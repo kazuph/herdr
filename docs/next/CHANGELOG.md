@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## [0.5.12] - 2026-05-19
+
 ### Fixed
 - The Claude Code integration no longer reports successful or failed post-tool hooks as `working`, and installing the updated integration removes Herdr's deprecated post-tool hook entries from existing Claude settings. (#198)
 - The Codex integration now reports native `PermissionRequest` hooks as `blocked`, so permission prompts no longer stay pinned as `working` after a tool-use hook. (#198)
