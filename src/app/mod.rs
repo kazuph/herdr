@@ -956,12 +956,12 @@ impl App {
     /// focused pane's negotiated keyboard protocol instead of passing host
     /// terminal escape sequences through unchanged.
     #[cfg(test)]
-    pub(crate) fn route_client_input(&mut self, data: Vec<u8>) {
+    pub(crate) async fn route_client_input(&mut self, data: Vec<u8>) {
         let events = crate::raw_input::parse_raw_input_bytes_sync(&data);
-        self.route_client_events(events, true);
+        self.route_client_events(events, true).await;
     }
 
-    pub(crate) fn route_client_events(
+    pub(crate) async fn route_client_events(
         &mut self,
         events: Vec<crate::raw_input::RawInputEvent>,
         apply_host_terminal_theme: bool,
@@ -974,7 +974,7 @@ impl App {
                         crossterm::event::KeyEventKind::Press => {
                             if self.state.mode == Mode::Terminal {
                                 self.suppressed_repeat_keys.remove(&key_id);
-                                self.handle_terminal_key_headless(key);
+                                self.handle_terminal_key_headless(key).await;
                             } else {
                                 self.suppressed_repeat_keys.insert(key_id);
                                 self.handle_non_terminal_key(key);
@@ -984,7 +984,7 @@ impl App {
                             if self.state.mode == Mode::Terminal
                                 && !self.suppressed_repeat_keys.contains(&key_id)
                             {
-                                self.handle_terminal_key_headless(key);
+                                self.handle_terminal_key_headless(key).await;
                             }
                             // Repeats in non-terminal modes are ignored
                             // (same as monolithic behavior).
@@ -1009,17 +1009,7 @@ impl App {
                                     if let Some(runtime) =
                                         self.state.runtime_for_pane_in_workspace(ws_idx, focused)
                                     {
-                                        let _ = runtime.try_send_bytes(bytes::Bytes::from(
-                                            if runtime
-                                                .input_state()
-                                                .map(|s| s.bracketed_paste)
-                                                .unwrap_or(false)
-                                            {
-                                                format!("\x1b[200~{text}\x1b[201~")
-                                            } else {
-                                                text
-                                            },
-                                        ));
+                                        let _ = runtime.send_paste(text).await;
                                     }
                                 }
                             }
@@ -2481,8 +2471,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn route_client_input_dispatches_navigate_mode_keybinds() {
+    #[tokio::test]
+    async fn route_client_input_dispatches_navigate_mode_keybinds() {
         let mut app = test_app();
         app.state.workspaces = vec![Workspace::test_new("test")];
         app.state.active = Some(0);
@@ -2495,7 +2485,7 @@ mod tests {
         // Ctrl+B is 0x02 in raw terminal input.
         // After entering navigate mode and pressing Esc, we should leave navigate mode.
         let esc_bytes = vec![0x1b]; // Esc
-        app.route_client_input(esc_bytes);
+        app.route_client_input(esc_bytes).await;
         // Esc in navigate mode should leave navigate mode.
         assert_eq!(
             app.state.mode,
@@ -2504,8 +2494,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn route_client_input_q_detaches_in_persistence_mode() {
+    #[tokio::test]
+    async fn route_client_input_q_detaches_in_persistence_mode() {
         let mut app = test_app();
         app.state.workspaces = vec![Workspace::test_new("test")];
         app.state.active = Some(0);
@@ -2517,7 +2507,7 @@ mod tests {
         assert!(!app.state.detach_requested);
 
         let q_bytes = b"q".to_vec();
-        app.route_client_input(q_bytes);
+        app.route_client_input(q_bytes).await;
 
         assert!(
             app.state.detach_requested,
@@ -2530,8 +2520,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn route_client_input_prefix_then_q_detaches_in_persistence_mode() {
+    #[tokio::test]
+    async fn route_client_input_prefix_then_q_detaches_in_persistence_mode() {
         let mut app = test_app();
         app.state.workspaces = vec![Workspace::test_new("test")];
         app.state.active = Some(0);
@@ -2544,7 +2534,7 @@ mod tests {
 
         // Send Ctrl+B (prefix key, raw byte 0x02).
         let prefix_bytes = vec![0x02];
-        app.route_client_input(prefix_bytes);
+        app.route_client_input(prefix_bytes).await;
 
         assert_eq!(
             app.state.mode,
@@ -2557,7 +2547,7 @@ mod tests {
         );
 
         let q_bytes = b"q".to_vec();
-        app.route_client_input(q_bytes);
+        app.route_client_input(q_bytes).await;
 
         assert!(
             app.state.detach_requested,
@@ -2584,10 +2574,10 @@ mod tests {
         app.state.prefix_code = KeyCode::Char('l');
         app.state.prefix_mods = KeyModifiers::CONTROL;
 
-        app.route_client_input(vec![0x0c]);
+        app.route_client_input(vec![0x0c]).await;
         assert_eq!(app.state.mode, Mode::Prefix);
 
-        app.route_client_input(vec![0x0c]);
+        app.route_client_input(vec![0x0c]).await;
         assert_eq!(app.state.mode, Mode::Terminal);
         assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from(vec![0x0c]));
     }
@@ -2606,7 +2596,7 @@ mod tests {
 
         // Ghostty/kitty-style Ctrl-C should be normalized back to the pane's
         // negotiated encoding instead of being forwarded verbatim.
-        app.route_client_input(b"\x1b[99;5u".to_vec());
+        app.route_client_input(b"\x1b[99;5u".to_vec()).await;
 
         assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from(vec![3]));
     }
@@ -2624,7 +2614,7 @@ mod tests {
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
 
-        app.route_client_input(b"\x1b[13;2u".to_vec());
+        app.route_client_input(b"\x1b[13;2u".to_vec()).await;
 
         assert_eq!(
             rx.recv().await.unwrap(),
@@ -2644,7 +2634,7 @@ mod tests {
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
 
-        app.route_client_input(b"ab".to_vec());
+        app.route_client_input(b"ab".to_vec()).await;
 
         assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from_static(b"a"));
         assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from_static(b"b"));
@@ -2665,7 +2655,7 @@ mod tests {
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
 
-        app.route_client_input(text.as_bytes().to_vec());
+        app.route_client_input(text.as_bytes().to_vec()).await;
 
         let mut forwarded = Vec::new();
         for _ in text.chars() {
@@ -2683,26 +2673,30 @@ mod tests {
         let focused = workspace.focused_pane_id().unwrap();
         let text = "你好，今天我们测试一段比较长的语音输入。こんにちは。안녕하세요.🙂".repeat(64);
         let char_count = text.chars().count();
-        let (runtime, mut rx) = TerminalRuntime::test_with_channel_capacity(80, 24, char_count);
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel_capacity(80, 24, 32);
         workspace.tabs[0].runtimes.insert(focused, runtime);
         app.state.workspaces = vec![workspace];
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
 
-        app.route_client_input(text.as_bytes().to_vec());
+        let route = app.route_client_input(text.as_bytes().to_vec());
+        let drain = async {
+            let mut forwarded = Vec::new();
+            for _ in 0..char_count {
+                let chunk = rx.recv().await.unwrap();
+                forwarded.extend_from_slice(&chunk);
+            }
+            forwarded
+        };
+        let (_, forwarded) = tokio::join!(route, drain);
 
-        let mut forwarded = Vec::new();
-        for _ in 0..char_count {
-            let chunk = rx.recv().await.unwrap();
-            forwarded.extend_from_slice(&chunk);
-        }
         assert_eq!(forwarded, text.as_bytes());
         assert!(rx.try_recv().is_err());
     }
 
-    #[test]
-    fn route_client_input_handles_mouse_events() {
+    #[tokio::test]
+    async fn route_client_input_handles_mouse_events() {
         let mut app = test_app();
         app.state.workspaces = vec![Workspace::test_new("test")];
         app.state.active = Some(0);
@@ -2712,16 +2706,16 @@ mod tests {
         let mouse_bytes = b"\x1b[<64;10;5M".to_vec();
         // This should not panic even though mouse handling is simplified
         // in headless mode.
-        app.route_client_input(mouse_bytes);
+        app.route_client_input(mouse_bytes).await;
         // No assertions on specific behavior — just no panic.
     }
 
-    #[test]
-    fn route_client_input_advances_onboarding_modal() {
+    #[tokio::test]
+    async fn route_client_input_advances_onboarding_modal() {
         let mut app = test_app();
         app.state.mode = Mode::Onboarding;
 
-        app.route_client_input(b"\r".to_vec());
+        app.route_client_input(b"\r".to_vec()).await;
 
         assert_eq!(app.state.mode, Mode::Settings);
         assert_eq!(
@@ -2730,8 +2724,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn route_client_input_closes_release_notes_modal() {
+    #[tokio::test]
+    async fn route_client_input_closes_release_notes_modal() {
         let mut app = test_app();
         app.state.workspaces = vec![Workspace::test_new("test")];
         app.state.active = Some(0);
@@ -2739,14 +2733,14 @@ mod tests {
         app.state.mode = Mode::ReleaseNotes;
         app.state.release_notes = Some(release_notes_state());
 
-        app.route_client_input(b"\x1b".to_vec());
+        app.route_client_input(b"\x1b".to_vec()).await;
 
         assert_eq!(app.state.mode, Mode::Terminal);
         assert!(app.state.release_notes.is_none());
     }
 
-    #[test]
-    fn route_client_input_closes_settings_modal() {
+    #[tokio::test]
+    async fn route_client_input_closes_settings_modal() {
         let mut app = test_app();
         app.state.workspaces = vec![Workspace::test_new("test")];
         app.state.active = Some(0);
@@ -2755,16 +2749,17 @@ mod tests {
         app.state.settings.original_theme = Some(app.state.theme_name.clone());
         app.state.settings.original_palette = Some(app.state.palette.clone());
 
-        app.route_client_input(b"\x1b".to_vec());
+        app.route_client_input(b"\x1b".to_vec()).await;
 
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 
-    #[test]
-    fn route_client_input_updates_host_terminal_theme_from_osc_response() {
+    #[tokio::test]
+    async fn route_client_input_updates_host_terminal_theme_from_osc_response() {
         let mut app = test_app();
 
-        app.route_client_input(b"\x1b]11;#123456\x07".to_vec());
+        app.route_client_input(b"\x1b]11;#123456\x07".to_vec())
+            .await;
 
         assert_eq!(
             app.state.host_terminal_theme.background,

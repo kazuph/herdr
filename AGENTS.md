@@ -11,6 +11,12 @@ Terminal workspace manager for AI coding agents. Rust + ratatui.
 - **Detection is decoupled.** The detector reads a screen snapshot, never touches the parser or viewport state.
 - **UI patterns should be reused.** Herdr is a mouse-first TUI. New dialogs, onboarding, settings, and post-update flows should follow the existing UI/UX language and interaction patterns instead of inventing one-off screens. Prefer reusing existing modal/screen structure, affordances, and close actions so the app feels consistent.
 
+## Fork-only AI rule
+
+This checkout is the personal fork workspace for `kazuph/herdr`.
+
+AI agents must not open pull requests, issues, branches, or pushes against the upstream `ogulcancelik/herdr` repository. Keep all agent-driven changes in the `kazuph/herdr` fork unless the human explicitly takes over upstream contribution outside the agent workflow.
+
 ## Multi-agent isolation
 
 Read-only investigation can happen in the shared checkout.

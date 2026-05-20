@@ -18,12 +18,12 @@ fn is_modifier_only_key(code: &KeyCode) -> bool {
 }
 
 impl App {
-    pub(crate) fn handle_terminal_key_headless(&mut self, key: TerminalKey) {
+    pub(crate) async fn handle_terminal_key_headless(&mut self, key: TerminalKey) {
         let Some(input) = self.prepare_terminal_key_forward(key) else {
             return;
         };
         if let Some(runtime) = self.lookup_runtime_sender(input.ws_idx, input.pane_id) {
-            let _ = runtime.try_send_bytes(input.bytes);
+            let _ = runtime.send_bytes(input.bytes).await;
         }
     }
 
@@ -661,7 +661,7 @@ mod tests {
         app.state.view.pane_infos = pane_infos;
 
         let key = crate::input::parse_terminal_key_sequence("\x1b\x7f").unwrap();
-        app.handle_terminal_key_headless(key);
+        app.handle_terminal_key_headless(key).await;
 
         let bytes = rx.try_recv().unwrap();
         assert_eq!(bytes.as_ref(), b"\x1b\x7f");
@@ -698,7 +698,8 @@ mod tests {
             .expect("initial scroll metrics");
         assert_eq!(start_metrics.offset_from_bottom, 0);
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()))
+            .await;
 
         let end_metrics = app
             .state
@@ -734,7 +735,8 @@ mod tests {
         app.state.mode = Mode::Terminal;
         app.state.view.pane_infos = pane_infos;
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()))
+            .await;
         let after_up = app
             .state
             .runtime_for_pane_in_workspace(0, pane_id)
@@ -745,7 +747,8 @@ mod tests {
         app.handle_terminal_key_headless(TerminalKey::new(
             KeyCode::PageDown,
             KeyModifiers::empty(),
-        ));
+        ))
+        .await;
         let after_down = app
             .state
             .runtime_for_pane_in_workspace(0, pane_id)
@@ -777,7 +780,8 @@ mod tests {
         app.state.mode = Mode::Terminal;
         app.state.view.pane_infos = pane_infos;
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()))
+            .await;
         let after_press = app
             .state
             .runtime_for_pane_in_workspace(0, pane_id)
@@ -791,7 +795,8 @@ mod tests {
         app.handle_terminal_key_headless(
             TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty())
                 .with_kind(KeyEventKind::Release),
-        );
+        )
+        .await;
 
         let after_release = app
             .state
@@ -827,7 +832,8 @@ mod tests {
         app.state.mode = Mode::Terminal;
         app.state.view.pane_infos = pane_infos;
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::CONTROL));
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::CONTROL))
+            .await;
 
         let metrics = app
             .state
@@ -869,7 +875,8 @@ mod tests {
             .expect("initial scroll metrics");
         assert_eq!(start_metrics.offset_from_bottom, 0);
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()))
+            .await;
 
         let end_metrics = app
             .state

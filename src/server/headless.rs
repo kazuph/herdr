@@ -467,7 +467,7 @@ impl HeadlessServer {
             self.accept_client_connections()?;
 
             // 5. Drain server events from client threads.
-            if self.drain_server_events() {
+            if self.drain_server_events().await {
                 needs_render = true;
             }
 
@@ -554,7 +554,7 @@ impl HeadlessServer {
                     }
                 }
                 LoopEvent::ServerEvent(ev) => {
-                    if self.handle_server_event(ev) {
+                    if self.handle_server_event(ev).await {
                         needs_render = true;
                     }
                 }
@@ -827,10 +827,10 @@ impl HeadlessServer {
     /// Drains server events from the dedicated channel.
     ///
     /// Returns true if any input was processed (requiring a re-render).
-    fn drain_server_events(&mut self) -> bool {
+    async fn drain_server_events(&mut self) -> bool {
         let mut changed = false;
         while let Ok(ev) = self.server_event_rx.try_recv() {
-            changed |= self.handle_server_event(ev);
+            changed |= self.handle_server_event(ev).await;
         }
         changed
     }
@@ -866,15 +866,18 @@ impl HeadlessServer {
         Ok(staged.paste_text)
     }
 
-    fn paste_client_clipboard_image_path(&mut self, client_id: u64, path: String) -> bool {
-        if let Some(ClientConnection {
-            mode: ClientConnectionMode::TerminalAttach { terminal_id },
-            ..
-        }) = self.clients.get(&client_id)
-        {
-            if let Some(runtime) = self.runtime_for_terminal_id_string(terminal_id) {
+    async fn paste_client_clipboard_image_path(&mut self, client_id: u64, path: String) -> bool {
+        let attached_terminal_id = match self.clients.get(&client_id) {
+            Some(ClientConnection {
+                mode: ClientConnectionMode::TerminalAttach { terminal_id },
+                ..
+            }) => Some(terminal_id.clone()),
+            _ => None,
+        };
+        if let Some(terminal_id) = attached_terminal_id {
+            if let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) {
                 let payload = paste_payload_for_runtime(runtime, &path);
-                if let Err(err) = runtime.try_send_bytes(Bytes::from(payload)) {
+                if let Err(err) = runtime.send_bytes(Bytes::from(payload)).await {
                     warn!(client_id, terminal_id = %terminal_id, err = %err, "terminal attach clipboard image paste failed");
                 }
             }
@@ -888,10 +891,12 @@ impl HeadlessServer {
         if let Some(client) = self.clients.get_mut(&client_id) {
             client.request_semantic_redraw_after_input();
         }
-        self.app.route_client_events(
-            vec![crate::raw_input::RawInputEvent::Paste(path)],
-            self.foreground_client_id == Some(client_id),
-        );
+        self.app
+            .route_client_events(
+                vec![crate::raw_input::RawInputEvent::Paste(path)],
+                self.foreground_client_id == Some(client_id),
+            )
+            .await;
         true
     }
 
@@ -1385,7 +1390,7 @@ impl HeadlessServer {
     }
 
     /// Handles a server event. Returns true if the event requires a re-render.
-    fn handle_server_event(&mut self, ev: ServerEvent) -> bool {
+    async fn handle_server_event(&mut self, ev: ServerEvent) -> bool {
         match ev {
             ServerEvent::ClientConnected {
                 client_id,
@@ -1434,13 +1439,16 @@ impl HeadlessServer {
             } => self.attach_terminal_client(client_id, terminal_id, takeover),
             ServerEvent::ClientInput { client_id, data } => {
                 debug!(client_id, len = data.len(), "client input received");
-                if let Some(ClientConnection {
-                    mode: ClientConnectionMode::TerminalAttach { terminal_id },
-                    ..
-                }) = self.clients.get(&client_id)
-                {
-                    if let Some(runtime) = self.runtime_for_terminal_id_string(terminal_id) {
-                        if let Err(err) = runtime.try_send_bytes(Bytes::from(data)) {
+                let attached_terminal_id = match self.clients.get(&client_id) {
+                    Some(ClientConnection {
+                        mode: ClientConnectionMode::TerminalAttach { terminal_id },
+                        ..
+                    }) => Some(terminal_id.clone()),
+                    _ => None,
+                };
+                if let Some(terminal_id) = attached_terminal_id {
+                    if let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) {
+                        if let Err(err) = runtime.send_bytes(Bytes::from(data)).await {
                             warn!(client_id, terminal_id = %terminal_id, err = %err, "terminal attach input failed");
                         }
                     }
@@ -1472,7 +1480,8 @@ impl HeadlessServer {
                 }
                 let theme_changed = self.update_client_host_theme_from_events(client_id, &events);
                 self.app
-                    .route_client_events(events, self.foreground_client_id == Some(client_id));
+                    .route_client_events(events, self.foreground_client_id == Some(client_id))
+                    .await;
 
                 // Check if the detach keybind was triggered during input processing.
                 if self.app.state.detach_requested {
@@ -1524,7 +1533,10 @@ impl HeadlessServer {
                     "client clipboard image received"
                 );
                 match self.write_client_clipboard_image(client_id, &extension, &data) {
-                    Ok(path) => self.paste_client_clipboard_image_path(client_id, path),
+                    Ok(path) => {
+                        self.paste_client_clipboard_image_path(client_id, path)
+                            .await
+                    }
                     Err(err) => {
                         warn!(client_id, err = %err, "failed to stage client clipboard image");
                         true
@@ -2427,28 +2439,34 @@ mod tests {
         )
     }
 
-    #[test]
-    fn terminal_attach_rejects_missing_terminal_and_removes_client() {
+    #[tokio::test]
+    async fn terminal_attach_rejects_missing_terminal_and_removes_client() {
         let mut server = test_headless_server();
         let (writer, control_rx, _render_rx) = test_client_writer();
 
-        assert!(server.handle_server_event(ServerEvent::ClientConnected {
-            client_id: 7,
-            cols: 80,
-            rows: 24,
-            cell_width_px: 0,
-            cell_height_px: 0,
-            render_encoding: RenderEncoding::TerminalAnsi,
-            writer,
-        }));
+        assert!(
+            server
+                .handle_server_event(ServerEvent::ClientConnected {
+                    client_id: 7,
+                    cols: 80,
+                    rows: 24,
+                    cell_width_px: 0,
+                    cell_height_px: 0,
+                    render_encoding: RenderEncoding::TerminalAnsi,
+                    writer,
+                })
+                .await
+        );
         assert!(server.clients.contains_key(&7));
 
         assert!(
-            !server.handle_server_event(ServerEvent::ClientAttachTerminal {
-                client_id: 7,
-                terminal_id: "term_missing".to_owned(),
-                takeover: false,
-            })
+            !server
+                .handle_server_event(ServerEvent::ClientAttachTerminal {
+                    client_id: 7,
+                    terminal_id: "term_missing".to_owned(),
+                    takeover: false,
+                })
+                .await
         );
         assert!(!server.clients.contains_key(&7));
         let reason = read_server_shutdown_reason(control_rx.recv().expect("shutdown message"));
@@ -2458,8 +2476,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn terminal_attach_client_exits_when_attached_pane_dies() {
+    #[tokio::test]
+    async fn terminal_attach_client_exits_when_attached_pane_dies() {
         let mut server = test_headless_server();
         let workspace = crate::workspace::Workspace::test_new("attached");
         let pane_id = workspace.tabs[0].root_pane;
@@ -2472,21 +2490,27 @@ mod tests {
             .to_string();
         let (writer, control_rx, _render_rx) = test_client_writer();
 
-        assert!(server.handle_server_event(ServerEvent::ClientConnected {
-            client_id: 7,
-            cols: 80,
-            rows: 24,
-            cell_width_px: 0,
-            cell_height_px: 0,
-            render_encoding: RenderEncoding::TerminalAnsi,
-            writer,
-        }));
         assert!(
-            server.handle_server_event(ServerEvent::ClientAttachTerminal {
-                client_id: 7,
-                terminal_id: terminal_id.clone(),
-                takeover: false,
-            })
+            server
+                .handle_server_event(ServerEvent::ClientConnected {
+                    client_id: 7,
+                    cols: 80,
+                    rows: 24,
+                    cell_width_px: 0,
+                    cell_height_px: 0,
+                    render_encoding: RenderEncoding::TerminalAnsi,
+                    writer,
+                })
+                .await
+        );
+        assert!(
+            server
+                .handle_server_event(ServerEvent::ClientAttachTerminal {
+                    client_id: 7,
+                    terminal_id: terminal_id.clone(),
+                    takeover: false,
+                })
+                .await
         );
         assert_eq!(server.terminal_attach_owners.get(&terminal_id), Some(&7));
 
@@ -2817,8 +2841,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn focus_lost_updates_client_without_promoting_foreground() {
+    #[tokio::test]
+    async fn focus_lost_updates_client_without_promoting_foreground() {
         let mut server = test_headless_server();
 
         server.clients.insert(
@@ -2848,10 +2872,12 @@ mod tests {
         server.foreground_client_id = Some(2);
         server.sync_foreground_client_state();
 
-        let changed = server.handle_server_event(ServerEvent::ClientInput {
-            client_id: 1,
-            data: b"\x1b[O".to_vec(),
-        });
+        let changed = server
+            .handle_server_event(ServerEvent::ClientInput {
+                client_id: 1,
+                data: b"\x1b[O".to_vec(),
+            })
+            .await;
 
         assert!(!changed);
         assert_eq!(server.foreground_client_id, Some(2));
@@ -2859,8 +2885,8 @@ mod tests {
         assert_eq!(server.app.state.outer_terminal_focus, Some(true));
     }
 
-    #[test]
-    fn focus_gained_promotes_client_to_foreground() {
+    #[tokio::test]
+    async fn focus_gained_promotes_client_to_foreground() {
         let mut server = test_headless_server();
 
         server.clients.insert(
@@ -2890,10 +2916,12 @@ mod tests {
         server.foreground_client_id = Some(2);
         server.sync_foreground_client_state();
 
-        let changed = server.handle_server_event(ServerEvent::ClientInput {
-            client_id: 1,
-            data: b"\x1b[I".to_vec(),
-        });
+        let changed = server
+            .handle_server_event(ServerEvent::ClientInput {
+                client_id: 1,
+                data: b"\x1b[I".to_vec(),
+            })
+            .await;
 
         assert!(changed);
         assert_eq!(server.foreground_client_id, Some(1));
@@ -2901,8 +2929,8 @@ mod tests {
         assert_eq!(server.app.state.outer_terminal_focus, Some(true));
     }
 
-    #[test]
-    fn foreground_client_focus_event_updates_app_focus_state() {
+    #[tokio::test]
+    async fn foreground_client_focus_event_updates_app_focus_state() {
         let mut server = test_headless_server();
 
         server.clients.insert(
@@ -2920,10 +2948,12 @@ mod tests {
         server.foreground_client_id = Some(1);
         server.sync_foreground_client_state();
 
-        let changed = server.handle_server_event(ServerEvent::ClientInput {
-            client_id: 1,
-            data: b"\x1b[O".to_vec(),
-        });
+        let changed = server
+            .handle_server_event(ServerEvent::ClientInput {
+                client_id: 1,
+                data: b"\x1b[O".to_vec(),
+            })
+            .await;
 
         assert!(!changed);
         assert_eq!(server.clients[&1].outer_terminal_focus, Some(false));
@@ -3082,8 +3112,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn terminal_ansi_input_does_not_reset_blit_baseline() {
+    #[tokio::test]
+    async fn terminal_ansi_input_does_not_reset_blit_baseline() {
         let mut server = test_headless_server();
         let (client_tx, _client_control_rx, client_rx) = test_client_writer();
 
@@ -3116,10 +3146,14 @@ mod tests {
             1
         );
 
-        assert!(!server.handle_server_event(ServerEvent::ClientInput {
-            client_id: 1,
-            data: Vec::new(),
-        }));
+        assert!(
+            !server
+                .handle_server_event(ServerEvent::ClientInput {
+                    client_id: 1,
+                    data: Vec::new(),
+                })
+                .await
+        );
         server.render_and_stream();
 
         assert_eq!(
@@ -3135,8 +3169,8 @@ mod tests {
         assert!(client_rx.recv_timeout(Duration::from_millis(50)).is_err());
     }
 
-    #[test]
-    fn outer_focus_gained_forces_terminal_ansi_full_redraw() {
+    #[tokio::test]
+    async fn outer_focus_gained_forces_terminal_ansi_full_redraw() {
         let mut server = test_headless_server();
         let (client_tx, _client_control_rx, client_rx) = test_client_writer();
 
@@ -3159,10 +3193,14 @@ mod tests {
             .recv_timeout(Duration::from_millis(100))
             .expect("initial terminal frame");
 
-        assert!(server.handle_server_event(ServerEvent::ClientInput {
-            client_id: 1,
-            data: b"\x1b[I".to_vec(),
-        }));
+        assert!(
+            server
+                .handle_server_event(ServerEvent::ClientInput {
+                    client_id: 1,
+                    data: b"\x1b[I".to_vec(),
+                })
+                .await
+        );
         server.render_and_stream();
 
         match read_server_message(client_rx.recv_timeout(Duration::from_millis(100)).unwrap()) {
@@ -3218,8 +3256,8 @@ mod tests {
         assert!(client_rx.recv_timeout(Duration::from_millis(50)).is_err());
     }
 
-    #[test]
-    fn writer_drained_retries_pending_terminal_ansi_render() {
+    #[tokio::test]
+    async fn writer_drained_retries_pending_terminal_ansi_render() {
         let mut server = test_headless_server();
         let (client_tx, _client_control_rx, client_rx) = test_client_writer();
         let queued = HeadlessServer::frame_server_message(&ServerMessage::ReloadSoundConfig)
@@ -3250,7 +3288,11 @@ mod tests {
             ServerMessage::ReloadSoundConfig
         ));
 
-        assert!(server.handle_server_event(ServerEvent::ClientWriterDrained { client_id: 1 }));
+        assert!(
+            server
+                .handle_server_event(ServerEvent::ClientWriterDrained { client_id: 1 })
+                .await
+        );
         server.render_and_stream();
 
         match read_server_message(client_rx.recv_timeout(Duration::from_millis(100)).unwrap()) {
