@@ -249,11 +249,10 @@ fn client_writer_loop(
 
         match render_rx.try_recv() {
             Ok(data) => {
-                let _ =
-                    server_event_tx.blocking_send(ServerEvent::ClientWriterDrained { client_id });
                 if !write_framed_bytes(&mut stream, &data) {
                     break;
                 }
+                notify_render_drained(client_id, &server_event_tx);
                 continue;
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
@@ -267,11 +266,10 @@ fn client_writer_loop(
         if control_closed {
             match render_rx.recv_timeout(Duration::from_millis(5)) {
                 Ok(data) => {
-                    let _ = server_event_tx
-                        .blocking_send(ServerEvent::ClientWriterDrained { client_id });
                     if !write_framed_bytes(&mut stream, &data) {
                         break;
                     }
+                    notify_render_drained(client_id, &server_event_tx);
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => render_closed = true,
@@ -290,6 +288,10 @@ fn client_writer_loop(
         }
     }
     debug!("client writer thread exiting");
+}
+
+fn notify_render_drained(client_id: u64, server_event_tx: &mpsc::Sender<ServerEvent>) {
+    let _ = server_event_tx.blocking_send(ServerEvent::ClientWriterDrained { client_id });
 }
 
 fn write_framed_bytes(stream: &mut UnixStream, data: &[u8]) -> bool {
@@ -512,6 +514,38 @@ mod tests {
             .join()
             .expect("handshake thread join")
             .expect("handshake thread result");
+    }
+
+    #[test]
+    fn client_writer_reports_render_drained_after_successful_write() {
+        let (mut client_stream, server_stream) = UnixStream::pair().expect("socket pair");
+        let (server_event_tx, mut server_event_rx) = mpsc::channel(4);
+        let (control_tx, control_rx) = std::sync::mpsc::channel();
+        let (render_tx, render_rx) = std::sync::mpsc::sync_channel(1);
+        let handle = std::thread::spawn(move || {
+            client_writer_loop(server_stream, 7, control_rx, render_rx, server_event_tx);
+        });
+
+        let mut framed = Vec::new();
+        protocol::write_message(&mut framed, &ServerMessage::ReloadSoundConfig)
+            .expect("serialize render message");
+        render_tx.send(framed).expect("queue render frame");
+
+        let message: ServerMessage =
+            protocol::read_message(&mut client_stream, MAX_FRAME_SIZE).expect("read render frame");
+        assert!(matches!(message, ServerMessage::ReloadSoundConfig));
+
+        match server_event_rx
+            .blocking_recv()
+            .expect("writer drained event")
+        {
+            ServerEvent::ClientWriterDrained { client_id } => assert_eq!(client_id, 7),
+            other => panic!("expected ClientWriterDrained, got {other:?}"),
+        }
+
+        drop(control_tx);
+        drop(render_tx);
+        handle.join().expect("writer thread join");
     }
 
     #[test]
