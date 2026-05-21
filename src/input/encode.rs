@@ -16,12 +16,32 @@ pub fn encode_terminal_key(key: TerminalKey, protocol: KeyboardProtocol) -> Vec<
         return bytes;
     }
 
+    if let Some(bytes) = encode_legacy_shift_enter(&key, protocol) {
+        return bytes;
+    }
+
     if let KeyboardProtocol::Kitty { flags } = protocol {
         if let Some(bytes) = try_encode_csi_u(&key, flags) {
             return bytes;
         }
     }
     encode_legacy(key.as_key_event())
+}
+
+fn encode_legacy_shift_enter(key: &TerminalKey, protocol: KeyboardProtocol) -> Option<Vec<u8>> {
+    if protocol != KeyboardProtocol::Legacy
+        || key.code != KeyCode::Enter
+        || key.modifiers != KeyModifiers::SHIFT
+    {
+        return None;
+    }
+
+    match key.kind {
+        crossterm::event::KeyEventKind::Press | crossterm::event::KeyEventKind::Repeat => {
+            Some(vec![b'\n'])
+        }
+        crossterm::event::KeyEventKind::Release => Some(Vec::new()),
+    }
 }
 
 #[allow(dead_code)] // exercised in input unit tests; production uses PaneRuntime helpers
@@ -476,9 +496,9 @@ mod tests {
     }
 
     #[test]
-    fn legacy_shift_enter_is_just_cr() {
+    fn legacy_shift_enter_is_lf() {
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT);
-        assert_eq!(encode_key(key, KeyboardProtocol::Legacy), vec![b'\r']);
+        assert_eq!(encode_key(key, KeyboardProtocol::Legacy), vec![b'\n']);
     }
 
     #[test]
@@ -706,6 +726,16 @@ mod tests {
             encode_key(key, KeyboardProtocol::Kitty { flags: 3 }),
             b"\x1b[13;2:2u"
         );
+    }
+
+    #[test]
+    fn legacy_shift_enter_release_emits_nothing() {
+        let key = KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            KeyModifiers::SHIFT,
+            crossterm::event::KeyEventKind::Release,
+        );
+        assert_eq!(encode_key(key, KeyboardProtocol::Legacy), b"");
     }
 
     #[test]

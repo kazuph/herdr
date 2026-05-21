@@ -334,7 +334,10 @@ fn detect_github_copilot(content: &str) -> AgentState {
     }
 
     // Working
-    if lower.contains("esc to cancel") {
+    if lower.contains("esc to cancel")
+        || lower.contains("esc cancel")
+        || has_copilot_status_activity(content)
+    {
         return AgentState::Working;
     }
 
@@ -663,6 +666,21 @@ fn has_cursor_spinner(content: &str) -> bool {
         }
     }
     false
+}
+
+fn has_copilot_status_activity(content: &str) -> bool {
+    content.lines().any(|line| {
+        let trimmed = line.trim();
+        let Some(first) = trimmed.chars().next() else {
+            return false;
+        };
+        if !matches!(first, '●' | '◉' | '◎' | '○') {
+            return false;
+        }
+
+        let lower = trimmed.to_lowercase();
+        (lower.contains("thinking") && lower.contains("esc cancel")) || lower.contains("loading:")
+    })
 }
 
 fn has_opencode_question_prompt(content: &str) -> bool {
@@ -1349,6 +1367,22 @@ mod tests {
     fn copilot_working() {
         assert_eq!(
             detect_github_copilot("generating\nesc to cancel"),
+            AgentState::Working
+        );
+    }
+
+    #[test]
+    fn copilot_working_on_status_footer() {
+        assert_eq!(
+            detect_github_copilot("● Thinking esc cancel"),
+            AgentState::Working
+        );
+    }
+
+    #[test]
+    fn copilot_loading_on_status_footer() {
+        assert_eq!(
+            detect_github_copilot("◉ Loading: 1 instruction, 5 hooks, 62 skills"),
             AgentState::Working
         );
     }

@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use super::sidebar::{agent_panel_entries, AgentPanelEntry};
-use super::status::{agent_icon, state_dot};
+use super::status::{agent_icon, state_summary_icon};
 use crate::app::state::{Palette, ToastKind, ToastNotification};
 use crate::app::AppState;
 use crate::detect::AgentState;
@@ -267,14 +267,7 @@ fn render_header_status(app: &AppState, frame: &mut Frame, area: Rect) {
     };
 
     let (state, seen) = ws.aggregate_state(&app.terminals);
-    let (dot, dot_style) = if matches!(state, AgentState::Working) {
-        (
-            super::spinner_frame(app.spinner_tick),
-            Style::default().fg(p.yellow),
-        )
-    } else {
-        state_dot(state, seen, p)
-    };
+    let (dot, dot_style) = state_summary_icon(state, seen, app.spinner_tick, p);
     let tab_label = format!("tab {}/{}", ws.active_tab + 1, ws.tabs.len());
     let row1 = Rect::new(area.x, area.y, area.width, 1);
     let tab_w = (tab_label.chars().count() as u16 + 1).min(area.width);
@@ -434,7 +427,7 @@ fn render_mobile_switcher_content(app: &AppState, frame: &mut Frame, viewport: R
         let selected = idx == app.selected;
         let bg = mobile_item_bg(selected, active, p);
         let (state, seen) = ws.aggregate_state(&app.terminals);
-        let (dot, dot_style) = state_dot(state, seen, p);
+        let (dot, dot_style) = state_summary_icon(state, seen, app.spinner_tick, p);
         let title = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(dot, dot_style.bg(bg)),

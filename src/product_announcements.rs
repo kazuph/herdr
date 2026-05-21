@@ -33,6 +33,8 @@ struct StoredProductAnnouncement {
     pub id: String,
     pub title: String,
     pub body: String,
+    #[serde(default = "default_update_track")]
+    pub update_track: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -43,9 +45,13 @@ struct AnnouncementStore {
     seen: BTreeSet<String>,
 }
 
+fn default_update_track() -> String {
+    "ogulcancelik/herdr".to_string()
+}
+
 impl StoredProductAnnouncement {
     fn seen_key(&self) -> String {
-        seen_key(&self.version, &self.id)
+        seen_key(&self.update_track, &self.version, &self.id)
     }
 
     fn into_product_announcement(self) -> ProductAnnouncement {
@@ -66,12 +72,13 @@ impl From<&ProductAnnouncement> for StoredProductAnnouncement {
             id: announcement.id.clone(),
             title: announcement.title.clone(),
             body: announcement.body.clone(),
+            update_track: crate::update::UPDATE_TRACK_ID.to_string(),
         }
     }
 }
 
-fn seen_key(version: &str, id: &str) -> String {
-    format!("{version}/{id}")
+fn seen_key(update_track: &str, version: &str, id: &str) -> String {
+    format!("{update_track}/{version}/{id}")
 }
 
 pub fn store_path() -> PathBuf {
@@ -184,14 +191,19 @@ fn clear_latest_for_version(path: &Path, version: &str) -> io::Result<()> {
 
 fn mark_seen_at(path: &Path, version: &str, id: &str) -> io::Result<()> {
     let mut store = load_store_from_path(path).unwrap_or_default();
-    store.seen.insert(seen_key(version, id));
+    store
+        .seen
+        .insert(seen_key(crate::update::UPDATE_TRACK_ID, version, id));
     write_store_to_path(path, &store)
 }
 
 fn load_unseen_from_path(path: &Path, current_version: &str) -> Option<ProductAnnouncement> {
     let store = load_store_from_path(path)?;
     let announcement = store.latest?;
-    if announcement.version != current_version || store.seen.contains(&announcement.seen_key()) {
+    if announcement.update_track != crate::update::UPDATE_TRACK_ID
+        || announcement.version != current_version
+        || store.seen.contains(&announcement.seen_key())
+    {
         return None;
     }
     Some(announcement.into_product_announcement())
@@ -301,6 +313,19 @@ mod tests {
         )
         .unwrap();
         clear_latest_for_version(&path, "1.2.3").unwrap();
+
+        assert_eq!(load_unseen_from_path(&path, "1.2.3"), None);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_unseen_ignores_other_update_tracks() {
+        let path = temp_path("other-track");
+        fs::write(
+            &path,
+            "{\n  \"latest\": {\n    \"version\": \"1.2.3\",\n    \"id\": \"keymap-v2\",\n    \"title\": \"Keymap changed\",\n    \"body\": \"### Changed\\n- One\",\n    \"update_track\": \"ogulcancelik/herdr\"\n  },\n  \"seen\": []\n}",
+        )
+        .unwrap();
 
         assert_eq!(load_unseen_from_path(&path, "1.2.3"), None);
         let _ = fs::remove_file(path);

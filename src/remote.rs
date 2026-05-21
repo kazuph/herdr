@@ -21,7 +21,7 @@ const REMOTE_SERVER_SHUTDOWN_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const REMOTE_SERVER_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CURRENT_PROTOCOL: u32 = crate::server::protocol::PROTOCOL_VERSION;
-const UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
+const UPDATE_MANIFEST_URL: &str = crate::update::UPDATE_MANIFEST_URL;
 const REMOTE_BINARY_ENV_VAR: &str = "HERDR_REMOTE_BINARY";
 pub(crate) const REATTACH_COMMAND_ENV_VAR: &str = "HERDR_REATTACH_COMMAND";
 

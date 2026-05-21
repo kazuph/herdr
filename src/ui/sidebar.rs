@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use super::scrollbar::{render_scrollbar, should_show_scrollbar};
-use super::status::{agent_icon, state_dot, state_label, state_label_color};
+use super::status::{agent_icon, state_label, state_label_color, state_summary_icon};
 use crate::app::state::{AgentPanelScope, Palette};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
@@ -431,7 +431,7 @@ pub(super) fn render_sidebar_collapsed(app: &AppState, frame: &mut Frame, area: 
             break;
         }
         let (agg_state, agg_seen) = ws.aggregate_state(&app.terminals);
-        let (icon, icon_style) = state_dot(agg_state, agg_seen, p);
+        let (icon, icon_style) = state_summary_icon(agg_state, agg_seen, app.spinner_tick, p);
         let is_selected = visible_idx == app.selected && is_navigating;
         let is_active = Some(visible_idx) == app.active;
         let row_style = if is_selected {
@@ -642,7 +642,7 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
             Style::default().fg(p.subtext0)
         };
 
-        let (icon, icon_style) = state_dot(agg_state, agg_seen, p);
+        let (icon, icon_style) = state_summary_icon(agg_state, agg_seen, app.spinner_tick, p);
         let line1 = vec![
             Span::styled(" ", Style::default()),
             Span::styled(icon, icon_style),

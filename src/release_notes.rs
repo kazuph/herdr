@@ -16,8 +16,14 @@ pub struct ReleaseNotes {
 struct StoredReleaseNotes {
     version: String,
     body: String,
+    #[serde(default = "default_update_track")]
+    update_track: String,
     #[serde(default = "default_show_on_startup")]
     show_on_startup: bool,
+}
+
+fn default_update_track() -> String {
+    "ogulcancelik/herdr".to_string()
 }
 
 fn default_show_on_startup() -> bool {
@@ -45,6 +51,7 @@ fn save_pending_to_path(path: &Path, version: &str, body: &str) -> std::io::Resu
         &StoredReleaseNotes {
             version: version.to_string(),
             body,
+            update_track: crate::update::UPDATE_TRACK_ID.to_string(),
             show_on_startup: true,
         },
     )
@@ -85,6 +92,9 @@ fn release_notes_from_stored(
 ) -> Option<ReleaseNotes> {
     let body = normalize_body(&stored.body);
     if body.is_empty() {
+        return None;
+    }
+    if stored.update_track != crate::update::UPDATE_TRACK_ID {
         return None;
     }
 
@@ -262,7 +272,26 @@ mod tests {
         )
         .unwrap();
 
-        assert!(load_latest_from_path(&path, "0.3.1").is_some());
+        assert!(load_latest_from_path(&path, "0.3.1").is_none());
+
+        clear_pending_at(&path).unwrap();
+    }
+
+    #[test]
+    fn load_latest_ignores_other_update_tracks() {
+        let path = std::env::temp_dir().join(format!(
+            "herdr-release-notes-{}-{}.json",
+            std::process::id(),
+            "other-track"
+        ));
+        let _ = clear_pending_at(&path);
+        fs::write(
+            &path,
+            "{\n  \"version\": \"0.6.0\",\n  \"body\": \"### Changed\\n- One\",\n  \"update_track\": \"ogulcancelik/herdr\",\n  \"show_on_startup\": true\n}",
+        )
+        .unwrap();
+
+        assert!(load_latest_from_path(&path, "0.6.0").is_none());
 
         clear_pending_at(&path).unwrap();
     }

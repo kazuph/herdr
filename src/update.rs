@@ -1,6 +1,6 @@
 //! Self-update mechanism.
 //!
-//! Checks the hosted herdr.dev update manifest for newer versions.
+//! Checks the configured update manifest for newer versions.
 //! Manual `herdr update` downloads and installs the binary.
 //! Background checks only surface availability and release notes.
 //! Uses `curl` as a subprocess for HTTP — no additional Rust HTTP dependencies.
@@ -17,7 +17,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-const UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
+pub(crate) const UPDATE_TRACK_ID: &str = "kazuph/herdr";
+pub(crate) const UPDATE_MANIFEST_URL: &str =
+    "https://raw.githubusercontent.com/kazuph/herdr/master/website/latest.json";
 const HOMEBREW_FORMULA_API_URL: &str = "https://formulae.brew.sh/api/formula/herdr.json";
 const HERDR_UPDATE_COMMAND: &str = "herdr update";
 const HOMEBREW_UPDATE_COMMAND: &str = "brew update && brew upgrade herdr";

@@ -90,6 +90,7 @@ pub(crate) struct GhosttyPaneCore {
     pub render_state: crate::ghostty::RenderState,
     pub initial_default_foreground: Option<crate::ghostty::RgbColor>,
     pub initial_default_background: Option<crate::ghostty::RgbColor>,
+    pub fixterm_keyboard_query_seen: bool,
     pub host_terminal_theme: crate::terminal_theme::TerminalTheme,
     pub transient_default_color_owner_pgid: Option<u32>,
     pub default_color_tracker: DefaultColorOscTracker,
@@ -279,6 +280,7 @@ impl GhosttyPaneTerminal {
                 render_state,
                 initial_default_foreground,
                 initial_default_background,
+                fixterm_keyboard_query_seen: false,
                 host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
                 transient_default_color_owner_pgid: None,
                 default_color_tracker: DefaultColorOscTracker::default(),
@@ -384,6 +386,13 @@ impl GhosttyPaneTerminal {
                 pane = pane_id.raw(),
                 shell_pid, "ignored scrollback clear sequence for droid compatibility"
             );
+        }
+
+        if Self::contains_fixterm_keyboard_query(filtered_bytes.as_ref()) {
+            core.fixterm_keyboard_query_seen = true;
+        }
+        if Self::contains_explicit_keyboard_protocol_request(filtered_bytes.as_ref()) {
+            core.fixterm_keyboard_query_seen = false;
         }
 
         core.terminal.write(filtered_bytes.as_ref());
@@ -553,6 +562,10 @@ impl GhosttyPaneTerminal {
         key: crate::input::TerminalKey,
         protocol: crate::input::KeyboardProtocol,
     ) -> Vec<u8> {
+        if Self::should_encode_shift_enter_as_lf(self, key, protocol) {
+            return crate::input::encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy);
+        }
+
         if ghostty_prefers_herdr_text_encoding(key) {
             return crate::input::encode_terminal_key(key, protocol);
         }
@@ -568,6 +581,33 @@ impl GhosttyPaneTerminal {
             Ok(bytes) if !bytes.is_empty() => bytes,
             Ok(_) | Err(_) => crate::input::encode_terminal_key(key, protocol),
         }
+    }
+
+    fn contains_fixterm_keyboard_query(bytes: &[u8]) -> bool {
+        bytes.windows(4).any(|window| window == b"\x1b[?u")
+    }
+
+    fn contains_explicit_keyboard_protocol_request(bytes: &[u8]) -> bool {
+        bytes.windows(3).any(|window| window == b"\x1b[>")
+    }
+
+    fn should_encode_shift_enter_as_lf(
+        pane: &GhosttyPaneTerminal,
+        key: crate::input::TerminalKey,
+        protocol: crate::input::KeyboardProtocol,
+    ) -> bool {
+        if protocol != crate::input::KeyboardProtocol::Legacy
+            || key.code != crossterm::event::KeyCode::Enter
+            || key.modifiers != crossterm::event::KeyModifiers::SHIFT
+        {
+            return false;
+        }
+
+        let Ok(core) = pane.core.lock() else {
+            return false;
+        };
+
+        core.fixterm_keyboard_query_seen && core.terminal.kitty_keyboard_flags().unwrap_or(0) == 0
     }
 
     pub fn encode_mouse_button(
@@ -1524,6 +1564,33 @@ mod tests {
         let encoded = pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy);
 
         assert_eq!(encoded, b"\x1b[27;2;13~");
+    }
+
+    #[test]
+    fn ghostty_keyboard_query_u_emits_response() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+
+        let _ = pane.process_pty_bytes(pane_id, 0, b"\x1b[?u", &tx);
+
+        let response = rx.try_recv().ok();
+        assert_eq!(response.as_deref(), Some(&b"\x1b[?0u"[..]));
+    }
+
+    #[test]
+    fn ghostty_fixterm_query_maps_shift_enter_to_lf_without_explicit_protocol_enable() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        pane.process_pty_bytes(pane_id, 0, b"\x1b[?u", &tx);
+
+        let key = crate::input::parse_terminal_key_sequence("\x1b[13;2u").unwrap();
+        let encoded = pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy);
+
+        assert_eq!(encoded, b"\n");
     }
 
     #[test]

@@ -110,6 +110,18 @@ pub(super) fn state_dot(state: AgentState, seen: bool, p: &Palette) -> (&'static
     }
 }
 
+pub(super) fn state_summary_icon(
+    state: AgentState,
+    seen: bool,
+    tick: u32,
+    p: &Palette,
+) -> (&'static str, Style) {
+    match (state, seen) {
+        (AgentState::Working, _) => (super::spinner_frame(tick), Style::default().fg(p.yellow)),
+        _ => state_dot(state, seen, p),
+    }
+}
+
 pub(super) fn agent_icon(
     state: AgentState,
     seen: bool,
@@ -142,5 +154,21 @@ pub(super) fn state_label_color(state: AgentState, seen: bool, p: &Palette) -> C
         (AgentState::Idle, false) => p.teal,
         (AgentState::Idle, true) => p.green,
         (AgentState::Unknown, _) => p.overlay0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::Palette;
+
+    #[test]
+    fn state_summary_icon_animates_working_state() {
+        let palette = Palette::catppuccin();
+
+        let (icon, style) = state_summary_icon(AgentState::Working, true, 0, &palette);
+
+        assert_eq!(icon, super::super::spinner_frame(0));
+        assert_eq!(style, Style::default().fg(palette.yellow));
     }
 }

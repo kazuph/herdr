@@ -74,6 +74,10 @@ pub fn host_modify_other_keys_mode(
         return Some(ModifyOtherKeysMode::Mode1);
     }
 
+    if term_program.is_some_and(|program| program.eq_ignore_ascii_case("ghostty")) {
+        return Some(ModifyOtherKeysMode::Mode1);
+    }
+
     None
 }
 
@@ -166,9 +170,21 @@ mod tests {
     }
 
     #[test]
-    fn modify_other_keys_mode_is_not_enabled_for_unknown_hosts() {
+    fn modify_other_keys_mode_is_enabled_for_ghostty_hosts() {
         assert_eq!(
             host_modify_other_keys_mode(false, Some("ghostty"), false),
+            Some(ModifyOtherKeysMode::Mode1)
+        );
+        assert_eq!(
+            host_modify_other_keys_mode(false, Some("Ghostty"), false),
+            Some(ModifyOtherKeysMode::Mode1)
+        );
+    }
+
+    #[test]
+    fn modify_other_keys_mode_is_not_enabled_for_unknown_hosts() {
+        assert_eq!(
+            host_modify_other_keys_mode(false, Some("kitty"), false),
             None
         );
         assert_eq!(host_modify_other_keys_mode(false, None, false), None);
