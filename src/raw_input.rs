@@ -117,6 +117,7 @@ const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
 #[derive(Debug)]
 pub enum RawInputEvent {
     Key(TerminalKey),
+    LineFeed,
     Paste(String),
     Mouse(MouseEvent),
     OuterFocusGained,
@@ -319,6 +320,10 @@ fn extract_one_event(buffer: &[u8]) -> Option<(RawInputEvent, usize)> {
         return Some((RawInputEvent::Unsupported, seq_len));
     }
 
+    if buffer[0] == b'\n' {
+        return Some((RawInputEvent::LineFeed, 1));
+    }
+
     let consumed = first_complete_utf8_char_len(buffer)?;
     let text = std::str::from_utf8(&buffer[..consumed]).ok()?;
     let key = parse_terminal_key_sequence(text)?;
@@ -488,6 +493,13 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEventKind};
 
     fn assert_raw_key(event: RawInputEvent, code: KeyCode, modifiers: KeyModifiers) {
+        if matches!(event, RawInputEvent::LineFeed)
+            && code == KeyCode::Char('j')
+            && modifiers == KeyModifiers::CONTROL
+        {
+            return;
+        }
+
         let RawInputEvent::Key(key) = event else {
             panic!("expected key");
         };
@@ -762,13 +774,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_raw_lf_as_ctrl_j() {
-        let (RawInputEvent::Key(key), consumed) = extract_one_event(b"\n").unwrap() else {
-            panic!("expected key");
-        };
+    fn parses_raw_lf_as_line_feed() {
+        let (event, consumed) = extract_one_event(b"\n").unwrap();
         assert_eq!(consumed, 1);
-        assert_eq!(key.code, KeyCode::Char('j'));
-        assert_eq!(key.modifiers, KeyModifiers::CONTROL);
+        assert!(matches!(event, RawInputEvent::LineFeed));
     }
 
     fn assert_fixture_extracts_whole_events(corpus: &str, macos_layout: bool) {

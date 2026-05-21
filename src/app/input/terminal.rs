@@ -27,6 +27,27 @@ impl App {
         }
     }
 
+    pub(crate) async fn send_literal_terminal_bytes(&mut self, bytes: Bytes) -> bool {
+        if self.state.mode != Mode::Terminal {
+            return false;
+        }
+
+        self.state.clear_selection();
+        self.selection_autoscroll_deadline = None;
+        self.state.update_dismissed = true;
+
+        let Some(ws_idx) = self.state.active else {
+            return false;
+        };
+        let Some(runtime) = self.state.focused_runtime_in_workspace(ws_idx) else {
+            return false;
+        };
+
+        runtime.scroll_reset();
+        let _ = runtime.send_bytes(bytes).await;
+        true
+    }
+
     fn prepare_terminal_key_forward(&mut self, key: TerminalKey) -> Option<PreparedPaneInput> {
         self.state.clear_selection();
         self.selection_autoscroll_deadline = None;

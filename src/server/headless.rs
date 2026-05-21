@@ -777,6 +777,7 @@ impl HeadlessServer {
             matches!(
                 event,
                 crate::raw_input::RawInputEvent::Key(_)
+                    | crate::raw_input::RawInputEvent::LineFeed
                     | crate::raw_input::RawInputEvent::Mouse(_)
                     | crate::raw_input::RawInputEvent::Paste(_)
                     | crate::raw_input::RawInputEvent::OuterFocusGained

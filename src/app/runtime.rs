@@ -82,6 +82,19 @@ impl App {
                     }
                 }
             }
+            crate::raw_input::RawInputEvent::LineFeed => {
+                if self.state.mode == Mode::Terminal {
+                    self.send_literal_terminal_bytes(bytes::Bytes::from_static(b"\n"))
+                        .await
+                } else {
+                    self.handle_key(crate::input::TerminalKey::new(
+                        crossterm::event::KeyCode::Char('j'),
+                        crossterm::event::KeyModifiers::CONTROL,
+                    ))
+                    .await;
+                    true
+                }
+            }
             crate::raw_input::RawInputEvent::Paste(text) => {
                 self.handle_paste(text).await;
                 true

@@ -994,6 +994,18 @@ impl App {
                         }
                     }
                 }
+                crate::raw_input::RawInputEvent::LineFeed => {
+                    if self.state.mode == Mode::Terminal {
+                        let _ = self
+                            .send_literal_terminal_bytes(bytes::Bytes::from_static(b"\n"))
+                            .await;
+                    } else {
+                        self.handle_non_terminal_key(crate::input::TerminalKey::new(
+                            crossterm::event::KeyCode::Char('j'),
+                            crossterm::event::KeyModifiers::CONTROL,
+                        ));
+                    }
+                }
                 crate::raw_input::RawInputEvent::Mouse(mouse) => {
                     if self.state.mouse_capture {
                         self.handle_mouse_event_headless(mouse);
@@ -1689,6 +1701,26 @@ mod tests {
             .await;
 
         assert!(handled);
+    }
+
+    #[tokio::test]
+    async fn terminal_mode_forwards_raw_line_feed_verbatim() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        let handled = app
+            .handle_raw_input_event(crate::raw_input::RawInputEvent::LineFeed)
+            .await;
+
+        assert!(handled);
+        assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from_static(b"\n"));
     }
 
     #[tokio::test]
@@ -2620,6 +2652,24 @@ mod tests {
             rx.recv().await.unwrap(),
             bytes::Bytes::from_static(b"\x1b[27;2;13~")
         );
+    }
+
+    #[tokio::test]
+    async fn route_client_input_preserves_raw_line_feed_for_focused_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(80, 24, 0, b"\x1b[>4;1m", 4);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.route_client_input(b"\n".to_vec()).await;
+
+        assert_eq!(rx.recv().await.unwrap(), bytes::Bytes::from_static(b"\n"));
     }
 
     #[tokio::test]
