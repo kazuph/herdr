@@ -210,11 +210,19 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 "##;
 
 fn should_block_nested(config: &config::Config) -> bool {
-    should_block_nested_for_env(config, std::env::var(HERDR_ENV_VAR).ok().as_deref())
+    should_block_nested_for_context(
+        config,
+        std::env::var(HERDR_ENV_VAR).ok().as_deref(),
+        crate::platform::process_has_ancestor_named(std::process::id(), "herdr"),
+    )
 }
 
-fn should_block_nested_for_env(config: &config::Config, herdr_env: Option<&str>) -> bool {
-    !config.experimental.allow_nested && herdr_env == Some(HERDR_ENV_VALUE)
+fn should_block_nested_for_context(
+    config: &config::Config,
+    herdr_env: Option<&str>,
+    has_herdr_ancestor: bool,
+) -> bool {
+    !config.experimental.allow_nested && herdr_env == Some(HERDR_ENV_VALUE) && has_herdr_ancestor
 }
 
 fn random_nested_message() -> &'static str {
@@ -231,7 +239,8 @@ fn random_nested_message() -> &'static str {
 fn exit_if_nested_disabled(config: &config::Config) {
     if should_block_nested(config) {
         eprintln!("\x1b[1merror:\x1b[0m nested herdr is disabled by default.");
-        eprintln!("see configuration if you want to enable it.");
+        eprintln!("detected HERDR_ENV=1 with a herdr parent process.");
+        eprintln!("set [experimental] allow_nested = true if you want to enable it.");
         eprintln!();
         eprintln!("\x1b[2m\"{}\"\x1b[0m", random_nested_message());
         std::process::exit(1);
@@ -587,20 +596,38 @@ mod tests {
     #[test]
     fn nested_herdr_blocks_when_env_is_set() {
         let config = config::Config::default();
-        assert!(should_block_nested_for_env(&config, Some(HERDR_ENV_VALUE)));
+        assert!(should_block_nested_for_context(
+            &config,
+            Some(HERDR_ENV_VALUE),
+            true
+        ));
     }
 
     #[test]
     fn nested_herdr_does_not_block_when_allowed() {
         let config: config::Config =
             toml::from_str("[experimental]\nallow_nested = true\n").unwrap();
-        assert!(!should_block_nested_for_env(&config, Some(HERDR_ENV_VALUE)));
+        assert!(!should_block_nested_for_context(
+            &config,
+            Some(HERDR_ENV_VALUE),
+            true
+        ));
     }
 
     #[test]
     fn nested_herdr_does_not_block_without_env() {
         let config = config::Config::default();
-        assert!(!should_block_nested_for_env(&config, None));
+        assert!(!should_block_nested_for_context(&config, None, true));
+    }
+
+    #[test]
+    fn leaked_herdr_env_does_not_block_without_herdr_parent() {
+        let config = config::Config::default();
+        assert!(!should_block_nested_for_context(
+            &config,
+            Some(HERDR_ENV_VALUE),
+            false
+        ));
     }
 
     #[test]

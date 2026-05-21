@@ -149,6 +149,18 @@ pub fn process_exists(pid: u32) -> bool {
     }
 }
 
+pub fn parent_process_id(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = stat.get(stat.rfind(')')? + 2..)?;
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+    let ppid: i32 = fields.get(1)?.parse().ok()?;
+    (ppid > 0).then_some(ppid as u32)
+}
+
+pub fn process_name(pid: u32) -> Option<String> {
+    process_pgrp_and_comm(pid).map(|(_, name)| name)
+}
+
 pub fn write_clipboard(bytes: &[u8]) -> bool {
     for command in clipboard_commands() {
         if run_clipboard_command(&command, bytes) {

@@ -80,6 +80,23 @@ pub(crate) fn read_limited_reader(
     }
 }
 
+pub fn process_has_ancestor_named(mut pid: u32, name: &str) -> bool {
+    for _ in 0..64 {
+        let Some(parent_pid) = parent_process_id(pid) else {
+            return false;
+        };
+        if parent_pid <= 1 || parent_pid == pid {
+            return false;
+        }
+        if process_name(parent_pid).as_deref() == Some(name) {
+            return true;
+        }
+        pid = parent_pid;
+    }
+
+    false
+}
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]

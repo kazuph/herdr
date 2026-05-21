@@ -600,13 +600,17 @@ fn root_help_hides_explicit_client_command() {
 }
 
 #[test]
-fn explicit_client_command_respects_nested_guard() {
+fn explicit_client_command_ignores_leaked_nested_env_without_herdr_parent() {
     let base = unique_test_dir();
     fs::create_dir_all(&base).unwrap();
+    let missing_socket = base.join("missing.sock");
 
     let output = Command::new(env!("CARGO_BIN_EXE_herdr"))
         .arg("client")
         .env("HERDR_ENV", "1")
+        .env("HERDR_PANE_ID", "p_stale")
+        .env("HERDR_SOCKET_PATH", &missing_socket)
+        .env_remove("HERDR_CLIENT_SOCKET_PATH")
         .env("XDG_CONFIG_HOME", &base)
         .env_remove("HERDR_CONFIG_PATH")
         .output()
@@ -617,8 +621,12 @@ fn explicit_client_command_respects_nested_guard() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("nested herdr is disabled by default"),
-        "client should fail at the nested guard before connecting: {stderr}"
+        stderr.contains("failed to connect to server"),
+        "client should reach the normal connection path: {stderr}"
+    );
+    assert!(
+        !stderr.contains("nested herdr"),
+        "stale HERDR_ENV without a herdr parent should not trigger nested guard: {stderr}"
     );
 }
 

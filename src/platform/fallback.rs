@@ -31,6 +31,16 @@ pub fn process_exists(_pid: u32) -> bool {
 }
 
 /// Unsupported platform stub.
+pub fn parent_process_id(_pid: u32) -> Option<u32> {
+    None
+}
+
+/// Unsupported platform stub.
+pub fn process_name(_pid: u32) -> Option<String> {
+    None
+}
+
+/// Unsupported platform stub.
 pub fn write_clipboard(_bytes: &[u8]) -> bool {
     false
 }
