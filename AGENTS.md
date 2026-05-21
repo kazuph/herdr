@@ -52,6 +52,8 @@ just check              # formatting check + cargo nextest + maintenance script 
 
 Default flow: run `just check` before committing. Do not commit until `just check` passes locally unless Can explicitly accepts a narrower validation for that commit.
 
+After every agent-driven change that is committed or handed off in this fork workspace, rebuild the release binary and replace the local runtime at `~/.local/bin/herdr` before reporting completion. A code change is not considered fully applied in this environment until the running `herdr` binary has been swapped.
+
 Unit tests live next to the code (`#[cfg(test)] mod tests`). If you add behavior to `AppState` or `Workspace`, it should be testable with `AppState::test_new()` and `Workspace::test_new()` — no PTYs.
 
 ## Conventions
