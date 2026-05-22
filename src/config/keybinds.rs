@@ -1020,6 +1020,34 @@ mod tests {
             parse_key_combo("ampersand"),
             Some((KeyCode::Char('&'), KeyModifiers::empty()))
         );
+        assert_eq!(
+            parse_key_combo("percent"),
+            Some((KeyCode::Char('%'), KeyModifiers::empty()))
+        );
+        assert_eq!(
+            parse_key_combo("double_quote"),
+            Some((KeyCode::Char('"'), KeyModifiers::empty()))
+        );
+    }
+
+    #[test]
+    fn default_split_bindings_include_tmux_style_keys() {
+        let keybinds = Config::default().keybinds();
+
+        assert!(keybinds.split_vertical.matches_prefix_key(
+            TerminalKey::new(KeyCode::Char('5'), KeyModifiers::SHIFT)
+                .with_shifted_codepoint('%' as u32)
+        ));
+        assert!(keybinds
+            .split_vertical
+            .matches_prefix_key(TerminalKey::new(KeyCode::Char('v'), KeyModifiers::empty())));
+        assert!(keybinds.split_horizontal.matches_prefix_key(
+            TerminalKey::new(KeyCode::Char('\''), KeyModifiers::SHIFT)
+                .with_shifted_codepoint('"' as u32)
+        ));
+        assert!(keybinds
+            .split_horizontal
+            .matches_prefix_key(TerminalKey::new(KeyCode::Char('-'), KeyModifiers::empty())));
     }
 
     #[test]

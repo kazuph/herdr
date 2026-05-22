@@ -280,8 +280,11 @@ impl Default for KeysConfig {
             focus_pane_right: BindingConfig::one("prefix+l"),
             cycle_pane_next: BindingConfig::one("prefix+tab"),
             cycle_pane_previous: BindingConfig::one("prefix+shift+tab"),
-            split_vertical: BindingConfig::one("prefix+v"),
-            split_horizontal: BindingConfig::one("prefix+minus"),
+            split_vertical: BindingConfig::Many(vec!["prefix+percent".into(), "prefix+v".into()]),
+            split_horizontal: BindingConfig::Many(vec![
+                "prefix+double_quote".into(),
+                "prefix+minus".into(),
+            ]),
             close_pane: BindingConfig::one("prefix+x"),
             zoom: BindingConfig::one("prefix+z"),
             resize_mode: BindingConfig::one("prefix+r"),
