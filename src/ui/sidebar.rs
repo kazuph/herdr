@@ -267,6 +267,45 @@ fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace) -> u16
     }
 }
 
+fn truncate_to_width(text: &str, max_width: usize) -> String {
+    if text.chars().count() <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "…".to_string();
+    }
+    let mut truncated = text.chars().take(max_width - 1).collect::<String>();
+    truncated.push('…');
+    truncated
+}
+
+fn workspace_upstream_labels(ws: &crate::workspace::Workspace) -> Vec<(String, bool)> {
+    ws.git_ahead_behind()
+        .map(|(ahead, behind)| {
+            let mut parts = Vec::new();
+            if ahead > 0 {
+                parts.push((format!("↑{}", ahead), true));
+            }
+            if behind > 0 {
+                parts.push((format!("↓{}", behind), false));
+            }
+            parts
+        })
+        .unwrap_or_default()
+}
+
+fn workspace_branch_reserved_width(branch: &str, upstream_labels: &[(String, bool)]) -> usize {
+    let upstream_width = upstream_labels
+        .iter()
+        .map(|(label, _)| label.chars().count())
+        .sum::<usize>()
+        + upstream_labels.len();
+    branch.chars().count() + upstream_width + 1
+}
+
 pub(crate) fn workspace_list_rect(area: Rect, split_ratio: f32) -> Rect {
     let (ws_area, _) = expanded_sidebar_sections(area, split_ratio);
     ws_area
@@ -697,15 +736,49 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
         };
 
         let (icon, icon_style) = state_summary_icon(agg_state, agg_seen, app.spinner_tick, p);
-        let line1 = vec![
+        let display_name = ws.display_name_from(&app.terminals, &app.terminal_runtimes);
+        let mut line1 = vec![
             Span::styled(" ", Style::default()),
             Span::styled(icon, icon_style),
             Span::styled(" ", Style::default()),
-            Span::styled(
-                ws.display_name_from(&app.terminals, &app.terminal_runtimes),
-                name_style,
-            ),
+            Span::styled(display_name.clone(), name_style),
         ];
+        if row_height == 1 {
+            if let Some(branch) = ws.branch() {
+                let upstream_labels = workspace_upstream_labels(ws);
+                let prefix_width = 3;
+                let upstream_width = upstream_labels
+                    .iter()
+                    .map(|(label, _)| label.chars().count())
+                    .sum::<usize>()
+                    + upstream_labels.len();
+                let max_branch_width = (card.rect.width as usize)
+                    .saturating_sub(prefix_width + upstream_width + 2)
+                    .max(1);
+                let branch_display = truncate_to_width(&branch, max_branch_width);
+                let reserved = workspace_branch_reserved_width(&branch_display, &upstream_labels);
+                let max_name_width = (card.rect.width as usize)
+                    .saturating_sub(prefix_width + reserved)
+                    .max(1);
+                line1[3] =
+                    Span::styled(truncate_to_width(&display_name, max_name_width), name_style);
+                let branch_color = if selected || is_active {
+                    p.mauve
+                } else {
+                    p.overlay0
+                };
+                line1.push(Span::styled(" ", Style::default()));
+                line1.push(Span::styled(
+                    branch_display,
+                    Style::default().fg(branch_color),
+                ));
+                for (label, is_ahead) in upstream_labels {
+                    let color = if is_ahead { p.green } else { p.red };
+                    line1.push(Span::styled(" ", Style::default()));
+                    line1.push(Span::styled(label, Style::default().fg(color)));
+                }
+            }
+        }
 
         frame.render_widget(
             Paragraph::new(Line::from(line1)),
@@ -714,28 +787,14 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
 
         if row_height > 1 && row_y + 1 < list_bottom {
             if let Some(branch) = ws.branch() {
-                let upstream_label = ws.git_ahead_behind().and_then(|(ahead, behind)| {
-                    let mut parts = Vec::new();
-                    if ahead > 0 {
-                        parts.push((format!("↑{}", ahead), p.green));
-                    }
-                    if behind > 0 {
-                        parts.push((format!("↓{}", behind), p.red));
-                    }
-                    (!parts.is_empty()).then_some(parts)
-                });
-                let reserved = upstream_label
-                    .as_ref()
-                    .map(|parts| {
-                        parts.iter().map(|(label, _)| label.len()).sum::<usize>() + parts.len()
-                    })
-                    .unwrap_or(0);
+                let upstream_labels = workspace_upstream_labels(ws);
+                let reserved = upstream_labels
+                    .iter()
+                    .map(|(label, _)| label.chars().count())
+                    .sum::<usize>()
+                    + upstream_labels.len();
                 let max_branch_len = (card.rect.width as usize).saturating_sub(5 + reserved);
-                let branch_display = if branch.len() > max_branch_len {
-                    format!("{}…", &branch[..max_branch_len.saturating_sub(1)])
-                } else {
-                    branch
-                };
+                let branch_display = truncate_to_width(&branch, max_branch_len);
                 let branch_color = if selected || is_active {
                     p.mauve
                 } else {
@@ -745,12 +804,13 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                     Span::styled("   ", Style::default()),
                     Span::styled(branch_display, Style::default().fg(branch_color)),
                 ];
-                if let Some(parts) = upstream_label {
+                if !upstream_labels.is_empty() {
                     spans.push(Span::styled(" ", Style::default()));
-                    for (idx, (label, color)) in parts.into_iter().enumerate() {
+                    for (idx, (label, is_ahead)) in upstream_labels.into_iter().enumerate() {
                         if idx > 0 {
                             spans.push(Span::styled(" ", Style::default()));
                         }
+                        let color = if is_ahead { p.green } else { p.red };
                         spans.push(Span::styled(label, Style::default().fg(color)));
                     }
                 }
@@ -1056,6 +1116,42 @@ mod tests {
         assert_eq!(full_cards[0].rect.height, 2);
         assert_eq!(slim_cards[0].rect.height, 1);
         assert_eq!(slim_cards[1].rect.y, slim_cards[0].rect.y + 2);
+    }
+
+    #[test]
+    fn slim_workspace_panel_keeps_git_details_on_name_row() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.ensure_test_terminals();
+        app.workspace_panel_density = WorkspacePanelDensity::Slim;
+        app.mouse_capture = false;
+        let workspace_id = app.workspaces[0].id.clone();
+        let resolved_identity_cwd = app.workspaces[0].resolved_identity_cwd().unwrap();
+        app.apply_workspace_git_statuses(vec![crate::workspace::WorkspaceGitStatus {
+            workspace_id,
+            resolved_identity_cwd,
+            branch: Some("main".into()),
+            ahead_behind: Some((2, 1)),
+        }]);
+
+        let area = Rect::new(0, 0, 32, 6);
+        app.view.workspace_card_areas = vec![crate::app::state::WorkspaceCardArea {
+            ws_idx: 0,
+            rect: Rect::new(0, 2, 32, 1),
+        }];
+        let backend = ratatui::backend::TestBackend::new(32, 6);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_workspace_list(&app, frame, area, false))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row = (0..32).map(|x| buffer[(x, 2)].symbol()).collect::<String>();
+
+        assert!(row.contains("one"));
+        assert!(row.contains("main"));
+        assert!(row.contains("↑2"));
+        assert!(row.contains("↓1"));
     }
 
     #[test]
