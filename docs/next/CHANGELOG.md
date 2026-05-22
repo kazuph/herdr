@@ -7,6 +7,7 @@
 - macOS system notifications for agent attention or completion now focus the matching Herdr pane when clicked.
 - Antigravity CLI (`agy`) panes are now detected, including command permission prompts.
 - The agent sidebar now shows only global pane IDs like `%22`, removing redundant workspace-local IDs such as `2-1`.
+- Workspace sidebar rows now keep a space between the status indicator and workspace number.
 - `herdr --remote` now offers to restart the remote server after installing or replacing a remote binary, or when the running server version differs, even if the client/server protocol is still compatible.
 
 ### Breaking Changes

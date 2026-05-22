@@ -750,8 +750,8 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
         let display_name = ws.display_name_from(&app.terminals, &app.terminal_runtimes);
         let workspace_number = format!("{} ", i + 1);
         let mut line1 = vec![
-            Span::styled(" ", Style::default()),
             Span::styled(icon, icon_style),
+            Span::styled(" ", Style::default()),
             Span::styled(
                 workspace_number.clone(),
                 Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
@@ -1173,6 +1173,8 @@ mod tests {
         let row = (0..32).map(|x| buffer[(x, 2)].symbol()).collect::<String>();
 
         assert!(row.contains("one"));
+        assert_eq!(buffer[(1, 2)].symbol(), " ");
+        assert_eq!(buffer[(2, 2)].symbol(), "1");
         assert!(row.contains("1 "));
         assert!(row.contains("main"));
         assert!(row.contains("↑2"));
