@@ -69,6 +69,15 @@ impl App {
             return self.find_pane(pane_id).map(|(ws_idx, _)| (ws_idx, pane_id));
         }
 
+        if let Some(raw) = id.strip_prefix('%').or(Some(id)) {
+            if let Ok(pane_raw) = raw.parse::<u32>() {
+                let pane_id = crate::layout::PaneId::from_raw(pane_raw);
+                if let Some((ws_idx, _)) = self.find_pane(pane_id) {
+                    return Some((ws_idx, pane_id));
+                }
+            }
+        }
+
         let (ws_raw, pane_number_raw) = id.rsplit_once('-')?;
         let ws_idx = self.parse_workspace_id(ws_raw)?;
         let pane_number = pane_number_raw.parse::<usize>().ok()?;

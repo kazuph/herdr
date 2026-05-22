@@ -1961,6 +1961,11 @@ mod tests {
         assert_eq!(tab.workspace_id, workspace.workspace_id);
         assert_eq!(root_pane.workspace_id, workspace.workspace_id);
         assert_eq!(root_pane.tab_id, tab.tab_id);
+        assert_eq!(root_pane.short_id, "1-1");
+        assert_eq!(
+            root_pane.global_id,
+            format!("p_{}", root_pane.global_number)
+        );
         assert!(root_pane.terminal_id.starts_with("term_"));
         assert_ne!(root_pane.terminal_id, root_pane.pane_id);
     }
@@ -2111,6 +2116,28 @@ mod tests {
 
         assert_eq!(resolved.pane_id, pane);
         assert_eq!(resolved.terminal_id, terminal_id);
+    }
+
+    #[test]
+    fn pane_targets_resolve_short_and_global_numbers() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("pane-target-numbers");
+        let pane = workspace.tabs[0].root_pane;
+        let second = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        assert_eq!(app.parse_pane_id("1-1").unwrap().1, pane);
+        assert_eq!(app.parse_pane_id("1-2").unwrap().1, second);
+        assert_eq!(
+            app.parse_pane_id(&second.raw().to_string()).unwrap().1,
+            second
+        );
+        assert_eq!(
+            app.parse_pane_id(&format!("%{}", second.raw())).unwrap().1,
+            second
+        );
     }
 
     #[test]

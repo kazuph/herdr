@@ -617,6 +617,9 @@ pub struct AgentInfo {
     pub workspace_id: String,
     pub tab_id: String,
     pub pane_id: String,
+    pub short_pane_id: String,
+    pub global_pane_id: String,
+    pub global_pane_number: u32,
     pub focused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
@@ -626,6 +629,11 @@ pub struct AgentInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneInfo {
     pub pane_id: String,
+    pub short_id: String,
+    pub global_id: String,
+    pub global_number: u32,
+    pub workspace_number: usize,
+    pub pane_number: usize,
     pub terminal_id: String,
     pub workspace_id: String,
     pub tab_id: String,
@@ -1117,6 +1125,11 @@ mod tests {
                 },
                 root_pane: PaneInfo {
                     pane_id: "w_1-3".into(),
+                    short_id: "1-3".into(),
+                    global_id: "p_3".into(),
+                    global_number: 3,
+                    workspace_number: 1,
+                    pane_number: 3,
                     terminal_id: "term_example".into(),
                     workspace_id: "w_1".into(),
                     tab_id: "w_1:2".into(),
