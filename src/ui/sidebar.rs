@@ -19,6 +19,8 @@ pub(crate) struct AgentPanelEntry {
     pub ws_idx: usize,
     pub tab_idx: usize,
     pub pane_id: crate::layout::PaneId,
+    pub short_pane_id: String,
+    pub global_pane_id: String,
     pub primary_label: String,
     pub primary_tab_label: Option<String>,
     pub agent_label: Option<String>,
@@ -141,6 +143,8 @@ pub(crate) fn agent_panel_entries(app: &AppState) -> Vec<AgentPanelEntry> {
             ws.pane_details(&app.terminals)
                 .into_iter()
                 .map(|detail| AgentPanelEntry {
+                    short_pane_id: pane_short_id(ws_idx, ws, detail.pane_id),
+                    global_pane_id: pane_global_id(detail.pane_id),
                     ws_idx,
                     tab_idx: detail.tab_idx,
                     pane_id: detail.pane_id,
@@ -163,6 +167,8 @@ pub(crate) fn agent_panel_entries(app: &AppState) -> Vec<AgentPanelEntry> {
                 ws.pane_details(&app.terminals)
                     .into_iter()
                     .map(move |detail| AgentPanelEntry {
+                        short_pane_id: pane_short_id(ws_idx, ws, detail.pane_id),
+                        global_pane_id: pane_global_id(detail.pane_id),
                         ws_idx,
                         tab_idx: detail.tab_idx,
                         pane_id: detail.pane_id,
@@ -198,6 +204,21 @@ fn agent_sort_bucket(state: AgentState, seen: bool) -> u8 {
         (AgentState::Idle, true) => 3,
         (AgentState::Unknown, _) => 4,
     }
+}
+
+fn pane_short_id(
+    ws_idx: usize,
+    ws: &crate::workspace::Workspace,
+    pane_id: crate::layout::PaneId,
+) -> String {
+    let pane_number = ws
+        .public_pane_number(pane_id)
+        .unwrap_or(pane_id.raw() as usize);
+    format!("{}-{pane_number}", ws_idx + 1)
+}
+
+fn pane_global_id(pane_id: crate::layout::PaneId) -> String {
+    format!("%{}", pane_id.raw())
 }
 
 fn truncate_text(text: &str, max_width: usize) -> String {
@@ -257,6 +278,10 @@ fn format_agent_panel_primary_label(entry: &AgentPanelEntry, max_width: usize) -
         separator,
         truncate_text(tab_label, tab_budget)
     )
+}
+
+fn agent_panel_id_label(entry: &AgentPanelEntry) -> String {
+    format!("{} {}", entry.global_pane_id, entry.short_pane_id)
 }
 
 fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace) -> u16 {
@@ -737,16 +762,20 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
 
         let (icon, icon_style) = state_summary_icon(agg_state, agg_seen, app.spinner_tick, p);
         let display_name = ws.display_name_from(&app.terminals, &app.terminal_runtimes);
+        let workspace_number = format!("{} ", i + 1);
         let mut line1 = vec![
             Span::styled(" ", Style::default()),
             Span::styled(icon, icon_style),
-            Span::styled(" ", Style::default()),
+            Span::styled(
+                workspace_number.clone(),
+                Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(display_name.clone(), name_style),
         ];
         if row_height == 1 {
             if let Some(branch) = ws.branch() {
                 let upstream_labels = workspace_upstream_labels(ws);
-                let prefix_width = 3;
+                let prefix_width = 2 + workspace_number.chars().count();
                 let upstream_width = upstream_labels
                     .iter()
                     .map(|(label, _)| label.chars().count())
@@ -935,11 +964,20 @@ fn render_agent_detail(app: &AppState, frame: &mut Frame, area: Rect) {
         };
         let agent_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
 
-        let primary_label =
-            format_agent_panel_primary_label(detail, body.width.saturating_sub(3) as usize);
+        let id_label = agent_panel_id_label(detail);
+        let id_width = id_label.chars().count();
+        let primary_label = format_agent_panel_primary_label(
+            detail,
+            (body.width as usize).saturating_sub(4 + id_width),
+        );
         let name_line = Line::from(vec![
             Span::styled(" ", Style::default()),
             Span::styled(icon, icon_style),
+            Span::styled(" ", Style::default()),
+            Span::styled(
+                id_label,
+                Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" ", Style::default()),
             Span::styled(primary_label, name_style),
         ]);
@@ -1149,9 +1187,44 @@ mod tests {
         let row = (0..32).map(|x| buffer[(x, 2)].symbol()).collect::<String>();
 
         assert!(row.contains("one"));
+        assert!(row.contains("1 "));
         assert!(row.contains("main"));
         assert!(row.contains("↑2"));
         assert!(row.contains("↓1"));
+    }
+
+    #[test]
+    fn agent_panel_renders_global_and_short_pane_ids() {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut workspace = Workspace::test_new("agents");
+        let pane_id = workspace.tabs[0].root_pane;
+        let second_pane_id = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        app.workspaces = vec![workspace];
+        app.ensure_test_terminals();
+        app.agent_panel_scope = AgentPanelScope::AllWorkspaces;
+
+        for pane_id in [pane_id, second_pane_id] {
+            let terminal_id = app.workspaces[0].tabs[0].panes[&pane_id]
+                .attached_terminal_id
+                .clone();
+            app.terminals.get_mut(&terminal_id).unwrap().detected_agent = Some(Agent::Claude);
+        }
+
+        let area = Rect::new(0, 0, 48, 10);
+        let backend = ratatui::backend::TestBackend::new(48, 10);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_agent_detail(&app, frame, area))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let first_row = (0..48).map(|x| buffer[(x, 3)].symbol()).collect::<String>();
+        let second_row = (0..48).map(|x| buffer[(x, 6)].symbol()).collect::<String>();
+
+        assert!(first_row.contains(&format!("%{}", pane_id.raw())));
+        assert!(first_row.contains("1-1"));
+        assert!(second_row.contains(&format!("%{}", second_pane_id.raw())));
+        assert!(second_row.contains("1-2"));
     }
 
     #[test]
@@ -1188,6 +1261,8 @@ mod tests {
             ws_idx: 0,
             tab_idx: 0,
             pane_id: crate::layout::PaneId::from_raw(1),
+            short_pane_id: "1-1".into(),
+            global_pane_id: "%1".into(),
             primary_label: "agent-browser".into(),
             primary_tab_label: Some("test-escalation".into()),
             agent_label: Some("claude".into()),
