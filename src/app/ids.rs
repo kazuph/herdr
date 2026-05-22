@@ -1,7 +1,7 @@
 use super::App;
 
 impl App {
-    pub(super) fn find_pane(
+    pub(crate) fn find_pane(
         &self,
         pane_id: crate::layout::PaneId,
     ) -> Option<(usize, &crate::pane::PaneState)> {
@@ -22,7 +22,7 @@ impl App {
         Some(format!("{}:{}", ws.id, tab_idx + 1))
     }
 
-    pub(super) fn public_pane_id(
+    pub(crate) fn public_pane_id(
         &self,
         ws_idx: usize,
         pane_id: crate::layout::PaneId,

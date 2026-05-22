@@ -39,6 +39,7 @@ pub struct AgentSoundOverrides {
     pub amp: AgentSoundSetting,
     pub grok: AgentSoundSetting,
     pub hermes: AgentSoundSetting,
+    pub antigravity: AgentSoundSetting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -128,6 +129,7 @@ impl AgentSoundOverrides {
             Some(Agent::Amp) => self.amp,
             Some(Agent::Grok) => self.grok,
             Some(Agent::Hermes) => self.hermes,
+            Some(Agent::Antigravity) => self.antigravity,
             None => AgentSoundSetting::Default,
         }
     }
@@ -162,6 +164,7 @@ impl Default for AgentSoundOverrides {
             amp: AgentSoundSetting::Default,
             grok: AgentSoundSetting::Default,
             hermes: AgentSoundSetting::Default,
+            antigravity: AgentSoundSetting::Default,
         }
     }
 }

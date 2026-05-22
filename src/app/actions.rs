@@ -362,6 +362,32 @@ impl AppState {
         false
     }
 
+    pub(crate) fn focus_pane_target(&mut self, ws_idx: usize, pane_id: PaneId) -> bool {
+        let Some(tab_idx) = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.find_tab_index_for_pane(pane_id))
+        else {
+            return false;
+        };
+
+        self.switch_workspace(ws_idx);
+        self.switch_tab(tab_idx);
+        let Some(tab) = self
+            .workspaces
+            .get_mut(ws_idx)
+            .and_then(|ws| ws.tabs.get_mut(tab_idx))
+        else {
+            return false;
+        };
+        if !tab.panes.contains_key(&pane_id) {
+            return false;
+        }
+        tab.layout.focus_pane(pane_id);
+        self.mark_session_dirty();
+        true
+    }
+
     fn cycle_agent_entry(&mut self, forward: bool) {
         let entries = crate::ui::agent_panel_entries(self);
         if entries.is_empty() {
@@ -1159,6 +1185,26 @@ mod tests {
 
         assert_eq!(state.active, Some(1));
         assert_eq!(state.workspaces[1].focused_pane_id(), Some(second_root));
+    }
+
+    #[test]
+    fn focus_pane_target_switches_workspace_tab_and_pane() {
+        let first = Workspace::test_new("first");
+        let mut second = Workspace::test_new("second");
+        let second_tab = second.test_add_tab(None);
+        let target_pane = second.tabs[second_tab].root_pane;
+
+        let mut state = AppState::test_new();
+        state.workspaces = vec![first, second];
+        state.active = Some(0);
+        state.selected = 0;
+
+        assert!(state.focus_pane_target(1, target_pane));
+
+        assert_eq!(state.active, Some(1));
+        assert_eq!(state.selected, 1);
+        assert_eq!(state.workspaces[1].active_tab, second_tab);
+        assert_eq!(state.workspaces[1].focused_pane_id(), Some(target_pane));
     }
 
     #[test]

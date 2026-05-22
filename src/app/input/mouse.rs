@@ -1074,13 +1074,7 @@ impl AppState {
         else {
             return;
         };
-        let Some(tab_idx) = self.workspaces[ws_idx].find_tab_index_for_pane(target.pane_id) else {
-            return;
-        };
-
-        self.switch_workspace(ws_idx);
-        self.switch_tab(tab_idx);
-        self.focus_pane(target.pane_id);
+        self.focus_pane_target(ws_idx, target.pane_id);
         self.toast = None;
         self.mode = Mode::Terminal;
     }

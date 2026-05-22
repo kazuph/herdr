@@ -986,6 +986,7 @@ impl HeadlessServer {
                         self.send_to_foreground_client(ServerMessage::Notify {
                             kind: protocol::NotifyKind::Sound,
                             message: msg.to_owned(),
+                            target_pane_id: None,
                         });
                     }
                 }
@@ -1012,10 +1013,15 @@ impl HeadlessServer {
                     };
 
                 if let Some(msg) = toast_msg {
+                    let target_pane_id = self
+                        .app
+                        .find_pane(pane_id_val)
+                        .and_then(|(ws_idx, _)| self.app.public_pane_id(ws_idx, pane_id_val));
                     self.send_to_foreground_client(ServerMessage::Notify {
                         kind: toast_notify_kind(self.app.state.toast_config.delivery)
                             .expect("toast forwarding requires a client notification kind"),
                         message: msg,
+                        target_pane_id,
                     });
                 }
 
@@ -1070,6 +1076,7 @@ impl HeadlessServer {
                         self.send_to_foreground_client(ServerMessage::Notify {
                             kind: protocol::NotifyKind::Sound,
                             message: msg.to_owned(),
+                            target_pane_id: None,
                         });
                     }
                 }
@@ -1096,10 +1103,15 @@ impl HeadlessServer {
                     };
 
                 if let Some(msg) = toast_msg {
+                    let target_pane_id = self
+                        .app
+                        .find_pane(pane_id_val)
+                        .and_then(|(ws_idx, _)| self.app.public_pane_id(ws_idx, pane_id_val));
                     self.send_to_foreground_client(ServerMessage::Notify {
                         kind: toast_notify_kind(self.app.state.toast_config.delivery)
                             .expect("toast forwarding requires a client notification kind"),
                         message: msg,
+                        target_pane_id,
                     });
                 }
 
@@ -1137,6 +1149,7 @@ impl HeadlessServer {
                         kind: toast_notify_kind(self.app.state.toast_config.delivery)
                             .expect("toast forwarding requires a client notification kind"),
                         message: msg,
+                        target_pane_id: None,
                     });
                 }
 
@@ -1707,6 +1720,16 @@ impl HeadlessServer {
                         kind: toast_notify_kind(self.app.state.toast_config.delivery)
                             .expect("toast forwarding requires a client notification kind"),
                         message: msg_text,
+                        target_pane_id: toast.target.as_ref().and_then(|target| {
+                            self.app.public_pane_id(
+                                self.app
+                                    .state
+                                    .workspaces
+                                    .iter()
+                                    .position(|workspace| workspace.id == target.workspace_id)?,
+                                target.pane_id,
+                            )
+                        }),
                     });
                     true
                 } else {
@@ -1794,6 +1817,7 @@ impl HeadlessServer {
                             kind: toast_notify_kind(self.app.state.toast_config.delivery)
                                 .expect("toast forwarding requires a client notification kind"),
                             message: msg_text,
+                            target_pane_id: self.app.public_pane_id(*ws_idx, *pane_id),
                         });
                     }
                 }
@@ -1815,6 +1839,7 @@ impl HeadlessServer {
                     self.send_to_foreground_client(ServerMessage::Notify {
                         kind: protocol::NotifyKind::Sound,
                         message: msg_text.to_owned(),
+                        target_pane_id: None,
                     });
                 }
             }
@@ -3472,6 +3497,7 @@ mod tests {
         assert!(server.send_to_foreground_client(ServerMessage::Notify {
             kind: protocol::NotifyKind::Toast,
             message: "pi finished: workspace 1".to_string(),
+            target_pane_id: Some("w_1-1".to_string()),
         }));
 
         match read_server_message(
@@ -3479,9 +3505,14 @@ mod tests {
                 .recv_timeout(Duration::from_millis(100))
                 .expect("foreground toast message"),
         ) {
-            ServerMessage::Notify { kind, message } => {
+            ServerMessage::Notify {
+                kind,
+                message,
+                target_pane_id,
+            } => {
                 assert_eq!(kind, protocol::NotifyKind::Toast);
                 assert_eq!(message, "pi finished: workspace 1");
+                assert_eq!(target_pane_id.as_deref(), Some("w_1-1"));
             }
             other => panic!("expected toast notify, got {other:?}"),
         }
@@ -3559,9 +3590,14 @@ mod tests {
                 .recv_timeout(Duration::from_millis(100))
                 .expect("system toast message"),
         ) {
-            ServerMessage::Notify { kind, message } => {
+            ServerMessage::Notify {
+                kind,
+                message,
+                target_pane_id,
+            } => {
                 assert_eq!(kind, protocol::NotifyKind::SystemToast);
                 assert_eq!(message, "v9.9.9 available: detach, then run `herdr update`");
+                assert_eq!(target_pane_id, None);
             }
             other => panic!("expected system toast notify, got {other:?}"),
         }

@@ -60,6 +60,8 @@ pub enum Method {
     PaneList(PaneListParams),
     #[serde(rename = "pane.get")]
     PaneGet(PaneTarget),
+    #[serde(rename = "pane.focus")]
+    PaneFocus(PaneTarget),
     #[serde(rename = "pane.rename")]
     PaneRename(PaneRenameParams),
     #[serde(rename = "pane.send_text")]

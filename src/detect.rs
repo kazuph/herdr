@@ -33,6 +33,7 @@ pub enum Agent {
     Amp,
     Grok,
     Hermes,
+    Antigravity,
 }
 
 pub fn agent_label(agent: Agent) -> &'static str {
@@ -51,6 +52,7 @@ pub fn agent_label(agent: Agent) -> &'static str {
         Agent::Amp => "amp",
         Agent::Grok => "grok",
         Agent::Hermes => "hermes",
+        Agent::Antigravity => "agy",
     }
 }
 
@@ -71,6 +73,7 @@ pub fn parse_agent_label(agent: &str) -> Option<Agent> {
         "amp" | "amp-local" => Some(Agent::Amp),
         "grok" | "grok-build" => Some(Agent::Grok),
         "hermes" | "hermes-agent" => Some(Agent::Hermes),
+        "agy" | "antigravity" | "antigravity-cli" => Some(Agent::Antigravity),
         _ => None,
     }
 }
@@ -95,6 +98,7 @@ pub fn identify_agent(process_name: &str) -> Option<Agent> {
         "amp" | "amp-local" => Some(Agent::Amp),
         "grok" | "grok-build" => Some(Agent::Grok),
         "hermes" | "hermes-agent" => Some(Agent::Hermes),
+        "agy" | "antigravity" | "antigravity-cli" => Some(Agent::Antigravity),
         _ => None,
     }
 }
@@ -150,6 +154,7 @@ pub fn detect_state(agent: Option<Agent>, screen_content: &str) -> AgentState {
         Agent::Amp => detect_amp(screen_content),
         Agent::Grok => detect_grok(screen_content),
         Agent::Hermes => detect_hermes(screen_content),
+        Agent::Antigravity => detect_antigravity(screen_content),
     }
 }
 
@@ -527,6 +532,30 @@ fn detect_hermes(content: &str) -> AgentState {
     AgentState::Idle
 }
 
+/// Google Antigravity CLI detection.
+///
+/// The `agy` CLI shows an Antigravity header at an idle prompt and a command
+/// confirmation dialog with "Do you want to proceed?" when it needs approval.
+fn detect_antigravity(content: &str) -> AgentState {
+    let lower = content.to_lowercase();
+
+    if lower.contains("requesting permission for:")
+        || lower.contains("do you want to proceed?")
+        || (lower.contains("tab amend") && lower.contains("edit command"))
+    {
+        return AgentState::Blocked;
+    }
+
+    if lower.contains("ctrl+o to expand")
+        || lower.contains("managetask")
+        || lower.contains("task(s)")
+    {
+        return AgentState::Working;
+    }
+
+    AgentState::Idle
+}
+
 /// Check for braille spinner characters at the start of a line.
 /// These are the Unicode braille pattern dots used by CLI spinners.
 fn has_braille_spinner(content: &str) -> bool {
@@ -831,6 +860,9 @@ mod tests {
         assert_eq!(identify_agent("grok-build"), Some(Agent::Grok));
         assert_eq!(identify_agent("hermes"), Some(Agent::Hermes));
         assert_eq!(identify_agent("hermes-agent"), Some(Agent::Hermes));
+        assert_eq!(identify_agent("agy"), Some(Agent::Antigravity));
+        assert_eq!(identify_agent("antigravity"), Some(Agent::Antigravity));
+        assert_eq!(identify_agent("antigravity-cli"), Some(Agent::Antigravity));
     }
 
     #[test]
@@ -846,6 +878,11 @@ mod tests {
         assert_eq!(parse_agent_label("kiro-cli"), Some(Agent::Kiro));
         assert_eq!(parse_agent_label("grok-build"), Some(Agent::Grok));
         assert_eq!(parse_agent_label("hermes-agent"), Some(Agent::Hermes));
+        assert_eq!(parse_agent_label("agy"), Some(Agent::Antigravity));
+        assert_eq!(
+            parse_agent_label("antigravity-cli"),
+            Some(Agent::Antigravity)
+        );
     }
 
     #[test]
@@ -856,6 +893,7 @@ mod tests {
         assert_eq!(agent_label(Agent::Kiro), "kiro");
         assert_eq!(agent_label(Agent::Grok), "grok");
         assert_eq!(agent_label(Agent::Hermes), "hermes");
+        assert_eq!(agent_label(Agent::Antigravity), "agy");
     }
 
     #[test]
@@ -871,6 +909,7 @@ mod tests {
         assert_eq!(identify_agent("Pi"), Some(Agent::Pi));
         assert_eq!(identify_agent("CLAUDE"), Some(Agent::Claude));
         assert_eq!(identify_agent("Codex"), Some(Agent::Codex));
+        assert_eq!(identify_agent("AGY"), Some(Agent::Antigravity));
     }
 
     #[test]
@@ -1651,6 +1690,42 @@ mod tests {
     fn hermes_denied_message_is_idle() {
         let screen = "╭─ ⚕ Hermes ────────────────────────────────────────────────────────────────────────────╮\n    Command was blocked/denied by the safety layer. I did not retry.\n╰───────────────────────────────────────────────────────────────────────────────────────╯\n ⚕ gpt-5.5 │ 15.4K/272K │ [█░░░░░░░░░] 6% │ 2m │ ⏲ 11s\n─────────────────────────────────────────────────────────────────────────────────────────\n❯";
         assert_eq!(detect_state(Some(Agent::Hermes), screen), AgentState::Idle);
+    }
+
+    // ---- Antigravity ----
+
+    #[test]
+    fn antigravity_identified_by_process_name() {
+        assert_eq!(identify_agent("agy"), Some(Agent::Antigravity));
+        assert_eq!(identify_agent("antigravity"), Some(Agent::Antigravity));
+        assert_eq!(identify_agent("antigravity-cli"), Some(Agent::Antigravity));
+    }
+
+    #[test]
+    fn antigravity_idle_at_start_prompt() {
+        let screen = "Antigravity CLI 1.0.1\nkazu.homma@gmail.com (Google AI Pro)\nGemini 3.5 Flash (Medium)\n~/src/github.com/kazuph/herdr\n────────────────────────────────────────────────────────────────────\n>\n────────────────────────────────────────────────────────────────────\n? for shortcuts                            Gemini 3.5 Flash (Medium)";
+        assert_eq!(
+            detect_state(Some(Agent::Antigravity), screen),
+            AgentState::Idle
+        );
+    }
+
+    #[test]
+    fn antigravity_blocked_on_command_permission_prompt() {
+        let screen = "Command\n────────────────────────────────────────────────────────────────────\n\n  Requesting permission for: node /Users/kazuph/.gemini/antigravity-cli/brain/task/scratch/take-pics.mjs\n\nDo you want to proceed?\n> 1. Yes\n  2. No\n\n  ↑/↓ Navigate · tab Amend · e edit command\nesc to cancel         Gemini 3.5 Flash (Medium) · 1 task(s) · /tasks";
+        assert_eq!(
+            detect_state(Some(Agent::Antigravity), screen),
+            AgentState::Blocked
+        );
+    }
+
+    #[test]
+    fn antigravity_working_on_tool_activity() {
+        let screen = "I will run the npm run verify command.\n\n● Bash(npm run verify) (ctrl+o to expand)\n\nGemini 3.5 Flash (Medium) · 1 task(s) · /tasks";
+        assert_eq!(
+            detect_state(Some(Agent::Antigravity), screen),
+            AgentState::Working
+        );
     }
 
     // ---- Helpers ----

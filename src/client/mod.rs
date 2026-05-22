@@ -718,8 +718,17 @@ async fn run_client_loop(
                 ServerMessage::ServerShutdown { reason } => {
                     return Err(ClientError::ServerShutdown { reason });
                 }
-                ServerMessage::Notify { kind, message } => {
-                    handle_notify(kind, &message, &state.sound_config);
+                ServerMessage::Notify {
+                    kind,
+                    message,
+                    target_pane_id,
+                } => {
+                    handle_notify(
+                        kind,
+                        &message,
+                        target_pane_id.as_deref(),
+                        &state.sound_config,
+                    );
                 }
                 ServerMessage::Clipboard { data } => {
                     forward_clipboard(&data);
@@ -842,22 +851,29 @@ fn reload_local_sound_config(sound_config: &mut crate::config::SoundConfig) {
     }
 }
 
-fn handle_notify(kind: NotifyKind, message: &str, sound_config: &crate::config::SoundConfig) {
+fn handle_notify(
+    kind: NotifyKind,
+    message: &str,
+    target_pane_id: Option<&str>,
+    sound_config: &crate::config::SoundConfig,
+) {
     handle_notify_with_notifiers(
         kind,
         message,
+        target_pane_id,
         sound_config,
         crate::terminal_notify::show_notification,
-        crate::platform::show_desktop_notification,
+        crate::platform::show_desktop_notification_with_action,
     );
 }
 
 fn handle_notify_with_notifiers(
     kind: NotifyKind,
     message: &str,
+    target_pane_id: Option<&str>,
     sound_config: &crate::config::SoundConfig,
     mut show_terminal_notification: impl FnMut(&str, Option<&str>) -> io::Result<bool>,
-    mut show_system_notification: impl FnMut(&str, Option<&str>) -> io::Result<bool>,
+    mut show_system_notification: impl FnMut(&str, Option<&str>, Option<&str>) -> io::Result<bool>,
 ) {
     match kind {
         NotifyKind::Sound => {
@@ -888,11 +904,26 @@ fn handle_notify_with_notifiers(
                 "received system toast notification from server"
             );
             let (title, body) = crate::terminal_notify::split_message(message);
-            if let Err(err) = show_system_notification(title, body) {
+            let click_command = target_pane_id.and_then(pane_focus_command);
+            if let Err(err) = show_system_notification(title, body, click_command.as_deref()) {
                 warn!(err = %err, "failed to emit system notification");
             }
         }
     }
+}
+
+fn pane_focus_command(pane_id: &str) -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let exe = exe.to_string_lossy();
+    Some(format!(
+        "{} pane focus {} >/dev/null 2>&1",
+        shell_quote(&exe),
+        shell_quote(pane_id)
+    ))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn sound_from_notify_message(message: &str) -> Option<crate::sound::Sound> {
@@ -1320,12 +1351,13 @@ mod tests {
         handle_notify_with_notifiers(
             NotifyKind::Toast,
             "pi finished: workspace 1",
+            Some("w_1-1"),
             &sound_config,
             |title, body| {
                 emitted = Some((title.to_string(), body.map(str::to_string)));
                 Ok(true)
             },
-            |_, _| Ok(false),
+            |_, _, _| Ok(false),
         );
 
         assert_eq!(
@@ -1342,17 +1374,27 @@ mod tests {
         handle_notify_with_notifiers(
             NotifyKind::SystemToast,
             "pi finished: workspace 1",
+            Some("w_1-1"),
             &sound_config,
             |_, _| Ok(false),
-            |title, body| {
-                emitted = Some((title.to_string(), body.map(str::to_string)));
+            |title, body, command| {
+                emitted = Some((
+                    title.to_string(),
+                    body.map(str::to_string),
+                    command.map(str::to_string),
+                ));
                 Ok(true)
             },
         );
 
-        assert_eq!(
-            emitted,
-            Some(("pi finished".to_string(), Some("workspace 1".to_string())))
+        let (title, body, command) = emitted.expect("system notification emitted");
+        assert_eq!(title, "pi finished");
+        assert_eq!(body.as_deref(), Some("workspace 1"));
+        assert!(
+            command
+                .as_deref()
+                .is_some_and(|command| command.contains(" pane focus 'w_1-1' ")),
+            "command should focus target pane: {command:?}"
         );
     }
 

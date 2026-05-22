@@ -4,7 +4,12 @@
 
 ### Fixed
 - Herdr no longer treats leaked `HERDR_ENV=1` shell environment as a nested launch unless the new process actually has a Herdr parent process.
+- macOS system notifications for agent attention or completion now focus the matching Herdr pane when clicked.
+- Antigravity CLI (`agy`) panes are now detected, including command permission prompts.
 - `herdr --remote` now offers to restart the remote server after installing or replacing a remote binary, or when the running server version differs, even if the client/server protocol is still compatible.
+
+### Breaking Changes
+- The client/server protocol is now version 9. Stop and restart any running v0.6.0 server before attaching with this release.
 
 ## [0.6.0] - 2026-05-20
 

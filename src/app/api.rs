@@ -92,17 +92,22 @@ impl App {
                 crate::config::ToastDelivery::Terminal | crate::config::ToastDelivery::System
             )
         {
-            let notify = match self.state.toast_config.delivery {
-                crate::config::ToastDelivery::Terminal => crate::terminal_notify::show_notification,
-                crate::config::ToastDelivery::System => crate::platform::show_desktop_notification,
-                _ => unreachable!("toast delivery was checked above"),
-            };
-
             if let Some((version, install_command)) = update_ready {
-                let _ = notify(
-                    &format!("v{version} available"),
-                    Some(&format!("detach, then run `{install_command}`")),
-                );
+                match self.state.toast_config.delivery {
+                    crate::config::ToastDelivery::Terminal => {
+                        let _ = crate::terminal_notify::show_notification(
+                            &format!("v{version} available"),
+                            Some(&format!("detach, then run `{install_command}`")),
+                        );
+                    }
+                    crate::config::ToastDelivery::System => {
+                        let _ = crate::platform::show_desktop_notification(
+                            &format!("v{version} available"),
+                            Some(&format!("detach, then run `{install_command}`")),
+                        );
+                    }
+                    _ => unreachable!("toast delivery was checked above"),
+                }
             } else {
                 for update in &pane_updates {
                     let is_active_tab = self
@@ -143,14 +148,28 @@ impl App {
                         ToastKind::Finished => "finished",
                         ToastKind::UpdateInstalled => "updated",
                     };
-                    let _ = notify(
-                        &format!("{} {}", agent_label, event_text),
-                        Some(&crate::app::actions::notification_context(
-                            ws,
-                            update.ws_idx,
-                            update.pane_id,
-                        )),
+                    let title = format!("{} {}", agent_label, event_text);
+                    let body = crate::app::actions::notification_context(
+                        ws,
+                        update.ws_idx,
+                        update.pane_id,
                     );
+                    match self.state.toast_config.delivery {
+                        crate::config::ToastDelivery::Terminal => {
+                            let _ = crate::terminal_notify::show_notification(&title, Some(&body));
+                        }
+                        crate::config::ToastDelivery::System => {
+                            let click_command = self
+                                .public_pane_id(update.ws_idx, update.pane_id)
+                                .and_then(|pane_id| pane_focus_command(&pane_id));
+                            let _ = crate::platform::show_desktop_notification_with_action(
+                                &title,
+                                Some(&body),
+                                click_command.as_deref(),
+                            );
+                        }
+                        _ => unreachable!("toast delivery was checked above"),
+                    }
                 }
             }
         }
@@ -732,6 +751,34 @@ impl App {
                 SuccessResponse {
                     id: request.id,
                     result: ResponseResult::TabInfo { tab },
+                }
+            }
+            Method::PaneFocus(target) => {
+                let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error: ErrorBody {
+                            code: "pane_not_found".into(),
+                            message: format!("pane {} not found", target.pane_id),
+                        },
+                    })
+                    .unwrap();
+                };
+                if !self.state.focus_pane_target(ws_idx, pane_id) {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error: ErrorBody {
+                            code: "pane_not_found".into(),
+                            message: format!("pane {} not found", target.pane_id),
+                        },
+                    })
+                    .unwrap();
+                }
+                self.state.mode = Mode::Terminal;
+                let pane = self.pane_info(ws_idx, pane_id).unwrap();
+                SuccessResponse {
+                    id: request.id,
+                    result: ResponseResult::PaneInfo { pane },
                 }
             }
             Method::TabRename(params) => {
@@ -1611,4 +1658,18 @@ impl App {
 
         serde_json::to_string(&response).unwrap()
     }
+}
+
+fn pane_focus_command(pane_id: &str) -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let exe = exe.to_string_lossy();
+    Some(format!(
+        "{} pane focus {} >/dev/null 2>&1",
+        shell_quote(&exe),
+        shell_quote(pane_id)
+    ))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }

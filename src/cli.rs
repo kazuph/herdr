@@ -432,6 +432,7 @@ fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
     match subcommand {
         "list" => pane_list(&args[1..]),
         "get" => pane_get(&args[1..]),
+        "focus" => pane_focus(&args[1..]),
         "read" => pane_read(&args[1..]),
         "rename" => pane_rename(&args[1..]),
         "split" => pane_split(&args[1..]),
@@ -1339,6 +1340,24 @@ fn pane_get(args: &[String]) -> std::io::Result<i32> {
     })?)
 }
 
+fn pane_focus(args: &[String]) -> std::io::Result<i32> {
+    let Some(raw_pane_id) = args.first() else {
+        eprintln!("usage: herdr pane focus <pane_id>");
+        return Ok(2);
+    };
+    if args.len() != 1 {
+        eprintln!("usage: herdr pane focus <pane_id>");
+        return Ok(2);
+    }
+
+    print_response(&send_request(&Request {
+        id: "cli:pane:focus".into(),
+        method: Method::PaneFocus(PaneTarget {
+            pane_id: normalize_pane_id(raw_pane_id),
+        }),
+    })?)
+}
+
 fn pane_rename(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
         eprintln!("usage: herdr pane rename <pane_id> <label>|--clear");
@@ -2234,6 +2253,7 @@ fn print_pane_help() {
     eprintln!("herdr pane commands:");
     eprintln!("  herdr pane list [--workspace <workspace_id>]");
     eprintln!("  herdr pane get <pane_id>");
+    eprintln!("  herdr pane focus <pane_id>");
     eprintln!("  herdr pane rename <pane_id> <label>|--clear");
     eprintln!("  herdr pane read <pane_id> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
     eprintln!(
