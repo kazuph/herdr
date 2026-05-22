@@ -19,7 +19,6 @@ pub(crate) struct AgentPanelEntry {
     pub ws_idx: usize,
     pub tab_idx: usize,
     pub pane_id: crate::layout::PaneId,
-    pub short_pane_id: String,
     pub global_pane_id: String,
     pub primary_label: String,
     pub primary_tab_label: Option<String>,
@@ -143,7 +142,6 @@ pub(crate) fn agent_panel_entries(app: &AppState) -> Vec<AgentPanelEntry> {
             ws.pane_details(&app.terminals)
                 .into_iter()
                 .map(|detail| AgentPanelEntry {
-                    short_pane_id: pane_short_id(ws_idx, ws, detail.pane_id),
                     global_pane_id: pane_global_id(detail.pane_id),
                     ws_idx,
                     tab_idx: detail.tab_idx,
@@ -167,7 +165,6 @@ pub(crate) fn agent_panel_entries(app: &AppState) -> Vec<AgentPanelEntry> {
                 ws.pane_details(&app.terminals)
                     .into_iter()
                     .map(move |detail| AgentPanelEntry {
-                        short_pane_id: pane_short_id(ws_idx, ws, detail.pane_id),
                         global_pane_id: pane_global_id(detail.pane_id),
                         ws_idx,
                         tab_idx: detail.tab_idx,
@@ -204,17 +201,6 @@ fn agent_sort_bucket(state: AgentState, seen: bool) -> u8 {
         (AgentState::Idle, true) => 3,
         (AgentState::Unknown, _) => 4,
     }
-}
-
-fn pane_short_id(
-    ws_idx: usize,
-    ws: &crate::workspace::Workspace,
-    pane_id: crate::layout::PaneId,
-) -> String {
-    let pane_number = ws
-        .public_pane_number(pane_id)
-        .unwrap_or(pane_id.raw() as usize);
-    format!("{}-{pane_number}", ws_idx + 1)
 }
 
 fn pane_global_id(pane_id: crate::layout::PaneId) -> String {
@@ -281,7 +267,7 @@ fn format_agent_panel_primary_label(entry: &AgentPanelEntry, max_width: usize) -
 }
 
 fn agent_panel_id_label(entry: &AgentPanelEntry) -> String {
-    format!("{} {}", entry.global_pane_id, entry.short_pane_id)
+    entry.global_pane_id.clone()
 }
 
 fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace) -> u16 {
@@ -1194,7 +1180,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_panel_renders_global_and_short_pane_ids() {
+    fn agent_panel_renders_global_pane_ids_only() {
         let mut app = crate::app::state::AppState::test_new();
         let mut workspace = Workspace::test_new("agents");
         let pane_id = workspace.tabs[0].root_pane;
@@ -1222,9 +1208,9 @@ mod tests {
         let second_row = (0..48).map(|x| buffer[(x, 6)].symbol()).collect::<String>();
 
         assert!(first_row.contains(&format!("%{}", pane_id.raw())));
-        assert!(first_row.contains("1-1"));
+        assert!(!first_row.contains("1-1"));
         assert!(second_row.contains(&format!("%{}", second_pane_id.raw())));
-        assert!(second_row.contains("1-2"));
+        assert!(!second_row.contains("1-2"));
     }
 
     #[test]
@@ -1261,7 +1247,6 @@ mod tests {
             ws_idx: 0,
             tab_idx: 0,
             pane_id: crate::layout::PaneId::from_raw(1),
-            short_pane_id: "1-1".into(),
             global_pane_id: "%1".into(),
             primary_label: "agent-browser".into(),
             primary_tab_label: Some("test-escalation".into()),

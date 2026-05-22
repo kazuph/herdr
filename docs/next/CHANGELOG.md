@@ -6,6 +6,7 @@
 - Herdr no longer treats leaked `HERDR_ENV=1` shell environment as a nested launch unless the new process actually has a Herdr parent process.
 - macOS system notifications for agent attention or completion now focus the matching Herdr pane when clicked.
 - Antigravity CLI (`agy`) panes are now detected, including command permission prompts.
+- The agent sidebar now shows only global pane IDs like `%22`, removing redundant workspace-local IDs such as `2-1`.
 - `herdr --remote` now offers to restart the remote server after installing or replacing a remote binary, or when the running server version differs, even if the client/server protocol is still compatible.
 
 ### Breaking Changes
