@@ -84,11 +84,43 @@ pub(super) fn git_ahead_behind(cwd: &Path) -> Option<(usize, usize)> {
     parse_git_ahead_behind_output(&stdout)
 }
 
+pub(super) fn git_diff_stats(cwd: &Path) -> Option<(usize, usize)> {
+    git_repo_root(cwd)?;
+
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["diff", "--numstat", "HEAD", "--"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    Some(parse_git_diff_numstat_output(&stdout))
+}
+
 fn parse_git_ahead_behind_output(stdout: &str) -> Option<(usize, usize)> {
     let mut parts = stdout.split_whitespace();
     let ahead = parts.next()?.parse().ok()?;
     let behind = parts.next()?.parse().ok()?;
     Some((ahead, behind))
+}
+
+fn parse_git_diff_numstat_output(stdout: &str) -> (usize, usize) {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let additions = parts.next()?.parse::<usize>().ok()?;
+            let deletions = parts.next()?.parse::<usize>().ok()?;
+            Some((additions, deletions))
+        })
+        .fold((0, 0), |(total_add, total_del), (add, del)| {
+            (total_add + add, total_del + del)
+        })
 }
 
 #[cfg(test)]
@@ -145,5 +177,13 @@ mod tests {
         assert_eq!(git_branch(&root), None);
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn parse_git_diff_numstat_output_sums_text_file_changes() {
+        let stats =
+            parse_git_diff_numstat_output("10\t2\tsrc/a.rs\n-\t-\timage.png\n3\t4\tREADME.md\n");
+
+        assert_eq!(stats, (13, 6));
     }
 }

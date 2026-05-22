@@ -308,13 +308,34 @@ fn workspace_upstream_labels(ws: &crate::workspace::Workspace) -> Vec<(String, b
         .unwrap_or_default()
 }
 
-fn workspace_branch_reserved_width(branch: &str, upstream_labels: &[(String, bool)]) -> usize {
-    let upstream_width = upstream_labels
+fn workspace_diff_labels(ws: &crate::workspace::Workspace) -> Vec<(String, bool)> {
+    ws.git_diff_stats()
+        .map(|(additions, deletions)| {
+            let mut parts = Vec::new();
+            if additions > 0 {
+                parts.push((format!("+{}", additions), true));
+            }
+            if deletions > 0 {
+                parts.push((format!("-{}", deletions), false));
+            }
+            parts
+        })
+        .unwrap_or_default()
+}
+
+fn workspace_git_meta_width(
+    branch: &str,
+    upstream_labels: &[(String, bool)],
+    diff_labels: &[(String, bool)],
+) -> usize {
+    let labels_width = upstream_labels
         .iter()
+        .chain(diff_labels.iter())
         .map(|(label, _)| label.chars().count())
         .sum::<usize>()
-        + upstream_labels.len();
-    branch.chars().count() + upstream_width + 1
+        + upstream_labels.len()
+        + diff_labels.len();
+    branch.chars().count() + labels_width + 1
 }
 
 pub(crate) fn workspace_list_rect(area: Rect, split_ratio: f32) -> Rect {
@@ -761,17 +782,21 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
         if row_height == 1 {
             if let Some(branch) = ws.branch() {
                 let upstream_labels = workspace_upstream_labels(ws);
+                let diff_labels = workspace_diff_labels(ws);
                 let prefix_width = 2 + workspace_number.chars().count();
-                let upstream_width = upstream_labels
+                let labels_width = upstream_labels
                     .iter()
+                    .chain(diff_labels.iter())
                     .map(|(label, _)| label.chars().count())
                     .sum::<usize>()
-                    + upstream_labels.len();
+                    + upstream_labels.len()
+                    + diff_labels.len();
                 let max_branch_width = (card.rect.width as usize)
-                    .saturating_sub(prefix_width + upstream_width + 2)
+                    .saturating_sub(prefix_width + labels_width + 2)
                     .max(1);
                 let branch_display = truncate_to_width(&branch, max_branch_width);
-                let reserved = workspace_branch_reserved_width(&branch_display, &upstream_labels);
+                let reserved =
+                    workspace_git_meta_width(&branch_display, &upstream_labels, &diff_labels);
                 let max_name_width = (card.rect.width as usize)
                     .saturating_sub(prefix_width + reserved)
                     .max(1);
@@ -792,6 +817,11 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                     line1.push(Span::styled(" ", Style::default()));
                     line1.push(Span::styled(label, Style::default().fg(color)));
                 }
+                for (label, is_addition) in diff_labels {
+                    let color = if is_addition { p.green } else { p.red };
+                    line1.push(Span::styled(" ", Style::default()));
+                    line1.push(Span::styled(label, Style::default().fg(color)));
+                }
             }
         }
 
@@ -803,12 +833,15 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
         if row_height > 1 && row_y + 1 < list_bottom {
             if let Some(branch) = ws.branch() {
                 let upstream_labels = workspace_upstream_labels(ws);
+                let diff_labels = workspace_diff_labels(ws);
                 let reserved = upstream_labels
                     .iter()
+                    .chain(diff_labels.iter())
                     .map(|(label, _)| label.chars().count())
                     .sum::<usize>()
-                    + upstream_labels.len();
-                let max_branch_len = (card.rect.width as usize).saturating_sub(5 + reserved);
+                    + upstream_labels.len()
+                    + diff_labels.len();
+                let max_branch_len = (card.rect.width as usize).saturating_sub(4 + reserved);
                 let branch_display = truncate_to_width(&branch, max_branch_len);
                 let branch_color = if selected || is_active {
                     p.mauve
@@ -816,16 +849,18 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                     p.overlay0
                 };
                 let mut spans = vec![
-                    Span::styled("   ", Style::default()),
+                    Span::styled("    ", Style::default()),
                     Span::styled(branch_display, Style::default().fg(branch_color)),
                 ];
-                if !upstream_labels.is_empty() {
-                    spans.push(Span::styled(" ", Style::default()));
-                    for (idx, (label, is_ahead)) in upstream_labels.into_iter().enumerate() {
-                        if idx > 0 {
-                            spans.push(Span::styled(" ", Style::default()));
-                        }
+                if !upstream_labels.is_empty() || !diff_labels.is_empty() {
+                    for (label, is_ahead) in upstream_labels {
+                        spans.push(Span::styled(" ", Style::default()));
                         let color = if is_ahead { p.green } else { p.red };
+                        spans.push(Span::styled(label, Style::default().fg(color)));
+                    }
+                    for (label, is_addition) in diff_labels {
+                        spans.push(Span::styled(" ", Style::default()));
+                        let color = if is_addition { p.green } else { p.red };
                         spans.push(Span::styled(label, Style::default().fg(color)));
                     }
                 }
@@ -1129,6 +1164,7 @@ mod tests {
             resolved_identity_cwd,
             branch: Some("main".into()),
             ahead_behind: None,
+            diff_stats: None,
         }]);
 
         let area = Rect::new(0, 0, 24, 16);
@@ -1156,6 +1192,7 @@ mod tests {
             resolved_identity_cwd,
             branch: Some("main".into()),
             ahead_behind: Some((2, 1)),
+            diff_stats: Some((123, 11)),
         }]);
 
         let area = Rect::new(0, 0, 32, 6);
@@ -1179,6 +1216,8 @@ mod tests {
         assert!(row.contains("main"));
         assert!(row.contains("↑2"));
         assert!(row.contains("↓1"));
+        assert!(row.contains("+123"));
+        assert!(row.contains("-11"));
     }
 
     #[test]

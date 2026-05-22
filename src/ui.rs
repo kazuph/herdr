@@ -535,7 +535,7 @@ mod tests {
         let line2 = buffer_row_text(buffer, card, card.y + 1);
 
         assert!(line1.starts_with("· 1 one"));
-        assert_eq!(line2, "   main");
+        assert_eq!(line2, "    main");
 
         std::fs::remove_dir_all(repo).ok();
     }

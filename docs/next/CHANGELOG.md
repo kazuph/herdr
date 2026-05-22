@@ -8,6 +8,7 @@
 - Antigravity CLI (`agy`) panes are now detected, including command permission prompts.
 - The agent sidebar now shows only global pane IDs like `%22`, removing redundant workspace-local IDs such as `2-1`.
 - Workspace sidebar rows now keep a space between the status indicator and workspace number.
+- Workspace sidebar git details now align with workspace names and include working tree line stats like `+123 -11`.
 - `herdr --remote` now offers to restart the remote server after installing or replacing a remote binary, or when the running server version differs, even if the client/server protocol is still compatible.
 
 ### Breaking Changes

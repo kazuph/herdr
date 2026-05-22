@@ -109,6 +109,7 @@ fn restore_workspace(
             identity_cwd: snap.identity_cwd.clone(),
             cached_git_branch: None,
             cached_git_ahead_behind: None,
+            cached_git_diff_stats: None,
             public_pane_numbers,
             next_public_pane_number,
             active_tab: snap.active_tab.min(tabs.len().saturating_sub(1)),

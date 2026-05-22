@@ -19,7 +19,7 @@ mod aggregate;
 mod git;
 mod tab;
 
-use self::git::git_ahead_behind;
+use self::git::{git_ahead_behind, git_diff_stats};
 pub use self::{
     git::{derive_label_from_cwd, git_branch},
     tab::Tab,
@@ -31,6 +31,7 @@ pub struct WorkspaceGitStatus {
     pub resolved_identity_cwd: PathBuf,
     pub branch: Option<String>,
     pub ahead_behind: Option<(usize, usize)>,
+    pub diff_stats: Option<(usize, usize)>,
 }
 
 static NEXT_WORKSPACE_ID: AtomicU64 = AtomicU64::new(1);
@@ -56,6 +57,8 @@ pub struct Workspace {
     pub(crate) cached_git_branch: Option<String>,
     /// Cached ahead/behind counts for the workspace repo's current branch upstream.
     pub(crate) cached_git_ahead_behind: Option<(usize, usize)>,
+    /// Cached working tree line additions/deletions for the workspace repo.
+    pub(crate) cached_git_diff_stats: Option<(usize, usize)>,
     /// Stable-ish public pane numbers within this workspace.
     /// New panes append at the end; closing a pane compacts higher numbers down.
     pub public_pane_numbers: HashMap<PaneId, usize>,
@@ -182,6 +185,7 @@ impl Workspace {
                 identity_cwd: initial_cwd.clone(),
                 cached_git_branch: git_branch(&initial_cwd),
                 cached_git_ahead_behind: None,
+                cached_git_diff_stats: None,
                 public_pane_numbers,
                 next_public_pane_number: 2,
                 tabs: vec![tab],
@@ -576,11 +580,16 @@ impl Workspace {
         self.cached_git_ahead_behind
     }
 
+    pub fn git_diff_stats(&self) -> Option<(usize, usize)> {
+        self.cached_git_diff_stats
+    }
+
     #[cfg(test)]
     pub fn refresh_git_ahead_behind(&mut self) {
         let cwd = self.resolved_identity_cwd();
         self.cached_git_branch = cwd.as_deref().and_then(git_branch);
         self.cached_git_ahead_behind = cwd.as_deref().and_then(git_ahead_behind);
+        self.cached_git_diff_stats = cwd.as_deref().and_then(git_diff_stats);
     }
 
     pub fn git_status_for_cwd(
@@ -590,6 +599,7 @@ impl Workspace {
         WorkspaceGitStatus {
             branch: git_branch(&resolved_identity_cwd),
             ahead_behind: git_ahead_behind(&resolved_identity_cwd),
+            diff_stats: git_diff_stats(&resolved_identity_cwd),
             workspace_id,
             resolved_identity_cwd,
         }
@@ -704,6 +714,7 @@ impl Workspace {
             identity_cwd: identity_cwd.clone(),
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
+            cached_git_diff_stats: None,
             public_pane_numbers,
             next_public_pane_number: 2,
             tabs: vec![tab],

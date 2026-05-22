@@ -771,6 +771,10 @@ impl AppState {
                 ws.cached_git_ahead_behind = result.ahead_behind;
                 changed = true;
             }
+            if ws.cached_git_diff_stats != result.diff_stats {
+                ws.cached_git_diff_stats = result.diff_stats;
+                changed = true;
+            }
         }
         changed
     }
@@ -1050,13 +1054,16 @@ mod tests {
             resolved_identity_cwd: first_cwd,
             branch: Some("main".into()),
             ahead_behind: Some((2, 1)),
+            diff_stats: Some((12, 3)),
         }]);
 
         assert!(changed);
         assert_eq!(state.workspaces[0].branch().as_deref(), Some("main"));
         assert_eq!(state.workspaces[0].git_ahead_behind(), Some((2, 1)));
+        assert_eq!(state.workspaces[0].git_diff_stats(), Some((12, 3)));
         assert_eq!(state.workspaces[1].id, second_id);
         assert_eq!(state.workspaces[1].git_ahead_behind(), None);
+        assert_eq!(state.workspaces[1].git_diff_stats(), None);
     }
 
     #[test]
@@ -1065,17 +1072,20 @@ mod tests {
         let workspace_id = state.workspaces[0].id.clone();
         state.workspaces[0].cached_git_branch = Some("old".into());
         state.workspaces[0].cached_git_ahead_behind = Some((1, 0));
+        state.workspaces[0].cached_git_diff_stats = Some((4, 5));
 
         let changed = state.apply_workspace_git_statuses(vec![WorkspaceGitStatus {
             workspace_id,
             resolved_identity_cwd: std::path::PathBuf::from("/definitely/not/current"),
             branch: Some("main".into()),
             ahead_behind: Some((0, 1)),
+            diff_stats: Some((9, 9)),
         }]);
 
         assert!(!changed);
         assert_eq!(state.workspaces[0].branch().as_deref(), Some("old"));
         assert_eq!(state.workspaces[0].git_ahead_behind(), Some((1, 0)));
+        assert_eq!(state.workspaces[0].git_diff_stats(), Some((4, 5)));
     }
 
     #[test]
@@ -1085,17 +1095,20 @@ mod tests {
         let cwd = state.workspaces[0].resolved_identity_cwd().unwrap();
         state.workspaces[0].cached_git_branch = Some("main".into());
         state.workspaces[0].cached_git_ahead_behind = Some((1, 2));
+        state.workspaces[0].cached_git_diff_stats = Some((3, 4));
 
         let changed = state.apply_workspace_git_statuses(vec![WorkspaceGitStatus {
             workspace_id,
             resolved_identity_cwd: cwd,
             branch: None,
             ahead_behind: None,
+            diff_stats: None,
         }]);
 
         assert!(changed);
         assert_eq!(state.workspaces[0].branch(), None);
         assert_eq!(state.workspaces[0].git_ahead_behind(), None);
+        assert_eq!(state.workspaces[0].git_diff_stats(), None);
     }
 
     #[test]
