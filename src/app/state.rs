@@ -608,6 +608,14 @@ pub enum AgentPanelScope {
     CurrentWorkspace,
     #[default]
     AllWorkspaces,
+    SortedAllWorkspaces,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum WorkspacePanelDensity {
+    #[default]
+    Full,
+    Slim,
 }
 
 // ---------------------------------------------------------------------------
@@ -958,6 +966,7 @@ pub struct AppState {
     pub sidebar_collapsed: bool,
     /// Ratio of sidebar height allocated to the workspaces section.
     pub sidebar_section_split: f32,
+    pub workspace_panel_density: WorkspacePanelDensity,
     pub agent_panel_scope: AgentPanelScope,
     /// Capture mouse input for Herdr's own mouse UI. When false, Herdr only
     /// captures mouse while the focused pane app requests mouse reporting.
@@ -1219,6 +1228,7 @@ impl AppState {
             sidebar_width_auto: false,
             sidebar_collapsed: false,
             sidebar_section_split: 0.5,
+            workspace_panel_density: WorkspacePanelDensity::Full,
             agent_panel_scope: AgentPanelScope::AllWorkspaces,
             mouse_capture: true,
             confirm_close: true,

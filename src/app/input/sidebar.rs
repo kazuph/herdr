@@ -415,6 +415,26 @@ impl AppState {
             && row < rect.y + rect.height
     }
 
+    pub(super) fn on_workspace_panel_density_toggle(&self, col: u16, row: u16) -> bool {
+        if self.sidebar_collapsed {
+            return false;
+        }
+
+        let (workspace_area, _) = crate::ui::expanded_sidebar_sections(
+            self.view.sidebar_rect,
+            self.sidebar_section_split,
+        );
+        let rect = crate::ui::workspace_panel_density_toggle_rect(
+            workspace_area,
+            self.workspace_panel_density,
+        );
+        rect.width > 0
+            && col >= rect.x
+            && col < rect.x + rect.width
+            && row >= rect.y
+            && row < rect.y + rect.height
+    }
+
     pub(super) fn agent_detail_target_at(
         &self,
         row: u16,
@@ -698,14 +718,45 @@ mod tests {
 
         assert_eq!(
             app.state.agent_panel_scope,
-            AgentPanelScope::CurrentWorkspace
+            AgentPanelScope::SortedAllWorkspaces
         );
         assert_eq!(app.state.agent_panel_scroll, 0);
         let snapshot = capture_snapshot(&app.state);
         assert_eq!(
             snapshot.agent_panel_scope,
-            AgentPanelScope::CurrentWorkspace
+            AgentPanelScope::SortedAllWorkspaces
         );
+    }
+
+    #[test]
+    fn clicking_workspace_density_toggle_switches_to_slim() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.workspace_scroll = 2;
+
+        let (workspace_area, _) = crate::ui::expanded_sidebar_sections(
+            app.state.view.sidebar_rect,
+            app.state.sidebar_section_split,
+        );
+        let toggle = crate::ui::workspace_panel_density_toggle_rect(
+            workspace_area,
+            app.state.workspace_panel_density,
+        );
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x,
+            toggle.y,
+        ));
+
+        assert_eq!(
+            app.state.workspace_panel_density,
+            crate::app::state::WorkspacePanelDensity::Slim
+        );
+        assert_eq!(app.state.workspace_scroll, 0);
+        assert!(app.state.session_dirty);
     }
 
     #[test]

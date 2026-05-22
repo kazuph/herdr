@@ -220,7 +220,8 @@ impl App {
                 .active
                 .and_then(|idx| self.state.workspaces.get(idx))
                 .is_some_and(|ws| ws.has_working_pane(&self.state.terminals)),
-            crate::app::state::AgentPanelScope::AllWorkspaces => self
+            crate::app::state::AgentPanelScope::AllWorkspaces
+            | crate::app::state::AgentPanelScope::SortedAllWorkspaces => self
                 .state
                 .workspaces
                 .iter()

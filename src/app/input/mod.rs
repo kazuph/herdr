@@ -182,6 +182,7 @@ impl App {
         }
 
         let previous_agent_panel_scope = self.state.agent_panel_scope;
+        let previous_workspace_panel_density = self.state.workspace_panel_density;
         let previous_settings_section = self.state.settings.section;
         if let Some(action) = self.state.handle_mouse(mouse) {
             match action {
@@ -203,6 +204,9 @@ impl App {
         }
         if self.state.agent_panel_scope != previous_agent_panel_scope {
             self.save_agent_panel_scope(self.state.agent_panel_scope);
+        }
+        if self.state.workspace_panel_density != previous_workspace_panel_density {
+            self.save_workspace_panel_density(self.state.workspace_panel_density);
         }
 
         if let Some(content) = self.state.request_clipboard_write.take() {

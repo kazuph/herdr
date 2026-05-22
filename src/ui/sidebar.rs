@@ -8,7 +8,7 @@ use ratatui::{
 
 use super::scrollbar::{render_scrollbar, should_show_scrollbar};
 use super::status::{agent_icon, state_label, state_label_color, state_summary_icon};
-use crate::app::state::{AgentPanelScope, Palette};
+use crate::app::state::{AgentPanelScope, Palette, WorkspacePanelDensity};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 
@@ -90,6 +90,7 @@ fn agent_panel_toggle_label(scope: AgentPanelScope) -> &'static str {
     match scope {
         AgentPanelScope::CurrentWorkspace => "current",
         AgentPanelScope::AllWorkspaces => "all",
+        AgentPanelScope::SortedAllWorkspaces => "sort",
     }
 }
 
@@ -108,8 +109,28 @@ pub(crate) fn agent_panel_toggle_rect(area: Rect, scope: AgentPanelScope) -> Rec
     )
 }
 
+fn workspace_panel_density_label(density: WorkspacePanelDensity) -> &'static str {
+    match density {
+        WorkspacePanelDensity::Full => "full",
+        WorkspacePanelDensity::Slim => "slim",
+    }
+}
+
+pub(crate) fn workspace_panel_density_toggle_rect(
+    area: Rect,
+    density: WorkspacePanelDensity,
+) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect::default();
+    }
+
+    let label = workspace_panel_density_label(density);
+    let width = label.chars().count() as u16;
+    Rect::new(area.x + area.width.saturating_sub(width), area.y, width, 1)
+}
+
 pub(crate) fn agent_panel_entries(app: &AppState) -> Vec<AgentPanelEntry> {
-    match app.agent_panel_scope {
+    let entries: Vec<AgentPanelEntry> = match app.agent_panel_scope {
         AgentPanelScope::CurrentWorkspace => {
             let Some(ws_idx) = agent_panel_current_workspace_idx(app) else {
                 return Vec::new();
@@ -132,7 +153,7 @@ pub(crate) fn agent_panel_entries(app: &AppState) -> Vec<AgentPanelEntry> {
                 })
                 .collect()
         }
-        AgentPanelScope::AllWorkspaces => app
+        AgentPanelScope::AllWorkspaces | AgentPanelScope::SortedAllWorkspaces => app
             .workspaces
             .iter()
             .enumerate()
@@ -154,6 +175,28 @@ pub(crate) fn agent_panel_entries(app: &AppState) -> Vec<AgentPanelEntry> {
                     })
             })
             .collect(),
+    };
+
+    if matches!(app.agent_panel_scope, AgentPanelScope::SortedAllWorkspaces) {
+        let mut sortable = entries
+            .into_iter()
+            .enumerate()
+            .map(|(idx, entry)| (agent_sort_bucket(entry.state, entry.seen), idx, entry))
+            .collect::<Vec<_>>();
+        sortable.sort_by_key(|(bucket, idx, _)| (*bucket, *idx));
+        return sortable.into_iter().map(|(_, _, entry)| entry).collect();
+    }
+
+    entries
+}
+
+fn agent_sort_bucket(state: AgentState, seen: bool) -> u8 {
+    match (state, seen) {
+        (AgentState::Blocked, _) => 0,
+        (AgentState::Idle, false) => 1,
+        (AgentState::Working, _) => 2,
+        (AgentState::Idle, true) => 3,
+        (AgentState::Unknown, _) => 4,
     }
 }
 
@@ -216,8 +259,8 @@ fn format_agent_panel_primary_label(entry: &AgentPanelEntry, max_width: usize) -
     )
 }
 
-fn workspace_row_height(ws: &crate::workspace::Workspace) -> u16 {
-    if ws.branch().is_some() {
+fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace) -> u16 {
+    if app.workspace_panel_density == WorkspacePanelDensity::Full && ws.branch().is_some() {
         2
     } else {
         1
@@ -250,7 +293,7 @@ fn workspace_list_visible_count(app: &AppState, area: Rect, scroll: usize) -> us
     let mut used_rows = 0u16;
     let mut visible = 0usize;
     for ws in app.workspaces.iter().skip(scroll) {
-        let needed = workspace_row_height(ws).saturating_add(1);
+        let needed = workspace_row_height(app, ws).saturating_add(1);
         if used_rows.saturating_add(needed) > body.height {
             break;
         }
@@ -364,7 +407,7 @@ pub(crate) fn compute_workspace_card_areas(
     let mut cards = Vec::new();
 
     for (ws_idx, ws) in app.workspaces.iter().enumerate().skip(app.workspace_scroll) {
-        let row_height = workspace_row_height(ws);
+        let row_height = workspace_row_height(app, ws);
         if row_y.saturating_add(row_height).saturating_add(1) > body_bottom {
             break;
         }
@@ -589,6 +632,17 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
             )])),
             Rect::new(area.x, area.y, area.width, 1),
         );
+        let toggle_rect = workspace_panel_density_toggle_rect(area, app.workspace_panel_density);
+        if toggle_rect != Rect::default() {
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    workspace_panel_density_label(app.workspace_panel_density),
+                    Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
+                ))
+                .alignment(Alignment::Right),
+                toggle_rect,
+            );
+        }
     }
 
     let metrics = workspace_list_scroll_metrics(app, area);
@@ -936,6 +990,72 @@ mod tests {
         assert_eq!(entries[1].primary_label, "two");
         assert_eq!(entries[1].primary_tab_label.as_deref(), Some("logs"));
         assert_eq!(entries[1].agent_label.as_deref(), Some("claude"));
+    }
+
+    #[test]
+    fn sorted_agent_panel_entries_group_attention_then_working_then_seen_idle() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![
+            Workspace::test_new("seen"),
+            Workspace::test_new("working"),
+            Workspace::test_new("blocked"),
+            Workspace::test_new("done"),
+        ];
+        app.ensure_test_terminals();
+
+        let cases = [
+            (0, AgentState::Idle, true),
+            (1, AgentState::Working, true),
+            (2, AgentState::Blocked, true),
+            (3, AgentState::Idle, false),
+        ];
+        for (ws_idx, state, seen) in cases {
+            let pane_id = app.workspaces[ws_idx].tabs[0].root_pane;
+            let terminal_id = app.workspaces[ws_idx].tabs[0].panes[&pane_id]
+                .attached_terminal_id
+                .clone();
+            let terminal = app.terminals.get_mut(&terminal_id).unwrap();
+            terminal.state = state;
+            terminal.detected_agent = Some(Agent::Claude);
+            app.workspaces[ws_idx].tabs[0]
+                .panes
+                .get_mut(&pane_id)
+                .unwrap()
+                .seen = seen;
+        }
+        app.agent_panel_scope = AgentPanelScope::SortedAllWorkspaces;
+
+        let labels = agent_panel_entries(&app)
+            .into_iter()
+            .map(|entry| entry.primary_label)
+            .collect::<Vec<_>>();
+
+        assert_eq!(labels, vec!["blocked", "done", "working", "seen"]);
+    }
+
+    #[test]
+    fn slim_workspace_panel_keeps_git_workspaces_to_one_row() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
+        app.ensure_test_terminals();
+        let workspace_id = app.workspaces[0].id.clone();
+        let resolved_identity_cwd = app.workspaces[0].resolved_identity_cwd().unwrap();
+        app.apply_workspace_git_statuses(vec![crate::workspace::WorkspaceGitStatus {
+            workspace_id,
+            resolved_identity_cwd,
+            branch: Some("main".into()),
+            ahead_behind: None,
+        }]);
+
+        let area = Rect::new(0, 0, 24, 16);
+        app.workspace_panel_density = WorkspacePanelDensity::Full;
+        let full_cards = compute_workspace_card_areas(&app, area);
+        app.workspace_panel_density = WorkspacePanelDensity::Slim;
+        let slim_cards = compute_workspace_card_areas(&app, area);
+
+        assert_eq!(full_cards[0].rect.height, 2);
+        assert_eq!(slim_cards[0].rect.height, 1);
+        assert_eq!(slim_cards[1].rect.y, slim_cards[0].rect.y + 2);
     }
 
     #[test]

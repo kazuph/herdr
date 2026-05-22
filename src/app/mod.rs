@@ -148,8 +148,18 @@ fn agent_panel_scope_from_config(
     scope: crate::config::AgentPanelScopeConfig,
 ) -> state::AgentPanelScope {
     match scope {
-        crate::config::AgentPanelScopeConfig::Current => state::AgentPanelScope::CurrentWorkspace,
-        crate::config::AgentPanelScopeConfig::All => state::AgentPanelScope::AllWorkspaces,
+        crate::config::AgentPanelScopeConfig::Current
+        | crate::config::AgentPanelScopeConfig::All => state::AgentPanelScope::AllWorkspaces,
+        crate::config::AgentPanelScopeConfig::Sort => state::AgentPanelScope::SortedAllWorkspaces,
+    }
+}
+
+fn workspace_panel_density_from_config(
+    density: crate::config::WorkspacePanelDensityConfig,
+) -> state::WorkspacePanelDensity {
+    match density {
+        crate::config::WorkspacePanelDensityConfig::Full => state::WorkspacePanelDensity::Full,
+        crate::config::WorkspacePanelDensityConfig::Slim => state::WorkspacePanelDensity::Slim,
     }
 }
 
@@ -287,6 +297,8 @@ impl App {
         };
 
         let agent_panel_scope = agent_panel_scope_from_config(config.ui.agent_panel_scope);
+        let workspace_panel_density =
+            workspace_panel_density_from_config(config.ui.workspace_panel_density);
 
         // Validate sidebar bounds before they reach any `u16::clamp(min, max)`
         // call: `clamp` panics when `min > max`. On bad config, fall back to
@@ -407,6 +419,7 @@ impl App {
             sidebar_width_auto: false,
             sidebar_collapsed: false,
             sidebar_section_split,
+            workspace_panel_density,
             agent_panel_scope,
             mouse_capture: config.ui.mouse_capture,
             confirm_close: config.ui.confirm_close,
@@ -868,6 +881,8 @@ impl App {
                 self.state.prompt_new_tab_name = config.ui.prompt_new_tab_name;
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
+                self.state.workspace_panel_density =
+                    workspace_panel_density_from_config(config.ui.workspace_panel_density);
                 self.state.agent_panel_scope =
                     agent_panel_scope_from_config(config.ui.agent_panel_scope);
                 self.state.agent_panel_scroll = 0;
@@ -1211,6 +1226,20 @@ mod tests {
     #[test]
     fn startup_uses_configured_agent_panel_scope() {
         let mut config = Config::default();
+        config.ui.agent_panel_scope = crate::config::AgentPanelScopeConfig::Sort;
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
+
+        assert_eq!(
+            app.state.agent_panel_scope,
+            state::AgentPanelScope::SortedAllWorkspaces
+        );
+    }
+
+    #[test]
+    fn startup_maps_legacy_current_agent_panel_scope_to_all() {
+        let mut config = Config::default();
         config.ui.agent_panel_scope = crate::config::AgentPanelScopeConfig::Current;
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1218,7 +1247,7 @@ mod tests {
 
         assert_eq!(
             app.state.agent_panel_scope,
-            state::AgentPanelScope::CurrentWorkspace
+            state::AgentPanelScope::AllWorkspaces
         );
     }
 
@@ -1332,7 +1361,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "[terminal]\ndefault_shell = \"nu\"\n[keys]\nnew_workspace = \"prefix+g\"\nprefix = \"ctrl+a\"\n[ui]\nagent_panel_scope = \"current\"\n[ui.toast]\ndelivery = \"herdr\"\n",
+            "[terminal]\ndefault_shell = \"nu\"\n[keys]\nnew_workspace = \"prefix+g\"\nprefix = \"ctrl+a\"\n[ui]\nworkspace_panel_density = \"slim\"\nagent_panel_scope = \"sort\"\n[ui.toast]\ndelivery = \"herdr\"\n",
         )
         .unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -1354,7 +1383,11 @@ mod tests {
         );
         assert_eq!(
             app.state.agent_panel_scope,
-            state::AgentPanelScope::CurrentWorkspace
+            state::AgentPanelScope::SortedAllWorkspaces
+        );
+        assert_eq!(
+            app.state.workspace_panel_density,
+            state::WorkspacePanelDensity::Slim
         );
         assert_eq!(app.state.default_shell, "nu");
         assert!(app.state.config_diagnostic.is_none());
@@ -1629,14 +1662,42 @@ mod tests {
             state::AgentPanelScope::AllWorkspaces
         );
 
-        app.save_agent_panel_scope(state::AgentPanelScope::CurrentWorkspace);
+        app.save_agent_panel_scope(state::AgentPanelScope::SortedAllWorkspaces);
 
         assert_eq!(
             app.state.agent_panel_scope,
-            state::AgentPanelScope::CurrentWorkspace
+            state::AgentPanelScope::SortedAllWorkspaces
         );
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("agent_panel_scope = \"current\""));
+        assert!(content.contains("agent_panel_scope = \"sort\""));
+        assert!(app.state.config_diagnostic.is_none());
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn save_workspace_panel_density_persists_then_applies_live_config() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("save-workspace-panel-density");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "onboarding = false\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        assert_eq!(
+            app.state.workspace_panel_density,
+            state::WorkspacePanelDensity::Full
+        );
+
+        app.save_workspace_panel_density(state::WorkspacePanelDensity::Slim);
+
+        assert_eq!(
+            app.state.workspace_panel_density,
+            state::WorkspacePanelDensity::Slim
+        );
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("workspace_panel_density = \"slim\""));
         assert!(app.state.config_diagnostic.is_none());
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);

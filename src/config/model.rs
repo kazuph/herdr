@@ -20,6 +20,7 @@ pub enum AgentPanelScopeConfig {
     Current,
     #[default]
     All,
+    Sort,
 }
 
 impl AgentPanelScopeConfig {
@@ -27,6 +28,24 @@ impl AgentPanelScopeConfig {
         match self {
             Self::Current => "current",
             Self::All => "all",
+            Self::Sort => "sort",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspacePanelDensityConfig {
+    #[default]
+    Full,
+    Slim,
+}
+
+impl WorkspacePanelDensityConfig {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Slim => "slim",
         }
     }
 }
@@ -198,7 +217,9 @@ pub struct UiConfig {
     pub prompt_new_tab_name: bool,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
-    /// Agent sidebar scope. Saved values are "current" or "all". Default: "all".
+    /// Workspace sidebar density. Saved values are "full" or "slim". Default: "full".
+    pub workspace_panel_density: WorkspacePanelDensityConfig,
+    /// Agent sidebar view. Saved values are "all" or "sort". Default: "all".
     pub agent_panel_scope: AgentPanelScopeConfig,
     /// Accent color for highlights, borders, and navigation UI.
     /// Accepts hex (#89b4fa), named colors (cyan, blue), or RGB (rgb(137,180,250)).
@@ -281,6 +302,7 @@ impl Default for UiConfig {
             confirm_close: true,
             prompt_new_tab_name: true,
             show_agent_labels_on_pane_borders: false,
+            workspace_panel_density: WorkspacePanelDensityConfig::Full,
             agent_panel_scope: AgentPanelScopeConfig::All,
             accent: "cyan".into(),
             toast: ToastConfig::default(),
@@ -348,10 +370,23 @@ default_shell = "nu"
     fn agent_panel_scope_config_parses() {
         let toml = r#"
 [ui]
-agent_panel_scope = "all"
+agent_panel_scope = "sort"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.ui.agent_panel_scope, AgentPanelScopeConfig::All);
+        assert_eq!(config.ui.agent_panel_scope, AgentPanelScopeConfig::Sort);
+    }
+
+    #[test]
+    fn workspace_panel_density_config_parses() {
+        let toml = r#"
+[ui]
+workspace_panel_density = "slim"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.ui.workspace_panel_density,
+            WorkspacePanelDensityConfig::Slim
+        );
     }
 
     #[test]

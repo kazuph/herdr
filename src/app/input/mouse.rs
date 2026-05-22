@@ -305,6 +305,20 @@ impl AppState {
                         return None;
                     }
 
+                    if self.on_workspace_panel_density_toggle(mouse.column, mouse.row) {
+                        self.workspace_panel_density = match self.workspace_panel_density {
+                            crate::app::state::WorkspacePanelDensity::Full => {
+                                crate::app::state::WorkspacePanelDensity::Slim
+                            }
+                            crate::app::state::WorkspacePanelDensity::Slim => {
+                                crate::app::state::WorkspacePanelDensity::Full
+                            }
+                        };
+                        self.workspace_scroll = 0;
+                        self.mark_session_dirty();
+                        return None;
+                    }
+
                     if let Some(target) =
                         self.workspace_list_scrollbar_target_at(mouse.column, mouse.row)
                     {
@@ -332,8 +346,9 @@ impl AppState {
 
                     if self.on_agent_panel_scope_toggle(mouse.column, mouse.row) {
                         self.agent_panel_scope = match self.agent_panel_scope {
-                            AgentPanelScope::CurrentWorkspace => AgentPanelScope::AllWorkspaces,
-                            AgentPanelScope::AllWorkspaces => AgentPanelScope::CurrentWorkspace,
+                            AgentPanelScope::AllWorkspaces => AgentPanelScope::SortedAllWorkspaces,
+                            AgentPanelScope::SortedAllWorkspaces
+                            | AgentPanelScope::CurrentWorkspace => AgentPanelScope::AllWorkspaces,
                         };
                         self.agent_panel_scroll = 0;
                         self.mark_session_dirty();

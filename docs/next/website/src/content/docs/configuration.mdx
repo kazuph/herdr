@@ -187,12 +187,15 @@ confirm_close = true
 prompt_new_tab_name = true
 show_agent_labels_on_pane_borders = false
 agent_panel_scope = "all"
+workspace_panel_density = "full"
 accent = "cyan"
 ```
 
 `sidebar_min_width` and `sidebar_max_width` control the expanded sidebar's resize bounds in columns. The defaults are 18 and 36.
 
-`agent_panel_scope` can be `all` or `current`. Use `current` if you only want the agent panel to show agents in the active workspace.
+`agent_panel_scope` can be `all` or `sort`. Use `sort` to group agents that need confirmation first, then running agents, then confirmed idle agents.
+
+`workspace_panel_density` can be `full` or `slim`. Use `slim` to keep workspace cards on one line.
 
 `confirm_close` controls whether closing a workspace asks for confirmation. `prompt_new_tab_name` controls whether new tabs ask for a label first.
 
