@@ -27,6 +27,18 @@ impl App {
             return;
         }
 
+        match ev {
+            AppEvent::WorktreeAddFinished(result) => {
+                self.handle_worktree_add_finished(result);
+                return;
+            }
+            AppEvent::WorktreeRemoveFinished(result) => {
+                self.handle_worktree_remove_finished(result);
+                return;
+            }
+            _ => {}
+        }
+
         let overlay_state = if let AppEvent::PaneDied { pane_id } = &ev {
             self.overlay_panes.remove(pane_id)
         } else {

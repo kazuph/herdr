@@ -12,6 +12,15 @@ use super::widgets::{
 };
 use crate::app::{AppState, Mode};
 
+fn bordered_inner(area: Rect) -> Rect {
+    Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    )
+}
+
 pub(crate) fn rename_button_rects(inner: Rect) -> (Rect, Rect, Rect) {
     let rects = action_button_row_rects(
         inner,
@@ -211,4 +220,344 @@ pub(crate) fn confirm_close_button_rects(inner: Rect) -> (Rect, Rect) {
         2,
     );
     (rects[0], rects[1])
+}
+
+pub(crate) fn new_linked_worktree_inner(area: Rect) -> Option<Rect> {
+    centered_popup_rect(area, 68, 10).map(bordered_inner)
+}
+
+pub(crate) fn new_linked_worktree_button_rects(inner: Rect) -> (Rect, Rect) {
+    let rects = action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: Some("↵"),
+                label: "create and open",
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "cancel",
+            },
+        ],
+        2,
+        2,
+    );
+    (rects[0], rects[1])
+}
+
+pub(super) fn render_new_linked_worktree_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    let Some(create) = app.worktree_create.as_ref() else {
+        return;
+    };
+
+    super::dim_background(frame, area);
+    let Some(inner) = render_modal_shell(frame, area, 68, 10, &app.palette) else {
+        return;
+    };
+
+    let rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas::<8>(inner);
+
+    render_modal_header(frame, rows[0], "new worktree", &app.palette);
+    frame.render_widget(
+        Paragraph::new(" branch").style(Style::default().fg(app.palette.overlay0)),
+        rows[1],
+    );
+    frame.render_widget(Clear, rows[2]);
+    frame.render_widget(
+        Paragraph::new(format!(" {}█", app.name_input)).style(
+            Style::default()
+                .fg(app.palette.text)
+                .bg(app.palette.surface0),
+        ),
+        rows[2],
+    );
+    frame.render_widget(
+        Paragraph::new(format!(" path {}", create.checkout_path.display()))
+            .style(Style::default().fg(app.palette.overlay0)),
+        rows[3],
+    );
+    if create.creating {
+        frame.render_widget(
+            Paragraph::new(" creating...").style(Style::default().fg(app.palette.yellow)),
+            rows[4],
+        );
+    }
+    if let Some(error) = &create.error {
+        frame.render_widget(
+            Paragraph::new(format!(" {error}")).style(Style::default().fg(app.palette.red)),
+            rows[5],
+        );
+    }
+
+    let (create_rect, cancel_rect) = new_linked_worktree_button_rects(inner);
+    render_action_button(
+        frame,
+        create_rect,
+        Some("↵"),
+        "create and open",
+        Style::default()
+            .fg(panel_contrast_fg(&app.palette))
+            .bg(app.palette.accent)
+            .add_modifier(Modifier::BOLD),
+    );
+    render_action_button(
+        frame,
+        cancel_rect,
+        Some("esc"),
+        "cancel",
+        Style::default()
+            .fg(app.palette.text)
+            .bg(app.palette.surface0)
+            .add_modifier(Modifier::BOLD),
+    );
+}
+
+pub(crate) fn open_existing_worktree_inner(area: Rect, entry_count: usize) -> Option<Rect> {
+    let height = (entry_count as u16).saturating_add(5).clamp(8, 18);
+    centered_popup_rect(area, 78, height).map(bordered_inner)
+}
+
+pub(crate) fn open_existing_worktree_entry_at(
+    inner: Rect,
+    entry_count: usize,
+    selected: usize,
+    col: u16,
+    row: u16,
+) -> Option<usize> {
+    if col < inner.x || col >= inner.x + inner.width {
+        return None;
+    }
+    let max_rows = inner.height.saturating_sub(4) as usize;
+    let start = selected.saturating_sub(max_rows.saturating_sub(1));
+    let first_row = inner.y.saturating_add(2);
+    let visible_offset = row.checked_sub(first_row)? as usize;
+    if visible_offset >= max_rows {
+        return None;
+    }
+    let idx = start.saturating_add(visible_offset);
+    (idx < entry_count).then_some(idx)
+}
+
+pub(crate) fn open_existing_worktree_button_rects(inner: Rect) -> (Rect, Rect) {
+    let rects = action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: Some("↵"),
+                label: "open",
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "cancel",
+            },
+        ],
+        2,
+        2,
+    );
+    (rects[0], rects[1])
+}
+
+pub(super) fn render_open_existing_worktree_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    let Some(open) = app.worktree_open.as_ref() else {
+        return;
+    };
+
+    super::dim_background(frame, area);
+    let height = (open.entries.len() as u16).saturating_add(5).clamp(8, 18);
+    let Some(inner) = render_modal_shell(frame, area, 78, height, &app.palette) else {
+        return;
+    };
+
+    render_modal_header(
+        frame,
+        Rect::new(inner.x, inner.y, inner.width, 1),
+        "open worktree",
+        &app.palette,
+    );
+    let max_rows = inner.height.saturating_sub(4) as usize;
+    let start = open.selected.saturating_sub(max_rows.saturating_sub(1));
+    for (visible_idx, (entry_idx, entry)) in open
+        .entries
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(max_rows)
+        .enumerate()
+    {
+        let selected = entry_idx == open.selected;
+        let y = inner.y.saturating_add(2 + visible_idx as u16);
+        let marker = if selected { "›" } else { " " };
+        let branch = entry.branch.as_deref().unwrap_or("detached");
+        let open_label = if entry.already_open_ws_idx.is_some() {
+            " open"
+        } else {
+            ""
+        };
+        let style = if selected {
+            Style::default()
+                .fg(app.palette.text)
+                .bg(app.palette.surface0)
+        } else {
+            Style::default().fg(app.palette.subtext0)
+        };
+        frame.render_widget(
+            Paragraph::new(format!(
+                "{marker} {branch}{open_label}  {}",
+                entry.path.display()
+            ))
+            .style(style),
+            Rect::new(inner.x, y, inner.width, 1),
+        );
+    }
+    if let Some(error) = &open.error {
+        frame.render_widget(
+            Paragraph::new(format!(" {error}")).style(Style::default().fg(app.palette.red)),
+            Rect::new(
+                inner.x,
+                inner.y + inner.height.saturating_sub(2),
+                inner.width,
+                1,
+            ),
+        );
+    }
+
+    let (open_rect, cancel_rect) = open_existing_worktree_button_rects(inner);
+    render_action_button(
+        frame,
+        open_rect,
+        Some("↵"),
+        "open",
+        Style::default()
+            .fg(panel_contrast_fg(&app.palette))
+            .bg(app.palette.accent)
+            .add_modifier(Modifier::BOLD),
+    );
+    render_action_button(
+        frame,
+        cancel_rect,
+        Some("esc"),
+        "cancel",
+        Style::default()
+            .fg(app.palette.text)
+            .bg(app.palette.surface0)
+            .add_modifier(Modifier::BOLD),
+    );
+}
+
+pub(crate) fn remove_worktree_inner(area: Rect) -> Option<Rect> {
+    centered_popup_rect(area, 72, 10).map(bordered_inner)
+}
+
+pub(crate) fn remove_worktree_button_rects(inner: Rect, force_confirmation: bool) -> (Rect, Rect) {
+    let primary = if force_confirmation {
+        "delete anyway"
+    } else {
+        "remove"
+    };
+    let rects = action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: Some("↵"),
+                label: primary,
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "cancel",
+            },
+        ],
+        2,
+        2,
+    );
+    (rects[0], rects[1])
+}
+
+pub(super) fn render_remove_worktree_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    let Some(remove) = app.worktree_remove.as_ref() else {
+        return;
+    };
+
+    super::dim_background(frame, area);
+    let Some(popup) = centered_popup_rect(area, 72, 10) else {
+        return;
+    };
+    let Some(inner) = render_panel_shell(frame, popup, app.palette.red, app.palette.panel_bg)
+    else {
+        return;
+    };
+
+    let rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas::<8>(inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(
+            " delete worktree checkout?",
+            Style::default()
+                .fg(app.palette.red)
+                .add_modifier(Modifier::BOLD),
+        )])),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(format!(" {}", remove.path.display()))
+            .style(Style::default().fg(app.palette.text)),
+        rows[1],
+    );
+    if remove.removing {
+        frame.render_widget(
+            Paragraph::new(" removing...").style(Style::default().fg(app.palette.yellow)),
+            rows[3],
+        );
+    }
+    if let Some(error) = &remove.error {
+        frame.render_widget(
+            Paragraph::new(format!(" {error}")).style(Style::default().fg(app.palette.red)),
+            rows[4],
+        );
+    }
+
+    let primary = if remove.force_confirmation {
+        "delete anyway"
+    } else {
+        "remove"
+    };
+    let (remove_rect, cancel_rect) = remove_worktree_button_rects(inner, remove.force_confirmation);
+    render_action_button(
+        frame,
+        remove_rect,
+        Some("↵"),
+        primary,
+        Style::default()
+            .fg(panel_contrast_fg(&app.palette))
+            .bg(app.palette.red)
+            .add_modifier(Modifier::BOLD),
+    );
+    render_action_button(
+        frame,
+        cancel_rect,
+        Some("esc"),
+        "cancel",
+        Style::default()
+            .fg(app.palette.text)
+            .bg(app.palette.surface0)
+            .add_modifier(Modifier::BOLD),
+    );
 }

@@ -17,6 +17,7 @@ mod session;
 pub mod state;
 mod terminal_targets;
 mod theme_sync;
+mod worktrees;
 
 use std::collections::{HashMap, HashSet};
 use std::future::pending;
@@ -359,6 +360,11 @@ impl App {
             request_clipboard_write: None,
             creating_new_tab: false,
             requested_new_tab_name: None,
+            worktree_directory: crate::worktree::expand_tilde_path(&config.worktrees.directory),
+            worktree_create: None,
+            worktree_open: None,
+            worktree_remove: None,
+            pending_worktree_action: None,
             rename_pane_target: None,
             request_complete_onboarding: false,
             name_input: String::new(),
@@ -558,6 +564,21 @@ impl App {
             if self.state.request_new_tab {
                 self.state.request_new_tab = false;
                 self.create_tab();
+                needs_render = true;
+            }
+
+            if let Some(request) = self.state.pending_worktree_action.take() {
+                match request {
+                    state::WorktreeActionRequest::New { ws_idx } => {
+                        self.open_new_linked_worktree_dialog(ws_idx)
+                    }
+                    state::WorktreeActionRequest::Open { ws_idx } => {
+                        self.open_existing_worktree_dialog(ws_idx)
+                    }
+                    state::WorktreeActionRequest::Remove { ws_idx } => {
+                        self.open_remove_linked_worktree_confirmation(ws_idx)
+                    }
+                }
                 needs_render = true;
             }
 
@@ -1071,6 +1092,9 @@ impl App {
             Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
                 input::handle_rename_key(&mut self.state, key_event);
             }
+            Mode::NewLinkedWorktree => self.handle_worktree_create_key(key_event),
+            Mode::OpenExistingWorktree => self.handle_worktree_open_key(key_event),
+            Mode::ConfirmRemoveWorktree => self.handle_worktree_remove_key(key_event),
             Mode::Resize => {
                 input::handle_resize_key(&mut self.state, key);
             }

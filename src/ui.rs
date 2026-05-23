@@ -19,7 +19,10 @@ mod status;
 mod tabs;
 mod widgets;
 
-use self::dialogs::{render_confirm_close_overlay, render_rename_overlay};
+use self::dialogs::{
+    render_confirm_close_overlay, render_new_linked_worktree_overlay,
+    render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
+};
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
     render_context_menu, render_global_launcher_menu, render_navigate_overlay,
@@ -48,7 +51,12 @@ use self::sidebar::{render_sidebar, render_sidebar_collapsed};
 use self::status::{render_config_diagnostic, render_toast_notification, toast_notification_rect};
 use self::tabs::render_tab_bar;
 pub(crate) use self::{
-    dialogs::{confirm_close_button_rects, confirm_close_popup_rect, rename_button_rects},
+    dialogs::{
+        confirm_close_button_rects, confirm_close_popup_rect, new_linked_worktree_button_rects,
+        new_linked_worktree_inner, open_existing_worktree_button_rects,
+        open_existing_worktree_entry_at, open_existing_worktree_inner,
+        remove_worktree_button_rects, remove_worktree_inner, rename_button_rects,
+    },
     settings::{settings_button_rects, settings_show_primary_action},
     sidebar::{
         agent_panel_body_rect, agent_panel_entries, agent_panel_scroll_metrics,
@@ -315,6 +323,11 @@ pub fn render(app: &AppState, frame: &mut Frame) {
         Mode::Prefix => render_prefix_overlay(app, frame, terminal_area),
         Mode::Resize => render_resize_overlay(app, frame, terminal_area),
         Mode::ConfirmClose => render_confirm_close_overlay(app, frame, terminal_area),
+        Mode::NewLinkedWorktree => render_new_linked_worktree_overlay(app, frame, terminal_area),
+        Mode::OpenExistingWorktree => {
+            render_open_existing_worktree_overlay(app, frame, terminal_area)
+        }
+        Mode::ConfirmRemoveWorktree => render_remove_worktree_overlay(app, frame, terminal_area),
         Mode::ContextMenu => {
             render_context_menu(app, frame);
         }

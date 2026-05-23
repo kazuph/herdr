@@ -79,6 +79,7 @@ The default keymap is prefix-first and avoids direct shortcuts that can steal in
 detach = "prefix+q"
 workspace_picker = "prefix+w"
 new_workspace = "prefix+shift+n"
+new_worktree = "prefix+shift+g"
 rename_workspace = "prefix+shift+w"
 close_workspace = "prefix+shift+d"
 new_tab = "prefix+c"
@@ -105,12 +106,28 @@ Optional actions are unset by default. Bind them with `prefix+` for prefix-mode 
 [keys]
 previous_workspace = "prefix+shift+left"
 next_workspace = "prefix+shift+right"
+open_worktree = "prefix+shift+o"
+remove_worktree = "prefix+shift+delete"
 next_tab = ["prefix+n", "ctrl+alt+]"]
 ```
 
 Key strings accept plain keys, modifier combinations such as `ctrl+a`, `shift+n`, `alt+1`, `cmd+k`, and special keys such as `enter`, `tab`, `esc`, `left`, `right`, `up`, and `down`. Named punctuation such as `minus`, `comma`, `ampersand`, `plus`, and `backtick` is also accepted. Plain direct printable keys such as `n` are unsafe because they intercept typing; use `prefix+n` unless you intentionally want a direct binding. Alt, Cmd/Super, and punctuation with modifiers depend on your terminal and tmux settings.
 
 If you have old custom keybindings and want the new defaults, run `herdr config reset-keys`. Herdr backs up `config.toml`, removes `[keys]` and `[[keys.command]]`, and uses built-in v2 defaults after restart or `herdr server reload-config`.
+
+## Git worktrees
+
+Workspace context menus can create a new Git worktree, open an existing checkout,
+or remove the selected linked checkout. New worktrees are created under:
+
+```toml
+[worktrees]
+directory = "~/.herdr/worktrees"
+```
+
+`new_worktree` defaults to `prefix+shift+g`. `open_worktree` and
+`remove_worktree` are unset by default so you can choose direct keyboard access
+only when you need it.
 
 ## Indexed jumps
 

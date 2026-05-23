@@ -246,6 +246,9 @@ pub struct Keybinds {
     pub help: ActionKeybinds,
     pub settings: ActionKeybinds,
     pub new_workspace: ActionKeybinds,
+    pub new_worktree: ActionKeybinds,
+    pub open_worktree: ActionKeybinds,
+    pub remove_worktree: ActionKeybinds,
     pub rename_workspace: ActionKeybinds,
     pub close_workspace: ActionKeybinds,
     pub workspace_picker: ActionKeybinds,
@@ -375,6 +378,9 @@ impl Config {
             help: action!("keys.help", &self.keys.help),
             settings: action!("keys.settings", &self.keys.settings),
             new_workspace: action!("keys.new_workspace", &self.keys.new_workspace),
+            new_worktree: action!("keys.new_worktree", &self.keys.new_worktree),
+            open_worktree: action!("keys.open_worktree", &self.keys.open_worktree),
+            remove_worktree: action!("keys.remove_worktree", &self.keys.remove_worktree),
             rename_workspace: action!("keys.rename_workspace", &self.keys.rename_workspace),
             close_workspace: action!("keys.close_workspace", &self.keys.close_workspace),
             workspace_picker: action!("keys.workspace_picker", &self.keys.workspace_picker),
@@ -1048,6 +1054,17 @@ mod tests {
         assert!(keybinds
             .split_horizontal
             .matches_prefix_key(TerminalKey::new(KeyCode::Char('-'), KeyModifiers::empty())));
+    }
+
+    #[test]
+    fn default_new_worktree_key_uses_prefix_shift_g() {
+        let keybinds = Config::default().keybinds();
+
+        assert!(keybinds
+            .new_worktree
+            .matches_prefix_key(TerminalKey::new(KeyCode::Char('G'), KeyModifiers::SHIFT)));
+        assert!(keybinds.open_worktree.bindings.is_empty());
+        assert!(keybinds.remove_worktree.bindings.is_empty());
     }
 
     #[test]

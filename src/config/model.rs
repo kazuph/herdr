@@ -96,6 +96,7 @@ pub struct Config {
     pub theme: ThemeConfig,
     pub terminal: TerminalConfig,
     pub keys: KeysConfig,
+    pub worktrees: WorktreesConfig,
     pub ui: UiConfig,
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
@@ -119,6 +120,12 @@ pub struct KeysConfig {
     pub settings: BindingConfig,
     /// Create a new workspace. Default: "prefix+shift+n"
     pub new_workspace: BindingConfig,
+    /// Create a Git worktree from the selected workspace. Default: "prefix+shift+g"
+    pub new_worktree: BindingConfig,
+    /// Open an existing Git worktree from the selected workspace. Unset by default.
+    pub open_worktree: BindingConfig,
+    /// Remove the selected worktree checkout after confirmation. Unset by default.
+    pub remove_worktree: BindingConfig,
     /// Rename the selected workspace. Default: "prefix+shift+w"
     pub rename_workspace: BindingConfig,
     /// Close the selected workspace. Default: "prefix+shift+d"
@@ -203,6 +210,13 @@ pub struct IndexedKeysConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
+pub struct WorktreesConfig {
+    /// Root directory under which Herdr creates <repo>/<branch-slug> checkouts.
+    pub directory: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default)]
 pub struct UiConfig {
     pub sidebar_width: u16,
     /// Minimum sidebar width (columns) when expanded. Default: 18.
@@ -254,6 +268,9 @@ impl Default for KeysConfig {
             help: BindingConfig::one("prefix+?"),
             settings: BindingConfig::one("prefix+s"),
             new_workspace: BindingConfig::one("prefix+shift+n"),
+            new_worktree: BindingConfig::one("prefix+shift+g"),
+            open_worktree: BindingConfig::empty(),
+            remove_worktree: BindingConfig::empty(),
             rename_workspace: BindingConfig::one("prefix+shift+w"),
             close_workspace: BindingConfig::one("prefix+shift+d"),
             workspace_picker: BindingConfig::one("prefix+w"),
@@ -291,6 +308,14 @@ impl Default for KeysConfig {
             toggle_sidebar: BindingConfig::one("prefix+b"),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
+        }
+    }
+}
+
+impl Default for WorktreesConfig {
+    fn default() -> Self {
+        Self {
+            directory: "~/.herdr/worktrees".into(),
         }
     }
 }
@@ -367,6 +392,19 @@ default_shell = "nu"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.terminal.default_shell, "nu");
+    }
+
+    #[test]
+    fn worktrees_directory_defaults_and_parses() {
+        let default_config = Config::default();
+        assert_eq!(default_config.worktrees.directory, "~/.herdr/worktrees");
+
+        let toml = r#"
+[worktrees]
+directory = "/tmp/herdr-worktrees"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.worktrees.directory, "/tmp/herdr-worktrees");
     }
 
     #[test]

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Added sidebar Git worktree actions for creating a new branch checkout, opening existing worktrees, and removing a selected linked checkout.
+
 ### Fixed
 - Herdr no longer treats leaked `HERDR_ENV=1` shell environment as a nested launch unless the new process actually has a Herdr parent process.
 - macOS system notifications for agent attention or completion now focus the matching Herdr pane when clicked.

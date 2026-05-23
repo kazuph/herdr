@@ -595,6 +595,9 @@ pub enum Mode {
     RenameWorkspace,
     RenameTab,
     RenamePane,
+    NewLinkedWorktree,
+    OpenExistingWorktree,
+    ConfirmRemoveWorktree,
     Resize,
     ConfirmClose,
     ContextMenu,
@@ -737,6 +740,47 @@ pub struct SettingsState {
     pub original_theme: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct WorktreeCreateState {
+    pub source_workspace_id: String,
+    pub source_repo_root: std::path::PathBuf,
+    pub repo_name: String,
+    pub branch: String,
+    pub checkout_path: std::path::PathBuf,
+    pub error: Option<String>,
+    pub creating: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorktreeOpenEntry {
+    pub path: std::path::PathBuf,
+    pub branch: Option<String>,
+    pub already_open_ws_idx: Option<usize>,
+}
+
+pub struct WorktreeOpenState {
+    pub source_repo_root: std::path::PathBuf,
+    pub entries: Vec<WorktreeOpenEntry>,
+    pub selected: usize,
+    pub error: Option<String>,
+}
+
+pub struct WorktreeRemoveState {
+    pub workspace_id: String,
+    pub repo_root: std::path::PathBuf,
+    pub path: std::path::PathBuf,
+    pub error: Option<String>,
+    pub removing: bool,
+    pub force_confirmation: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeActionRequest {
+    New { ws_idx: usize },
+    Open { ws_idx: usize },
+    Remove { ws_idx: usize },
+}
+
 pub(crate) enum DragTarget {
     WorkspaceReorder {
         source_ws_idx: usize,
@@ -817,9 +861,15 @@ pub struct ContextMenuState {
 }
 
 impl ContextMenuState {
-    pub fn items(&self) -> &'static [&'static str] {
+    pub fn items(&self) -> &[&'static str] {
         match self.kind {
-            ContextMenuKind::Workspace { .. } => &["Rename", "Close"],
+            ContextMenuKind::Workspace { .. } => &[
+                "New worktree",
+                "Open worktree",
+                "Remove worktree",
+                "Rename",
+                "Close",
+            ],
             ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
             ContextMenuKind::Pane {
                 has_manual_label: true,
@@ -924,6 +974,11 @@ pub struct AppState {
     pub request_clipboard_write: Option<Vec<u8>>,
     pub creating_new_tab: bool,
     pub requested_new_tab_name: Option<String>,
+    pub worktree_directory: std::path::PathBuf,
+    pub worktree_create: Option<WorktreeCreateState>,
+    pub worktree_open: Option<WorktreeOpenState>,
+    pub worktree_remove: Option<WorktreeRemoveState>,
+    pub pending_worktree_action: Option<WorktreeActionRequest>,
     pub rename_pane_target: Option<PaneId>,
     pub request_complete_onboarding: bool,
     pub name_input: String,
@@ -1177,6 +1232,11 @@ impl AppState {
             request_clipboard_write: None,
             creating_new_tab: false,
             requested_new_tab_name: None,
+            worktree_directory: crate::worktree::expand_tilde_path("~/.herdr/worktrees"),
+            worktree_create: None,
+            worktree_open: None,
+            worktree_remove: None,
+            pending_worktree_action: None,
             rename_pane_target: None,
             request_complete_onboarding: false,
             name_input: String::new(),

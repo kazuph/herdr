@@ -866,6 +866,7 @@ impl AppState {
                 self.apply_workspace_git_statuses(results);
                 Vec::new()
             }
+            AppEvent::WorktreeAddFinished(_) | AppEvent::WorktreeRemoveFinished(_) => Vec::new(),
         }
     }
 

@@ -54,6 +54,8 @@ impl App {
                 let previous_mode = self.state.mode;
                 self.launch_focused_scrollback_editor();
                 finish_action_context(&mut self.state, ActionContext::Prefix, previous_mode);
+            } else if self.execute_worktree_action(action) {
+                self.selection_autoscroll_deadline = None;
             } else {
                 execute_navigate_action_in_context(&mut self.state, action, ActionContext::Prefix);
             }
@@ -85,6 +87,8 @@ impl App {
         if let Some(action) = action_for_key(&self.state, raw_key, BindingDispatch::Prefix) {
             if action == NavigateAction::EditScrollback {
                 self.launch_focused_scrollback_editor();
+            } else if self.execute_worktree_action(action) {
+                self.selection_autoscroll_deadline = None;
             } else {
                 execute_navigate_action_in_context(
                     &mut self.state,
@@ -99,6 +103,17 @@ impl App {
         if let Some(binding) = command_for_key(&self.state, raw_key, BindingDispatch::Prefix) {
             self.launch_custom_command(binding, ActionContext::Navigate);
         }
+    }
+
+    fn execute_worktree_action(&mut self, action: NavigateAction) -> bool {
+        let ws_idx = self.state.selected;
+        match action {
+            NavigateAction::NewWorktree => self.open_new_linked_worktree_dialog(ws_idx),
+            NavigateAction::OpenWorktree => self.open_existing_worktree_dialog(ws_idx),
+            NavigateAction::RemoveWorktree => self.open_remove_linked_worktree_confirmation(ws_idx),
+            _ => return false,
+        }
+        true
     }
 
     fn pass_through_key_to_focused_pane(&mut self, key: TerminalKey) -> bool {
@@ -448,6 +463,9 @@ pub(crate) fn handle_navigate_key(state: &mut AppState, key: KeyEvent) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NavigateAction {
     NewWorkspace,
+    NewWorktree,
+    OpenWorktree,
+    RemoveWorktree,
     RenameWorkspace,
     CloseWorkspace,
     SwitchWorkspace(usize),
@@ -546,6 +564,9 @@ fn action_for_key(
         (&kb.settings, NavigateAction::Settings),
         (&kb.workspace_picker, NavigateAction::WorkspacePicker),
         (&kb.new_workspace, NavigateAction::NewWorkspace),
+        (&kb.new_worktree, NavigateAction::NewWorktree),
+        (&kb.open_worktree, NavigateAction::OpenWorktree),
+        (&kb.remove_worktree, NavigateAction::RemoveWorktree),
         (&kb.rename_workspace, NavigateAction::RenameWorkspace),
         (&kb.close_workspace, NavigateAction::CloseWorkspace),
         (&kb.previous_workspace, NavigateAction::PreviousWorkspace),
@@ -599,6 +620,24 @@ pub(super) fn execute_navigate_action_in_context(
     match action {
         NavigateAction::NewWorkspace => {
             state.request_new_workspace = true;
+            leave_navigate_mode(state);
+        }
+        NavigateAction::NewWorktree
+        | NavigateAction::OpenWorktree
+        | NavigateAction::RemoveWorktree => {
+            let ws_idx = state.selected;
+            state.pending_worktree_action = Some(match action {
+                NavigateAction::NewWorktree => {
+                    crate::app::state::WorktreeActionRequest::New { ws_idx }
+                }
+                NavigateAction::OpenWorktree => {
+                    crate::app::state::WorktreeActionRequest::Open { ws_idx }
+                }
+                NavigateAction::RemoveWorktree => {
+                    crate::app::state::WorktreeActionRequest::Remove { ws_idx }
+                }
+                _ => unreachable!(),
+            });
             leave_navigate_mode(state);
         }
         NavigateAction::RenameWorkspace => {

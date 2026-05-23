@@ -501,6 +501,36 @@ pub(crate) fn handle_confirm_close_key(state: &mut AppState, key: KeyEvent) {
 pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuState, idx: usize) {
     let item = menu.items().get(idx).copied();
     match (menu.kind, item) {
+        (ContextMenuKind::Workspace { ws_idx }, Some("New worktree")) => {
+            state.selected = ws_idx;
+            state.pending_worktree_action =
+                Some(crate::app::state::WorktreeActionRequest::New { ws_idx });
+            state.mode = if state.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
+        (ContextMenuKind::Workspace { ws_idx }, Some("Open worktree")) => {
+            state.selected = ws_idx;
+            state.pending_worktree_action =
+                Some(crate::app::state::WorktreeActionRequest::Open { ws_idx });
+            state.mode = if state.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
+        (ContextMenuKind::Workspace { ws_idx }, Some("Remove worktree")) => {
+            state.selected = ws_idx;
+            state.pending_worktree_action =
+                Some(crate::app::state::WorktreeActionRequest::Remove { ws_idx });
+            state.mode = if state.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
         (ContextMenuKind::Workspace { ws_idx }, Some("Rename")) => {
             open_rename_workspace(state, ws_idx);
         }
@@ -1023,5 +1053,24 @@ mod tests {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
         );
         assert_eq!(state.workspaces.len(), 1);
+    }
+
+    #[test]
+    fn context_menu_workspace_worktree_action_defers_to_app_runtime() {
+        let mut state = state_with_workspaces(&["a"]);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        apply_context_menu_action(&mut state, menu, 0);
+
+        assert_eq!(
+            state.pending_worktree_action,
+            Some(crate::app::state::WorktreeActionRequest::New { ws_idx: 0 })
+        );
+        assert_eq!(state.mode, Mode::Terminal);
     }
 }

@@ -49,6 +49,7 @@ mod terminal_theme;
 mod ui;
 mod update;
 mod workspace;
+mod worktree;
 
 fn init_logging() {
     crate::logging::init_file_logging("herdr.log");
@@ -99,6 +100,9 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # open_notification_target = "prefix+o"
 # workspace_picker = "prefix+w"
 # new_workspace = "prefix+shift+n"
+# new_worktree = "prefix+shift+g"
+# open_worktree = ""     # optional
+# remove_worktree = ""   # optional
 # rename_workspace = "prefix+shift+w"
 # close_workspace = "prefix+shift+d"
 # previous_workspace = "" # optional, unset by default
@@ -142,6 +146,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # tabs = ""       # e.g. "ctrl" makes ctrl+1..9 switch tabs directly
 # workspaces = "" # e.g. "ctrl+shift" makes ctrl+shift+1..9 switch workspaces directly
 # agents = ""     # e.g. "alt" makes alt+1..9 focus agent rows directly
+
+[worktrees]
+# Root directory for worktree checkouts created from the workspace sidebar.
+# directory = "~/.herdr/worktrees"
 
 [ui]
 # Sidebar width (auto-scaled based on workspace names, this sets the default)
