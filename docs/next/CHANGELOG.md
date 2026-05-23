@@ -4,6 +4,7 @@
 
 ### Added
 - Added sidebar Git worktree actions for creating a new branch checkout, opening existing worktrees, and removing a selected linked checkout.
+- Added a touch-friendly workspace menu trigger: tapping the active workspace card opens the same context menu as right click.
 
 ### Fixed
 - Herdr no longer treats leaked `HERDR_ENV=1` shell environment as a nested launch unless the new process actually has a Herdr parent process.

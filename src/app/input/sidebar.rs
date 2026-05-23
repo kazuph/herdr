@@ -482,7 +482,7 @@ mod tests {
 
     use super::super::{app_for_mouse_test, capture_snapshot, mouse, unique_temp_path};
     use crate::{
-        app::state::{AgentPanelScope, DragTarget, Mode},
+        app::state::{AgentPanelScope, ContextMenuKind, DragTarget, Mode},
         detect::Agent,
         workspace::Workspace,
     };
@@ -1018,6 +1018,31 @@ mod tests {
         let snapshot = capture_snapshot(&app.state);
         assert_eq!(snapshot.active, Some(1));
         assert_eq!(snapshot.selected, 1);
+    }
+
+    #[test]
+    fn tapping_active_workspace_opens_context_menu() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let target_row = app.state.view.workspace_card_areas[0].rect.y;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            2,
+            target_row,
+        ));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 2, target_row));
+
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(app.state.selected, 0);
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+        assert!(matches!(
+            app.state.context_menu.as_ref().map(|menu| menu.kind),
+            Some(ContextMenuKind::Workspace { ws_idx: 0 })
+        ));
     }
 
     #[test]

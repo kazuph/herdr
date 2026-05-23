@@ -596,6 +596,21 @@ impl AppState {
                     Some(_) => {}
                     None => {
                         if let Some(press) = workspace_press {
+                            if self.active == Some(press.ws_idx)
+                                && self.workspace_at_row(mouse.row) == Some(press.ws_idx)
+                            {
+                                self.selected = press.ws_idx;
+                                self.context_menu = Some(ContextMenuState {
+                                    kind: ContextMenuKind::Workspace {
+                                        ws_idx: press.ws_idx,
+                                    },
+                                    x: mouse.column,
+                                    y: mouse.row,
+                                    list: MenuListState::new(0),
+                                });
+                                self.mode = Mode::ContextMenu;
+                                return None;
+                            }
                             self.switch_workspace(press.ws_idx);
                             self.mode = Mode::Terminal;
                             return None;
