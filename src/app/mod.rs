@@ -519,6 +519,24 @@ impl App {
         self.full_redraw_pending = true;
     }
 
+    fn run_pending_worktree_action(&mut self) -> bool {
+        let Some(request) = self.state.pending_worktree_action.take() else {
+            return false;
+        };
+        match request {
+            state::WorktreeActionRequest::New { ws_idx } => {
+                self.open_new_linked_worktree_dialog(ws_idx)
+            }
+            state::WorktreeActionRequest::Open { ws_idx } => {
+                self.open_existing_worktree_dialog(ws_idx)
+            }
+            state::WorktreeActionRequest::Remove { ws_idx } => {
+                self.open_remove_linked_worktree_confirmation(ws_idx)
+            }
+        }
+        true
+    }
+
     pub async fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         if self.input_rx.is_none() {
             self.input_rx = Some(crate::raw_input::spawn_input_reader());
@@ -567,18 +585,7 @@ impl App {
                 needs_render = true;
             }
 
-            if let Some(request) = self.state.pending_worktree_action.take() {
-                match request {
-                    state::WorktreeActionRequest::New { ws_idx } => {
-                        self.open_new_linked_worktree_dialog(ws_idx)
-                    }
-                    state::WorktreeActionRequest::Open { ws_idx } => {
-                        self.open_existing_worktree_dialog(ws_idx)
-                    }
-                    state::WorktreeActionRequest::Remove { ws_idx } => {
-                        self.open_remove_linked_worktree_confirmation(ws_idx)
-                    }
-                }
+            if self.run_pending_worktree_action() {
                 needs_render = true;
             }
 

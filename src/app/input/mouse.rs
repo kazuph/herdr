@@ -1354,6 +1354,32 @@ mod tests {
     }
 
     #[test]
+    fn clicking_workspace_worktree_context_menu_runs_runtime_action() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("active")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.context_menu = Some(ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 2,
+            y: 2,
+            list: MenuListState::new(0),
+        });
+        app.state.mode = Mode::ContextMenu;
+
+        let menu = app.state.context_menu_rect().unwrap();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            menu.x + 2,
+            menu.y + 1,
+        ));
+
+        assert!(app.state.pending_worktree_action.is_none());
+        assert_eq!(app.state.mode, Mode::NewLinkedWorktree);
+        assert!(app.state.worktree_create.is_some());
+    }
+
+    #[test]
     fn clicking_agent_toast_focuses_target_pane() {
         let mut app = app_for_mouse_test();
         let active = Workspace::test_new("active");
