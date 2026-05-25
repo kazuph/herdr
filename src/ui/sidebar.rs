@@ -800,7 +800,45 @@ pub(super) fn render_sidebar(app: &AppState, frame: &mut Frame, area: Rect) {
 
     render_workspace_list(app, frame, ws_area, is_navigating);
     render_agent_detail(app, frame, detail_area);
+    render_selection_copy_status(app, frame, area);
     render_sidebar_toggle(app, frame, area, false, p);
+}
+
+fn render_selection_copy_status(app: &AppState, frame: &mut Frame, area: Rect) {
+    let Some(status) = app.selection_copy_status else {
+        return;
+    };
+    if area.width <= 1 || area.height == 0 {
+        return;
+    }
+
+    let p = &app.palette;
+    let line_label = if status.line_count == 1 {
+        "line"
+    } else {
+        "lines"
+    };
+    let message = format!(" Copied {} {line_label}", status.line_count);
+    let rect = Rect::new(
+        area.x,
+        area.y + area.height.saturating_sub(1),
+        area.width.saturating_sub(1),
+        1,
+    );
+    let buf = frame.buffer_mut();
+    for x in rect.x..rect.x + rect.width {
+        buf[(x, rect.y)].set_style(Style::default().bg(p.surface_dim));
+    }
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            truncate_to_width(&message, rect.width as usize),
+            Style::default()
+                .fg(p.green)
+                .bg(p.surface_dim)
+                .add_modifier(Modifier::BOLD),
+        )),
+        rect,
+    );
 }
 
 fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navigating: bool) {
@@ -1306,6 +1344,29 @@ mod tests {
         assert_eq!(cards[0].rect.x, sections[0].rect.x);
         assert_eq!(cards[0].rect.width, sections[0].rect.width);
         assert_eq!(cards[0].rect.y, sections[0].rect.y + 2);
+    }
+
+    #[test]
+    fn sidebar_renders_selection_copy_status_at_bottom() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.ensure_test_terminals();
+        app.selection_copy_status = Some(crate::app::state::SelectionCopyStatus { line_count: 3 });
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 80, 12));
+
+        let backend = ratatui::backend::TestBackend::new(80, 12);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, frame, app.view.sidebar_rect))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let y = app.view.sidebar_rect.y + app.view.sidebar_rect.height - 1;
+        let row = (app.view.sidebar_rect.x..app.view.sidebar_rect.x + app.view.sidebar_rect.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect::<String>();
+
+        assert!(row.contains("Copied 3 lines"));
     }
 
     #[test]

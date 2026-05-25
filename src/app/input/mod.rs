@@ -21,6 +21,7 @@ enum WheelRouting {
 
 const WORKSPACE_DRAG_THRESHOLD: u16 = 1;
 const TAB_DRAG_THRESHOLD: u16 = 1;
+const SELECTION_COPY_STATUS_DURATION: std::time::Duration = std::time::Duration::from_secs(2);
 
 mod modal;
 mod mouse;
@@ -222,12 +223,20 @@ impl App {
             self.save_workspace_panel_density(self.state.workspace_panel_density);
         }
 
-        if let Some(content) = self.state.request_clipboard_write.take() {
+        if let Some(request) = self.state.request_clipboard_write.take() {
             if self
                 .event_tx
-                .try_send(crate::events::AppEvent::ClipboardWrite { content })
-                .is_err()
+                .try_send(crate::events::AppEvent::ClipboardWrite {
+                    content: request.content,
+                })
+                .is_ok()
             {
+                self.state.selection_copy_status = Some(crate::app::state::SelectionCopyStatus {
+                    line_count: request.line_count,
+                });
+                self.selection_copy_status_deadline =
+                    Some(std::time::Instant::now() + SELECTION_COPY_STATUS_DURATION);
+            } else {
                 tracing::warn!("failed to queue clipboard write event");
             }
         }

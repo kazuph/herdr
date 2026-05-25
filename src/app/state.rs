@@ -942,6 +942,17 @@ pub struct ToastNotification {
     pub target: Option<ToastTarget>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardWriteRequest {
+    pub content: Vec<u8>,
+    pub line_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectionCopyStatus {
+    pub line_count: u32,
+}
+
 pub struct ReleaseNotesState {
     pub version: String,
     pub body: String,
@@ -996,7 +1007,7 @@ pub struct AppState {
     pub request_client_sound_config_reload: bool,
     /// Set when UI interaction requested a clipboard write that must be
     /// handled by the outer App/event loop instead of directly from AppState.
-    pub request_clipboard_write: Option<Vec<u8>>,
+    pub request_clipboard_write: Option<ClipboardWriteRequest>,
     pub creating_new_tab: bool,
     pub requested_new_tab_name: Option<String>,
     pub worktree_directory: std::path::PathBuf,
@@ -1033,6 +1044,7 @@ pub struct AppState {
     pub update_dismissed: bool,
     pub config_diagnostic: Option<String>,
     pub toast: Option<ToastNotification>,
+    pub selection_copy_status: Option<SelectionCopyStatus>,
     /// Last reported focus state for the outer terminal hosting herdr.
     /// None means unsupported or not yet reported, which preserves active-pane suppression.
     pub outer_terminal_focus: Option<bool>,
@@ -1309,6 +1321,7 @@ impl AppState {
             update_dismissed: false,
             config_diagnostic: None,
             toast: None,
+            selection_copy_status: None,
             outer_terminal_focus: None,
             prefix_code: KeyCode::Char('b'),
             prefix_mods: KeyModifiers::CONTROL,

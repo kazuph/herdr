@@ -161,6 +161,15 @@ impl App {
         }
 
         if self
+            .selection_copy_status_deadline
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.selection_copy_status_deadline = None;
+            self.state.selection_copy_status = None;
+            changed = true;
+        }
+
+        if self
             .next_animation_tick
             .is_some_and(|deadline| now >= deadline)
         {
@@ -410,6 +419,7 @@ impl App {
             include_resize_poll.then_some(self.next_resize_poll),
             self.config_diagnostic_deadline,
             self.toast_deadline,
+            self.selection_copy_status_deadline,
             self.next_animation_tick,
             self.git_refresh_deadline(),
             self.next_auto_update_check,
@@ -613,5 +623,25 @@ mod tests {
         // At scrollback bottom, can't scroll further down — should stop
         assert!(app.state.selection_autoscroll.is_none());
         assert!(app.selection_autoscroll_deadline.is_none());
+    }
+
+    #[test]
+    fn scheduled_tasks_clear_selection_copy_status_after_deadline() {
+        let mut app = super::super::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            tokio::sync::mpsc::unbounded_channel().1,
+            crate::api::EventHub::default(),
+        );
+        let now = Instant::now();
+        app.state.selection_copy_status =
+            Some(crate::app::state::SelectionCopyStatus { line_count: 2 });
+        app.selection_copy_status_deadline = Some(now);
+
+        assert!(app.handle_scheduled_tasks(now));
+
+        assert!(app.state.selection_copy_status.is_none());
+        assert!(app.selection_copy_status_deadline.is_none());
     }
 }

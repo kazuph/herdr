@@ -5,6 +5,7 @@
 ### Added
 - Added workspace sidebar sections for `⭐ favorites`, `💼 work`, and `🏠 personal`, with right-click workspace actions to assign sections and clickable section headers to collapse or expand each section.
 - Pane context menus can now be opened with a double-click in the main content area, matching the existing right-click menu without replacing text selection or scrolling.
+- Text selection copies now show a short sidebar confirmation such as `Copied 3 lines`.
 - The agents panel now follows expanded workspace sections, so agents in collapsed sections stay hidden while you focus on the visible spaces.
 - Added sidebar Git worktree actions for creating a new branch checkout, opening existing worktrees, and removing a selected linked checkout.
 - Added a touch-friendly workspace menu trigger: tapping the active workspace card opens the same context menu as right click.

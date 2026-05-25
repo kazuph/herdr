@@ -158,6 +158,11 @@ impl Selection {
         self.ordered()
     }
 
+    pub(crate) fn selected_line_count(&self) -> u32 {
+        let ((start_row, _), (end_row, _)) = self.ordered();
+        end_row.saturating_sub(start_row).saturating_add(1)
+    }
+
     /// Check whether a pane-relative cell (row, col) is inside the selection.
     pub fn contains(&self, viewport_row: u16, col: u16, metrics: Option<ScrollMetrics>) -> bool {
         if !self.is_visible() {

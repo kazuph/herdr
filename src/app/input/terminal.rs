@@ -323,6 +323,11 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
 
         assert!(app.state.selection.is_none());
+        assert_eq!(
+            app.state.selection_copy_status,
+            Some(crate::app::state::SelectionCopyStatus { line_count: 1 })
+        );
+        assert!(app.selection_copy_status_deadline.is_some());
     }
 
     #[tokio::test]

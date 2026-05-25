@@ -722,6 +722,7 @@ impl AppState {
         if !sel.finish() {
             return;
         }
+        let line_count = sel.selected_line_count();
 
         let ws_idx = match self.active {
             Some(ws_idx) if self.workspaces.get(ws_idx).is_some() => ws_idx,
@@ -734,7 +735,10 @@ impl AppState {
 
         if let Some(text) = text {
             if !text.is_empty() {
-                self.request_clipboard_write = Some(text.into_bytes());
+                self.request_clipboard_write = Some(crate::app::state::ClipboardWriteRequest {
+                    content: text.into_bytes(),
+                    line_count,
+                });
                 info!("copied selection to clipboard");
             }
         }
