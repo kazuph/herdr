@@ -220,7 +220,16 @@ pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
     let items: Vec<ListItem> = menu
         .items()
         .iter()
-        .map(|item| ListItem::new(Line::from(*item)))
+        .map(|item| {
+            if *item == "--" {
+                ListItem::new(Line::from(Span::styled(
+                    " --",
+                    Style::default().fg(p.overlay0),
+                )))
+            } else {
+                ListItem::new(Line::from(*item))
+            }
+        })
         .collect();
     let list = List::new(items)
         .style(Style::default().fg(p.text))

@@ -412,6 +412,7 @@ impl App {
             drag: None,
             workspace_press: None,
             tab_press: None,
+            last_pane_click: None,
             selection: None,
             selection_autoscroll: None,
             context_menu: None,

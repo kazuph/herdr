@@ -1,16 +1,19 @@
 use bytes::Bytes;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Direction, Rect};
+use std::time::{Duration, Instant};
 use tracing::warn;
 
 use crate::{
     app::state::{
         AgentPanelScope, AppState, ContextMenuKind, ContextMenuState, DragState, DragTarget,
-        MenuListState, Mode, TabPressState, ViewLayout, WorkspacePressState,
+        MenuListState, Mode, PaneClickState, TabPressState, ViewLayout, WorkspacePressState,
     },
     layout::{PaneInfo, SplitBorder},
     selection::Selection,
 };
+
+const PANE_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(500);
 
 #[cfg(test)]
 use super::WheelRouting;
@@ -25,6 +28,49 @@ use super::{
 };
 
 impl AppState {
+    fn open_pane_context_menu(&mut self, info: &PaneInfo, col: u16, row: u16) {
+        self.focus_pane(info.id);
+        let has_manual_label = self
+            .active
+            .and_then(|ws_idx| self.workspaces.get(ws_idx))
+            .and_then(|ws| ws.pane_state(info.id))
+            .and_then(|pane| self.terminals.get(&pane.attached_terminal_id))
+            .and_then(|terminal| terminal.manual_label.as_ref())
+            .is_some();
+        self.context_menu = Some(ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                pane_id: info.id,
+                has_manual_label,
+            },
+            x: col,
+            y: row,
+            list: MenuListState::new(0),
+        });
+        self.mode = Mode::ContextMenu;
+    }
+
+    fn register_pane_click_or_open_menu(&mut self, info: &PaneInfo, col: u16, row: u16) -> bool {
+        let now = Instant::now();
+        let is_double_click = self.last_pane_click.is_some_and(|click| {
+            click.pane_id == info.id
+                && click.col == col
+                && click.row == row
+                && now.saturating_duration_since(click.at) <= PANE_DOUBLE_CLICK_WINDOW
+        });
+        if is_double_click {
+            self.last_pane_click = None;
+            self.open_pane_context_menu(info, col, row);
+            return true;
+        }
+        self.last_pane_click = Some(PaneClickState {
+            pane_id: info.id,
+            col,
+            row,
+            at: now,
+        });
+        false
+    }
+
     pub(crate) fn handle_pane_mouse_only(&mut self, mouse: MouseEvent) {
         if self.mode != Mode::Terminal {
             return;
@@ -184,10 +230,12 @@ impl AppState {
                 }
 
                 if self.mode == Mode::ContextMenu {
-                    let item_idx = self.context_menu_item_at(mouse.column, mouse.row);
+                    let row_idx = self.context_menu_row_at(mouse.column, mouse.row);
                     if let Some(menu) = self.context_menu.take() {
-                        if let Some(idx) = item_idx {
+                        if let Some(idx) = row_idx.filter(|idx| !menu.is_separator(*idx)) {
                             apply_context_menu_action(self, menu, idx);
+                        } else if row_idx.is_some() {
+                            self.context_menu = Some(menu);
                         } else {
                             leave_modal(self);
                         }
@@ -422,6 +470,7 @@ impl AppState {
 
             MouseEventKind::Drag(MouseButton::Left) => {
                 if self.selection.is_some() {
+                    self.last_pane_click = None;
                     self.update_selection_drag(mouse.column, mouse.row);
                     return None;
                 }
@@ -546,6 +595,14 @@ impl AppState {
 
             MouseEventKind::Up(MouseButton::Left) => {
                 if self.selection.is_some() {
+                    let pane_info = self
+                        .pane_at(mouse.column, mouse.row)
+                        .filter(|info| {
+                            self.selection
+                                .as_ref()
+                                .is_some_and(|selection| selection.pane_id == info.id)
+                        })
+                        .cloned();
                     self.workspace_press = None;
                     self.tab_press = None;
                     self.drag = None;
@@ -554,7 +611,14 @@ impl AppState {
                     if was_click {
                         self.selection = None;
                         self.selection_autoscroll = None;
+                        if let Some(info) = pane_info {
+                            if self.register_pane_click_or_open_menu(&info, mouse.column, mouse.row)
+                            {
+                                return None;
+                            }
+                        }
                     } else {
+                        self.last_pane_click = None;
                         self.copy_selection();
                     }
                     return None;
@@ -660,6 +724,7 @@ impl AppState {
                 if !in_sidebar && self.scroll_selection_with_wheel(mouse) => {}
 
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if !in_sidebar => {
+                self.last_pane_click = None;
                 self.selection = None;
                 self.selection_autoscroll = None;
                 self.handle_terminal_wheel(mouse);
@@ -751,24 +816,8 @@ impl AppState {
 
             MouseEventKind::Down(MouseButton::Right) if !in_sidebar => {
                 if let Some(info) = self.pane_mouse_target(mouse.column, mouse.row).cloned() {
-                    self.focus_pane(info.id);
-                    let has_manual_label = self
-                        .active
-                        .and_then(|ws_idx| self.workspaces.get(ws_idx))
-                        .and_then(|ws| ws.pane_state(info.id))
-                        .and_then(|pane| self.terminals.get(&pane.attached_terminal_id))
-                        .and_then(|terminal| terminal.manual_label.as_ref())
-                        .is_some();
-                    self.context_menu = Some(ContextMenuState {
-                        kind: ContextMenuKind::Pane {
-                            pane_id: info.id,
-                            has_manual_label,
-                        },
-                        x: mouse.column,
-                        y: mouse.row,
-                        list: MenuListState::new(0),
-                    });
-                    self.mode = Mode::ContextMenu;
+                    self.last_pane_click = None;
+                    self.open_pane_context_menu(&info, mouse.column, mouse.row);
                 }
             }
 
@@ -891,6 +940,14 @@ impl AppState {
     }
 
     fn context_menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
+        let idx = self.context_menu_row_at(col, row)?;
+        self.context_menu
+            .as_ref()
+            .filter(|menu| !menu.is_separator(idx))
+            .map(|_| idx)
+    }
+
+    fn context_menu_row_at(&self, col: u16, row: u16) -> Option<usize> {
         let menu_rect = self.context_menu_rect()?;
         let inner_x = menu_rect.x + 1;
         let inner_y = menu_rect.y + 1;
@@ -1397,6 +1454,31 @@ mod tests {
         assert!(app.state.pending_worktree_action.is_none());
         assert_eq!(app.state.mode, Mode::NewLinkedWorktree);
         assert!(app.state.worktree_create.is_some());
+    }
+
+    #[test]
+    fn double_clicking_pane_opens_pane_context_menu() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("active")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 24));
+        let pane = app.state.view.pane_infos[0].clone();
+        let col = pane.inner_rect.x + 1;
+        let row = pane.inner_rect.y + 1;
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
+        assert_eq!(app.state.mode, Mode::Terminal);
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
+
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+        assert!(matches!(
+            app.state.context_menu.as_ref().map(|menu| menu.kind),
+            Some(ContextMenuKind::Pane { pane_id, .. }) if pane_id == pane.id
+        ));
     }
 
     #[test]

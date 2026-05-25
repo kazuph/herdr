@@ -430,10 +430,10 @@ fn workspace_list_visible_count(app: &AppState, area: Rect, scroll: usize) -> us
     let mut visible = 0usize;
     let mut skipped = 0usize;
     for (section, indices) in sectioned_workspace_indices(app) {
-        if used_rows.saturating_add(1) > body.height {
+        if used_rows.saturating_add(2) > body.height {
             break;
         }
-        used_rows = used_rows.saturating_add(1);
+        used_rows = used_rows.saturating_add(2);
 
         if !workspace_section_is_expanded(app, section) {
             continue;
@@ -590,7 +590,7 @@ fn compute_workspace_list_areas(
             section,
             rect: Rect::new(body.x, row_y, body.width, 1),
         });
-        row_y = row_y.saturating_add(1);
+        row_y = row_y.saturating_add(2);
 
         if !workspace_section_is_expanded(app, section) {
             continue;
@@ -908,6 +908,12 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
         let (icon, icon_style) = state_summary_icon(agg_state, agg_seen, app.spinner_tick, p);
         let display_name = ws.display_name_from(&app.terminals, &app.terminal_runtimes);
         let workspace_number = format!("{} ", i + 1);
+        let content_rect = Rect::new(
+            card.rect.x.saturating_add(1),
+            row_y,
+            card.rect.width.saturating_sub(1),
+            1,
+        );
         let mut line1 = vec![
             Span::styled(icon, icon_style),
             Span::styled(" ", Style::default()),
@@ -929,13 +935,13 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                     .sum::<usize>()
                     + upstream_labels.len()
                     + diff_labels.len();
-                let max_branch_width = (card.rect.width as usize)
+                let max_branch_width = (content_rect.width as usize)
                     .saturating_sub(prefix_width + labels_width + 2)
                     .max(1);
                 let branch_display = truncate_to_width(&branch, max_branch_width);
                 let reserved =
                     workspace_git_meta_width(&branch_display, &upstream_labels, &diff_labels);
-                let max_name_width = (card.rect.width as usize)
+                let max_name_width = (content_rect.width as usize)
                     .saturating_sub(prefix_width + reserved)
                     .max(1);
                 line1[3] =
@@ -954,10 +960,7 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
             }
         }
 
-        frame.render_widget(
-            Paragraph::new(Line::from(line1)),
-            Rect::new(card.rect.x, row_y, card.rect.width, 1),
-        );
+        frame.render_widget(Paragraph::new(Line::from(line1)), content_rect);
 
         if row_height > 1 && row_y + 1 < list_bottom {
             if let Some(branch) = ws.branch() {
@@ -970,7 +973,7 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                     .sum::<usize>()
                     + upstream_labels.len()
                     + diff_labels.len();
-                let max_branch_len = (card.rect.width as usize).saturating_sub(4 + reserved);
+                let max_branch_len = (content_rect.width as usize).saturating_sub(4 + reserved);
                 let branch_display = truncate_to_width(&branch, max_branch_len);
                 let branch_color = if selected || is_active {
                     p.mauve
@@ -989,7 +992,7 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                 ));
                 frame.render_widget(
                     Paragraph::new(Line::from(spans)),
-                    Rect::new(card.rect.x, row_y + 1, card.rect.width, 1),
+                    Rect::new(content_rect.x, row_y + 1, content_rect.width, 1),
                 );
             }
         }
@@ -1287,6 +1290,25 @@ mod tests {
     }
 
     #[test]
+    fn workspace_section_header_leaves_blank_row_and_cards_keep_full_width_hit_area() {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut work = Workspace::test_new("work");
+        work.section = crate::workspace::WorkspaceSection::Work;
+        app.workspaces = vec![work];
+        app.ensure_test_terminals();
+
+        let area = Rect::new(0, 0, 32, 24);
+        let cards = compute_workspace_card_areas(&app, area);
+        let sections = compute_workspace_section_header_areas(&app, area);
+
+        assert_eq!(sections.len(), 1);
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].rect.x, sections[0].rect.x);
+        assert_eq!(cards[0].rect.width, sections[0].rect.width);
+        assert_eq!(cards[0].rect.y, sections[0].rect.y + 2);
+    }
+
+    #[test]
     fn sorted_agent_panel_entries_group_attention_then_working_then_seen_idle() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![
@@ -1342,7 +1364,7 @@ mod tests {
             diff_stats: None,
         }]);
 
-        let area = Rect::new(0, 0, 24, 16);
+        let area = Rect::new(0, 0, 24, 24);
         app.workspace_panel_density = WorkspacePanelDensity::Full;
         let full_cards = compute_workspace_card_areas(&app, area);
         app.workspace_panel_density = WorkspacePanelDensity::Slim;
@@ -1385,8 +1407,9 @@ mod tests {
         let row = (0..32).map(|x| buffer[(x, 2)].symbol()).collect::<String>();
 
         assert!(row.contains("one"));
-        assert_eq!(buffer[(1, 2)].symbol(), " ");
-        assert_eq!(buffer[(2, 2)].symbol(), "1");
+        assert_eq!(buffer[(1, 2)].symbol(), "·");
+        assert_eq!(buffer[(2, 2)].symbol(), " ");
+        assert_eq!(buffer[(3, 2)].symbol(), "1");
         assert!(row.contains("1 "));
         assert!(row.contains("main"));
         assert!(row.contains("↑2"));
@@ -1428,8 +1451,9 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let row = (0..32).map(|x| buffer[(x, 3)].symbol()).collect::<String>();
 
-        assert!(row.starts_with("    +123 -11 main"));
-        assert!(!row.starts_with("     +123"));
+        let content = row.strip_prefix(' ').unwrap_or(&row);
+        assert!(content.starts_with("    +123 -11 main"));
+        assert!(!content.starts_with("     +123"));
     }
 
     #[test]

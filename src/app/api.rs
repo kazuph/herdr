@@ -415,8 +415,11 @@ impl App {
                             if let Some(workspace) = self.state.workspaces.get_mut(index) {
                                 workspace.set_custom_name(label);
                                 crate::logging::workspace_renamed(&workspace.id);
+                                self.schedule_session_save();
                             }
                         }
+                        self.render_dirty.store(true, Ordering::Release);
+                        self.render_notify.notify_one();
                         let workspace = self.workspace_info(index);
                         let tab = self
                             .tab_info(index, 0)
@@ -512,6 +515,8 @@ impl App {
                 ws.set_custom_name(params.label.clone());
                 crate::logging::workspace_renamed(&ws.id);
                 self.schedule_session_save();
+                self.render_dirty.store(true, Ordering::Release);
+                self.render_notify.notify_one();
                 self.emit_event(crate::api::schema::EventEnvelope {
                     event: crate::api::schema::EventKind::WorkspaceRenamed,
                     data: crate::api::schema::EventData::WorkspaceRenamed {

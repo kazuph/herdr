@@ -844,6 +844,14 @@ pub(crate) struct TabPressState {
     pub start_row: u16,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PaneClickState {
+    pub pane_id: PaneId,
+    pub col: u16,
+    pub row: u16,
+    pub at: std::time::Instant,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuKind {
     Workspace {
@@ -877,11 +885,11 @@ impl ContextMenuState {
                 "Duplicate",
                 "Rename",
                 "Close",
+                "--",
                 "⭐ favorite",
                 "💼 work",
                 "🏠 personal",
                 "No section",
-                "Toggle section",
             ],
             ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
             ContextMenuKind::Pane {
@@ -906,6 +914,10 @@ impl ContextMenuState {
                 "Close pane",
             ],
         }
+    }
+
+    pub fn is_separator(&self, idx: usize) -> bool {
+        self.items().get(idx).copied() == Some("--")
     }
 }
 
@@ -1010,6 +1022,7 @@ pub struct AppState {
     pub(crate) drag: Option<DragState>,
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
+    pub(crate) last_pane_click: Option<PaneClickState>,
     pub selection: Option<Selection>,
     pub selection_autoscroll: Option<SelectionAutoscroll>,
     pub context_menu: Option<ContextMenuState>,
@@ -1286,6 +1299,7 @@ impl AppState {
             drag: None,
             workspace_press: None,
             tab_press: None,
+            last_pane_click: None,
             selection: None,
             selection_autoscroll: None,
             context_menu: None,

@@ -136,6 +136,8 @@ impl App {
         if focus || self.state.active.is_none() {
             self.state.switch_workspace(idx);
             self.state.mode = Mode::Terminal;
+        } else {
+            self.state.ensure_workspace_visible(idx);
         }
         self.schedule_session_save();
         Ok(idx)

@@ -240,7 +240,7 @@ pub(crate) fn new_linked_worktree_button_rects(inner: Rect) -> (Rect, Rect) {
             },
         ],
         2,
-        2,
+        inner.height.saturating_sub(1),
     );
     (rects[0], rects[1])
 }
@@ -362,7 +362,7 @@ pub(crate) fn open_existing_worktree_button_rects(inner: Rect) -> (Rect, Rect) {
             },
         ],
         2,
-        2,
+        inner.height.saturating_sub(1),
     );
     (rects[0], rects[1])
 }
@@ -477,7 +477,7 @@ pub(crate) fn remove_worktree_button_rects(inner: Rect, force_confirmation: bool
             },
         ],
         2,
-        2,
+        inner.height.saturating_sub(1),
     );
     (rects[0], rects[1])
 }
@@ -560,4 +560,20 @@ pub(super) fn render_remove_worktree_overlay(app: &AppState, frame: &mut Frame, 
             .bg(app.palette.surface0)
             .add_modifier(Modifier::BOLD),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_worktree_buttons_render_below_entry_rows() {
+        let inner = open_existing_worktree_inner(Rect::new(0, 0, 120, 30), 3).unwrap();
+        let (open_rect, cancel_rect) = open_existing_worktree_button_rects(inner);
+        let first_entry_y = inner.y + 2;
+        let last_entry_y = first_entry_y + 2;
+
+        assert!(open_rect.y > last_entry_y);
+        assert_eq!(cancel_rect.y, open_rect.y);
+    }
 }

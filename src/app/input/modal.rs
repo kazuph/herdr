@@ -561,22 +561,6 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
                 Mode::Navigate
             };
         }
-        (ContextMenuKind::Workspace { ws_idx }, Some("Toggle section")) => {
-            if state.workspaces.get(ws_idx).is_some() {
-                let section = crate::ui::workspace_effective_section(state, ws_idx);
-                if !state.collapsed_workspace_sections.remove(&section) {
-                    state.collapsed_workspace_sections.insert(section);
-                }
-                state.workspace_scroll = 0;
-                state.agent_panel_scroll = 0;
-                state.mark_session_dirty();
-            }
-            state.mode = if state.active.is_some() {
-                Mode::Terminal
-            } else {
-                Mode::Navigate
-            };
-        }
         (ContextMenuKind::Workspace { ws_idx }, Some("New worktree")) => {
             state.selected = ws_idx;
             state.pending_worktree_action =
@@ -712,21 +696,47 @@ pub(crate) fn handle_context_menu_key(state: &mut AppState, key: KeyEvent) {
         }
         KeyCode::Up => {
             if let Some(menu) = &mut state.context_menu {
-                menu.list.move_prev();
+                move_context_menu_selection(menu, -1);
             }
         }
         KeyCode::Down => {
             if let Some(menu) = &mut state.context_menu {
-                menu.list.move_next(menu.items().len());
+                move_context_menu_selection(menu, 1);
             }
         }
         KeyCode::Enter => {
             if let Some(menu) = state.context_menu.take() {
                 let idx = menu.list.highlighted;
-                apply_context_menu_action(state, menu, idx);
+                if menu.is_separator(idx) {
+                    state.context_menu = Some(menu);
+                } else {
+                    apply_context_menu_action(state, menu, idx);
+                }
             }
         }
         _ => {}
+    }
+}
+
+fn move_context_menu_selection(menu: &mut ContextMenuState, direction: isize) {
+    let item_count = menu.items().len();
+    if item_count == 0 {
+        return;
+    }
+    let mut idx = menu.list.highlighted.min(item_count - 1);
+    for _ in 0..item_count {
+        idx = if direction < 0 {
+            idx.saturating_sub(1)
+        } else {
+            (idx + 1).min(item_count - 1)
+        };
+        if !menu.is_separator(idx) {
+            menu.list.highlighted = idx;
+            return;
+        }
+        if (direction < 0 && idx == 0) || (direction > 0 && idx + 1 == item_count) {
+            return;
+        }
     }
 }
 
@@ -1185,5 +1195,39 @@ mod tests {
 
         assert_eq!(state.pending_duplicate_workspace, Some(0));
         assert_eq!(state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn workspace_context_menu_groups_section_actions_without_toggle_item() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        assert!(menu.items().contains(&"--"));
+        assert!(!menu.items().contains(&"Toggle section"));
+        assert_eq!(menu.items()[7], "⭐ favorite");
+        assert!(menu.is_separator(6));
+    }
+
+    #[test]
+    fn context_menu_keyboard_skips_separator_rows() {
+        let mut state = state_with_workspaces(&["a"]);
+        state.context_menu = Some(ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(5),
+        });
+        state.mode = Mode::ContextMenu;
+
+        handle_context_menu_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.context_menu.as_ref().unwrap().list.highlighted, 7);
     }
 }
