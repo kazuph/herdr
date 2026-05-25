@@ -338,6 +338,24 @@ fn workspace_git_meta_width(
     branch.chars().count() + labels_width + 1
 }
 
+fn push_git_labels(
+    spans: &mut Vec<Span<'static>>,
+    upstream_labels: Vec<(String, bool)>,
+    diff_labels: Vec<(String, bool)>,
+    p: &Palette,
+) {
+    for (label, is_ahead) in upstream_labels {
+        let color = if is_ahead { p.green } else { p.red };
+        spans.push(Span::styled(" ", Style::default()));
+        spans.push(Span::styled(label, Style::default().fg(color)));
+    }
+    for (label, is_addition) in diff_labels {
+        let color = if is_addition { p.green } else { p.red };
+        spans.push(Span::styled(" ", Style::default()));
+        spans.push(Span::styled(label, Style::default().fg(color)));
+    }
+}
+
 pub(crate) fn workspace_list_rect(area: Rect, split_ratio: f32) -> Rect {
     let (ws_area, _) = expanded_sidebar_sections(area, split_ratio);
     ws_area
@@ -807,21 +825,12 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                 } else {
                     p.overlay0
                 };
+                push_git_labels(&mut line1, upstream_labels, diff_labels, p);
                 line1.push(Span::styled(" ", Style::default()));
                 line1.push(Span::styled(
                     branch_display,
                     Style::default().fg(branch_color),
                 ));
-                for (label, is_ahead) in upstream_labels {
-                    let color = if is_ahead { p.green } else { p.red };
-                    line1.push(Span::styled(" ", Style::default()));
-                    line1.push(Span::styled(label, Style::default().fg(color)));
-                }
-                for (label, is_addition) in diff_labels {
-                    let color = if is_addition { p.green } else { p.red };
-                    line1.push(Span::styled(" ", Style::default()));
-                    line1.push(Span::styled(label, Style::default().fg(color)));
-                }
             }
         }
 
@@ -848,22 +857,16 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                 } else {
                     p.overlay0
                 };
-                let mut spans = vec![
-                    Span::styled("    ", Style::default()),
-                    Span::styled(branch_display, Style::default().fg(branch_color)),
-                ];
-                if !upstream_labels.is_empty() || !diff_labels.is_empty() {
-                    for (label, is_ahead) in upstream_labels {
-                        spans.push(Span::styled(" ", Style::default()));
-                        let color = if is_ahead { p.green } else { p.red };
-                        spans.push(Span::styled(label, Style::default().fg(color)));
-                    }
-                    for (label, is_addition) in diff_labels {
-                        spans.push(Span::styled(" ", Style::default()));
-                        let color = if is_addition { p.green } else { p.red };
-                        spans.push(Span::styled(label, Style::default().fg(color)));
-                    }
+                let has_labels = !upstream_labels.is_empty() || !diff_labels.is_empty();
+                let mut spans = vec![Span::styled("    ", Style::default())];
+                push_git_labels(&mut spans, upstream_labels, diff_labels, p);
+                if has_labels {
+                    spans.push(Span::styled(" ", Style::default()));
                 }
+                spans.push(Span::styled(
+                    branch_display,
+                    Style::default().fg(branch_color),
+                ));
                 frame.render_widget(
                     Paragraph::new(Line::from(spans)),
                     Rect::new(card.rect.x, row_y + 1, card.rect.width, 1),
@@ -1218,6 +1221,8 @@ mod tests {
         assert!(row.contains("↓1"));
         assert!(row.contains("+123"));
         assert!(row.contains("-11"));
+        assert!(row.find("↑2").unwrap() < row.find("main").unwrap());
+        assert!(row.find("-11").unwrap() < row.find("main").unwrap());
     }
 
     #[test]
