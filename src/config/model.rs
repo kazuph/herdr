@@ -229,6 +229,8 @@ pub struct UiConfig {
     pub confirm_close: bool,
     /// Ask for a tab name before creating a new tab. Default: true.
     pub prompt_new_tab_name: bool,
+    /// Show the top tab bar in the main content area. Default: true.
+    pub show_tab_bar: bool,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
     /// Workspace sidebar density. Saved values are "full" or "slim". Default: "full".
@@ -329,6 +331,7 @@ impl Default for UiConfig {
             mouse_capture: true,
             confirm_close: true,
             prompt_new_tab_name: true,
+            show_tab_bar: true,
             show_agent_labels_on_pane_borders: false,
             workspace_panel_density: WorkspacePanelDensityConfig::Full,
             agent_panel_scope: AgentPanelScopeConfig::All,
@@ -454,6 +457,19 @@ prompt_new_tab_name = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.ui.prompt_new_tab_name);
+    }
+
+    #[test]
+    fn show_tab_bar_defaults_on_and_parses() {
+        let default_config = Config::default();
+        assert!(default_config.ui.show_tab_bar);
+
+        let toml = r#"
+[ui]
+show_tab_bar = false
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(!config.ui.show_tab_bar);
     }
 
     #[test]

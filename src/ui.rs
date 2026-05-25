@@ -162,8 +162,8 @@ fn compute_view_internal(
     let [sidebar_area, main_area] =
         Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).areas(area);
 
-    let has_tabs = app.active.and_then(|i| app.workspaces.get(i)).is_some();
-    let (tab_bar_rect, terminal_area) = if has_tabs && main_area.height > 1 {
+    let show_tab_bar = app.show_tab_bar && app.active.and_then(|i| app.workspaces.get(i)).is_some();
+    let (tab_bar_rect, terminal_area) = if show_tab_bar && main_area.height > 1 {
         let [tab_bar_rect, terminal_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
         (tab_bar_rect, terminal_area)
@@ -315,7 +315,7 @@ pub fn render(app: &AppState, frame: &mut Frame) {
     } else {
         render_sidebar(app, frame, sidebar_area);
     }
-    if app.view.layout != ViewLayout::Mobile {
+    if app.view.layout != ViewLayout::Mobile && app.show_tab_bar {
         render_tab_bar(app, frame, tab_bar_area);
     }
     render_panes(app, frame, terminal_area);
@@ -501,6 +501,22 @@ mod tests {
         compute_view(&mut app, Rect::new(0, 0, 100, 20));
 
         assert_eq!(app.view.sidebar_rect.width, 22);
+    }
+
+    #[test]
+    fn hidden_tab_bar_gives_main_height_to_terminal() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.show_tab_bar = false;
+
+        compute_view(&mut app, Rect::new(0, 0, 80, 20));
+
+        assert_eq!(app.view.tab_bar_rect, Rect::default());
+        assert_eq!(app.view.terminal_area.y, 0);
+        assert_eq!(app.view.terminal_area.height, 20);
     }
 
     #[test]

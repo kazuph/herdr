@@ -431,6 +431,7 @@ fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
 
     match subcommand {
         "list" => pane_list(&args[1..]),
+        "current" => pane_current(&args[1..]),
         "get" => pane_get(&args[1..]),
         "focus" => pane_focus(&args[1..]),
         "read" => pane_read(&args[1..]),
@@ -1320,6 +1321,49 @@ fn pane_list(args: &[String]) -> std::io::Result<i32> {
         id: "cli:pane:list".into(),
         method: Method::PaneList(PaneListParams { workspace_id }),
     })?)
+}
+
+fn pane_current(args: &[String]) -> std::io::Result<i32> {
+    if !args.is_empty() {
+        eprintln!("usage: herdr pane current");
+        return Ok(2);
+    }
+
+    let pane_id = match std::env::var(crate::integration::HERDR_PANE_ID_ENV_VAR) {
+        Ok(value) if !value.trim().is_empty() => normalize_pane_id(value.trim()),
+        _ => {
+            eprintln!(
+                "{} is not set; refusing to infer the current pane from focus",
+                crate::integration::HERDR_PANE_ID_ENV_VAR
+            );
+            return Ok(1);
+        }
+    };
+
+    let response = send_request(&Request {
+        id: "cli:pane:current".into(),
+        method: Method::PaneGet(PaneTarget {
+            pane_id: pane_id.clone(),
+        }),
+    })?;
+
+    if let Some(error) = response.get("error") {
+        eprintln!(
+            "{}",
+            serde_json::to_string(error).unwrap_or_else(|_| error.to_string())
+        );
+        return Ok(1);
+    }
+
+    println!("{}", current_pane_id_from_response(&response, &pane_id));
+    Ok(0)
+}
+
+fn current_pane_id_from_response(response: &serde_json::Value, fallback: &str) -> String {
+    response["result"]["pane"]["global_id"]
+        .as_str()
+        .unwrap_or(fallback)
+        .to_string()
 }
 
 fn pane_get(args: &[String]) -> std::io::Result<i32> {
@@ -2252,6 +2296,7 @@ fn print_terminal_help() {
 fn print_pane_help() {
     eprintln!("herdr pane commands:");
     eprintln!("  herdr pane list [--workspace <workspace_id>]");
+    eprintln!("  herdr pane current");
     eprintln!("  herdr pane get <pane_id>");
     eprintln!("  herdr pane focus <pane_id>");
     eprintln!("  herdr pane rename <pane_id> <label>|--clear");
@@ -2300,4 +2345,33 @@ fn print_session_help() {
 
 fn _print_json<T: Serialize>(value: &T) {
     println!("{}", serde_json::to_string(value).unwrap());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_pane_id_prefers_validated_global_id() {
+        let response = serde_json::json!({
+            "result": {
+                "pane": {
+                    "global_id": "p_42"
+                }
+            }
+        });
+
+        assert_eq!(current_pane_id_from_response(&response, "p_1"), "p_42");
+    }
+
+    #[test]
+    fn current_pane_id_falls_back_to_env_id_for_older_response_shapes() {
+        let response = serde_json::json!({
+            "result": {
+                "pane": {}
+            }
+        });
+
+        assert_eq!(current_pane_id_from_response(&response, "p_1"), "p_1");
+    }
 }

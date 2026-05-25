@@ -2137,6 +2137,16 @@ impl HeadlessServer {
 
         if self
             .app
+            .selection_copy_status_deadline
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.app.selection_copy_status_deadline = None;
+            self.app.state.selection_copy_status = None;
+            changed = true;
+        }
+
+        if self
+            .app
             .next_animation_tick
             .is_some_and(|deadline| now >= deadline)
         {
@@ -2439,6 +2449,20 @@ mod tests {
             ServerMessage::Frame(frame) => frame,
             other => panic!("expected frame, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn headless_scheduled_tasks_clear_selection_copy_status_after_deadline() {
+        let mut server = test_headless_server();
+        let now = Instant::now();
+        server.app.state.selection_copy_status =
+            Some(crate::app::state::SelectionCopyStatus { line_count: 2 });
+        server.app.selection_copy_status_deadline = Some(now);
+
+        assert!(server.handle_scheduled_tasks_headless(now));
+
+        assert!(server.app.state.selection_copy_status.is_none());
+        assert!(server.app.selection_copy_status_deadline.is_none());
     }
 
     fn read_server_shutdown_reason(bytes: Vec<u8>) -> Option<String> {

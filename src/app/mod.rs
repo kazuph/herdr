@@ -441,6 +441,7 @@ impl App {
             mouse_capture: config.ui.mouse_capture,
             confirm_close: config.ui.confirm_close,
             prompt_new_tab_name: config.ui.prompt_new_tab_name,
+            show_tab_bar: config.ui.show_tab_bar,
             show_agent_labels_on_pane_borders: config.ui.show_agent_labels_on_pane_borders,
             kitty_graphics_enabled: config.experimental.kitty_graphics,
             default_shell: config.terminal.default_shell.clone(),
@@ -936,6 +937,7 @@ impl App {
                 self.state.mouse_capture = config.ui.mouse_capture;
                 self.state.confirm_close = config.ui.confirm_close;
                 self.state.prompt_new_tab_name = config.ui.prompt_new_tab_name;
+                self.state.show_tab_bar = config.ui.show_tab_bar;
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
                 self.state.workspace_panel_density =
@@ -1422,7 +1424,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "[terminal]\ndefault_shell = \"nu\"\n[keys]\nnew_workspace = \"prefix+g\"\nprefix = \"ctrl+a\"\n[ui]\nworkspace_panel_density = \"slim\"\nagent_panel_scope = \"sort\"\n[ui.toast]\ndelivery = \"herdr\"\n",
+            "[terminal]\ndefault_shell = \"nu\"\n[keys]\nnew_workspace = \"prefix+g\"\nprefix = \"ctrl+a\"\n[ui]\nworkspace_panel_density = \"slim\"\nagent_panel_scope = \"sort\"\nshow_tab_bar = false\n[ui.toast]\ndelivery = \"herdr\"\n",
         )
         .unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -1450,6 +1452,7 @@ mod tests {
             app.state.workspace_panel_density,
             state::WorkspacePanelDensity::Slim
         );
+        assert!(!app.state.show_tab_bar);
         assert_eq!(app.state.default_shell, "nu");
         assert!(app.state.config_diagnostic.is_none());
         let toast = app.state.toast.as_ref().unwrap();
