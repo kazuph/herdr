@@ -559,6 +559,12 @@ pub struct WorkspaceCardArea {
     pub rect: Rect,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceSectionHeaderArea {
+    pub section: crate::workspace::WorkspaceSection,
+    pub rect: Rect,
+}
+
 /// Computed view geometry — derived from AppState + terminal size.
 /// Updated before each render, consumed by render and mouse handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -571,6 +577,7 @@ pub struct ViewState {
     pub layout: ViewLayout,
     pub sidebar_rect: Rect,
     pub workspace_card_areas: Vec<WorkspaceCardArea>,
+    pub workspace_section_header_areas: Vec<WorkspaceSectionHeaderArea>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
@@ -870,6 +877,11 @@ impl ContextMenuState {
                 "Duplicate",
                 "Rename",
                 "Close",
+                "⭐ favorite",
+                "💼 work",
+                "🏠 personal",
+                "No section",
+                "Toggle section",
             ],
             ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
             ContextMenuKind::Pane {
@@ -1023,6 +1035,8 @@ pub struct AppState {
     pub sidebar_collapsed: bool,
     /// Ratio of sidebar height allocated to the workspaces section.
     pub sidebar_section_split: f32,
+    pub collapsed_workspace_sections:
+        std::collections::BTreeSet<crate::workspace::WorkspaceSection>,
     pub workspace_panel_density: WorkspacePanelDensity,
     pub agent_panel_scope: AgentPanelScope,
     /// Capture mouse input for Herdr's own mouse UI. When false, Herdr only
@@ -1256,6 +1270,7 @@ impl AppState {
                 layout: ViewLayout::Desktop,
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                workspace_section_header_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
@@ -1291,6 +1306,7 @@ impl AppState {
             sidebar_width_auto: false,
             sidebar_collapsed: false,
             sidebar_section_split: 0.5,
+            collapsed_workspace_sections: std::collections::BTreeSet::new(),
             workspace_panel_density: WorkspacePanelDensity::Full,
             agent_panel_scope: AgentPanelScope::AllWorkspaces,
             mouse_capture: true,

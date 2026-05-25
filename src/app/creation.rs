@@ -156,6 +156,7 @@ impl App {
             self.state.agent_panel_scope,
             self.state.sidebar_width,
             self.state.sidebar_section_split,
+            &self.state.collapsed_workspace_sections,
         );
         let mut workspace_snapshot = snapshot.workspaces.remove(ws_idx);
         workspace_snapshot.id = None;
@@ -168,6 +169,7 @@ impl App {
             agent_panel_scope: self.state.agent_panel_scope,
             sidebar_width: Some(self.state.sidebar_width),
             sidebar_section_split: Some(self.state.sidebar_section_split),
+            collapsed_workspace_sections: self.state.collapsed_workspace_sections.clone(),
         };
         let (mut workspaces, terminals, terminal_runtimes) = crate::persist::restore(
             &duplicate_snapshot,

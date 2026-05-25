@@ -117,6 +117,8 @@ impl AppState {
             self.selection_autoscroll = None;
             self.active = Some(idx);
             self.selected = idx;
+            let section = crate::ui::workspace_effective_section(self, idx);
+            self.collapsed_workspace_sections.remove(&section);
             let workspace_id = self.workspaces[idx].id.clone();
             crate::logging::workspace_focused(&workspace_id);
             self.mark_session_dirty();
@@ -158,20 +160,24 @@ impl AppState {
             return;
         }
 
-        let first_idx = cards.first().map(|card| card.ws_idx).unwrap_or(0);
-        if idx < first_idx {
-            self.workspace_scroll = idx;
+        if cards.iter().any(|card| card.ws_idx == idx) {
             return;
         }
 
-        while cards.last().map(|card| card.ws_idx).unwrap_or(idx) < idx {
+        self.workspace_scroll = 0;
+        cards = crate::ui::compute_workspace_card_areas(self, self.view.sidebar_rect);
+        if cards.iter().any(|card| card.ws_idx == idx) {
+            return;
+        }
+
+        for _ in 0..self.workspaces.len() {
             let previous_scroll = self.workspace_scroll;
             self.workspace_scroll = self.workspace_scroll.saturating_add(1);
             if self.workspace_scroll == previous_scroll {
                 break;
             }
             cards = crate::ui::compute_workspace_card_areas(self, self.view.sidebar_rect);
-            if cards.is_empty() {
+            if cards.is_empty() || cards.iter().any(|card| card.ws_idx == idx) {
                 break;
             }
         }

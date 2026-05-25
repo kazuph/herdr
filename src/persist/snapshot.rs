@@ -25,6 +25,9 @@ pub struct SessionSnapshot {
     pub sidebar_width: Option<u16>,
     #[serde(default)]
     pub sidebar_section_split: Option<f32>,
+    #[serde(default)]
+    pub collapsed_workspace_sections:
+        std::collections::BTreeSet<crate::workspace::WorkspaceSection>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -33,6 +36,8 @@ pub struct WorkspaceSnapshot {
     pub id: Option<String>,
     #[serde(default)]
     pub custom_name: Option<String>,
+    #[serde(default)]
+    pub section: crate::workspace::WorkspaceSection,
     pub identity_cwd: PathBuf,
     pub tabs: Vec<TabSnapshot>,
     #[serde(default)]
@@ -107,6 +112,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
         Self {
             id: None,
             custom_name: snap.custom_name,
+            section: crate::workspace::WorkspaceSection::None,
             identity_cwd,
             tabs: vec![tab],
             active_tab: 0,
@@ -130,6 +136,8 @@ struct RawSessionSnapshot {
     sidebar_width: Option<u16>,
     #[serde(default)]
     sidebar_section_split: Option<f32>,
+    #[serde(default)]
+    collapsed_workspace_sections: std::collections::BTreeSet<crate::workspace::WorkspaceSection>,
 }
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
@@ -145,6 +153,7 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
         agent_panel_scope: raw.agent_panel_scope,
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
+        collapsed_workspace_sections: raw.collapsed_workspace_sections,
     })
 }
 
@@ -210,6 +219,7 @@ pub fn capture(
     agent_panel_scope: crate::app::state::AgentPanelScope,
     sidebar_width: u16,
     sidebar_section_split: f32,
+    collapsed_workspace_sections: &std::collections::BTreeSet<crate::workspace::WorkspaceSection>,
 ) -> SessionSnapshot {
     SessionSnapshot {
         version: SNAPSHOT_VERSION,
@@ -222,6 +232,7 @@ pub fn capture(
         agent_panel_scope,
         sidebar_width: Some(sidebar_width),
         sidebar_section_split: Some(sidebar_section_split),
+        collapsed_workspace_sections: collapsed_workspace_sections.clone(),
     }
 }
 
@@ -239,6 +250,7 @@ fn capture_workspace(
     WorkspaceSnapshot {
         id: Some(ws.id.clone()),
         custom_name: ws.custom_name.clone(),
+        section: ws.section,
         identity_cwd: ws
             .resolved_identity_cwd_from(terminals, terminal_runtimes)
             .unwrap_or_else(|| ws.identity_cwd.clone()),
@@ -382,6 +394,7 @@ mod tests {
             state.agent_panel_scope,
             state.sidebar_width,
             state.sidebar_section_split,
+            &state.collapsed_workspace_sections,
         )
     }
 
@@ -402,6 +415,7 @@ mod tests {
             agent_panel_scope: AgentPanelScope::CurrentWorkspace,
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
+            collapsed_workspace_sections: std::collections::BTreeSet::new(),
         };
         let json = serde_json::to_string(&snap).unwrap();
         let restored = parse_snapshot(&json).unwrap();
@@ -457,6 +471,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("wproj".to_string()),
                 custom_name: Some("pi-mono".to_string()),
+                section: crate::workspace::WorkspaceSection::Favorite,
                 identity_cwd: PathBuf::from("/home/can/Projects/herdr"),
                 tabs: vec![TabSnapshot {
                     custom_name: Some("api".to_string()),
@@ -478,6 +493,7 @@ mod tests {
             agent_panel_scope: AgentPanelScope::CurrentWorkspace,
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
+            collapsed_workspace_sections: std::collections::BTreeSet::new(),
             version: SNAPSHOT_VERSION,
         };
 
@@ -782,6 +798,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("test-ws".to_string()),
                 custom_name: Some("fallback test".to_string()),
+                section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: PathBuf::from("/tmp"),
                 tabs: vec![TabSnapshot {
                     custom_name: None,
@@ -803,6 +820,7 @@ mod tests {
             agent_panel_scope: AgentPanelScope::CurrentWorkspace,
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
+            collapsed_workspace_sections: std::collections::BTreeSet::new(),
         };
 
         let json = serde_json::to_string(&snap).unwrap();

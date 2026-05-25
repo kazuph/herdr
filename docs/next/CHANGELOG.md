@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Added workspace sidebar sections for `⭐ favorites`, `💼 work`, and `🏠 personal`, with right-click workspace actions to assign sections and collapse or expand each section.
+- The agents panel now follows expanded workspace sections, so agents in collapsed sections stay hidden while you focus on the visible spaces.
 - Added sidebar Git worktree actions for creating a new branch checkout, opening existing worktrees, and removing a selected linked checkout.
 - Added a touch-friendly workspace menu trigger: tapping the active workspace card opens the same context menu as right click.
 - Added a workspace context menu Duplicate action that opens a new workspace with the same tab, pane layout, and working directories.
@@ -16,6 +18,7 @@
 - The agent sidebar now shows only global pane IDs like `%22`, removing redundant workspace-local IDs such as `2-1`.
 - Workspace sidebar rows now keep a space between the status indicator and workspace number.
 - Workspace sidebar git details now align with workspace names and include working tree line stats like `+123 -11`.
+- Removed the extra leading space before the first workspace Git diff label.
 - `herdr --remote` now offers to restart the remote server after installing or replacing a remote binary, or when the running server version differs, even if the client/server protocol is still compatible.
 
 ### Breaking Changes

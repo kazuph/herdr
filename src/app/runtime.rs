@@ -218,6 +218,10 @@ impl App {
             crate::app::state::AgentPanelScope::CurrentWorkspace => self
                 .state
                 .active
+                .filter(|idx| {
+                    let section = crate::ui::workspace_effective_section(&self.state, *idx);
+                    crate::ui::workspace_section_is_expanded(&self.state, section)
+                })
                 .and_then(|idx| self.state.workspaces.get(idx))
                 .is_some_and(|ws| ws.has_working_pane(&self.state.terminals)),
             crate::app::state::AgentPanelScope::AllWorkspaces
@@ -225,6 +229,12 @@ impl App {
                 .state
                 .workspaces
                 .iter()
+                .enumerate()
+                .filter(|(idx, _)| {
+                    let section = crate::ui::workspace_effective_section(&self.state, *idx);
+                    crate::ui::workspace_section_is_expanded(&self.state, section)
+                })
+                .map(|(_, ws)| ws)
                 .any(|ws| ws.has_working_pane(&self.state.terminals)),
         }
     }

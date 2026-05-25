@@ -229,6 +229,7 @@ impl App {
             sidebar_width,
             sidebar_width_source,
             sidebar_section_split,
+            collapsed_workspace_sections,
         ) = if no_session {
             (
                 Vec::new(),
@@ -238,6 +239,7 @@ impl App {
                 config.ui.sidebar_width,
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
+                std::collections::BTreeSet::new(),
             )
         } else if let Some(snap) = crate::persist::load() {
             let (ws, terminals, terminal_runtimes) = crate::persist::restore(
@@ -266,6 +268,7 @@ impl App {
                         state::SidebarWidthSource::ConfigDefault
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
+                    snap.collapsed_workspace_sections.clone(),
                 )
             } else {
                 crate::logging::session_restored(ws.len(), "ok");
@@ -283,6 +286,7 @@ impl App {
                         state::SidebarWidthSource::ConfigDefault
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
+                    snap.collapsed_workspace_sections.clone(),
                 )
             }
         } else {
@@ -294,6 +298,7 @@ impl App {
                 config.ui.sidebar_width,
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
+                std::collections::BTreeSet::new(),
             )
         };
 
@@ -391,6 +396,7 @@ impl App {
                 layout: state::ViewLayout::Desktop,
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                workspace_section_header_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
@@ -426,6 +432,7 @@ impl App {
             sidebar_width_auto: false,
             sidebar_collapsed: false,
             sidebar_section_split,
+            collapsed_workspace_sections,
             workspace_panel_density,
             agent_panel_scope,
             mouse_capture: config.ui.mouse_capture,

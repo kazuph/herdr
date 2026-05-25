@@ -358,6 +358,7 @@ fn capture_snapshot(state: &AppState) -> crate::persist::SessionSnapshot {
         state.agent_panel_scope,
         state.sidebar_width,
         state.sidebar_section_split,
+        &state.collapsed_workspace_sections,
     )
 }
 

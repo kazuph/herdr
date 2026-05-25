@@ -133,6 +133,7 @@ mod tests {
             agent_panel_scope: AgentPanelScope::CurrentWorkspace,
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
+            collapsed_workspace_sections: std::collections::BTreeSet::new(),
         }
     }
 

@@ -72,6 +72,9 @@ impl AppState {
     }
 
     pub(super) fn scroll_workspace_list(&mut self, delta: i16) {
+        let area = self.workspace_list_rect();
+        let max_scroll =
+            crate::ui::workspace_list_scroll_metrics(self, area).max_offset_from_bottom;
         if delta.is_negative() {
             self.workspace_scroll = self
                 .workspace_scroll
@@ -79,16 +82,10 @@ impl AppState {
             return;
         }
 
-        for _ in 0..delta as usize {
-            let cards = crate::ui::compute_workspace_card_areas(self, self.view.sidebar_rect);
-            let Some(last) = cards.last() else {
-                break;
-            };
-            if last.ws_idx + 1 >= self.workspaces.len() {
-                break;
-            }
-            self.workspace_scroll = self.workspace_scroll.saturating_add(1);
-        }
+        self.workspace_scroll = self
+            .workspace_scroll
+            .saturating_add(delta as usize)
+            .min(max_scroll);
     }
 
     pub(super) fn agent_panel_scrollbar_target_at(
@@ -295,6 +292,32 @@ impl AppState {
         cards.iter().find_map(|card| {
             (row >= card.rect.y && row < card.rect.y + card.rect.height).then_some(card.ws_idx)
         })
+    }
+
+    pub(super) fn workspace_section_at_row(
+        &self,
+        row: u16,
+    ) -> Option<crate::workspace::WorkspaceSection> {
+        let sections = if self.view.workspace_section_header_areas.is_empty() {
+            crate::ui::compute_workspace_section_header_areas(self, self.view.sidebar_rect)
+        } else {
+            self.view.workspace_section_header_areas.clone()
+        };
+
+        sections.iter().find_map(|area| {
+            (row >= area.rect.y && row < area.rect.y + area.rect.height).then_some(area.section)
+        })
+    }
+
+    pub(super) fn toggle_workspace_section(&mut self, section: crate::workspace::WorkspaceSection) {
+        if self.collapsed_workspace_sections.remove(&section) {
+            self.mark_session_dirty();
+            return;
+        }
+        self.collapsed_workspace_sections.insert(section);
+        self.workspace_scroll = 0;
+        self.agent_panel_scroll = 0;
+        self.mark_session_dirty();
     }
 
     pub(super) fn collapsed_workspace_at_row(&self, row: u16) -> Option<usize> {
@@ -1273,11 +1296,15 @@ mod tests {
             .unwrap()
             .cwd = second_repo.clone();
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let first_card = app.state.view.workspace_card_areas[0].rect;
 
         assert_eq!(app.state.workspace_drop_index_at_row(0), Some(0));
-        assert_eq!(app.state.workspace_drop_index_at_row(1), Some(0));
-        assert_eq!(app.state.workspace_drop_index_at_row(2), Some(0));
-        assert_eq!(app.state.workspace_drop_index_at_row(3), Some(1));
+        assert_eq!(app.state.workspace_drop_index_at_row(first_card.y), Some(0));
+        assert_eq!(
+            app.state
+                .workspace_drop_index_at_row(first_card.y + first_card.height),
+            Some(1)
+        );
 
         let _ = fs::remove_dir_all(first_repo);
         let _ = fs::remove_dir_all(second_repo);
@@ -1303,7 +1330,7 @@ mod tests {
 
         let last = cards.last().unwrap().rect;
         assert_eq!(bottom_slot, last.y + last.height);
-        assert!(bottom_slot < app.state.sidebar_footer_rect().y.saturating_sub(1));
+        assert!(bottom_slot < app.state.sidebar_footer_rect().y);
     }
 
     #[test]

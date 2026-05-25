@@ -501,6 +501,82 @@ pub(crate) fn handle_confirm_close_key(state: &mut AppState, key: KeyEvent) {
 pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuState, idx: usize) {
     let item = menu.items().get(idx).copied();
     match (menu.kind, item) {
+        (ContextMenuKind::Workspace { ws_idx }, Some("⭐ favorite")) => {
+            let section = crate::workspace::WorkspaceSection::Favorite;
+            if let Some(ws) = state.workspaces.get_mut(ws_idx) {
+                ws.section = section;
+            }
+            state.collapsed_workspace_sections.remove(&section);
+            state.workspace_scroll = 0;
+            state.agent_panel_scroll = 0;
+            state.mark_session_dirty();
+            state.mode = if state.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
+        (ContextMenuKind::Workspace { ws_idx }, Some("💼 work")) => {
+            let section = crate::workspace::WorkspaceSection::Work;
+            if let Some(ws) = state.workspaces.get_mut(ws_idx) {
+                ws.section = section;
+            }
+            state.collapsed_workspace_sections.remove(&section);
+            state.workspace_scroll = 0;
+            state.agent_panel_scroll = 0;
+            state.mark_session_dirty();
+            state.mode = if state.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
+        (ContextMenuKind::Workspace { ws_idx }, Some("🏠 personal")) => {
+            let section = crate::workspace::WorkspaceSection::Personal;
+            if let Some(ws) = state.workspaces.get_mut(ws_idx) {
+                ws.section = section;
+            }
+            state.collapsed_workspace_sections.remove(&section);
+            state.workspace_scroll = 0;
+            state.agent_panel_scroll = 0;
+            state.mark_session_dirty();
+            state.mode = if state.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
+        (ContextMenuKind::Workspace { ws_idx }, Some("No section")) => {
+            let section = crate::workspace::WorkspaceSection::None;
+            if let Some(ws) = state.workspaces.get_mut(ws_idx) {
+                ws.section = section;
+            }
+            state.collapsed_workspace_sections.remove(&section);
+            state.workspace_scroll = 0;
+            state.agent_panel_scroll = 0;
+            state.mark_session_dirty();
+            state.mode = if state.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
+        (ContextMenuKind::Workspace { ws_idx }, Some("Toggle section")) => {
+            if state.workspaces.get(ws_idx).is_some() {
+                let section = crate::ui::workspace_effective_section(state, ws_idx);
+                if !state.collapsed_workspace_sections.remove(&section) {
+                    state.collapsed_workspace_sections.insert(section);
+                }
+                state.workspace_scroll = 0;
+                state.agent_panel_scroll = 0;
+                state.mark_session_dirty();
+            }
+            state.mode = if state.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
         (ContextMenuKind::Workspace { ws_idx }, Some("New worktree")) => {
             state.selected = ws_idx;
             state.pending_worktree_action =

@@ -335,6 +335,11 @@ impl AppState {
                         return None;
                     }
 
+                    if let Some(section) = self.workspace_section_at_row(mouse.row) {
+                        self.toggle_workspace_section(section);
+                        return None;
+                    }
+
                     if let Some(idx) = self.workspace_at_row(mouse.row) {
                         self.workspace_press = Some(WorkspacePressState {
                             ws_idx: idx,

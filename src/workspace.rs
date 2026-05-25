@@ -25,6 +25,41 @@ pub use self::{
     tab::Tab,
 };
 
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceSection {
+    #[default]
+    None,
+    Favorite,
+    Work,
+    Personal,
+}
+
+impl WorkspaceSection {
+    pub const ALL: [Self; 4] = [Self::Favorite, Self::Work, Self::Personal, Self::None];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "spaces",
+            Self::Favorite => "⭐ favorites",
+            Self::Work => "💼 work",
+            Self::Personal => "🏠 personal",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceGitStatus {
     pub workspace_id: String,
@@ -51,6 +86,8 @@ pub struct Workspace {
     pub id: String,
     /// User-provided override. If set, auto-derived identity stops updating.
     pub custom_name: Option<String>,
+    /// Optional user grouping used by the sidebar and agent panel filter.
+    pub section: WorkspaceSection,
     /// Fallback workspace identity source for tests, old snapshots, or missing runtimes.
     pub identity_cwd: PathBuf,
     /// Cached current git branch for the workspace repo.
@@ -182,6 +219,7 @@ impl Workspace {
             Self {
                 id: generate_workspace_id(),
                 custom_name: None,
+                section: WorkspaceSection::None,
                 identity_cwd: initial_cwd.clone(),
                 cached_git_branch: git_branch(&initial_cwd),
                 cached_git_ahead_behind: None,
@@ -711,6 +749,7 @@ impl Workspace {
         Self {
             id: generate_workspace_id(),
             custom_name: Some(name.to_string()),
+            section: WorkspaceSection::None,
             identity_cwd: identity_cwd.clone(),
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
