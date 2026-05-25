@@ -5,9 +5,11 @@
 ### Added
 - Added sidebar Git worktree actions for creating a new branch checkout, opening existing worktrees, and removing a selected linked checkout.
 - Added a touch-friendly workspace menu trigger: tapping the active workspace card opens the same context menu as right click.
+- Added a workspace context menu Duplicate action that opens a new workspace with the same tab, pane layout, and working directories.
 
 ### Fixed
 - Workspace cards now show Git branch names after upstream and diff stats so activity indicators stay closer to the workspace name.
+- Pane context menu splits now use the selected pane's current working directory.
 - Herdr no longer treats leaked `HERDR_ENV=1` shell environment as a nested launch unless the new process actually has a Herdr parent process.
 - macOS system notifications for agent attention or completion now focus the matching Herdr pane when clicked.
 - Antigravity CLI (`agy`) panes are now detected, including command permission prompts.

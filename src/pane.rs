@@ -1010,8 +1010,10 @@ impl PaneRuntime {
 
     /// Get the current working directory of the child shell process.
     pub fn cwd(&self) -> Option<std::path::PathBuf> {
-        let pid = self.child_pid.load(Ordering::Relaxed);
-        crate::platform::process_cwd(pid)
+        self.terminal.current_working_directory().or_else(|| {
+            let pid = self.child_pid.load(Ordering::Relaxed);
+            crate::platform::process_cwd(pid)
+        })
     }
 }
 

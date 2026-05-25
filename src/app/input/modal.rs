@@ -531,6 +531,15 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
                 Mode::Navigate
             };
         }
+        (ContextMenuKind::Workspace { ws_idx }, Some("Duplicate")) => {
+            state.selected = ws_idx;
+            state.pending_duplicate_workspace = Some(ws_idx);
+            state.mode = if state.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
         (ContextMenuKind::Workspace { ws_idx }, Some("Rename")) => {
             open_rename_workspace(state, ws_idx);
         }
@@ -583,11 +592,23 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
             }
             state.mode = Mode::Terminal;
         }
-        (ContextMenuKind::Pane { .. }, Some("Split vertical")) => {
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Split vertical")) => {
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
             state.split_pane(Direction::Horizontal);
             state.mode = Mode::Terminal;
         }
-        (ContextMenuKind::Pane { .. }, Some("Split horizontal")) => {
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Split horizontal")) => {
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
             state.split_pane(Direction::Vertical);
             state.mode = Mode::Terminal;
         }
@@ -1071,6 +1092,22 @@ mod tests {
             state.pending_worktree_action,
             Some(crate::app::state::WorktreeActionRequest::New { ws_idx: 0 })
         );
+        assert_eq!(state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn context_menu_workspace_duplicate_defers_to_app_runtime() {
+        let mut state = state_with_workspaces(&["a"]);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        apply_context_menu_action(&mut state, menu, 3);
+
+        assert_eq!(state.pending_duplicate_workspace, Some(0));
         assert_eq!(state.mode, Mode::Terminal);
     }
 }

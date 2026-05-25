@@ -205,6 +205,11 @@ impl App {
                 .store(true, std::sync::atomic::Ordering::Release);
             self.render_notify.notify_one();
         }
+        if self.run_pending_duplicate_workspace() {
+            self.render_dirty
+                .store(true, std::sync::atomic::Ordering::Release);
+            self.render_notify.notify_one();
+        }
         if previous_settings_section != crate::app::state::SettingsSection::Integrations
             && self.state.settings.section == crate::app::state::SettingsSection::Integrations
         {

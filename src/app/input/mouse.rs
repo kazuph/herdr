@@ -1480,7 +1480,7 @@ mod tests {
             kind: ContextMenuKind::Workspace { ws_idx: 1 },
             x: 2,
             y: 2,
-            list: MenuListState::new(4),
+            list: MenuListState::new(5),
         });
         app.state.mode = Mode::ContextMenu;
         handle_context_menu_key(

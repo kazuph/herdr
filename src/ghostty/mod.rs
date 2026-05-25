@@ -699,6 +699,12 @@ impl Terminal {
         self.get_usize(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_TOTAL_ROWS)
     }
 
+    pub fn current_working_directory(&self) -> Option<std::path::PathBuf> {
+        self.get_string(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_PWD)
+            .ok()
+            .and_then(|pwd| ghostty_pwd_to_path(&pwd))
+    }
+
     pub fn scrollback_rows(&self) -> Result<usize, Error> {
         self.get_usize(ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS)
     }
@@ -946,6 +952,18 @@ impl Terminal {
                 .into_result()?;
         }
         Ok(out)
+    }
+
+    fn get_string(&self, data: ffi::GhosttyTerminalData) -> Result<String, Error> {
+        let mut out = ffi::GhosttyString::default();
+        unsafe {
+            ffi::ghostty_terminal_get(self.raw, data, (&mut out as *mut ffi::GhosttyString).cast())
+                .into_result()?;
+            if out.ptr.is_null() || out.len == 0 {
+                return Ok(String::new());
+            }
+            Ok(String::from_utf8_lossy(slice::from_raw_parts(out.ptr, out.len)).into_owned())
+        }
     }
 
     pub fn kitty_image_placements(&self) -> Result<Vec<KittyImagePlacement>, Error> {
@@ -2345,6 +2363,48 @@ impl<'a> RowCellIter<'a> {
     }
 }
 
+fn ghostty_pwd_to_path(pwd: &str) -> Option<std::path::PathBuf> {
+    if pwd.is_empty() {
+        return None;
+    }
+    let path = if let Some(rest) = pwd.strip_prefix("file://") {
+        let path_start = rest.find('/').unwrap_or(0);
+        &rest[path_start..]
+    } else {
+        pwd
+    };
+    let decoded = percent_decode(path);
+    (!decoded.is_empty()).then(|| std::path::PathBuf::from(decoded))
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut idx = 0;
+    while idx < bytes.len() {
+        if bytes[idx] == b'%' && idx + 2 < bytes.len() {
+            if let (Some(high), Some(low)) = (hex_value(bytes[idx + 1]), hex_value(bytes[idx + 2]))
+            {
+                out.push((high << 4) | low);
+                idx += 3;
+                continue;
+            }
+        }
+        out.push(bytes[idx]);
+        idx += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2427,6 +2487,14 @@ mod tests {
                 | ffi::GhosttyOptimizeMode_GHOSTTY_OPTIMIZE_RELEASE_SMALL
                 | ffi::GhosttyOptimizeMode_GHOSTTY_OPTIMIZE_RELEASE_FAST
         ));
+    }
+
+    #[test]
+    fn ghostty_pwd_to_path_decodes_file_urls() {
+        assert_eq!(
+            ghostty_pwd_to_path("file://host/tmp/herdr%20space").as_deref(),
+            Some(std::path::Path::new("/tmp/herdr space"))
+        );
     }
 
     #[test]

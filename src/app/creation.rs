@@ -141,6 +141,62 @@ impl App {
         Ok(idx)
     }
 
+    pub(super) fn duplicate_workspace(&mut self, ws_idx: usize) -> std::io::Result<()> {
+        if ws_idx >= self.state.workspaces.len() {
+            return Err(std::io::Error::other("workspace not found"));
+        }
+
+        let (rows, cols) = self.state.estimate_pane_size();
+        let mut snapshot = crate::persist::capture(
+            &self.state.workspaces,
+            &self.state.terminals,
+            &self.state.terminal_runtimes,
+            Some(ws_idx),
+            ws_idx,
+            self.state.agent_panel_scope,
+            self.state.sidebar_width,
+            self.state.sidebar_section_split,
+        );
+        let mut workspace_snapshot = snapshot.workspaces.remove(ws_idx);
+        workspace_snapshot.id = None;
+
+        let duplicate_snapshot = crate::persist::SessionSnapshot {
+            version: snapshot.version,
+            workspaces: vec![workspace_snapshot],
+            active: Some(0),
+            selected: 0,
+            agent_panel_scope: self.state.agent_panel_scope,
+            sidebar_width: Some(self.state.sidebar_width),
+            sidebar_section_split: Some(self.state.sidebar_section_split),
+        };
+        let (mut workspaces, terminals, terminal_runtimes) = crate::persist::restore(
+            &duplicate_snapshot,
+            rows,
+            cols,
+            self.state.pane_scrollback_limit_bytes,
+            &self.state.default_shell,
+            self.event_tx.clone(),
+            self.render_notify.clone(),
+            self.render_dirty.clone(),
+        );
+        let Some(workspace) = workspaces.pop() else {
+            return Err(std::io::Error::other("workspace could not be restored"));
+        };
+
+        for (terminal_id, runtime) in terminal_runtimes {
+            self.state.terminal_runtimes.insert(terminal_id, runtime);
+        }
+        for (terminal_id, terminal) in terminals {
+            self.state.terminals.insert(terminal_id, terminal);
+        }
+        self.state.workspaces.push(workspace);
+        let duplicate_idx = self.state.workspaces.len() - 1;
+        self.state.switch_workspace(duplicate_idx);
+        self.state.mode = Mode::Terminal;
+        self.schedule_session_save();
+        Ok(())
+    }
+
     pub(super) fn collect_panes_for_workspace(
         &self,
         workspace_id: Option<&str>,

@@ -146,6 +146,10 @@ impl PaneTerminal {
         self.ghostty.input_state()
     }
 
+    pub fn current_working_directory(&self) -> Option<std::path::PathBuf> {
+        self.ghostty.current_working_directory()
+    }
+
     pub fn cursor_state(&self) -> Option<TerminalCursorState> {
         self.ghostty.cursor_state()
     }
@@ -532,6 +536,13 @@ impl GhosttyPaneTerminal {
             mouse_protocol_encoding,
             mouse_alternate_scroll,
         })
+    }
+
+    pub fn current_working_directory(&self) -> Option<std::path::PathBuf> {
+        let Ok(core) = self.core.lock() else {
+            return None;
+        };
+        core.terminal.current_working_directory()
     }
 
     pub fn cursor_state(&self) -> Option<TerminalCursorState> {
