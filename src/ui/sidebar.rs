@@ -8,6 +8,7 @@ use ratatui::{
 
 use super::scrollbar::{render_scrollbar, should_show_scrollbar};
 use super::status::{agent_icon, state_label, state_label_color, state_summary_icon};
+use super::widgets::panel_contrast_fg;
 use crate::app::state::{AgentPanelScope, Palette, WorkspacePanelDensity};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
@@ -852,8 +853,16 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
     let insertion_row = match app.drag.as_ref().map(|drag| &drag.target) {
         Some(crate::app::state::DragTarget::WorkspaceReorder {
             insert_idx: Some(insert_idx),
+            target_section: None,
             ..
         }) => workspace_drop_indicator_row(&app.view.workspace_card_areas, area, *insert_idx),
+        _ => None,
+    };
+    let target_section = match app.drag.as_ref().map(|drag| &drag.target) {
+        Some(crate::app::state::DragTarget::WorkspaceReorder {
+            target_section: Some(section),
+            ..
+        }) => Some(*section),
         _ => None,
     };
 
@@ -885,7 +894,20 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
     for section_area in &app.view.workspace_section_header_areas {
         let expanded = workspace_section_is_expanded(app, section_area.section);
         let arrow = if expanded { "▾" } else { "▸" };
-        let style = Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD);
+        let targeted = target_section == Some(section_area.section);
+        let style = if targeted {
+            Style::default()
+                .fg(panel_contrast_fg(p))
+                .bg(p.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD)
+        };
+        if targeted {
+            for x in section_area.rect.x..section_area.rect.x + section_area.rect.width {
+                frame.buffer_mut()[(x, section_area.rect.y)].set_style(style);
+            }
+        }
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(arrow, style),

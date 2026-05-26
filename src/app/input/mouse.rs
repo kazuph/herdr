@@ -485,7 +485,13 @@ impl AppState {
                     }
                 }
 
-                let workspace_drop_index = self.workspace_drop_index_at_row(mouse.row);
+                let workspace_target_section =
+                    self.workspace_section_drop_target_at(mouse.column, mouse.row);
+                let workspace_drop_index = if workspace_target_section.is_some() {
+                    None
+                } else {
+                    self.workspace_drop_index_at_row(mouse.row)
+                };
                 let tab_drop_index = self.tab_drop_index_at(mouse.column, mouse.row);
                 if self.drag.is_none() {
                     if let Some(press) = &self.workspace_press {
@@ -496,6 +502,7 @@ impl AppState {
                                 target: DragTarget::WorkspaceReorder {
                                     source_ws_idx: press.ws_idx,
                                     insert_idx: workspace_drop_index,
+                                    target_section: workspace_target_section,
                                 },
                             });
                         }
@@ -515,10 +522,16 @@ impl AppState {
                 }
 
                 if let Some(DragState {
-                    target: DragTarget::WorkspaceReorder { insert_idx, .. },
+                    target:
+                        DragTarget::WorkspaceReorder {
+                            insert_idx,
+                            target_section,
+                            ..
+                        },
                 }) = &mut self.drag
                 {
                     *insert_idx = workspace_drop_index;
+                    *target_section = workspace_target_section;
                 } else if let Some(DragState {
                     target:
                         DragTarget::TabReorder {
@@ -645,9 +658,20 @@ impl AppState {
                             DragTarget::WorkspaceReorder {
                                 source_ws_idx,
                                 insert_idx: Some(insert_idx),
+                                target_section: None,
                             },
                     }) => {
                         self.move_workspace(source_ws_idx, insert_idx);
+                    }
+                    Some(DragState {
+                        target:
+                            DragTarget::WorkspaceReorder {
+                                source_ws_idx,
+                                target_section: Some(section),
+                                ..
+                            },
+                    }) => {
+                        self.set_workspace_section(source_ws_idx, section);
                     }
                     Some(DragState {
                         target:

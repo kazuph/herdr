@@ -792,6 +792,7 @@ pub(crate) enum DragTarget {
     WorkspaceReorder {
         source_ws_idx: usize,
         insert_idx: Option<usize>,
+        target_section: Option<crate::workspace::WorkspaceSection>,
     },
     TabReorder {
         ws_idx: usize,

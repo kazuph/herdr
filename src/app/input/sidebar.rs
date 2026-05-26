@@ -309,6 +309,52 @@ impl AppState {
         })
     }
 
+    pub(super) fn workspace_section_drop_target_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<crate::workspace::WorkspaceSection> {
+        let sections = if self.view.workspace_section_header_areas.is_empty() {
+            crate::ui::compute_workspace_section_header_areas(self, self.view.sidebar_rect)
+        } else {
+            self.view.workspace_section_header_areas.clone()
+        };
+        let section = sections.iter().find_map(|area| {
+            (col >= area.rect.x
+                && col < area.rect.x + area.rect.width
+                && row >= area.rect.y
+                && row < area.rect.y + area.rect.height)
+                .then_some(area.section)
+        })?;
+        if self
+            .workspace_press
+            .as_ref()
+            .and_then(|press| self.workspaces.get(press.ws_idx))
+            .is_some_and(|ws| ws.section == section)
+        {
+            return None;
+        }
+        Some(section)
+    }
+
+    pub(super) fn set_workspace_section(
+        &mut self,
+        ws_idx: usize,
+        section: crate::workspace::WorkspaceSection,
+    ) {
+        let Some(ws) = self.workspaces.get_mut(ws_idx) else {
+            return;
+        };
+        if ws.section == section {
+            return;
+        }
+        ws.section = section;
+        self.collapsed_workspace_sections.remove(&section);
+        self.workspace_scroll = 0;
+        self.agent_panel_scroll = 0;
+        self.mark_session_dirty();
+    }
+
     pub(super) fn toggle_workspace_section(&mut self, section: crate::workspace::WorkspaceSection) {
         if self.collapsed_workspace_sections.remove(&section) {
             self.mark_session_dirty();
@@ -507,7 +553,7 @@ mod tests {
     use crate::{
         app::state::{AgentPanelScope, ContextMenuKind, DragTarget, Mode},
         detect::Agent,
-        workspace::Workspace,
+        workspace::{Workspace, WorkspaceSection},
     };
 
     #[test]
@@ -1104,6 +1150,7 @@ mod tests {
             Some(DragTarget::WorkspaceReorder {
                 source_ws_idx: 1,
                 insert_idx: Some(0),
+                target_section: None,
             })
         ));
         app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 2, target_row));
@@ -1126,6 +1173,78 @@ mod tests {
             .map(|ws| ws.custom_name.clone().unwrap())
             .collect();
         assert_eq!(captured_names, vec!["b", "a", "c"]);
+    }
+
+    #[test]
+    fn dragging_workspace_to_section_header_changes_section_without_reordering() {
+        let mut app = app_for_mouse_test();
+        let mut work = Workspace::test_new("work");
+        work.section = WorkspaceSection::Work;
+        let personal = Workspace::test_new("personal");
+        app.state.workspaces = vec![work, personal];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .collapsed_workspace_sections
+            .insert(WorkspaceSection::Work);
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+
+        let source = app
+            .state
+            .view
+            .workspace_card_areas
+            .iter()
+            .find(|card| card.ws_idx == 1)
+            .expect("personal card")
+            .rect;
+        let target = app
+            .state
+            .view
+            .workspace_section_header_areas
+            .iter()
+            .find(|area| area.section == WorkspaceSection::Work)
+            .expect("work header")
+            .rect;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            source.x + 1,
+            source.y,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            target.x + 1,
+            target.y,
+        ));
+        assert!(matches!(
+            app.state.drag.as_ref().map(|drag| &drag.target),
+            Some(DragTarget::WorkspaceReorder {
+                source_ws_idx: 1,
+                insert_idx: None,
+                target_section: Some(WorkspaceSection::Work),
+            })
+        ));
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            target.x + 1,
+            target.y,
+        ));
+
+        let names: Vec<_> = app
+            .state
+            .workspaces
+            .iter()
+            .map(|ws| ws.display_name())
+            .collect();
+        assert_eq!(names, vec!["work", "personal"]);
+        assert_eq!(app.state.workspaces[1].section, WorkspaceSection::Work);
+        assert!(!app
+            .state
+            .collapsed_workspace_sections
+            .contains(&WorkspaceSection::Work));
+        let snapshot = capture_snapshot(&app.state);
+        assert_eq!(snapshot.workspaces[1].section, WorkspaceSection::Work);
     }
 
     #[test]
