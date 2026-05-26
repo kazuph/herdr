@@ -231,7 +231,7 @@ pub struct UiConfig {
     pub prompt_new_tab_name: bool,
     /// Show the top tab bar in the main content area. Default: true.
     pub show_tab_bar: bool,
-    /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
+    /// Deprecated. Pane border titles are always shown; this is parsed for old configs.
     pub show_agent_labels_on_pane_borders: bool,
     /// Workspace sidebar density. Saved values are "full" or "slim". Default: "full".
     pub workspace_panel_density: WorkspacePanelDensityConfig,

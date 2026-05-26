@@ -120,17 +120,6 @@ pub(super) fn render_settings_overlay(app: &AppState, frame: &mut Frame, area: R
                 2,
             );
         }
-        SettingsSection::PaneLabels => {
-            render_settings_toggle(
-                frame,
-                content_area,
-                p,
-                "agent border labels",
-                "show detected agent names in split pane borders",
-                app.agent_border_labels_enabled(),
-                app.settings.list.selected,
-            );
-        }
         SettingsSection::Integrations => {
             render_settings_integrations(app, frame, content_area);
         }

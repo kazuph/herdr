@@ -3094,8 +3094,15 @@ mod tests {
         server.sync_foreground_client_state();
         server.resize_shared_runtime_to_effective_size();
 
-        let terminal_area = server.app.state.view.terminal_area;
-        let expected = (terminal_area.height, terminal_area.width.saturating_sub(1));
+        let pane = server
+            .app
+            .state
+            .view
+            .pane_infos
+            .iter()
+            .find(|pane| pane.id == active_pane)
+            .expect("active pane info");
+        let expected = (pane.inner_rect.height, pane.inner_rect.width);
         assert_eq!(
             server
                 .app

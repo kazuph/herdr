@@ -173,9 +173,6 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Set false to create tabs immediately with generated names.
 # prompt_new_tab_name = true
 
-# Show detected/reported agent labels in split pane borders when no manual pane name is set.
-# show_agent_labels_on_pane_borders = false
-
 # Agent panel view: "all" or "sort". Sort groups attention first, then working, then seen idle.
 # agent_panel_scope = "all"
 

@@ -638,25 +638,17 @@ pub enum SettingsSection {
     Theme,
     Sound,
     Toast,
-    PaneLabels,
     Integrations,
 }
 
 impl SettingsSection {
-    pub const ALL: &[Self] = &[
-        Self::Theme,
-        Self::Sound,
-        Self::Toast,
-        Self::PaneLabels,
-        Self::Integrations,
-    ];
+    pub const ALL: &[Self] = &[Self::Theme, Self::Sound, Self::Toast, Self::Integrations];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Theme => "theme",
             Self::Sound => "sound",
             Self::Toast => "toasts",
-            Self::PaneLabels => "pane labels",
             Self::Integrations => "integrations",
         }
     }
@@ -1112,10 +1104,6 @@ impl AppState {
 
     pub fn toast_delivery(&self) -> ToastDelivery {
         self.toast_config.delivery
-    }
-
-    pub fn agent_border_labels_enabled(&self) -> bool {
-        self.show_agent_labels_on_pane_borders
     }
 
     pub(crate) fn integration_updates_available(&self) -> bool {

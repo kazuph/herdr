@@ -11,7 +11,7 @@ use super::widgets::panel_contrast_fg;
 use crate::app::state::Palette;
 use crate::app::{AppState, Mode};
 use crate::layout::PaneInfo;
-use crate::terminal::TerminalRuntime;
+use crate::terminal::{TerminalRuntime, TerminalState};
 
 pub(crate) fn pane_is_scrolled_back(rt: &TerminalRuntime) -> bool {
     rt.scroll_metrics()
@@ -42,6 +42,10 @@ fn pane_border_title(label: &str, pane_width: u16) -> Option<String> {
     Some(format!(" {} ", truncate_label(label, max_label_width)))
 }
 
+fn pane_should_frame(area: Rect) -> bool {
+    area.width > 2 && area.height > 2
+}
+
 fn stable_terminal_inner_rect(pane_inner: Rect) -> Rect {
     if pane_inner.width <= 4 {
         return pane_inner;
@@ -55,12 +59,38 @@ fn stable_terminal_inner_rect(pane_inner: Rect) -> Rect {
     )
 }
 
-fn pane_inner_rect(area: Rect, framed: bool) -> Rect {
-    if framed {
+fn pane_inner_rect(area: Rect) -> Rect {
+    if pane_should_frame(area) {
         Block::default().borders(Borders::ALL).inner(area)
     } else {
         area
     }
+}
+
+fn command_label(argv: &[String]) -> Option<&str> {
+    let command = argv.first()?.trim();
+    if command.is_empty() {
+        return None;
+    }
+    command
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|label| !label.is_empty())
+}
+
+fn terminal_pane_label(terminal: &TerminalState) -> &str {
+    terminal
+        .manual_label
+        .as_deref()
+        .or(terminal.agent_name.as_deref())
+        .or_else(|| terminal.effective_agent_label())
+        .or_else(|| terminal.launch_argv.as_deref().and_then(command_label))
+        .unwrap_or("terminal")
+}
+
+fn pane_title(pane_id: crate::layout::PaneId, terminal: Option<&TerminalState>) -> String {
+    let label = terminal.map(terminal_pane_label).unwrap_or("terminal");
+    format!("%{} {label}", pane_id.raw())
 }
 
 fn runtime_for_tab_pane<'a>(
@@ -104,12 +134,10 @@ pub(super) fn resize_tab_panes(
     area: Rect,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
-    let multi_pane = tab.layout.pane_count() > 1;
-
     if tab.zoomed {
         let focused_id = tab.layout.focused();
         if let Some((terminal_id, rt)) = runtime_for_tab_pane(app, tab, focused_id) {
-            let pane_inner = pane_inner_rect(area, multi_pane);
+            let pane_inner = pane_inner_rect(area);
             let inner_rect = stable_terminal_inner_rect(pane_inner);
             if !app.direct_attach_resize_locks.contains(terminal_id) {
                 rt.resize(
@@ -124,11 +152,7 @@ pub(super) fn resize_tab_panes(
     }
 
     for info in tab.layout.panes(area) {
-        let pane_inner = if multi_pane {
-            Block::default().borders(Borders::ALL).inner(info.rect)
-        } else {
-            area
-        };
+        let pane_inner = pane_inner_rect(info.rect);
 
         if let Some((terminal_id, rt)) = runtime_for_tab_pane(app, tab, info.id) {
             let inner_rect = stable_terminal_inner_rect(pane_inner);
@@ -158,12 +182,11 @@ pub(super) fn compute_pane_infos(
         return Vec::new();
     };
 
-    let multi_pane = ws.layout.pane_count() > 1;
     let terminal_active = app.mode == Mode::Terminal;
 
     if ws.zoomed {
         let focused_id = ws.layout.focused();
-        let pane_inner = pane_inner_rect(area, multi_pane);
+        let pane_inner = pane_inner_rect(area);
         let mut inner_rect = pane_inner;
         let mut scrollbar_rect = None;
         if let Some(rt) = app.runtime_for_pane_in_workspace(ws_idx, focused_id) {
@@ -193,18 +216,18 @@ pub(super) fn compute_pane_infos(
     let mut pane_infos = ws.layout.panes(area);
 
     for info in &mut pane_infos {
-        let pane_inner = if multi_pane {
-            let border_set = if info.is_focused && terminal_active {
-                ratatui::symbols::border::THICK
-            } else {
-                ratatui::symbols::border::PLAIN
-            };
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_set(border_set);
+        let border_set = if info.is_focused && terminal_active {
+            ratatui::symbols::border::THICK
+        } else {
+            ratatui::symbols::border::PLAIN
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_set(border_set);
+        let pane_inner = if pane_should_frame(info.rect) {
             block.inner(info.rect)
         } else {
-            area
+            info.rect
         };
 
         let mut inner_rect = pane_inner;
@@ -247,7 +270,7 @@ pub(super) fn render_panes(app: &AppState, frame: &mut Frame, area: Rect) {
 
     for info in &app.view.pane_infos {
         if let Some(rt) = app.runtime_for_pane_in_workspace(ws_idx, info.id) {
-            if multi_pane {
+            if pane_should_frame(info.rect) {
                 let (border_style, border_set) = if info.is_focused && terminal_active {
                     (
                         Style::default().fg(app.palette.accent),
@@ -269,13 +292,11 @@ pub(super) fn render_panes(app: &AppState, frame: &mut Frame, area: Rect) {
                     .borders(Borders::ALL)
                     .border_style(border_style)
                     .border_set(border_set);
-                if let Some(title) = ws
+                let terminal = ws
                     .pane_state(info.id)
-                    .and_then(|pane| app.terminals.get(&pane.attached_terminal_id))
-                    .and_then(|terminal| {
-                        terminal.border_label(app.show_agent_labels_on_pane_borders)
-                    })
-                    .and_then(|label| pane_border_title(label, info.rect.width))
+                    .and_then(|pane| app.terminals.get(&pane.attached_terminal_id));
+                if let Some(title) =
+                    pane_border_title(&pane_title(info.id, terminal), info.rect.width)
                 {
                     block = block.title(Line::from(Span::styled(title, border_style)));
                 }
@@ -377,6 +398,8 @@ fn render_empty(app: &AppState, frame: &mut Frame, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::detect::{Agent, AgentState};
+    use crate::terminal::TerminalId;
     use crate::terminal::TerminalRuntime;
     use crate::workspace::Workspace;
 
@@ -389,6 +412,27 @@ mod tests {
         assert_eq!(pane_border_title("", 20), None);
         assert_eq!(pane_border_title("abcdef", 8).as_deref(), Some(" abc… "));
         assert_eq!(pane_border_title("abcdef", 4), None);
+    }
+
+    #[test]
+    fn pane_title_uses_id_and_best_available_label() {
+        let pane_id = crate::layout::PaneId::from_raw(5);
+        let terminal_id = TerminalId::alloc();
+        let mut terminal = TerminalState::new(terminal_id, "/tmp".into())
+            .with_launch_argv(vec!["/usr/local/bin/codex".into()]);
+
+        assert_eq!(pane_title(pane_id, Some(&terminal)), "%5 codex");
+
+        terminal.set_detected_state(Some(Agent::Claude), AgentState::Idle);
+        assert_eq!(pane_title(pane_id, Some(&terminal)), "%5 claude");
+
+        terminal.set_agent_name("agent-one".into());
+        assert_eq!(pane_title(pane_id, Some(&terminal)), "%5 agent-one");
+
+        terminal.set_manual_label(" reviewer ".into());
+        assert_eq!(pane_title(pane_id, Some(&terminal)), "%5 reviewer");
+
+        assert_eq!(pane_title(pane_id, None), "%5 terminal");
     }
 
     #[tokio::test]
@@ -414,7 +458,7 @@ mod tests {
 
         assert_eq!(info.rect, area);
         assert_eq!(info.scrollbar_rect, None);
-        assert_eq!(info.inner_rect, Rect::new(10, 3, 39, 8));
+        assert_eq!(info.inner_rect, Rect::new(11, 4, 37, 6));
     }
 
     #[tokio::test]
@@ -441,7 +485,7 @@ mod tests {
 
         assert_eq!(info.rect, area);
         assert_eq!(info.scrollbar_rect, None);
-        assert_eq!(info.inner_rect, Rect::new(10, 3, 39, 8));
+        assert_eq!(info.inner_rect, Rect::new(11, 4, 37, 6));
     }
 
     #[tokio::test]
@@ -495,7 +539,7 @@ mod tests {
 
         assert_eq!(info.rect, area);
         assert_eq!(info.scrollbar_rect, None);
-        assert_eq!(info.inner_rect, area);
+        assert_eq!(info.inner_rect, Rect::new(11, 4, 2, 6));
     }
 
     #[tokio::test]
@@ -525,7 +569,48 @@ mod tests {
         let info = &infos[0];
 
         assert_eq!(info.rect, area);
-        assert_eq!(info.scrollbar_rect, Some(Rect::new(49, 3, 1, 8)));
-        assert_eq!(info.inner_rect, Rect::new(10, 3, 39, 8));
+        assert_eq!(info.scrollbar_rect, Some(Rect::new(48, 4, 1, 6)));
+        assert_eq!(info.inner_rect, Rect::new(11, 4, 37, 6));
+    }
+
+    #[tokio::test]
+    async fn single_pane_renders_frame_with_id_and_label() {
+        let mut app = AppState::test_new();
+        let mut workspace = Workspace::test_new("test");
+        let root_pane = workspace.tabs[0].root_pane;
+        workspace.insert_test_runtime(
+            root_pane,
+            TerminalRuntime::test_with_screen_bytes(20, 5, b"ready"),
+        );
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        app.mode = Mode::Terminal;
+        app.ensure_test_terminals();
+        let terminal_id = app.workspaces[0].terminal_id(root_pane).unwrap().clone();
+        app.terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_manual_label("reviewer".into());
+
+        let area = Rect::new(0, 0, 32, 8);
+        app.view.pane_infos = compute_pane_infos(
+            &app,
+            area,
+            false,
+            crate::kitty_graphics::HostCellSize::default(),
+        );
+
+        let backend = ratatui::backend::TestBackend::new(32, 8);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_panes(&app, frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let top_row = (0..area.width)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+
+        assert!(top_row.contains(&format!("%{} reviewer", root_pane.raw())));
+        assert_ne!(buffer[(0, 0)].symbol(), " ");
     }
 }

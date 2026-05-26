@@ -193,9 +193,6 @@ impl App {
                 SettingsAction::SaveTheme(name) => self.save_theme(&name),
                 SettingsAction::SaveSound(enabled) => self.save_sound(enabled),
                 SettingsAction::SaveToastDelivery(delivery) => self.save_toast_delivery(delivery),
-                SettingsAction::SaveAgentBorderLabels(enabled) => {
-                    self.save_agent_border_labels(enabled)
-                }
                 SettingsAction::InstallRecommendedIntegrations => {
                     self.install_recommended_integrations()
                 }

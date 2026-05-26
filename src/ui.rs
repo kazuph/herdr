@@ -770,7 +770,10 @@ mod tests {
         compute_view(&mut app, Rect::new(0, 0, 40, 12));
 
         let info = app.view.pane_infos.first().expect("pane info");
-        assert_eq!(info.inner_rect.width + 1, app.view.terminal_area.width);
+        assert_eq!(
+            info.inner_rect.width + 1,
+            app.view.terminal_area.width.saturating_sub(2)
+        );
         assert_eq!(
             info.scrollbar_rect,
             Some(Rect::new(

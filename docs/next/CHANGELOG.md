@@ -28,6 +28,8 @@
 - Workspace context menus now group section actions behind a separator.
 - Selection copy confirmations now expire correctly in persistent server sessions.
 - Git worktree dialogs now keep action buttons below the worktree list instead of overlapping list content.
+- Pane frames now always render with pane IDs and labels, including single-pane terminals and renamed panes.
+- The settings popup no longer shows the old agent border label toggle because pane titles are now always visible.
 - `herdr --remote` now offers to restart the remote server after installing or replacing a remote binary, or when the running server version differs, even if the client/server protocol is still compatible.
 
 ### Breaking Changes
