@@ -172,6 +172,23 @@ impl TileLayout {
         set_ratio_at(&mut self.root, path, ratio.clamp(0.1, 0.9));
     }
 
+    /// Rebuild every pane in one split direction while preserving pane order.
+    pub fn arrange_all(&mut self, direction: Direction) {
+        let ids = self.pane_ids();
+        if ids.len() <= 1 {
+            return;
+        }
+        self.root = build_even_split(&ids, direction);
+        if !ids.contains(&self.focus) {
+            self.focus = ids[0];
+        }
+    }
+
+    /// Equalize split ratios while preserving the current split directions.
+    pub fn equalize(&mut self) {
+        equalize_ratios(&mut self.root);
+    }
+
     /// Adjust the nearest split in the given direction for the focused pane.
     /// `delta` is positive to grow, negative to shrink.
     pub fn resize_focused(&mut self, nav: NavDirection, delta: f32, area: Rect) {
@@ -373,6 +390,19 @@ fn collect_ids(node: &Node, ids: &mut Vec<PaneId>) {
     }
 }
 
+fn build_even_split(ids: &[PaneId], direction: Direction) -> Node {
+    match ids {
+        [] => Node::Pane(PaneId::from_raw(0)),
+        [id] => Node::Pane(*id),
+        [first, rest @ ..] => Node::Split {
+            direction,
+            ratio: 1.0 / ids.len() as f32,
+            first: Box::new(Node::Pane(*first)),
+            second: Box::new(build_even_split(rest, direction)),
+        },
+    }
+}
+
 fn split_at(node: Node, target: PaneId, direction: Direction, new_id: PaneId) -> Node {
     match node {
         Node::Pane(id) if id == target => Node::Split {
@@ -416,6 +446,24 @@ fn remove_pane(node: Node, target: PaneId) -> Option<Node> {
             }),
             (None, None) => None,
         },
+    }
+}
+
+fn equalize_ratios(node: &mut Node) -> usize {
+    match node {
+        Node::Pane(_) => 1,
+        Node::Split {
+            ratio,
+            first,
+            second,
+            ..
+        } => {
+            let first_count = equalize_ratios(first);
+            let second_count = equalize_ratios(second);
+            let total = first_count + second_count;
+            *ratio = first_count as f32 / total as f32;
+            total
+        }
     }
 }
 
@@ -475,5 +523,58 @@ fn split_rect(area: Rect, direction: Direction, ratio: f32) -> (Rect, Rect) {
                 Rect::new(area.x, area.y + first_h, area.width, second_h),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arrange_all_preserves_order_and_stacks_multiple_panes() {
+        let (mut layout, root) = TileLayout::new();
+        let second = layout.split_focused(Direction::Horizontal);
+        let third = layout.split_focused(Direction::Horizontal);
+        layout.focus_pane(second);
+
+        layout.arrange_all(Direction::Vertical);
+
+        assert_eq!(layout.pane_ids(), vec![root, second, third]);
+        assert_eq!(layout.focused(), second);
+        let panes = layout.panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(panes[0].rect, Rect::new(0, 0, 90, 10));
+        assert_eq!(panes[1].rect, Rect::new(0, 10, 90, 10));
+        assert_eq!(panes[2].rect, Rect::new(0, 20, 90, 10));
+    }
+
+    #[test]
+    fn arrange_all_lays_multiple_panes_side_by_side() {
+        let (mut layout, root) = TileLayout::new();
+        let second = layout.split_focused(Direction::Vertical);
+        let third = layout.split_focused(Direction::Vertical);
+
+        layout.arrange_all(Direction::Horizontal);
+
+        assert_eq!(layout.pane_ids(), vec![root, second, third]);
+        let panes = layout.panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(panes[0].rect, Rect::new(0, 0, 30, 30));
+        assert_eq!(panes[1].rect, Rect::new(30, 0, 30, 30));
+        assert_eq!(panes[2].rect, Rect::new(60, 0, 30, 30));
+    }
+
+    #[test]
+    fn equalize_preserves_directions_and_balances_leaf_sizes() {
+        let (mut layout, _root) = TileLayout::new();
+        layout.split_focused(Direction::Horizontal);
+        layout.split_focused(Direction::Horizontal);
+        layout.set_ratio_at(&[], 0.8);
+        layout.set_ratio_at(&[true], 0.8);
+
+        layout.equalize();
+
+        let panes = layout.panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(panes[0].rect.width, 30);
+        assert_eq!(panes[1].rect.width, 30);
+        assert_eq!(panes[2].rect.width, 30);
     }
 }

@@ -672,6 +672,36 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
             state.split_pane(Direction::Vertical);
             state.mode = Mode::Terminal;
         }
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Move to vertical split")) => {
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
+            state.arrange_panes(Direction::Horizontal);
+            state.mode = Mode::Terminal;
+        }
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Move to horizontal split")) => {
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
+            state.arrange_panes(Direction::Vertical);
+            state.mode = Mode::Terminal;
+        }
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Equalize pane sizes")) => {
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
+            state.equalize_pane_sizes();
+            state.mode = Mode::Terminal;
+        }
         (ContextMenuKind::Pane { .. }, Some("Zoom")) => {
             state.toggle_zoom();
             state.mode = Mode::Terminal;
@@ -788,7 +818,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use ratatui::layout::Rect;
+    use ratatui::layout::{Direction, Rect};
 
     use super::super::{capture_snapshot, state_with_workspaces};
     use super::*;
@@ -1240,6 +1270,95 @@ mod tests {
         assert!(!menu.items().contains(&"Toggle section"));
         assert_eq!(menu.items()[7], "⭐ favorite");
         assert!(menu.is_separator(6));
+    }
+
+    #[test]
+    fn pane_context_menu_includes_layout_actions() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                pane_id: crate::layout::PaneId::from_raw(1),
+                has_manual_label: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        assert!(menu.items().contains(&"Move to vertical split"));
+        assert!(menu.items().contains(&"Move to horizontal split"));
+        assert!(menu.items().contains(&"Equalize pane sizes"));
+    }
+
+    #[test]
+    fn pane_context_menu_moves_all_panes_to_horizontal_split() {
+        let mut state = state_with_workspaces(&["a"]);
+        state.active = Some(0);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let second = state.workspaces[0].test_split(Direction::Horizontal);
+        let third = state.workspaces[0].test_split(Direction::Horizontal);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                pane_id: second,
+                has_manual_label: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Move to horizontal split")
+            .unwrap();
+
+        apply_context_menu_action(&mut state, menu, idx);
+
+        let tab = &state.workspaces[0].tabs[0];
+        assert_eq!(tab.layout.focused(), second);
+        assert_eq!(tab.layout.pane_ids(), vec![root, second, third]);
+        let panes = tab.layout.panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(panes[0].rect, Rect::new(0, 0, 90, 10));
+        assert_eq!(panes[1].rect, Rect::new(0, 10, 90, 10));
+        assert_eq!(panes[2].rect, Rect::new(0, 20, 90, 10));
+        assert_eq!(state.mode, Mode::Terminal);
+        assert!(state.session_dirty);
+    }
+
+    #[test]
+    fn pane_context_menu_equalizes_pane_sizes() {
+        let mut state = state_with_workspaces(&["a"]);
+        state.active = Some(0);
+        let second = state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].tabs[0].layout.set_ratio_at(&[], 0.8);
+        state.workspaces[0].tabs[0]
+            .layout
+            .set_ratio_at(&[true], 0.8);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                pane_id: second,
+                has_manual_label: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Equalize pane sizes")
+            .unwrap();
+
+        apply_context_menu_action(&mut state, menu, idx);
+
+        let panes = state.workspaces[0].tabs[0]
+            .layout
+            .panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(panes[0].rect.width, 30);
+        assert_eq!(panes[1].rect.width, 30);
+        assert_eq!(panes[2].rect.width, 30);
+        assert_eq!(state.mode, Mode::Terminal);
+        assert!(state.session_dirty);
     }
 
     #[test]

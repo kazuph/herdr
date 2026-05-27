@@ -3,6 +3,8 @@
 
 use tracing::{info, warn};
 
+use ratatui::layout::Direction;
+
 use crate::detect::{Agent, AgentState};
 use crate::events::AppEvent;
 use crate::layout::{find_in_direction, NavDirection, PaneId};
@@ -607,6 +609,28 @@ impl AppState {
                 tab.layout.resize_focused(direction, 0.05, area);
                 self.mark_session_dirty();
             }
+        }
+    }
+
+    pub fn arrange_panes(&mut self, direction: Direction) {
+        if let Some(tab) = self
+            .active
+            .and_then(|i| self.workspaces.get_mut(i))
+            .and_then(|ws| ws.active_tab_mut())
+        {
+            tab.layout.arrange_all(direction);
+            self.mark_session_dirty();
+        }
+    }
+
+    pub fn equalize_pane_sizes(&mut self) {
+        if let Some(tab) = self
+            .active
+            .and_then(|i| self.workspaces.get_mut(i))
+            .and_then(|ws| ws.active_tab_mut())
+        {
+            tab.layout.equalize();
+            self.mark_session_dirty();
         }
     }
 
