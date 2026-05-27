@@ -29,6 +29,21 @@ install-hooks:
 build:
     cargo build --release --locked
 
+# Build, ad-hoc sign, and install to ~/.local/bin/herdr (macOS dev workflow)
+install-local: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin="target/release/herdr"
+    dest="${HERDR_INSTALL_DIR:-$HOME/.local/bin}/herdr"
+    if [[ "$(uname -s)" == Darwin ]]; then
+        codesign -s - -f "$bin"
+    fi
+    install -m 755 "$bin" "$dest"
+    if [[ "$(uname -s)" == Darwin ]]; then
+        codesign -s - -f "$dest"
+    fi
+    echo "installed $dest"
+
 # Build the website and documentation
 website-build:
     cd website && bun install --frozen-lockfile && bun run build

@@ -634,6 +634,45 @@ fn collect_positive_pids(pids: Vec<libc::pid_t>, count: usize) -> Vec<u32> {
         .collect()
 }
 
+/// Re-applies an ad-hoc Mach-O signature when the current one is invalid.
+///
+/// macOS rejects copied or replaced developer builds with SIGKILL when the
+/// embedded linker signature no longer matches the file contents.
+pub fn refresh_ad_hoc_code_signature(path: &Path) -> std::io::Result<()> {
+    if ad_hoc_code_signature_is_valid(path) {
+        return Ok(());
+    }
+    force_refresh_ad_hoc_code_signature(path)
+}
+
+pub fn force_refresh_ad_hoc_code_signature(path: &Path) -> std::io::Result<()> {
+    let status = Command::new("codesign")
+        .args(["-s", "-", "-f"])
+        .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "codesign failed for {} (exit {})",
+            path.display(),
+            status.code().unwrap_or(-1)
+        )))
+    }
+}
+
+fn ad_hoc_code_signature_is_valid(path: &Path) -> bool {
+    Command::new("codesign")
+        .args(["--verify", "--strict"])
+        .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 pub fn signal_processes(pids: &[u32], signal: Signal) {
     let sig = match signal {
         Signal::Hangup => libc::SIGHUP,
@@ -666,6 +705,14 @@ pub fn process_exists(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+
+    #[test]
+    fn refresh_ad_hoc_code_signature_accepts_current_test_binary() {
+        let exe = env::current_exe().expect("current test binary");
+        refresh_ad_hoc_code_signature(&exe).expect("codesign refresh should succeed");
+        assert!(ad_hoc_code_signature_is_valid(&exe));
+    }
 
     fn build_procargs2(exec_path: &str, argv: &[&str], env: &[&str]) -> Vec<u8> {
         let mut buf = Vec::new();

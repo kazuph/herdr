@@ -23,6 +23,15 @@ pub fn session_processes(_child_pid: u32) -> Vec<u32> {
 }
 
 /// Unsupported platform stub.
+pub fn refresh_ad_hoc_code_signature(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+pub fn force_refresh_ad_hoc_code_signature(path: &std::path::Path) -> std::io::Result<()> {
+    refresh_ad_hoc_code_signature(path)
+}
+
+/// Unsupported platform stub.
 pub fn signal_processes(_pids: &[u32], _signal: Signal) {}
 
 /// Unsupported platform stub.

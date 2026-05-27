@@ -120,6 +120,14 @@ pub fn session_processes(child_pid: u32) -> Vec<u32> {
     pids
 }
 
+pub fn refresh_ad_hoc_code_signature(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+pub fn force_refresh_ad_hoc_code_signature(path: &std::path::Path) -> std::io::Result<()> {
+    refresh_ad_hoc_code_signature(path)
+}
+
 pub fn signal_processes(pids: &[u32], signal: Signal) {
     let sig = match signal {
         Signal::Hangup => libc::SIGHUP,

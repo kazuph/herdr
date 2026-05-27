@@ -2,6 +2,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -95,9 +96,8 @@ pub fn active_name() -> Option<String> {
 
 /// Replaces the current process with a fresh `herdr` launch.
 pub fn exec_relaunch(no_session: bool) -> std::io::Result<()> {
-    use std::process::Command;
-
     let exe = std::env::current_exe()?;
+    refresh_executable_signature(&exe)?;
     let mut command = Command::new(exe);
     if no_session {
         command.arg("--no-session");
@@ -105,6 +105,20 @@ pub fn exec_relaunch(no_session: bool) -> std::io::Result<()> {
         command.arg("--session").arg(name);
     }
     Err(command.exec())
+}
+
+fn refresh_executable_signature(exe: &Path) -> std::io::Result<()> {
+    crate::platform::force_refresh_ad_hoc_code_signature(exe).map_err(|err| {
+        std::io::Error::new(
+            err.kind(),
+            format!(
+                "failed to refresh macOS code signature for {}: {err}. \
+                 run `codesign -s - -f {}` and try again",
+                exe.display(),
+                exe.display()
+            ),
+        )
+    })
 }
 
 pub fn explicit_session_requested() -> bool {

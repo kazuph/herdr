@@ -337,6 +337,13 @@ fn install_downloaded_update(mut update: DownloadedUpdate) -> Result<(), String>
         return Err(format!("failed to replace binary: {e}"));
     }
 
+    if let Err(err) = crate::platform::force_refresh_ad_hoc_code_signature(&update.current_exe) {
+        return Err(format!(
+            "installed update but failed to refresh macOS code signature for {}: {err}",
+            update.current_exe.display()
+        ));
+    }
+
     Ok(())
 }
 
