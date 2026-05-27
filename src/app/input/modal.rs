@@ -684,6 +684,36 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
                 Mode::Navigate
             };
         }
+        (ContextMenuKind::SidebarBlank, Some("New workspace")) => {
+            state.request_new_workspace = true;
+            leave_modal(state);
+        }
+        (ContextMenuKind::SidebarBlank, Some("New tab")) => {
+            open_new_tab_dialog(state);
+        }
+        (ContextMenuKind::SidebarBlank, Some("Settings")) => {
+            super::settings::open_settings(state);
+        }
+        (ContextMenuKind::SidebarBlank, Some("Keybinds")) => {
+            open_keybind_help(state);
+        }
+        (ContextMenuKind::SidebarBlank, Some("Reload config")) => {
+            state.request_reload_config = true;
+            leave_modal(state);
+        }
+        (ContextMenuKind::SidebarBlank, Some("Stop server")) => {
+            state.should_quit = true;
+            leave_modal(state);
+        }
+        (ContextMenuKind::SidebarBlank, Some("Restart")) => {
+            state.request_restart = true;
+            state.should_quit = true;
+            leave_modal(state);
+        }
+        (ContextMenuKind::SidebarBlank, Some("Detach")) => {
+            request_detach(state);
+            leave_modal(state);
+        }
         _ => leave_modal(state),
     }
 }

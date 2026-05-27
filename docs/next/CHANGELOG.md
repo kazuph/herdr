@@ -30,6 +30,8 @@
 - Git worktree dialogs now keep action buttons below the worktree list instead of overlapping list content.
 - Pane frames now always render with pane IDs and labels, including single-pane terminals and renamed panes.
 - The settings popup no longer shows the old agent border label toggle because pane titles are now always visible.
+- Added a spaces sidebar context menu on right click or double click in blank workspace-list areas, with workspace actions plus settings, keybinds, reload config, stop server, restart, and detach.
+- Mobile switcher workspace lists now use the same collapsible workspace sections as the desktop sidebar.
 - `herdr --remote` now offers to restart the remote server after installing or replacing a remote binary, or when the running server version differs, even if the client/server protocol is still compatible.
 
 ### Breaking Changes

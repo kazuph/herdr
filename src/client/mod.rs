@@ -523,16 +523,15 @@ fn run_client_with_mode(
         rt.shutdown_timeout(Duration::from_millis(100));
         crate::logging::shutdown("client");
 
-        if matches!(
-            err,
+        match err {
             ClientError::ServerShutdown {
-                reason: Some(reason)
-            } if reason == "detached"
-        ) {
-            return Ok(());
+                reason: Some(reason),
+            } if reason == "detached" => return Ok(()),
+            ClientError::ServerShutdown {
+                reason: Some(reason),
+            } if reason == "restart" => return crate::session::exec_relaunch(false),
+            _ => std::process::exit(1),
         }
-
-        std::process::exit(1);
     }
 
     rt.shutdown_timeout(Duration::from_millis(100));

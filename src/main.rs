@@ -564,6 +564,7 @@ fn main() -> io::Result<()> {
             event_hub,
         );
         let result = app.run(&mut terminal).await;
+        let request_restart = app.state.request_restart;
 
         // Reset modifyOtherKeys if we enabled it.
         if modify_other_keys_mode.is_some() {
@@ -586,6 +587,10 @@ fn main() -> io::Result<()> {
 
         // Drop app (and all workspaces/panes) before runtime shuts down
         drop(app);
+
+        if request_restart {
+            return crate::session::exec_relaunch(true);
+        }
 
         result
     });

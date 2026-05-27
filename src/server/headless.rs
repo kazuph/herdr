@@ -2200,8 +2200,13 @@ impl HeadlessServer {
 
         // Clear client-local host graphics, then send ServerShutdown to all connected clients.
         self.send_all_clients_graphics_cleanup();
+        let shutdown_reason = if self.app.state.request_restart {
+            "restart"
+        } else {
+            "server is shutting down"
+        };
         let shutdown_msg = ServerMessage::ServerShutdown {
-            reason: Some("server is shutting down".to_owned()),
+            reason: Some(shutdown_reason.to_owned()),
         };
         self.send_to_all_clients(shutdown_msg);
 
@@ -2223,8 +2228,13 @@ impl HeadlessServer {
         // Send ServerShutdown to all remaining clients.
         if !self.clients.is_empty() {
             self.send_all_clients_graphics_cleanup();
+            let shutdown_reason = if self.app.state.request_restart {
+                "restart"
+            } else {
+                "server is shutting down"
+            };
             let shutdown_msg = ServerMessage::ServerShutdown {
-                reason: Some("server is shutting down".to_owned()),
+                reason: Some(shutdown_reason.to_owned()),
             };
             self.send_to_all_clients(shutdown_msg);
 

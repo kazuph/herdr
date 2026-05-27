@@ -722,6 +722,26 @@ impl AppState {
                         } else {
                             self.copy_selection();
                         }
+
+                        if self.selection.is_none()
+                            && self.sidebar_blank_at(mouse.column, mouse.row)
+                        {
+                            let now = Instant::now();
+                            let is_double_click =
+                                self.last_sidebar_blank_click.is_some_and(|(col, row, at)| {
+                                    col == mouse.column
+                                        && row == mouse.row
+                                        && now.saturating_duration_since(at)
+                                            <= PANE_DOUBLE_CLICK_WINDOW
+                                });
+                            if is_double_click {
+                                self.last_sidebar_blank_click = None;
+                                self.open_sidebar_blank_context_menu(mouse.column, mouse.row);
+                            } else {
+                                self.last_sidebar_blank_click =
+                                    Some((mouse.column, mouse.row, now));
+                            }
+                        }
                     }
                 }
             }
@@ -803,12 +823,6 @@ impl AppState {
             }
 
             MouseEventKind::Down(MouseButton::Right) if in_sidebar && !self.sidebar_collapsed => {
-                if self
-                    .workspace_list_scrollbar_target_at(mouse.column, mouse.row)
-                    .is_some()
-                {
-                    return None;
-                }
                 if let Some(idx) = self.workspace_at_row(mouse.row) {
                     self.selected = idx;
                     self.context_menu = Some(ContextMenuState {
@@ -818,6 +832,8 @@ impl AppState {
                         list: MenuListState::new(0),
                     });
                     self.mode = Mode::ContextMenu;
+                } else if self.sidebar_blank_at(mouse.column, mouse.row) {
+                    self.open_sidebar_blank_context_menu(mouse.column, mouse.row);
                 }
             }
 
@@ -890,6 +906,9 @@ impl AppState {
         match crate::ui::mobile_switcher_target_at(self, mouse.column, mouse.row) {
             Some(crate::ui::MobileSwitcherTarget::NewWorkspace) => {
                 self.request_new_workspace = true;
+            }
+            Some(crate::ui::MobileSwitcherTarget::WorkspaceSection(section)) => {
+                self.toggle_workspace_section(section);
             }
             Some(crate::ui::MobileSwitcherTarget::Workspace(ws_idx)) => {
                 self.switch_workspace(ws_idx);
@@ -2019,7 +2038,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 4,
+            viewport.y + 6,
         ));
 
         assert_eq!(app.state.active, Some(1));
@@ -2057,7 +2076,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 2,
+            viewport.y + 4,
         ));
 
         assert_eq!(app.state.active, Some(1));
@@ -2100,7 +2119,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 4,
+            viewport.y + 6,
         ));
         assert_eq!(app.state.workspaces[0].active_tab, 2);
     }
@@ -2136,10 +2155,52 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 5,
+            viewport.y + 7,
         ));
         assert_eq!(app.state.mode, Mode::RenameTab);
         assert!(app.state.creating_new_tab);
+    }
+
+    #[test]
+    fn mobile_switcher_section_header_toggles_workspace_section() {
+        let mut app = app_for_mouse_test();
+        let mut work = Workspace::test_new("work");
+        work.section = crate::workspace::WorkspaceSection::Work;
+        let mut personal = Workspace::test_new("personal");
+        personal.section = crate::workspace::WorkspaceSection::Personal;
+        app.state.workspaces = vec![work, personal];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
+        let switch = app.state.view.mobile_menu_hit_area;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            switch.x + 1,
+            switch.y + 1,
+        ));
+
+        let viewport = crate::ui::mobile_switcher_areas(&app.state).viewport;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            viewport.x + 2,
+            viewport.y + 2,
+        ));
+        assert!(app
+            .state
+            .collapsed_workspace_sections
+            .contains(&crate::workspace::WorkspaceSection::Work));
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            viewport.x + 2,
+            viewport.y + 2,
+        ));
+        assert!(!app
+            .state
+            .collapsed_workspace_sections
+            .contains(&crate::workspace::WorkspaceSection::Work));
     }
 
     #[test]

@@ -6,7 +6,10 @@ use ratatui::{
     Frame,
 };
 
-use super::sidebar::{agent_panel_entries, AgentPanelEntry};
+use super::sidebar::{
+    agent_panel_entries, push_git_labels, sectioned_workspace_indices, workspace_diff_labels,
+    workspace_section_is_expanded, workspace_upstream_labels, AgentPanelEntry,
+};
 use super::status::{agent_icon, state_summary_icon};
 use crate::app::state::{Palette, ToastKind, ToastNotification};
 use crate::app::AppState;
@@ -30,6 +33,7 @@ pub(crate) struct MobileSwitcherAreas {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MobileSwitcherTarget {
     NewWorkspace,
+    WorkspaceSection(crate::workspace::WorkspaceSection),
     Workspace(usize),
     NewTab,
     Tab(usize),
@@ -89,9 +93,24 @@ pub(crate) fn mobile_switcher_max_scroll_for_height(app: &AppState, viewport_hei
     mobile_switcher_content_height(app).saturating_sub(viewport_height as usize)
 }
 
-pub(crate) fn mobile_switcher_workspace_doc_range(idx: usize) -> std::ops::Range<usize> {
-    let start = 2 + idx * 2;
-    start..start + 2
+pub(crate) fn mobile_switcher_workspace_doc_range(
+    app: &AppState,
+    idx: usize,
+) -> std::ops::Range<usize> {
+    let mut cursor = 2usize;
+    for (section, indices) in sectioned_workspace_indices(app) {
+        cursor += 2;
+        if !workspace_section_is_expanded(app, section) {
+            continue;
+        }
+        for ws_idx in indices {
+            if ws_idx == idx {
+                return cursor..cursor + 2;
+            }
+            cursor += 2;
+        }
+    }
+    cursor..cursor + 2
 }
 
 pub(crate) fn mobile_switcher_max_scroll(app: &AppState) -> usize {
@@ -119,11 +138,23 @@ pub(crate) fn mobile_switcher_target_at(
         return Some(MobileSwitcherTarget::NewWorkspace);
     }
     cursor += 1;
-    let spaces_end = cursor + app.workspaces.len() * 2;
-    if doc_row >= cursor && doc_row < spaces_end {
-        return Some(MobileSwitcherTarget::Workspace((doc_row - cursor) / 2));
+    for (section, indices) in sectioned_workspace_indices(app) {
+        if doc_row == cursor {
+            return Some(MobileSwitcherTarget::WorkspaceSection(section));
+        }
+        cursor += 2;
+
+        if !workspace_section_is_expanded(app, section) {
+            continue;
+        }
+
+        for ws_idx in indices {
+            if doc_row >= cursor && doc_row < cursor + 2 {
+                return Some(MobileSwitcherTarget::Workspace(ws_idx));
+            }
+            cursor += 2;
+        }
     }
-    cursor = spaces_end;
 
     if let Some(ws) = app.active.and_then(|idx| app.workspaces.get(idx)) {
         cursor += 1; // tabs title
@@ -370,7 +401,7 @@ fn render_close_button(app: &AppState, frame: &mut Frame, area: Rect) {
 }
 
 fn mobile_switcher_content_height(app: &AppState) -> usize {
-    let spaces_h = 2 + app.workspaces.len() * 2;
+    let spaces_h = 2 + mobile_sectioned_spaces_height(app);
     let tabs_h = app
         .active
         .and_then(|idx| app.workspaces.get(idx))
@@ -379,6 +410,20 @@ fn mobile_switcher_content_height(app: &AppState) -> usize {
     let agents_h = 1 + agent_panel_entries(app).len() * 2;
     let menu_h = 1 + app.global_menu_labels().len();
     spaces_h + tabs_h + agents_h + menu_h
+}
+
+fn mobile_sectioned_spaces_height(app: &AppState) -> usize {
+    sectioned_workspace_indices(app)
+        .into_iter()
+        .map(|(section, indices)| {
+            let workspace_rows = if workspace_section_is_expanded(app, section) {
+                indices.len() * 2
+            } else {
+                0
+            };
+            2 + workspace_rows
+        })
+        .sum()
 }
 
 fn render_mobile_switcher_content(app: &AppState, frame: &mut Frame, viewport: Rect) {
@@ -422,45 +467,69 @@ fn render_mobile_switcher_content(app: &AppState, frame: &mut Frame, viewport: R
         p,
     );
     doc_y += 1;
-    for (idx, ws) in app.workspaces.iter().enumerate() {
-        let active = Some(idx) == app.active;
-        let selected = idx == app.selected;
-        let bg = mobile_item_bg(selected, active, p);
-        let (state, seen) = ws.aggregate_state(&app.terminals);
-        let (dot, dot_style) = state_summary_icon(state, seen, app.spinner_tick, p);
-        let title = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(dot, dot_style.bg(bg)),
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                truncate(
-                    &ws.display_name_from(&app.terminals, &app.terminal_runtimes),
-                    content.width.saturating_sub(5) as usize,
-                ),
-                Style::default()
-                    .fg(p.text)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]);
-        let detail = format!(
-            "  {} · tab {}/{}",
-            ws.branch().unwrap_or_else(|| "shell".into()),
-            ws.active_tab + 1,
-            ws.tabs.len()
-        );
-        render_two_line_item(
+    for (section, indices) in sectioned_workspace_indices(app) {
+        render_workspace_section_header_at(
+            app,
             frame,
             viewport,
             content,
             doc_y,
             app.mobile_switcher_scroll,
-            bg,
-            title,
-            truncate(&detail, content.width as usize),
-            p.overlay0,
+            section,
+            p,
         );
         doc_y += 2;
+
+        if !workspace_section_is_expanded(app, section) {
+            continue;
+        }
+
+        for idx in indices {
+            let ws = &app.workspaces[idx];
+            let active = Some(idx) == app.active;
+            let selected = idx == app.selected;
+            let bg = mobile_item_bg(selected, active, p);
+            let (state, seen) = ws.aggregate_state(&app.terminals);
+            let (dot, dot_style) = state_summary_icon(state, seen, app.spinner_tick, p);
+            let workspace_number = format!("{} ", idx + 1);
+            let max_name_width = (content.width as usize)
+                .saturating_sub(5 + workspace_number.chars().count())
+                .max(1);
+            let title = Line::from(vec![
+                Span::styled("  ", Style::default().bg(bg)),
+                Span::styled(dot, dot_style.bg(bg)),
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    workspace_number,
+                    Style::default()
+                        .fg(p.overlay0)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    truncate(
+                        &ws.display_name_from(&app.terminals, &app.terminal_runtimes),
+                        max_name_width,
+                    ),
+                    Style::default()
+                        .fg(p.text)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]);
+            let detail = mobile_workspace_detail_line(ws, content.width as usize, active, p);
+            render_two_line_item_with_detail_line(
+                frame,
+                viewport,
+                content,
+                doc_y,
+                app.mobile_switcher_scroll,
+                bg,
+                title,
+                detail,
+            );
+            doc_y += 2;
+        }
     }
 
     if let Some(ws) = app.active.and_then(|idx| app.workspaces.get(idx)) {
@@ -589,6 +658,69 @@ fn render_mobile_switcher_content(app: &AppState, frame: &mut Frame, viewport: R
     }
 }
 
+fn render_workspace_section_header_at(
+    app: &AppState,
+    frame: &mut Frame,
+    viewport: Rect,
+    content: Rect,
+    doc_y: usize,
+    scroll: usize,
+    section: crate::workspace::WorkspaceSection,
+    p: &Palette,
+) {
+    let Some(y) = visible_y(viewport, scroll, doc_y) else {
+        return;
+    };
+    let expanded = workspace_section_is_expanded(app, section);
+    let arrow = if expanded { "▾" } else { "▸" };
+    let style = Style::default()
+        .fg(p.overlay0)
+        .bg(p.panel_bg)
+        .add_modifier(Modifier::BOLD);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(arrow, style),
+            Span::styled(" ", style),
+            Span::styled(section.label(), style),
+        ])),
+        Rect::new(content.x, y, content.width, 1),
+    );
+}
+
+fn mobile_workspace_detail_line(
+    ws: &crate::workspace::Workspace,
+    max_width: usize,
+    highlighted: bool,
+    p: &Palette,
+) -> Line<'static> {
+    let upstream_labels = workspace_upstream_labels(ws);
+    let diff_labels = workspace_diff_labels(ws);
+    let labels_width = upstream_labels
+        .iter()
+        .chain(diff_labels.iter())
+        .map(|(label, _)| label.chars().count())
+        .sum::<usize>()
+        + upstream_labels.len()
+        + diff_labels.len();
+    let branch = ws.branch().unwrap_or_else(|| "shell".into());
+    let max_branch_width = max_width.saturating_sub(5 + labels_width).max(1);
+    let branch_display = truncate(&branch, max_branch_width);
+    let branch_color = if highlighted { p.mauve } else { p.overlay0 };
+    let has_labels = !upstream_labels.is_empty() || !diff_labels.is_empty();
+
+    let mut spans = vec![Span::styled("    ", Style::default())];
+    push_git_labels(&mut spans, upstream_labels, diff_labels, p);
+    if has_labels {
+        spans.push(Span::styled(" ", Style::default()));
+    }
+    spans.push(Span::styled(
+        branch_display,
+        Style::default().fg(branch_color),
+    ));
+
+    Line::from(spans)
+}
+
 fn mobile_agent_detail(entry: &AgentPanelEntry) -> String {
     let mut parts = Vec::new();
     if let Some(tab_label) = entry.primary_tab_label.as_deref() {
@@ -677,6 +809,28 @@ fn render_two_line_item(
     detail: String,
     detail_fg: ratatui::style::Color,
 ) {
+    render_two_line_item_with_detail_line(
+        frame,
+        viewport,
+        content,
+        doc_y,
+        scroll,
+        bg,
+        title,
+        Line::from(Span::styled(detail, Style::default().fg(detail_fg))),
+    );
+}
+
+fn render_two_line_item_with_detail_line(
+    frame: &mut Frame,
+    viewport: Rect,
+    content: Rect,
+    doc_y: usize,
+    scroll: usize,
+    bg: ratatui::style::Color,
+    title: Line<'_>,
+    detail: Line<'_>,
+) {
     fill_visible_doc_rect(
         frame,
         viewport,
@@ -694,7 +848,7 @@ fn render_two_line_item(
     }
     if let Some(y) = visible_y(viewport, scroll, doc_y + 1) {
         frame.render_widget(
-            Paragraph::new(detail).style(Style::default().fg(detail_fg).bg(bg)),
+            Paragraph::new(detail).style(Style::default().bg(bg)),
             Rect::new(content.x, y, content.width, 1),
         );
     }
@@ -900,6 +1054,9 @@ fn truncate(text: &str, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::AppState;
+    use crate::app::Mode;
+    use crate::workspace::{Workspace, WorkspaceSection};
 
     fn agent_entry(primary_tab_label: Option<&str>, agent_label: Option<&str>) -> AgentPanelEntry {
         AgentPanelEntry {
@@ -928,5 +1085,37 @@ mod tests {
         let entry = agent_entry(None, Some("pi"));
 
         assert_eq!(mobile_agent_detail(&entry), "  idle · pi");
+    }
+
+    #[test]
+    fn mobile_switcher_renders_workspace_sections_and_respects_collapse() {
+        let mut app = AppState::test_new();
+        let mut office = Workspace::test_new("office");
+        office.section = WorkspaceSection::Work;
+        let mut home = Workspace::test_new("home");
+        home.section = WorkspaceSection::Personal;
+        app.workspaces = vec![office, home];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Navigate;
+        app.collapsed_workspace_sections
+            .insert(WorkspaceSection::Work);
+
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 44, 20));
+        let backend = ratatui::backend::TestBackend::new(44, 20);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_mobile_panel(&app, frame, Rect::new(0, 0, 44, 20)))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let screen = (0..20)
+            .map(|y| (0..44).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(screen.contains("work"));
+        assert!(screen.contains("personal"));
+        assert!(screen.contains("home"));
+        assert!(!screen.contains("office"));
     }
 }

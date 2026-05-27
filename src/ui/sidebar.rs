@@ -118,7 +118,7 @@ fn workspace_is_in_expanded_section(app: &AppState, ws_idx: usize) -> bool {
         && workspace_section_is_expanded(app, workspace_effective_section(app, ws_idx))
 }
 
-fn sectioned_workspace_indices(
+pub(crate) fn sectioned_workspace_indices(
     app: &AppState,
 ) -> Vec<(crate::workspace::WorkspaceSection, Vec<usize>)> {
     crate::workspace::WorkspaceSection::ALL
@@ -334,7 +334,7 @@ fn truncate_to_width(text: &str, max_width: usize) -> String {
     truncated
 }
 
-fn workspace_upstream_labels(ws: &crate::workspace::Workspace) -> Vec<(String, bool)> {
+pub(super) fn workspace_upstream_labels(ws: &crate::workspace::Workspace) -> Vec<(String, bool)> {
     ws.git_ahead_behind()
         .map(|(ahead, behind)| {
             let mut parts = Vec::new();
@@ -349,7 +349,7 @@ fn workspace_upstream_labels(ws: &crate::workspace::Workspace) -> Vec<(String, b
         .unwrap_or_default()
 }
 
-fn workspace_diff_labels(ws: &crate::workspace::Workspace) -> Vec<(String, bool)> {
+pub(super) fn workspace_diff_labels(ws: &crate::workspace::Workspace) -> Vec<(String, bool)> {
     ws.git_diff_stats()
         .map(|(additions, deletions)| {
             let mut parts = Vec::new();
@@ -379,7 +379,7 @@ fn workspace_git_meta_width(
     branch.chars().count() + labels_width + 1
 }
 
-fn push_git_labels(
+pub(super) fn push_git_labels(
     spans: &mut Vec<Span<'static>>,
     upstream_labels: Vec<(String, bool)>,
     diff_labels: Vec<(String, bool)>,

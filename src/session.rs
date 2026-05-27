@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -90,6 +91,20 @@ pub fn active_name() -> Option<String> {
         .ok()
         .filter(|name| name != DEFAULT_SESSION_NAME)
         .filter(|name| validate_name(name).is_ok())
+}
+
+/// Replaces the current process with a fresh `herdr` launch.
+pub fn exec_relaunch(no_session: bool) -> std::io::Result<()> {
+    use std::process::Command;
+
+    let exe = std::env::current_exe()?;
+    let mut command = Command::new(exe);
+    if no_session {
+        command.arg("--no-session");
+    } else if let Some(name) = active_name() {
+        command.arg("--session").arg(name);
+    }
+    Err(command.exec())
 }
 
 pub fn explicit_session_requested() -> bool {

@@ -189,7 +189,7 @@ impl AppState {
             return;
         }
 
-        let row_range = crate::ui::mobile_switcher_workspace_doc_range(idx);
+        let row_range = crate::ui::mobile_switcher_workspace_doc_range(self, idx);
         let visible_start = self.mobile_switcher_scroll;
         let visible_end = visible_start.saturating_add(viewport.height as usize);
         if row_range.start < visible_start {

@@ -858,6 +858,7 @@ pub enum ContextMenuKind {
         pane_id: PaneId,
         has_manual_label: bool,
     },
+    SidebarBlank,
 }
 
 /// Right-click context menu state.
@@ -905,6 +906,18 @@ impl ContextMenuState {
                 "Split horizontal",
                 "Zoom",
                 "Close pane",
+            ],
+            ContextMenuKind::SidebarBlank => &[
+                "New workspace",
+                "New tab",
+                "--",
+                "Settings",
+                "Keybinds",
+                "Reload config",
+                "--",
+                "Stop server",
+                "Restart",
+                "Detach",
             ],
         }
     }
@@ -995,6 +1008,8 @@ pub struct AppState {
     pub request_new_workspace: bool,
     pub request_new_tab: bool,
     pub request_reload_config: bool,
+    /// Stop the server and relaunch herdr after shutdown completes.
+    pub request_restart: bool,
     /// Set when the headless server should ask attached clients to reload
     /// their client-local sound config from disk.
     pub request_client_sound_config_reload: bool,
@@ -1027,6 +1042,7 @@ pub struct AppState {
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
     pub(crate) last_pane_click: Option<PaneClickState>,
+    pub(crate) last_sidebar_blank_click: Option<(u16, u16, std::time::Instant)>,
     pub selection: Option<Selection>,
     pub selection_autoscroll: Option<SelectionAutoscroll>,
     pub context_menu: Option<ContextMenuState>,
@@ -1259,6 +1275,7 @@ impl AppState {
             request_new_workspace: false,
             request_new_tab: false,
             request_reload_config: false,
+            request_restart: false,
             request_client_sound_config_reload: false,
             request_clipboard_write: None,
             creating_new_tab: false,
@@ -1302,6 +1319,7 @@ impl AppState {
             workspace_press: None,
             tab_press: None,
             last_pane_click: None,
+            last_sidebar_blank_click: None,
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
