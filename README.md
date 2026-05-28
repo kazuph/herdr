@@ -22,10 +22,13 @@ workspaces, tabs, panes. mouse-native: click, drag, split. every agent at a glan
 ## install
 
 ```bash
-curl -fsSL https://herdr.dev/install.sh | sh
+git clone https://github.com/kazuph/herdr
+cd herdr
+just build
+install -m 0755 target/release/herdr ~/.local/bin/herdr
 ```
 
-or download the binary from [releases](https://github.com/ogulcancelik/herdr/releases). requires linux or macos.
+or download the binary from [releases](https://github.com/kazuph/herdr/releases). requires linux or macos.
 
 ### update
 
@@ -283,7 +286,7 @@ If you are an AI agent helping with this repository, read [`AGENTS.md`](./AGENTS
 ## building from source
 
 ```bash
-git clone https://github.com/ogulcancelik/herdr
+git clone https://github.com/kazuph/herdr
 cd herdr
 cargo build --release
 ./target/release/herdr
