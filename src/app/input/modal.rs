@@ -1278,6 +1278,7 @@ mod tests {
             kind: ContextMenuKind::Pane {
                 pane_id: crate::layout::PaneId::from_raw(1),
                 has_manual_label: false,
+                has_layout_actions: true,
             },
             x: 0,
             y: 0,
@@ -1287,6 +1288,25 @@ mod tests {
         assert!(menu.items().contains(&"Move to vertical split"));
         assert!(menu.items().contains(&"Move to horizontal split"));
         assert!(menu.items().contains(&"Equalize pane sizes"));
+    }
+
+    #[test]
+    fn single_pane_context_menu_hides_layout_actions() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                pane_id: crate::layout::PaneId::from_raw(1),
+                has_manual_label: false,
+                has_layout_actions: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        assert!(!menu.items().contains(&"Move to vertical split"));
+        assert!(!menu.items().contains(&"Move to horizontal split"));
+        assert!(!menu.items().contains(&"Equalize pane sizes"));
+        assert!(!menu.items().contains(&"Zoom"));
     }
 
     #[test]
@@ -1300,6 +1320,7 @@ mod tests {
             kind: ContextMenuKind::Pane {
                 pane_id: second,
                 has_manual_label: false,
+                has_layout_actions: true,
             },
             x: 0,
             y: 0,
@@ -1338,6 +1359,7 @@ mod tests {
             kind: ContextMenuKind::Pane {
                 pane_id: second,
                 has_manual_label: false,
+                has_layout_actions: true,
             },
             x: 0,
             y: 0,

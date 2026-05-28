@@ -37,10 +37,16 @@ impl AppState {
             .and_then(|pane| self.terminals.get(&pane.attached_terminal_id))
             .and_then(|terminal| terminal.manual_label.as_ref())
             .is_some();
+        let has_layout_actions = self
+            .active
+            .and_then(|ws_idx| self.workspaces.get(ws_idx))
+            .and_then(|ws| ws.active_tab())
+            .is_some_and(|tab| tab.layout.pane_count() > 1);
         self.context_menu = Some(ContextMenuState {
             kind: ContextMenuKind::Pane {
                 pane_id: info.id,
                 has_manual_label,
+                has_layout_actions,
             },
             x: col,
             y: row,
@@ -1522,6 +1528,10 @@ mod tests {
             app.state.context_menu.as_ref().map(|menu| menu.kind),
             Some(ContextMenuKind::Pane { pane_id, .. }) if pane_id == pane.id
         ));
+        let items = app.state.context_menu.as_ref().unwrap().items();
+        assert!(!items.contains(&"Move to vertical split"));
+        assert!(!items.contains(&"Move to horizontal split"));
+        assert!(!items.contains(&"Equalize pane sizes"));
     }
 
     #[test]

@@ -857,6 +857,7 @@ pub enum ContextMenuKind {
     Pane {
         pane_id: PaneId,
         has_manual_label: bool,
+        has_layout_actions: bool,
     },
     SidebarBlank,
 }
@@ -888,6 +889,7 @@ impl ContextMenuState {
             ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
             ContextMenuKind::Pane {
                 has_manual_label: true,
+                has_layout_actions: true,
                 ..
             } => &[
                 "Rename pane",
@@ -901,7 +903,19 @@ impl ContextMenuState {
                 "Close pane",
             ],
             ContextMenuKind::Pane {
+                has_manual_label: true,
+                has_layout_actions: false,
+                ..
+            } => &[
+                "Rename pane",
+                "Clear pane name",
+                "Split vertical",
+                "Split horizontal",
+                "Close pane",
+            ],
+            ContextMenuKind::Pane {
                 has_manual_label: false,
+                has_layout_actions: true,
                 ..
             } => &[
                 "Rename pane",
@@ -911,6 +925,16 @@ impl ContextMenuState {
                 "Move to horizontal split",
                 "Equalize pane sizes",
                 "Zoom",
+                "Close pane",
+            ],
+            ContextMenuKind::Pane {
+                has_manual_label: false,
+                has_layout_actions: false,
+                ..
+            } => &[
+                "Rename pane",
+                "Split vertical",
+                "Split horizontal",
                 "Close pane",
             ],
             ContextMenuKind::SidebarBlank => &[

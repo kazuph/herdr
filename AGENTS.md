@@ -37,7 +37,11 @@ When the change is ready, fast-forward the shared checkout at `../herdr` to the 
 
 If the current session is already inside an isolated task worktree, keep using it. Do not create nested worktrees.
 
-Before committing, propose the commit message and get alignment.
+When the human asks for a change to be completed, treat commit and push to `origin/master` as a single completion step after local verification passes. Do not stop at an uncommitted handoff unless the human explicitly asks not to commit or not to push.
+
+Before committing, propose the commit message and get alignment unless the human has already explicitly authorized commit/push for the current change.
+
+Restarting a running Herdr server or client is never implied by commit, push, build, or local runtime replacement. Restart only after the human explicitly authorizes that restart.
 
 After the change is integrated, remove the task worktree and delete the task branch locally and remotely.
 
