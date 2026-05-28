@@ -910,13 +910,17 @@ mod tests {
     #[test]
     fn release_notes_preview_lines_show_update_steps() {
         let palette = Palette::catppuccin();
-        let lines = release_notes_preview_lines("0.5.0", "herdr update", &palette);
+        let lines =
+            release_notes_preview_lines("0.5.0", crate::update::update_install_command(), &palette);
 
         assert_eq!(lines.len(), 2);
         assert_eq!(line_text(&lines[0]), "● update ready");
         assert_eq!(
             line_text(&lines[1]),
-            "detach from this session, then run herdr update in your shell"
+            format!(
+                "detach from this session, then run {} in your shell",
+                crate::update::update_install_command()
+            )
         );
         assert_eq!(lines[0].spans[0].style.fg, Some(palette.accent));
         assert_eq!(lines[0].spans[1].style.fg, Some(palette.text));

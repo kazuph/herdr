@@ -1,19 +1,22 @@
 ---
 title: Install Herdr
-description: Install, update, and verify Herdr on Linux and macOS.
+description: Build, install, and verify Herdr on Linux and macOS.
 ---
 
 Herdr ships as a single binary for Linux and macOS.
 
 ## Install
 
-Run the installer:
+Build and install from this fork:
 
 ```bash
-curl -fsSL https://herdr.dev/install.sh | sh
+git clone https://github.com/kazuph/herdr
+cd herdr
+just build
+install -m 0755 target/release/herdr ~/.local/bin/herdr
 ```
 
-The installer downloads the right release binary for your platform and places it on your PATH.
+This fork does not use the hosted installer or self-update flow.
 
 ## Verify
 
@@ -25,17 +28,9 @@ herdr
 
 If your shell cannot find `herdr`, restart the terminal or check that the install directory is on your PATH.
 
-## Update
-
-Herdr checks for new releases and notifies you in the app. You can update manually:
-
-```bash
-herdr update
-```
-
 ## Download manually
 
-You can also download a binary from [GitHub releases](https://github.com/ogulcancelik/herdr/releases).
+You can also download a binary from [GitHub releases](https://github.com/kazuph/herdr/releases).
 
 Choose the asset that matches your system:
 

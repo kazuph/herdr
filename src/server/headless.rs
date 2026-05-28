@@ -3587,7 +3587,7 @@ mod tests {
 
         let changed = server.handle_internal_event_with_forwarding(AppEvent::UpdateReady {
             version: "9.9.9".to_string(),
-            install_command: "herdr update".into(),
+            install_command: crate::update::update_install_command().into(),
         });
 
         assert!(changed);
@@ -3622,7 +3622,7 @@ mod tests {
 
         let changed = server.handle_internal_event_with_forwarding(AppEvent::UpdateReady {
             version: "9.9.9".to_string(),
-            install_command: "herdr update".into(),
+            install_command: crate::update::update_install_command().into(),
         });
 
         assert!(changed);
@@ -3637,7 +3637,13 @@ mod tests {
                 target_pane_id,
             } => {
                 assert_eq!(kind, protocol::NotifyKind::SystemToast);
-                assert_eq!(message, "v9.9.9 available: detach, then run `herdr update`");
+                assert_eq!(
+                    message,
+                    format!(
+                        "v9.9.9 available: detach, then run `{}`",
+                        crate::update::update_install_command()
+                    )
+                );
                 assert_eq!(target_pane_id, None);
             }
             other => panic!("expected system toast notify, got {other:?}"),

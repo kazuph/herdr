@@ -56,6 +56,8 @@ pub enum AppEvent {
         seq: Option<u64>,
     },
     /// A new version is available through the active installation manager.
+    #[allow(dead_code)]
+    // Update fetching is disabled in this fork; tests keep UI behavior covered.
     UpdateReady {
         version: String,
         install_command: String,

@@ -338,7 +338,6 @@ fn main() -> io::Result<()> {
         println!("       herdr --session <name> [options]");
         println!("       herdr --remote <ssh-target> [--session <name>]");
         println!("       herdr session attach <name>");
-        println!("       herdr update");
         println!("       herdr server stop");
         println!("       herdr server reload-config");
         println!("       herdr config <subcommand> ...");
@@ -357,7 +356,6 @@ fn main() -> io::Result<()> {
                 "herdr status [server|client]",
                 "Show local client and running server status",
             ),
-            ("herdr update", "Download and install the latest version"),
             (
                 "herdr server stop",
                 "Stop the running server via the API socket",
@@ -532,10 +530,6 @@ fn main() -> io::Result<()> {
     let config = &loaded_config.config;
     let config_diagnostic = config::config_diagnostic_summary(&loaded_config.diagnostics);
     logging::startup("app");
-
-    // Background update check (non-blocking, best-effort)
-    // Only checks for newer versions and notifies the TUI.
-    // Skipped in --no-session mode (testing).
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

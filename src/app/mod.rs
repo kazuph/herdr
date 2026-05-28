@@ -33,7 +33,6 @@ pub(crate) const HEADLESS_ANIMATION_TICK_STEP: u32 = 8;
 pub(crate) const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(30);
 const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
-const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
 const SIDEBAR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
 
@@ -143,7 +142,8 @@ fn repeat_key_identity(
 }
 
 fn auto_updates_enabled(no_session: bool) -> bool {
-    !no_session && !cfg!(debug_assertions)
+    let _ = no_session;
+    false
 }
 
 fn agent_panel_scope_from_config(
@@ -328,12 +328,8 @@ impl App {
             "using pane scrollback configuration"
         );
 
-        let latest_release_notes = crate::release_notes::load_latest();
-        let update_available = latest_release_notes
-            .as_ref()
-            .filter(|notes| notes.preview)
-            .map(|notes| notes.version.clone());
-        let latest_release_notes_available = latest_release_notes.is_some();
+        let update_available = None;
+        let latest_release_notes_available = false;
         let update_install_command = crate::update::update_install_command().to_string();
         let startup_product_announcement =
             crate::product_announcements::load_unseen_for_current_version();
@@ -483,9 +479,7 @@ impl App {
                 cwd.as_deref().and_then(crate::workspace::git_branch);
         }
 
-        // Background auto-update is disabled in monolithic no-session mode
-        // and in debug/test builds so local development never mutates the
-        // running binary out from under spawned test processes.
+        // Network auto-update is disabled in this fork.
         if auto_updates_enabled(no_session) {
             let update_tx = event_tx.clone();
             std::thread::spawn(move || crate::update::auto_update(update_tx));
@@ -510,8 +504,7 @@ impl App {
             last_sidebar_divider_click: None,
             next_resize_poll: Instant::now() + RESIZE_POLL_INTERVAL,
             next_animation_tick: None,
-            next_auto_update_check: auto_updates_enabled(no_session)
-                .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),
+            next_auto_update_check: None,
             session_save_deadline: None,
             selection_autoscroll_deadline: None,
             last_render_at: None,
@@ -1317,7 +1310,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_restores_preview_update_available_from_saved_notes() {
+    fn startup_ignores_preview_update_available_from_saved_notes() {
         let _guard = config_env_lock().lock().unwrap();
         let path = temp_config_path("startup-preview-update-available");
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -1327,8 +1320,8 @@ mod tests {
 
         let app = test_app();
 
-        assert_eq!(app.state.update_available.as_deref(), Some("99.99.99"));
-        assert!(app.state.latest_release_notes_available);
+        assert_eq!(app.state.update_available, None);
+        assert!(!app.state.latest_release_notes_available);
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -1345,14 +1338,14 @@ mod tests {
         let app = test_app();
 
         assert_eq!(app.state.update_available, None);
-        assert!(app.state.latest_release_notes_available);
+        assert!(!app.state.latest_release_notes_available);
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]
-    fn startup_keeps_pending_release_notes_available_without_auto_opening() {
+    fn startup_ignores_pending_release_notes_without_auto_opening() {
         let _guard = config_env_lock().lock().unwrap();
         let path = temp_config_path("startup-pending-release-notes-no-auto-open");
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -1369,7 +1362,7 @@ mod tests {
 
         assert_eq!(app.state.mode, Mode::Navigate);
         assert!(app.state.release_notes.is_none());
-        assert!(app.state.latest_release_notes_available);
+        assert!(!app.state.latest_release_notes_available);
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -2690,7 +2683,7 @@ mod tests {
             app.event_tx
                 .try_send(AppEvent::UpdateReady {
                     version: format!("9.9.{i}"),
-                    install_command: "herdr update".into(),
+                    install_command: crate::update::update_install_command().into(),
                 })
                 .unwrap();
         }

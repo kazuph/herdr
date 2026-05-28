@@ -11,6 +11,7 @@ const FAKE_ANNOUNCEMENT_BODY_FILE_ENV: &str = "HERDR_FAKE_PRODUCT_ANNOUNCEMENT_B
 const FAKE_ANNOUNCEMENT_ID_ENV: &str = "HERDR_FAKE_PRODUCT_ANNOUNCEMENT_ID";
 const FAKE_ANNOUNCEMENT_TITLE_ENV: &str = "HERDR_FAKE_PRODUCT_ANNOUNCEMENT_TITLE";
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ManifestAnnouncement {
     pub id: String,
@@ -85,6 +86,7 @@ pub fn store_path() -> PathBuf {
     crate::config::state_dir().join(PRODUCT_ANNOUNCEMENTS_PATH)
 }
 
+#[cfg(test)]
 pub fn save_manifest_announcement(
     manifest_version: &str,
     announcement: Option<&ManifestAnnouncement>,
@@ -113,6 +115,7 @@ pub fn mark_seen(version: &str, id: &str) -> io::Result<()> {
     mark_seen_at(&store_path(), version, id)
 }
 
+#[cfg(test)]
 fn announcement_from_manifest(
     manifest_version: &str,
     announcement: &ManifestAnnouncement,
@@ -170,12 +173,14 @@ fn load_fake_for_current_version() -> Option<ProductAnnouncement> {
     })
 }
 
+#[cfg(test)]
 fn save_latest_to_path(path: &Path, announcement: ProductAnnouncement) -> io::Result<()> {
     let mut store = load_store_from_path(path).unwrap_or_default();
     store.latest = Some(StoredProductAnnouncement::from(&announcement));
     write_store_to_path(path, &store)
 }
 
+#[cfg(test)]
 fn clear_latest_for_version(path: &Path, version: &str) -> io::Result<()> {
     let mut store = load_store_from_path(path).unwrap_or_default();
     if store

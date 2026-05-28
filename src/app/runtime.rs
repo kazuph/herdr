@@ -4,8 +4,8 @@ use crossterm::terminal;
 
 use super::{
     auto_updates_enabled, repeat_key_identity, App, Mode, ANIMATION_INTERVAL,
-    AUTO_UPDATE_CHECK_INTERVAL, GIT_REMOTE_STATUS_REFRESH_INTERVAL, MIN_RENDER_INTERVAL,
-    RESIZE_POLL_INTERVAL, SELECTION_AUTOSCROLL_INTERVAL,
+    GIT_REMOTE_STATUS_REFRESH_INTERVAL, MIN_RENDER_INTERVAL, RESIZE_POLL_INTERVAL,
+    SELECTION_AUTOSCROLL_INTERVAL,
 };
 use crate::events::AppEvent;
 use crate::workspace::{Workspace, WorkspaceGitStatus};
@@ -333,11 +333,7 @@ impl App {
             return;
         }
 
-        self.next_auto_update_check = self
-            .state
-            .update_available
-            .is_none()
-            .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL);
+        self.next_auto_update_check = None;
 
         if self.state.update_available.is_some() {
             return;

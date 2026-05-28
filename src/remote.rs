@@ -1,13 +1,11 @@
 //! Remote thin-client launcher over SSH command stdio.
 
-use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, IsTerminal, Write as _};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-use serde::Deserialize;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -21,7 +19,6 @@ const REMOTE_SERVER_SHUTDOWN_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const REMOTE_SERVER_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CURRENT_PROTOCOL: u32 = crate::server::protocol::PROTOCOL_VERSION;
-const UPDATE_MANIFEST_URL: &str = crate::update::UPDATE_MANIFEST_URL;
 const REMOTE_BINARY_ENV_VAR: &str = "HERDR_REMOTE_BINARY";
 pub(crate) const REATTACH_COMMAND_ENV_VAR: &str = "HERDR_REATTACH_COMMAND";
 
@@ -226,12 +223,6 @@ impl RemoteHerdr {
     }
 }
 
-#[derive(Deserialize)]
-struct RemoteUpdateManifest {
-    version: String,
-    assets: BTreeMap<String, String>,
-}
-
 struct InstallSource {
     path: PathBuf,
     temporary_dir: Option<PathBuf>,
@@ -250,6 +241,7 @@ impl InstallSource {
         }
     }
 
+    #[cfg(test)]
     fn temporary(path: PathBuf, temporary_dir: PathBuf) -> Self {
         Self {
             path,
@@ -446,7 +438,11 @@ fn resolve_install_source(
         return Ok(InstallSource::persistent(path));
     }
 
-    download_release_asset(platform)
+    Err(io::Error::other(format!(
+        "remote host is {}, but this local herdr is {}; automatic release downloads are disabled in the kazuph/herdr fork. Build herdr for the remote platform and pass HERDR_REMOTE_BINARY.",
+        platform.asset_key(),
+        CURRENT_VERSION
+    )))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -675,81 +671,6 @@ fn warn_if_remote_bin_not_on_path(target: &str) -> io::Result<()> {
         );
     }
     Ok(())
-}
-
-fn download_release_asset(platform: &RemotePlatform) -> io::Result<InstallSource> {
-    let manifest_output = Command::new("curl")
-        .args([
-            "-sfL",
-            "--retry",
-            "3",
-            "--connect-timeout",
-            "10",
-            "--max-time",
-            "20",
-            UPDATE_MANIFEST_URL,
-        ])
-        .output()
-        .map_err(|err| io::Error::new(err.kind(), format!("curl failed: {err}")))?;
-    if !manifest_output.status.success() {
-        return Err(command_failed(
-            "failed to fetch update manifest",
-            &manifest_output,
-        ));
-    }
-
-    let manifest: RemoteUpdateManifest = serde_json::from_slice(&manifest_output.stdout)
-        .map_err(|err| io::Error::other(format!("failed to parse update manifest JSON: {err}")))?;
-    if manifest.version.trim_start_matches('v') != CURRENT_VERSION {
-        return Err(io::Error::other(format!(
-            "remote host is {}, but this local herdr is {CURRENT_VERSION} and the latest release manifest is {}; build herdr for the remote platform or install it there manually",
-            platform.asset_key(),
-            manifest.version
-        )));
-    }
-
-    let asset_key = platform.asset_key();
-    let url = manifest.assets.get(&asset_key).ok_or_else(|| {
-        io::Error::other(format!(
-            "no {asset_key} binary in the release manifest for herdr {CURRENT_VERSION}"
-        ))
-    })?;
-
-    let dir = private_download_dir(&asset_key)?;
-    let path = dir.join("herdr.tmp");
-    let status = Command::new("curl")
-        .args(["-sfL", "--max-time", "120", "-o"])
-        .arg(&path)
-        .arg(url)
-        .status()
-        .map_err(|err| io::Error::new(err.kind(), format!("download failed: {err}")))?;
-    if !status.success() {
-        let _ = fs::remove_dir_all(&dir);
-        return Err(io::Error::other("download failed"));
-    }
-
-    Ok(InstallSource::temporary(path, dir))
-}
-
-fn private_download_dir(asset_key: &str) -> io::Result<PathBuf> {
-    let base = std::env::temp_dir();
-    for attempt in 0..100 {
-        let dir = base.join(format!(
-            "herdr-remote-{}-{}-{attempt}",
-            std::process::id(),
-            asset_key
-        ));
-        match fs::create_dir(&dir) {
-            Ok(()) => return Ok(dir),
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(err),
-        }
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "failed to create private herdr remote download directory",
-    ))
 }
 
 fn confirm_remote_install(

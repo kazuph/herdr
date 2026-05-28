@@ -30,14 +30,6 @@ install -m 0755 target/release/herdr ~/.local/bin/herdr
 
 or download the binary from [releases](https://github.com/kazuph/herdr/releases). requires linux or macos.
 
-### update
-
-herdr notifies you when a new version is available. run manually to update:
-
-```bash
-herdr update
-```
-
 ## quick start
 
 ```bash

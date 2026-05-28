@@ -1153,7 +1153,7 @@ mod tests {
 
         let updates = state.handle_app_event(crate::events::AppEvent::UpdateReady {
             version: "0.5.0".into(),
-            install_command: "herdr update".into(),
+            install_command: crate::update::update_install_command().into(),
         });
 
         assert!(updates.is_empty());
@@ -1161,7 +1161,13 @@ mod tests {
         assert!(state.latest_release_notes_available);
         let toast = state.toast.as_ref().expect("update toast");
         assert_eq!(toast.title, "v0.5.0 available");
-        assert_eq!(toast.context, "detach, then run `herdr update`");
+        assert_eq!(
+            toast.context,
+            format!(
+                "detach, then run `{}`",
+                crate::update::update_install_command()
+            )
+        );
     }
 
     fn mark_agent(state: &mut AppState, ws_idx: usize, tab_idx: usize, pane_id: PaneId) {
@@ -1792,7 +1798,7 @@ mod tests {
 
         let updates = state.handle_app_event(AppEvent::UpdateReady {
             version: "0.5.0".into(),
-            install_command: "herdr update".into(),
+            install_command: crate::update::update_install_command().into(),
         });
 
         assert!(updates.is_empty());
@@ -1802,7 +1808,13 @@ mod tests {
         let toast = state.toast.as_ref().expect("update toast");
         assert_eq!(toast.kind, ToastKind::UpdateInstalled);
         assert_eq!(toast.title, "v0.5.0 available");
-        assert_eq!(toast.context, "detach, then run `herdr update`");
+        assert_eq!(
+            toast.context,
+            format!(
+                "detach, then run `{}`",
+                crate::update::update_install_command()
+            )
+        );
     }
 
     #[test]

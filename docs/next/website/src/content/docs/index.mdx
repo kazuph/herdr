@@ -19,7 +19,10 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 Herdr is a terminal-native agent runtime and multiplexer. It gives the whole herd persistent terminal workspaces with panes, tabs, mouse control, state awareness, and an API that agents can use themselves.
 
 ```bash
-curl -fsSL https://herdr.dev/install.sh | sh
+git clone https://github.com/kazuph/herdr
+cd herdr
+just build
+install -m 0755 target/release/herdr ~/.local/bin/herdr
 herdr
 ```
 

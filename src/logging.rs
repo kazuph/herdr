@@ -350,35 +350,6 @@ pub(crate) fn session_restored(workspaces: usize, outcome: &'static str) {
     );
 }
 
-pub(crate) fn update_check_started() {
-    tracing::info!(
-        event = "update.check.start",
-        subsystem = "update",
-        outcome = "started",
-        "checking for updates"
-    );
-}
-
-pub(crate) fn update_check_failed(err: &str) {
-    tracing::warn!(
-        event = "update.check.complete",
-        subsystem = "update",
-        outcome = "error",
-        err,
-        "update check failed"
-    );
-}
-
-pub(crate) fn update_available(version: &str) {
-    tracing::info!(
-        event = "update.available",
-        subsystem = "update",
-        outcome = "ok",
-        version,
-        "update available"
-    );
-}
-
 pub(crate) fn config_write_failed(path: &Path, context: &str, err: &str) {
     tracing::warn!(
         event = "config.write",
