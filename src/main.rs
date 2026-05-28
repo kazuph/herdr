@@ -347,7 +347,6 @@ fn main() -> io::Result<()> {
         println!("       herdr pane <subcommand> ...");
         println!("       herdr wait <subcommand> ...");
         println!("       herdr session <subcommand> ...");
-        println!("       herdr integration <subcommand> ...");
         println!();
         println!("Common commands:");
         for (command, description) in [
@@ -388,10 +387,6 @@ fn main() -> io::Result<()> {
             (
                 "herdr session <subcommand>",
                 "Manage named persistent sessions",
-            ),
-            (
-                "herdr integration <subcommand>",
-                "Manage built-in agent integrations",
             ),
         ] {
             println!("  {command:<32} {description}");
@@ -454,7 +449,6 @@ fn main() -> io::Result<()> {
                 "pane",
                 "wait",
                 "session",
-                "integration",
             ]
             .contains(&arg.as_str())
         {

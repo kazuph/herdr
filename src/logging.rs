@@ -362,21 +362,6 @@ pub(crate) fn config_write_failed(path: &Path, context: &str, err: &str) {
     );
 }
 
-pub(crate) fn integration_action(
-    action: &'static str,
-    target: &'static str,
-    outcome: &'static str,
-) {
-    tracing::info!(
-        event = "integration.action",
-        subsystem = "integration",
-        outcome,
-        action,
-        target,
-        "integration action finished"
-    );
-}
-
 struct RotatingFileMakeWriter {
     state: Arc<Mutex<RotatingFileState>>,
 }

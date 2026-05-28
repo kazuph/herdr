@@ -1,9 +1,9 @@
 ---
 title: CLI reference
-description: Herdr commands for sessions, workspaces, tabs, panes, agents, waits, integrations, and status.
+description: Herdr commands for sessions, workspaces, tabs, panes, agents, waits, and status.
 ---
 
-Herdr’s CLI talks to the running server over the same local socket API used by integrations and agents.
+Herdr’s CLI talks to the running server over the same local socket API used by agents and automation.
 
 Most commands print JSON responses. Use them from scripts when you want deterministic automation.
 
@@ -104,7 +104,7 @@ herdr pane run <pane_id> <command>
 
 `pane run` submits text plus Enter atomically. Prefer it over `send-text` plus `send-keys Enter` for commands.
 
-Report agent state from custom hooks:
+Report agent state from custom tools:
 
 ```bash
 herdr pane report-agent <pane_id> \
@@ -159,22 +159,6 @@ herdr wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [
 ```
 
 Use `wait output` for normal commands and servers. Use `wait agent-status` for coding agents.
-
-## Integrations
-
-```bash
-herdr integration install pi
-herdr integration install claude
-herdr integration install codex
-herdr integration install opencode
-herdr integration install hermes
-herdr integration uninstall pi
-herdr integration uninstall claude
-herdr integration uninstall codex
-herdr integration uninstall opencode
-herdr integration uninstall hermes
-herdr integration status [--outdated-only]
-```
 
 ## Read sources
 

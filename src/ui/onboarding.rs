@@ -95,7 +95,7 @@ fn render_onboarding_welcome(app: &AppState, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(key_line), content_rows[2]);
 
     frame.render_widget(
-        Paragraph::new("  next: install optional agent integrations for more reliable state")
+        Paragraph::new("  next: start managing persistent terminal workspaces")
             .style(Style::default().fg(app.palette.overlay1)),
         content_rows[3],
     );

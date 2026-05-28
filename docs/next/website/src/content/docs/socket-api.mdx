@@ -7,7 +7,7 @@ Herdr exposes a local socket API for scripts and agents that need to inspect or 
 
 Most automation should start with the CLI wrappers. Use the raw socket API only when you need direct request/response control or long-lived event subscriptions.
 
-## Choose an integration layer
+## Choose an automation layer
 
 | Layer | Use it for |
 | --- | --- |
@@ -25,9 +25,8 @@ The socket API can:
 - create, list, focus, rename, and close tabs
 - list, inspect, split, rename, read, close, and send input to panes
 - list, inspect, read, send to, rename, focus, start, and attach agents through CLI helpers
-- report custom agent state from hooks and plugins
+- report custom agent state from trusted local tools
 - subscribe to events and wait for output or state changes
-- install and uninstall built-in integrations
 - stop the server and reload config
 
 ## CLI examples
@@ -77,7 +76,6 @@ Raw socket method names use dot notation:
 | Pane | `pane.split`, `pane.list`, `pane.get`, `pane.focus`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.report_agent`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.wait_for_output` |
 | Agent | `agent.list`, `agent.get`, `agent.read`, `agent.send`, `agent.rename`, `agent.focus`, `agent.start` |
 | Events | `events.subscribe`, `events.wait` |
-| Integrations | `integration.install`, `integration.uninstall` |
 
 Some CLI commands are conveniences around these methods. For example, `herdr agent wait` resolves an agent target and then subscribes to pane agent state events.
 
@@ -121,7 +119,7 @@ Use `HERDR_SOCKET_PATH` only for low-level overrides.
 
 ## Agent state reporting
 
-Integrations report agent state with `pane.report_agent`.
+Tools report agent state with `pane.report_agent`.
 
 ```json
 {

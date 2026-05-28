@@ -38,7 +38,6 @@ pub(crate) use self::{
         handle_keybind_help_key, handle_rename_key, handle_resize_key,
     },
     navigate::terminal_direct_navigation_action,
-    settings::open_settings_at,
 };
 use self::{
     modal::{
@@ -193,9 +192,6 @@ impl App {
                 SettingsAction::SaveTheme(name) => self.save_theme(&name),
                 SettingsAction::SaveSound(enabled) => self.save_sound(enabled),
                 SettingsAction::SaveToastDelivery(delivery) => self.save_toast_delivery(delivery),
-                SettingsAction::InstallRecommendedIntegrations => {
-                    self.install_recommended_integrations()
-                }
             }
         }
         if self.run_pending_worktree_action() {
@@ -208,11 +204,7 @@ impl App {
                 .store(true, std::sync::atomic::Ordering::Release);
             self.render_notify.notify_one();
         }
-        if previous_settings_section != crate::app::state::SettingsSection::Integrations
-            && self.state.settings.section == crate::app::state::SettingsSection::Integrations
-        {
-            self.refresh_integration_recommendations();
-        }
+        let _ = previous_settings_section;
         if self.state.agent_panel_scope != previous_agent_panel_scope {
             self.save_agent_panel_scope(self.state.agent_panel_scope);
         }

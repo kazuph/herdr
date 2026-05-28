@@ -638,18 +638,16 @@ pub enum SettingsSection {
     Theme,
     Sound,
     Toast,
-    Integrations,
 }
 
 impl SettingsSection {
-    pub const ALL: &[Self] = &[Self::Theme, Self::Sound, Self::Toast, Self::Integrations];
+    pub const ALL: &[Self] = &[Self::Theme, Self::Sound, Self::Toast];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Theme => "theme",
             Self::Sound => "sound",
             Self::Toast => "toasts",
-            Self::Integrations => "integrations",
         }
     }
 }
@@ -1127,10 +1125,6 @@ pub struct AppState {
     pub theme_name: String,
     /// Settings panel state.
     pub settings: SettingsState,
-    /// Cached integration recommendations for onboarding/settings UI.
-    pub integration_recommendations: Vec<crate::integration::IntegrationRecommendation>,
-    /// Result messages from the latest integration install action.
-    pub integration_install_messages: Vec<String>,
     /// Highlight state for the bottom-right global launcher menu.
     pub global_menu: MenuListState,
     /// Resolved host terminal default colors for theming embedded panes.
@@ -1152,23 +1146,17 @@ impl AppState {
         self.toast_config.delivery
     }
 
-    pub(crate) fn integration_updates_available(&self) -> bool {
-        self.integration_recommendations
-            .iter()
-            .any(|item| item.state == crate::integration::IntegrationStatusKind::Outdated)
-    }
-
     pub(crate) fn global_menu_attention_badge_visible(&self) -> bool {
-        self.update_available.is_some() || self.integration_updates_available()
+        self.update_available.is_some()
     }
 
     pub(crate) fn global_menu_item_has_badge(&self, item: &str) -> bool {
-        (item == "update ready" && self.update_available.is_some())
-            || (item == "settings" && self.integration_updates_available())
+        item == "update ready" && self.update_available.is_some()
     }
 
     pub(crate) fn settings_section_has_badge(&self, section: SettingsSection) -> bool {
-        section == SettingsSection::Integrations && self.integration_updates_available()
+        let _ = section;
+        false
     }
 
     pub fn focused_pane_requests_mouse_capture(&self) -> bool {
@@ -1399,8 +1387,6 @@ impl AppState {
                 original_palette: None,
                 original_theme: None,
             },
-            integration_recommendations: Vec::new(),
-            integration_install_messages: Vec::new(),
             global_menu: MenuListState::new(0),
             host_terminal_theme: TerminalTheme::default(),
             session_dirty: false,

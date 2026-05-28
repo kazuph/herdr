@@ -1,6 +1,6 @@
 ---
 title: Agents
-description: See what Herdr can detect, how agent state works, and how integrations improve it.
+description: See what Herdr can detect, how agent state works, custom labels, and direct attach.
 ---
 
 Herdr is built for running more than one coding agent at a time. Each agent stays in a real terminal pane with its shell, logs, prompts, and running processes intact. Herdr tracks which panes contain agents, rolls their state up to tabs and workspaces, and lets you jump straight to the pane that needs attention instead of polling every terminal by hand.
@@ -24,17 +24,16 @@ Automatic detection works out of the box for common coding agents.
 
 Detected but less thoroughly tested: Gemini CLI, Cursor Agent, Cline, and Kimi.
 
-Unsupported agents still run normally as terminal processes. They just may not get rich state unless you add an integration or report state over the socket API.
+Unsupported agents still run normally as terminal processes. They just may not get rich state unless a tool reports state over the socket API.
 
 ## How detection works
 
-Herdr combines three signals:
+Herdr combines two built-in signals:
 
 1. foreground process detection
 2. terminal output heuristics
-3. integration state reports
 
-Process detection tells Herdr which pane owns an agent. Heuristics infer state when no hook is available. Integrations provide the most precise semantic state.
+Process detection tells Herdr which pane owns an agent. Heuristics infer state without installing hooks or plugins into agent config directories.
 
 ## State rollups
 
@@ -43,30 +42,6 @@ The sidebar rolls state upward.
 A blocked agent makes its pane, tab, and workspace look blocked. A working agent makes the workspace look active. A done agent stays visible until you view it.
 
 This is the main Herdr workflow: start several agents, let them work in parallel, and use the sidebar to see which project needs a decision, which one is still running, and which one is ready to review.
-
-## Direct integrations
-
-Install integrations for agents that expose hooks or plugins:
-
-```bash
-herdr integration install pi
-herdr integration install claude
-herdr integration install codex
-herdr integration install opencode
-herdr integration install hermes
-```
-
-Check installed integration versions:
-
-```bash
-herdr integration status
-```
-
-Show only outdated integrations:
-
-```bash
-herdr integration status --outdated-only
-```
 
 ## Custom agent labels
 
@@ -81,7 +56,7 @@ Targets accept terminal IDs, unique agent names, detected or reported agent labe
 
 ## Custom status labels
 
-Integrations can report a visual status label without changing semantic state.
+Tools can report a visual status label without changing semantic state.
 
 ```bash
 herdr pane report-agent 1-1 \

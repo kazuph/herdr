@@ -340,9 +340,8 @@ impl App {
         use bytes::Bytes;
 
         use crate::api::schema::{
-            ErrorBody, ErrorResponse, IntegrationInstallResult, IntegrationUninstallResult, Method,
-            PaneListParams, PaneReadResult, ReadFormat, ReadSource, ResponseResult,
-            SuccessResponse, TabListParams,
+            ErrorBody, ErrorResponse, Method, PaneListParams, PaneReadResult, ReadFormat,
+            ReadSource, ResponseResult, SuccessResponse, TabListParams,
         };
 
         let response = match request.method {
@@ -1611,54 +1610,6 @@ impl App {
                 SuccessResponse {
                     id: request.id,
                     result: ResponseResult::Ok {},
-                }
-            }
-            Method::IntegrationInstall(params) => {
-                let target = params.target;
-                let messages = match crate::integration::install_target(target) {
-                    Ok(messages) => messages,
-                    Err(err) => {
-                        return serde_json::to_string(&ErrorResponse {
-                            id: request.id,
-                            error: ErrorBody {
-                                code: "integration_install_failed".into(),
-                                message: err.to_string(),
-                            },
-                        })
-                        .unwrap();
-                    }
-                };
-
-                SuccessResponse {
-                    id: request.id,
-                    result: ResponseResult::IntegrationInstall {
-                        target,
-                        details: IntegrationInstallResult { messages },
-                    },
-                }
-            }
-            Method::IntegrationUninstall(params) => {
-                let target = params.target;
-                let messages = match crate::integration::uninstall_target(target) {
-                    Ok(messages) => messages,
-                    Err(err) => {
-                        return serde_json::to_string(&ErrorResponse {
-                            id: request.id,
-                            error: ErrorBody {
-                                code: "integration_uninstall_failed".into(),
-                                message: err.to_string(),
-                            },
-                        })
-                        .unwrap();
-                    }
-                };
-
-                SuccessResponse {
-                    id: request.id,
-                    result: ResponseResult::IntegrationUninstall {
-                        target,
-                        details: IntegrationUninstallResult { messages },
-                    },
                 }
             }
             _ => {

@@ -7,12 +7,11 @@ use serde::Serialize;
 use crate::api;
 use crate::api::schema::{
     AgentReadParams, AgentRenameParams, AgentSendParams, AgentStartParams, AgentStatus,
-    AgentTarget, EmptyParams, IntegrationTarget, Method, OutputMatch, PaneAgentState,
-    PaneListParams, PaneReadParams, PaneRenameParams, PaneReportAgentParams, PaneSendInputParams,
-    PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams,
-    PingParams, ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams,
-    TabListParams, TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams,
-    WorkspaceTarget,
+    AgentTarget, EmptyParams, Method, OutputMatch, PaneAgentState, PaneListParams, PaneReadParams,
+    PaneRenameParams, PaneReportAgentParams, PaneSendInputParams, PaneSendKeysParams,
+    PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams, PingParams,
+    ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams, TabListParams,
+    TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
 };
 
 pub enum CommandOutcome {
@@ -40,7 +39,6 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "terminal" => run_terminal_command(&args[2..])?,
         "pane" => run_pane_command(&args[2..])?,
         "wait" => run_wait_command(&args[2..])?,
-        "integration" => run_integration_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
         _ => return Ok(CommandOutcome::NotCli),
     };
@@ -468,27 +466,6 @@ fn run_wait_command(args: &[String]) -> std::io::Result<i32> {
         }
         _ => {
             print_wait_help();
-            Ok(2)
-        }
-    }
-}
-
-fn run_integration_command(args: &[String]) -> std::io::Result<i32> {
-    let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
-        print_integration_help();
-        return Ok(2);
-    };
-
-    match subcommand {
-        "install" => integration_install(&args[1..]),
-        "uninstall" => integration_uninstall(&args[1..]),
-        "status" => integration_status(&args[1..]),
-        "help" | "--help" | "-h" => {
-            print_integration_help();
-            Ok(0)
-        }
-        _ => {
-            print_integration_help();
             Ok(2)
         }
     }
@@ -1718,111 +1695,6 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
     }))
 }
 
-fn integration_status(args: &[String]) -> std::io::Result<i32> {
-    let outdated_only = match args {
-        [] => false,
-        [flag] if flag == "--outdated-only" => true,
-        _ => {
-            eprintln!("usage: herdr integration status [--outdated-only]");
-            return Ok(2);
-        }
-    };
-
-    if outdated_only {
-        crate::integration::print_outdated_update_notice();
-        return Ok(0);
-    }
-
-    for status in crate::integration::installed_integration_statuses() {
-        let target = crate::integration::integration_target_label(status.target);
-        let version = match status.installed_version {
-            Some(version) => format!("v{version}"),
-            None => "legacy".to_string(),
-        };
-        let state = match status.state {
-            crate::integration::IntegrationStatusKind::NotInstalled => "not installed".to_string(),
-            crate::integration::IntegrationStatusKind::Current => {
-                format!("current ({version})")
-            }
-            crate::integration::IntegrationStatusKind::Outdated => {
-                format!("outdated ({version} < v{})", status.expected_version)
-            }
-        };
-        println!("{target}: {state} ({})", status.path.display());
-    }
-
-    Ok(0)
-}
-
-fn integration_install(args: &[String]) -> std::io::Result<i32> {
-    let Some(target) = parse_integration_target(args, "install")? else {
-        return Ok(2);
-    };
-
-    match crate::integration::install_target(target) {
-        Ok(messages) => {
-            print_integration_messages(messages);
-            Ok(0)
-        }
-        Err(err) => {
-            eprintln!("{err}");
-            Ok(1)
-        }
-    }
-}
-
-fn integration_uninstall(args: &[String]) -> std::io::Result<i32> {
-    let Some(target) = parse_integration_target(args, "uninstall")? else {
-        return Ok(2);
-    };
-
-    match crate::integration::uninstall_target(target) {
-        Ok(messages) => {
-            print_integration_messages(messages);
-            Ok(0)
-        }
-        Err(err) => {
-            eprintln!("{err}");
-            Ok(1)
-        }
-    }
-}
-
-fn print_integration_messages(messages: Vec<String>) {
-    for message in messages {
-        println!("{message}");
-    }
-}
-
-fn parse_integration_target(
-    args: &[String],
-    action: &str,
-) -> std::io::Result<Option<IntegrationTarget>> {
-    let Some(target) = args.first().map(|arg| arg.as_str()) else {
-        eprintln!("usage: herdr integration {action} <pi|claude|codex|opencode|hermes>");
-        return Ok(None);
-    };
-    if args.len() != 1 {
-        eprintln!("usage: herdr integration {action} <pi|claude|codex|opencode|hermes>");
-        return Ok(None);
-    }
-
-    let parsed = match target {
-        "pi" => IntegrationTarget::Pi,
-        "claude" => IntegrationTarget::Claude,
-        "codex" => IntegrationTarget::Codex,
-        "opencode" => IntegrationTarget::Opencode,
-        "hermes" => IntegrationTarget::Hermes,
-        _ => {
-            eprintln!("unknown integration target: {target}");
-            eprintln!("currently supported: pi, claude, codex, opencode, hermes");
-            return Ok(None);
-        }
-    };
-
-    Ok(Some(parsed))
-}
-
 fn wait_output(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
         eprintln!("usage: herdr wait output <pane_id> --match <text> [--source visible|recent|recent-unwrapped] [--lines N] [--timeout MS] [--regex]");
@@ -2317,21 +2189,6 @@ fn print_wait_help() {
     eprintln!(
         "  herdr wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [--timeout MS]"
     );
-}
-
-fn print_integration_help() {
-    eprintln!("herdr integration commands:");
-    eprintln!("  herdr integration install pi");
-    eprintln!("  herdr integration install claude");
-    eprintln!("  herdr integration install codex");
-    eprintln!("  herdr integration install opencode");
-    eprintln!("  herdr integration install hermes");
-    eprintln!("  herdr integration uninstall pi");
-    eprintln!("  herdr integration uninstall claude");
-    eprintln!("  herdr integration uninstall codex");
-    eprintln!("  herdr integration uninstall opencode");
-    eprintln!("  herdr integration uninstall hermes");
-    eprintln!("  herdr integration status [--outdated-only]");
 }
 
 fn print_session_help() {

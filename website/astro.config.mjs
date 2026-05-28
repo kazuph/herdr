@@ -9,8 +9,6 @@ function rewriteHerdrLinks() {
     ['./README.md', '/docs/'],
     ['CONFIGURATION.md', '/docs/configuration/'],
     ['./CONFIGURATION.md', '/docs/configuration/'],
-    ['INTEGRATIONS.md', '/docs/integrations/'],
-    ['./INTEGRATIONS.md', '/docs/integrations/'],
     ['SOCKET_API.md', '/docs/socket-api/'],
     ['./SOCKET_API.md', '/docs/socket-api/'],
     ['SKILL.md', '/docs/agent-skill/'],
@@ -89,7 +87,6 @@ export default defineConfig({
           label: 'Core guides',
           items: [
             { label: 'Agents', slug: 'docs/agents' },
-            { label: 'Integrations', slug: 'docs/integrations' },
             { label: 'Configuration', slug: 'docs/configuration' },
             { label: 'Persistence and remote access', slug: 'docs/persistence-remote' },
           ],

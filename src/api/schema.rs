@@ -86,10 +86,6 @@ pub enum Method {
     EventsWait(EventsWaitParams),
     #[serde(rename = "pane.wait_for_output")]
     PaneWaitForOutput(PaneWaitForOutputParams),
-    #[serde(rename = "integration.install")]
-    IntegrationInstall(IntegrationInstallParams),
-    #[serde(rename = "integration.uninstall")]
-    IntegrationUninstall(IntegrationUninstallParams),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -383,26 +379,6 @@ pub struct PaneWaitForOutputParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IntegrationInstallParams {
-    pub target: IntegrationTarget,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IntegrationUninstallParams {
-    pub target: IntegrationTarget,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IntegrationTarget {
-    Pi,
-    Claude,
-    Codex,
-    Opencode,
-    Hermes,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OutputMatch {
     Substring { value: String },
@@ -570,14 +546,6 @@ pub enum ResponseResult {
         matched_line: Option<String>,
         read: PaneReadResult,
     },
-    IntegrationInstall {
-        target: IntegrationTarget,
-        details: IntegrationInstallResult,
-    },
-    IntegrationUninstall {
-        target: IntegrationTarget,
-        details: IntegrationUninstallResult,
-    },
     ConfigReload {
         status: crate::config::ConfigReloadStatus,
         diagnostics: Vec<String>,
@@ -662,16 +630,6 @@ pub struct PaneReadResult {
     pub text: String,
     pub revision: u64,
     pub truncated: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IntegrationInstallResult {
-    pub messages: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IntegrationUninstallResult {
-    pub messages: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

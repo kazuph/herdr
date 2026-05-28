@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://herdr.dev">herdr.dev</a> · <a href="#install">install</a> · <a href="#quick-start">quick start</a> · <a href="#supported-agents">supported agents</a> · <a href="https://herdr.dev/docs/integrations/">integrations</a> · <a href="https://herdr.dev/docs/configuration/">configuration</a> · <a href="https://herdr.dev/docs/socket-api/">socket api</a>
+  <a href="https://herdr.dev">herdr.dev</a> · <a href="#install">install</a> · <a href="#quick-start">quick start</a> · <a href="#supported-agents">supported agents</a> · <a href="https://herdr.dev/docs/configuration/">configuration</a> · <a href="https://herdr.dev/docs/socket-api/">socket api</a>
 </p>
 
 ---
@@ -120,7 +120,7 @@ states:
 - 🔵 **done** — work finished, you have not looked at it yet
 - 🟢 **idle** — done and seen
 
-detection works by reading foreground process and terminal output. zero config, no hooks required. for agents that expose hooks, the socket api integration gives more robust state reporting.
+detection works by reading foreground process and terminal output. zero config, no hooks or plugins required.
 
 ## lives in your terminal
 
@@ -178,21 +178,7 @@ automatic detection works out of the box. process name matching plus terminal ou
 
 detected but not fully tested: gemini cli, cursor agent, cline, kimi, github copilot cli.
 
-for agents outside the built-in list, herdr still works as a terminal multiplexer with workspaces, panes, and tiling. custom integrations can report agent labels over the socket api. see the [socket api docs](https://herdr.dev/docs/socket-api/).
-
-### direct integrations
-
-the built-in pi, claude code, codex, opencode, and hermes integrations forward semantic state to herdr over the socket api. install with:
-
-```bash
-herdr integration install pi
-herdr integration install claude
-herdr integration install codex
-herdr integration install opencode
-herdr integration install hermes
-```
-
-see the [integrations docs](https://herdr.dev/docs/integrations/) for setup details.
+for agents outside the built-in list, herdr still works as a terminal multiplexer with workspaces, panes, and tiling. custom tools can report agent labels over the socket api. see the [socket api docs](https://herdr.dev/docs/socket-api/).
 
 ## keybindings
 
@@ -268,7 +254,6 @@ full logging and environment variable details: [configuration docs](https://herd
 ## docs
 
 - [configuration](https://herdr.dev/docs/configuration/) — keybindings, themes, notifications, environment variables
-- [integrations](https://herdr.dev/docs/integrations/) — pi, claude code, codex, opencode, hermes integrations
 - [`SKILL.md`](./SKILL.md) — reusable agent skill
 - [socket api](https://herdr.dev/docs/socket-api/) — socket protocol and cli reference
 
