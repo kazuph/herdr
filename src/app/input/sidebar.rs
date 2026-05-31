@@ -376,12 +376,15 @@ impl AppState {
         } else {
             self.view.workspace_section_header_areas.clone()
         };
-        let section = sections.iter().find_map(|area| {
-            (col >= area.rect.x
-                && col < area.rect.x + area.rect.width
-                && row >= area.rect.y
-                && row < area.rect.y + area.rect.height)
-                .then_some(area.section)
+        let section = sections.iter().enumerate().find_map(|(idx, area)| {
+            if col < area.rect.x || col >= area.rect.x + area.rect.width || row < area.rect.y {
+                return None;
+            }
+            let next_section_y = sections
+                .get(idx + 1)
+                .map(|next| next.rect.y)
+                .unwrap_or_else(|| self.sidebar_footer_rect().y);
+            (row < next_section_y).then_some(area.section)
         })?;
         if self
             .workspace_press
@@ -1307,6 +1310,65 @@ mod tests {
             .contains(&WorkspaceSection::Work));
         let snapshot = capture_snapshot(&app.state);
         assert_eq!(snapshot.workspaces[1].section, WorkspaceSection::Work);
+    }
+
+    #[test]
+    fn dragging_workspace_to_section_body_changes_section() {
+        let mut app = app_for_mouse_test();
+        let mut work = Workspace::test_new("work");
+        work.section = WorkspaceSection::Work;
+        let mut personal = Workspace::test_new("personal");
+        personal.section = WorkspaceSection::Personal;
+        app.state.workspaces = vec![work, personal];
+        app.state.active = Some(1);
+        app.state.selected = 1;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+
+        let source = app
+            .state
+            .view
+            .workspace_card_areas
+            .iter()
+            .find(|card| card.ws_idx == 1)
+            .expect("personal card")
+            .rect;
+        let target = app
+            .state
+            .view
+            .workspace_card_areas
+            .iter()
+            .find(|card| card.ws_idx == 0)
+            .expect("work card")
+            .rect;
+        let target_row = target.y + target.height;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            source.x + 1,
+            source.y,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            target.x + target.width.saturating_sub(2),
+            target_row,
+        ));
+
+        assert!(matches!(
+            app.state.drag.as_ref().map(|drag| &drag.target),
+            Some(DragTarget::WorkspaceReorder {
+                source_ws_idx: 1,
+                insert_idx: None,
+                target_section: Some(WorkspaceSection::Work),
+            })
+        ));
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            target.x + target.width.saturating_sub(2),
+            target_row,
+        ));
+
+        assert_eq!(app.state.workspaces[1].section, WorkspaceSection::Work);
     }
 
     #[test]

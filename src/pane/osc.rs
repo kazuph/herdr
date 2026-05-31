@@ -12,6 +12,13 @@ pub(super) struct DefaultColorOscTracker {
     body: Vec<u8>,
 }
 
+#[derive(Debug, Default)]
+pub(super) struct TitleOscTracker {
+    state: DefaultColorOscTrackerState,
+    body: Vec<u8>,
+    latest: Option<Option<String>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum DefaultColorOscTrackerState {
     #[default]
@@ -74,6 +81,64 @@ impl DefaultColorOscTracker {
     }
 }
 
+impl TitleOscTracker {
+    pub(super) fn observe(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            match self.state {
+                DefaultColorOscTrackerState::Ground => {
+                    if byte == 0x1b {
+                        self.state = DefaultColorOscTrackerState::Escape;
+                    }
+                }
+                DefaultColorOscTrackerState::Escape => {
+                    if byte == b']' {
+                        self.body.clear();
+                        self.state = DefaultColorOscTrackerState::OscBody;
+                    } else if byte == 0x1b {
+                        self.state = DefaultColorOscTrackerState::Escape;
+                    } else {
+                        self.state = DefaultColorOscTrackerState::Ground;
+                    }
+                }
+                DefaultColorOscTrackerState::OscBody => match byte {
+                    0x07 => {
+                        self.finalize();
+                        self.state = DefaultColorOscTrackerState::Ground;
+                    }
+                    0x1b => self.state = DefaultColorOscTrackerState::OscEscape,
+                    _ => self.body.push(byte),
+                },
+                DefaultColorOscTrackerState::OscEscape => {
+                    if byte == b'\\' {
+                        self.finalize();
+                        self.state = DefaultColorOscTrackerState::Ground;
+                    } else {
+                        self.body.push(0x1b);
+                        self.body.push(byte);
+                        self.state = DefaultColorOscTrackerState::OscBody;
+                    }
+                }
+            }
+
+            if self.body.len() > 1024 {
+                self.body.clear();
+                self.state = DefaultColorOscTrackerState::Ground;
+            }
+        }
+    }
+
+    fn finalize(&mut self) {
+        if let Some(title) = parse_title_osc(&self.body) {
+            self.latest = Some(title);
+        }
+        self.body.clear();
+    }
+
+    pub(super) fn take_latest(&mut self) -> Option<Option<String>> {
+        self.latest.take()
+    }
+}
+
 fn is_default_color_set_osc(body: &[u8]) -> bool {
     let Some(separator) = body.iter().position(|byte| *byte == b';') else {
         return false;
@@ -81,6 +146,21 @@ fn is_default_color_set_osc(body: &[u8]) -> bool {
     let command = &body[..separator];
     let value = &body[separator + 1..];
     matches!(command, b"10" | b"11") && !value.is_empty() && value != b"?"
+}
+
+fn parse_title_osc(body: &[u8]) -> Option<Option<String>> {
+    let separator = body.iter().position(|byte| *byte == b';')?;
+    let command = &body[..separator];
+    if !matches!(command, b"0" | b"1" | b"2") {
+        return None;
+    }
+
+    let value = std::str::from_utf8(&body[separator + 1..]).ok()?;
+    let title = value
+        .trim_matches(|ch: char| ch.is_control())
+        .trim()
+        .to_string();
+    Some((!title.is_empty()).then_some(title))
 }
 
 /// 256 KiB of base64 ≈ 192 KiB of text — enough for real source-file copies
@@ -469,6 +549,23 @@ mod tests {
         fw.observe(b"\x1b]0;title\x07");
         fw.observe(b"\x1b]8;;https://example.com\x1b\\");
         assert!(fw.drain_pending().is_empty());
+    }
+
+    #[test]
+    fn title_tracker_detects_osc_title_sequences() {
+        let mut tracker = TitleOscTracker::default();
+        tracker.observe(b"\x1b]0;planner\x07");
+
+        assert_eq!(tracker.take_latest(), Some(Some("planner".into())));
+    }
+
+    #[test]
+    fn title_tracker_detects_split_st_title_sequences() {
+        let mut tracker = TitleOscTracker::default();
+        tracker.observe(b"\x1b]2;review");
+        tracker.observe(b"\x1b\\");
+
+        assert_eq!(tracker.take_latest(), Some(Some("review".into())));
     }
 
     #[test]

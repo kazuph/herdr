@@ -517,6 +517,17 @@ impl PaneRuntime {
                                     );
                                 }
                             }
+                            if let Some(title) = result.pane_title {
+                                if let Err(err) = rt.block_on(
+                                    events.send(AppEvent::PaneTitleChanged { pane_id, title }),
+                                ) {
+                                    warn!(
+                                        pane = pane_id.raw(),
+                                        err = %err,
+                                        "failed to send pane title update"
+                                    );
+                                }
+                            }
                         }
                     }
                 }

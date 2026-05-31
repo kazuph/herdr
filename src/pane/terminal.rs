@@ -20,7 +20,7 @@ use super::{
     osc::{
         contains_scrollback_clear_sequence, current_transient_default_color_owner,
         maybe_filter_primary_screen_scrollback_clear, restore_host_terminal_theme_if_needed,
-        write_host_terminal_theme, DefaultColorOscTracker, Osc52Forwarder,
+        write_host_terminal_theme, DefaultColorOscTracker, Osc52Forwarder, TitleOscTracker,
     },
 };
 
@@ -78,6 +78,7 @@ pub(crate) struct ProcessBytesResult {
     pub request_render: bool,
     pub render_delay: Option<Duration>,
     pub clipboard_writes: Vec<Vec<u8>>,
+    pub pane_title: Option<Option<String>>,
 }
 
 pub(crate) struct GhosttyPaneTerminal {
@@ -95,6 +96,7 @@ pub(crate) struct GhosttyPaneCore {
     pub transient_default_color_owner_pgid: Option<u32>,
     pub default_color_tracker: DefaultColorOscTracker,
     pub osc52_forwarder: Osc52Forwarder,
+    pub title_tracker: TitleOscTracker,
 }
 
 pub(crate) struct PaneTerminal {
@@ -289,6 +291,7 @@ impl GhosttyPaneTerminal {
                 transient_default_color_owner_pgid: None,
                 default_color_tracker: DefaultColorOscTracker::default(),
                 osc52_forwarder: Osc52Forwarder::default(),
+                title_tracker: TitleOscTracker::default(),
             }),
             key_encoder: Mutex::new(key_encoder),
         })
@@ -351,6 +354,7 @@ impl GhosttyPaneTerminal {
                 request_render: false,
                 render_delay: None,
                 clipboard_writes: Vec::new(),
+                pane_title: None,
             };
         };
 
@@ -367,6 +371,8 @@ impl GhosttyPaneTerminal {
 
         core.osc52_forwarder.observe(bytes);
         let clipboard_writes = core.osc52_forwarder.drain_pending();
+        core.title_tracker.observe(bytes);
+        let pane_title = core.title_tracker.take_latest();
 
         let alternate_screen = core
             .terminal
@@ -418,6 +424,7 @@ impl GhosttyPaneTerminal {
             render_delay: (!synchronized_output && has_kitty_graphics_sequence)
                 .then_some(KITTY_GRAPHICS_REDRAW_SETTLE),
             clipboard_writes,
+            pane_title,
         }
     }
 

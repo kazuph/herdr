@@ -39,6 +39,7 @@ pub struct TerminalState {
     pub hook_authority: Option<HookAuthority>,
     pub manual_label: Option<String>,
     pub agent_name: Option<String>,
+    pub pane_title: Option<String>,
     hook_report_sequences: HashMap<String, u64>,
     pub state: AgentState,
     pub revision: u64,
@@ -55,6 +56,7 @@ impl TerminalState {
             hook_authority: None,
             manual_label: None,
             agent_name: None,
+            pane_title: None,
             hook_report_sequences: HashMap::new(),
             state: AgentState::Unknown,
             revision: 0,
@@ -263,6 +265,18 @@ impl TerminalState {
 
     pub fn clear_agent_name(&mut self) {
         self.agent_name = None;
+    }
+
+    pub fn set_pane_title(&mut self, title: Option<String>) -> bool {
+        let title = title.and_then(|title| {
+            let title = title.trim().to_string();
+            (!title.is_empty()).then_some(title)
+        });
+        if self.pane_title == title {
+            return false;
+        }
+        self.pane_title = title;
+        true
     }
 
     pub fn is_agent_terminal(&self) -> bool {

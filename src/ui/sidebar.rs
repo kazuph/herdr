@@ -311,8 +311,8 @@ fn agent_panel_id_label(entry: &AgentPanelEntry) -> String {
     entry.global_pane_id.clone()
 }
 
-fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace) -> u16 {
-    if app.workspace_panel_density == WorkspacePanelDensity::Full && ws.branch().is_some() {
+fn workspace_row_height(app: &AppState, _ws: &crate::workspace::Workspace) -> u16 {
+    if app.workspace_panel_density == WorkspacePanelDensity::Full {
         2
     } else {
         1
@@ -1023,6 +1023,7 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
         frame.render_widget(Paragraph::new(Line::from(line1)), content_rect);
 
         if row_height > 1 && row_y + 1 < list_bottom {
+            let mut spans = vec![Span::styled("    ", Style::default())];
             if let Some(branch) = ws.branch() {
                 let upstream_labels = workspace_upstream_labels(ws);
                 let diff_labels = workspace_diff_labels(ws);
@@ -1041,7 +1042,6 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                     p.overlay0
                 };
                 let has_labels = !upstream_labels.is_empty() || !diff_labels.is_empty();
-                let mut spans = vec![Span::styled("    ", Style::default())];
                 push_git_labels(&mut spans, upstream_labels, diff_labels, p);
                 if has_labels {
                     spans.push(Span::styled(" ", Style::default()));
@@ -1050,11 +1050,18 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                     branch_display,
                     Style::default().fg(branch_color),
                 ));
-                frame.render_widget(
-                    Paragraph::new(Line::from(spans)),
-                    Rect::new(content_rect.x, row_y + 1, content_rect.width, 1),
-                );
+            } else {
+                let label_color = if selected || is_active {
+                    p.mauve
+                } else {
+                    p.overlay0
+                };
+                spans.push(Span::styled("nogit", Style::default().fg(label_color)));
             }
+            frame.render_widget(
+                Paragraph::new(Line::from(spans)),
+                Rect::new(content_rect.x, row_y + 1, content_rect.width, 1),
+            );
         }
     }
 
@@ -1433,7 +1440,7 @@ mod tests {
     }
 
     #[test]
-    fn slim_workspace_panel_keeps_git_workspaces_to_one_row() {
+    fn workspace_panel_uses_two_rows_in_full_density() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
         app.ensure_test_terminals();
@@ -1454,8 +1461,35 @@ mod tests {
         let slim_cards = compute_workspace_card_areas(&app, area);
 
         assert_eq!(full_cards[0].rect.height, 2);
+        assert_eq!(full_cards[1].rect.height, 2);
         assert_eq!(slim_cards[0].rect.height, 1);
         assert_eq!(slim_cards[1].rect.y, slim_cards[0].rect.y + 2);
+    }
+
+    #[test]
+    fn full_workspace_panel_renders_nogit_label_for_non_git_workspace() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.workspaces[0].cached_git_branch = None;
+        app.ensure_test_terminals();
+        app.workspace_panel_density = WorkspacePanelDensity::Full;
+        app.mouse_capture = false;
+
+        let area = Rect::new(0, 0, 32, 6);
+        app.view.workspace_card_areas = vec![crate::app::state::WorkspaceCardArea {
+            ws_idx: 0,
+            rect: Rect::new(0, 2, 32, 2),
+        }];
+        let backend = ratatui::backend::TestBackend::new(32, 6);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_workspace_list(&app, frame, area, false))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row = (0..32).map(|x| buffer[(x, 3)].symbol()).collect::<String>();
+
+        assert!(row.contains("nogit"));
     }
 
     #[test]

@@ -896,6 +896,10 @@ impl AppState {
             // Intercepted in App::handle_internal_event before reaching this
             // dispatch; never touches AppState.
             AppEvent::ClipboardWrite { .. } => Vec::new(),
+            AppEvent::PaneTitleChanged { pane_id, title } => {
+                self.update_pane_title(pane_id, title);
+                Vec::new()
+            }
             AppEvent::GitStatusRefreshed { results } => {
                 self.apply_workspace_git_statuses(results);
                 Vec::new()
@@ -933,6 +937,25 @@ impl AppState {
         };
         self.apply_pane_state_change(ws_idx, pane_id, &change);
         Some(update)
+    }
+
+    fn update_pane_title(&mut self, pane_id: PaneId, title: Option<String>) -> bool {
+        let Some(ws_idx) = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.pane_state(pane_id).is_some())
+        else {
+            return false;
+        };
+        let Some(terminal_id) = self.workspaces[ws_idx]
+            .pane_state(pane_id)
+            .map(|pane| pane.attached_terminal_id.clone())
+        else {
+            return false;
+        };
+        self.terminals
+            .get_mut(&terminal_id)
+            .is_some_and(|terminal| terminal.set_pane_title(title))
     }
 
     fn apply_pane_state_change(
