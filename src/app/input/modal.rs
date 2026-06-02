@@ -66,12 +66,40 @@ pub(super) fn modal_action_from_buttons<A: Copy>(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidebarWidthPreset {
+    Narrow,
+    Normal,
+    Wide,
+}
+
+impl SidebarWidthPreset {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Narrow => "sidebar narrow",
+            Self::Normal => "sidebar normal",
+            Self::Wide => "sidebar wide",
+        }
+    }
+
+    fn width(self, state: &AppState) -> u16 {
+        match self {
+            Self::Narrow => state.sidebar_min_width,
+            Self::Normal => state
+                .default_sidebar_width
+                .clamp(state.sidebar_min_width, state.sidebar_max_width),
+            Self::Wide => state.sidebar_max_width,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GlobalMenuAction {
     Detach,
     WhatsNew,
     Keybinds,
     ReloadConfig,
     Settings,
+    SetSidebarWidth(SidebarWidthPreset),
 }
 
 pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
@@ -79,12 +107,32 @@ pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
         GlobalMenuAction::Settings,
         GlobalMenuAction::Keybinds,
         GlobalMenuAction::ReloadConfig,
+        GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Narrow),
+        GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Normal),
+        GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Wide),
     ];
     if state.update_available.is_some() || state.latest_release_notes_available {
         actions.push(GlobalMenuAction::WhatsNew);
     }
     actions.push(GlobalMenuAction::Detach);
     actions
+}
+
+pub(super) fn global_menu_action_label(state: &AppState, action: GlobalMenuAction) -> &'static str {
+    match action {
+        GlobalMenuAction::Detach => "detach",
+        GlobalMenuAction::WhatsNew => {
+            if state.update_available.is_some() {
+                "update ready"
+            } else {
+                "what's new"
+            }
+        }
+        GlobalMenuAction::Keybinds => "keybinds",
+        GlobalMenuAction::ReloadConfig => "reload config",
+        GlobalMenuAction::Settings => "settings",
+        GlobalMenuAction::SetSidebarWidth(preset) => preset.label(),
+    }
 }
 
 pub(super) fn open_global_menu(state: &mut AppState) {
@@ -132,6 +180,18 @@ pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuA
             leave_modal(state);
         }
         GlobalMenuAction::Settings => super::settings::open_settings(state),
+        GlobalMenuAction::SetSidebarWidth(preset) => {
+            state.sidebar_width = preset.width(state);
+            state.sidebar_width_source = match preset {
+                SidebarWidthPreset::Normal => crate::app::state::SidebarWidthSource::ConfigDefault,
+                SidebarWidthPreset::Narrow | SidebarWidthPreset::Wide => {
+                    crate::app::state::SidebarWidthSource::Manual
+                }
+            };
+            state.sidebar_width_auto = false;
+            state.mark_session_dirty();
+            leave_modal(state);
+        }
     }
 }
 
@@ -884,6 +944,47 @@ mod tests {
         );
 
         assert_eq!(state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn global_menu_sidebar_width_presets_update_width_source_and_snapshot() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.sidebar_min_width = 18;
+        state.default_sidebar_width = 26;
+        state.sidebar_max_width = 36;
+
+        apply_global_menu_action(
+            &mut state,
+            GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Narrow),
+        );
+        assert_eq!(state.sidebar_width, 18);
+        assert_eq!(
+            state.sidebar_width_source,
+            crate::app::state::SidebarWidthSource::Manual
+        );
+        assert_eq!(capture_snapshot(&state).sidebar_width, Some(18));
+
+        apply_global_menu_action(
+            &mut state,
+            GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Wide),
+        );
+        assert_eq!(state.sidebar_width, 36);
+        assert_eq!(
+            state.sidebar_width_source,
+            crate::app::state::SidebarWidthSource::Manual
+        );
+        assert_eq!(capture_snapshot(&state).sidebar_width, Some(36));
+
+        apply_global_menu_action(
+            &mut state,
+            GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Normal),
+        );
+        assert_eq!(state.sidebar_width, 26);
+        assert_eq!(
+            state.sidebar_width_source,
+            crate::app::state::SidebarWidthSource::ConfigDefault
+        );
+        assert_eq!(capture_snapshot(&state).sidebar_width, Some(26));
     }
 
     #[test]

@@ -12,6 +12,7 @@
 - The agents panel now follows expanded workspace sections, so agents in collapsed sections stay hidden while you focus on the visible spaces.
 - Added sidebar Git worktree actions for creating a new branch checkout, opening existing worktrees, and removing a selected linked checkout.
 - Added a touch-friendly workspace menu trigger: tapping the active workspace card opens the same context menu as right click.
+- Added global menu sidebar width presets for narrow, normal, and wide widths, giving touch-only clients a non-drag resize path.
 - Added a workspace context menu Duplicate action that opens a new workspace with the same tab, pane layout, and working directories.
 - Pane context menus can now rearrange all panes into vertical or horizontal splits and equalize pane sizes.
 
