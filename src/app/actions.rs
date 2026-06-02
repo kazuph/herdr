@@ -64,10 +64,6 @@ pub fn notification_toast_for_state_change(
     }
 }
 
-fn toast_agent_label(agent_label: &str) -> &str {
-    agent_label
-}
-
 pub fn notification_context(
     ws: &crate::workspace::Workspace,
     ws_idx: usize,
@@ -81,6 +77,63 @@ pub fn notification_context(
         }
     }
     context
+}
+
+pub fn notification_title_for_pane(state: &AppState, ws_idx: usize, _pane_id: PaneId) -> String {
+    let Some(ws) = state.workspaces.get(ws_idx) else {
+        return format!("{} workspace", ws_idx + 1);
+    };
+    format!(
+        "{} {}",
+        ws_idx + 1,
+        ws.display_name_from(&state.terminals, &state.terminal_runtimes)
+    )
+}
+
+pub fn notification_body_for_pane(
+    state: &AppState,
+    ws_idx: usize,
+    pane_id: PaneId,
+) -> Option<String> {
+    let runtime = state.runtime_for_pane_in_workspace(ws_idx, pane_id)?;
+    notification_body_excerpt(&runtime.recent_unwrapped_text(80))
+}
+
+pub fn notification_message_for_pane(state: &AppState, ws_idx: usize, pane_id: PaneId) -> String {
+    let title = notification_title_for_pane(state, ws_idx, pane_id);
+    match notification_body_for_pane(state, ws_idx, pane_id) {
+        Some(body) => format!("{title}: {body}"),
+        None => title,
+    }
+}
+
+pub fn notification_body_excerpt(text: &str) -> Option<String> {
+    let mut last_block = Vec::new();
+    let mut current_block = Vec::new();
+    for line in text.lines() {
+        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if line.is_empty() {
+            if !current_block.is_empty() {
+                last_block = std::mem::take(&mut current_block);
+            }
+            continue;
+        }
+        current_block.push(line);
+    }
+    if !current_block.is_empty() {
+        last_block = current_block;
+    }
+    let excerpt = last_block.into_iter().next()?;
+    Some(truncate_notification_body(&excerpt, 120))
+}
+
+fn truncate_notification_body(text: &str, max_chars: usize) -> String {
+    let len = text.chars().count();
+    if len <= max_chars {
+        return text.to_string();
+    }
+    let prefix: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{prefix}…")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -995,23 +1048,19 @@ impl AppState {
             self.toast_config.delivery,
             crate::config::ToastDelivery::Herdr
         ) {
-            if let (Some(agent_label), Some(kind)) = (
-                change.agent_label.as_deref(),
-                notification_toast_for_state_change(
-                    is_active_tab,
-                    change.previous_state,
-                    change.state,
-                ),
+            if let Some(kind) = notification_toast_for_state_change(
+                is_active_tab,
+                change.previous_state,
+                change.state,
             ) {
-                let event_text = match kind {
-                    ToastKind::NeedsAttention => "needs attention",
-                    ToastKind::Finished => "finished",
-                    ToastKind::UpdateInstalled => "updated",
-                };
-                let context = notification_context(&self.workspaces[ws_idx], ws_idx, pane_id);
+                let title = notification_title_for_pane(self, ws_idx, pane_id);
+                let context =
+                    notification_body_for_pane(self, ws_idx, pane_id).unwrap_or_else(|| {
+                        notification_context(&self.workspaces[ws_idx], ws_idx, pane_id)
+                    });
                 self.toast = Some(ToastNotification {
                     kind,
-                    title: format!("{} {}", toast_agent_label(agent_label), event_text),
+                    title,
                     context,
                     target: Some(ToastTarget {
                         workspace_id: self.workspaces[ws_idx].id.clone(),
@@ -1659,6 +1708,37 @@ mod tests {
     }
 
     #[test]
+    fn notification_title_uses_workspace_number_name_and_osc_title_without_space_before_dash() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.workspaces[1].custom_name = None;
+        let pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+        let terminal_id = state.workspaces[1]
+            .panes
+            .get(&pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_pane_title(Some("planner".into()));
+
+        assert_eq!(
+            notification_title_for_pane(&state, 1, pane_id),
+            "2 herdr-planner"
+        );
+    }
+
+    #[test]
+    fn notification_body_excerpt_uses_first_line_of_last_non_empty_block() {
+        assert_eq!(
+            notification_body_excerpt("old\n\n  Here is the answer  \nsecond line\n"),
+            Some("Here is the answer".into())
+        );
+    }
+
+    #[test]
     fn background_waiting_sets_attention_toast() {
         let mut state = app_with_workspaces(&["active", "background"]);
         state.active = Some(0);
@@ -1673,7 +1753,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
-        assert_eq!(toast.title, "pi needs attention");
+        assert_eq!(toast.title, "2 background");
         assert_eq!(toast.context, "background · 2");
     }
 
@@ -1696,7 +1776,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
-        assert_eq!(toast.title, "hermes needs attention");
+        assert_eq!(toast.title, "2 background");
         assert_eq!(toast.context, "background · 2");
     }
 
@@ -1722,7 +1802,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::Finished);
-        assert_eq!(toast.title, "droid finished");
+        assert_eq!(toast.title, "2 background");
         assert_eq!(toast.context, "background · 2");
         let target = toast.target.as_ref().expect("toast target");
         assert_eq!(&target.workspace_id, &state.workspaces[1].id);
@@ -1747,7 +1827,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
-        assert_eq!(toast.title, "pi needs attention");
+        assert_eq!(toast.title, "2 background");
         assert_eq!(toast.context, "background · 2 · logs");
     }
 
@@ -1769,7 +1849,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
-        assert_eq!(toast.title, "pi needs attention");
+        assert_eq!(toast.title, "1 active");
         assert_eq!(toast.context, "active · 1 · logs");
     }
 

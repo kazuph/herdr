@@ -17,6 +17,8 @@
 - Pane context menus can now rearrange all panes into vertical or horizontal splits and equalize pane sizes.
 
 ### Fixed
+- Agent notifications now title background events as `number workspace-OSC title` and use the latest response excerpt as the body.
+- Workspace names with root pane OSC titles now render as `workspace-OSC title` without a space before the hyphen.
 - Workspace cards now show Git branch names after upstream and diff stats so activity indicators stay closer to the workspace name.
 - Pane context menu splits now use the selected pane's current working directory.
 - Herdr no longer treats leaked `HERDR_ENV=1` shell environment as a nested launch unless the new process actually has a Herdr parent process.

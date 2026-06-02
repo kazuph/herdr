@@ -111,14 +111,6 @@ fn toast_notify_kind(delivery: config::ToastDelivery) -> Option<protocol::Notify
     }
 }
 
-fn toast_event_text(kind: app::state::ToastKind) -> &'static str {
-    match kind {
-        app::state::ToastKind::NeedsAttention => "needs attention",
-        app::state::ToastKind::Finished => "finished",
-        app::state::ToastKind::UpdateInstalled => "updated",
-    }
-}
-
 fn toast_message_from_state_change(
     state: &AppState,
     pane_id: PaneId,
@@ -126,7 +118,7 @@ fn toast_message_from_state_change(
     prev_state: AgentState,
     new_state: AgentState,
 ) -> Option<String> {
-    let kind = app::actions::notification_toast_for_state_change(
+    app::actions::notification_toast_for_state_change(
         suppress_active_tab_notifications,
         prev_state,
         new_state,
@@ -138,16 +130,9 @@ fn toast_message_from_state_change(
         .enumerate()
         .find_map(|(ws_idx, ws)| {
             ws.tabs.iter().find_map(|tab| {
-                let pane = tab.panes.get(&pane_id)?;
-                let agent_label = state
-                    .terminals
-                    .get(&pane.attached_terminal_id)
-                    .and_then(|terminal| terminal.effective_agent_label())?;
-                Some(format!(
-                    "{} {}: {}",
-                    agent_label,
-                    toast_event_text(kind),
-                    app::actions::notification_context(ws, ws_idx, pane_id)
+                tab.panes.get(&pane_id)?;
+                Some(app::actions::notification_message_for_pane(
+                    state, ws_idx, pane_id,
                 ))
             })
         })
@@ -1785,42 +1770,24 @@ impl HeadlessServer {
 
             if !forwarded_toast_from_state
                 && should_forward_toast_to_clients(self.app.state.toast_config.delivery)
-            {
-                if let Some(kind) = crate::app::actions::notification_toast_for_state_change(
+                && crate::app::actions::notification_toast_for_state_change(
                     suppress_active_tab_notifications,
                     *prev_state,
                     new_state,
-                ) {
-                    if let Some(agent_label) = self
-                        .app
-                        .state
-                        .terminals
-                        .get(&pane_after.attached_terminal_id)
-                        .and_then(|terminal| terminal.effective_agent_label())
-                    {
-                        let event_text = match kind {
-                            crate::app::state::ToastKind::NeedsAttention => "needs attention",
-                            crate::app::state::ToastKind::Finished => "finished",
-                            crate::app::state::ToastKind::UpdateInstalled => "updated",
-                        };
-                        let msg_text = format!(
-                            "{} {}: {}",
-                            agent_label,
-                            event_text,
-                            crate::app::actions::notification_context(
-                                &self.app.state.workspaces[*ws_idx],
-                                *ws_idx,
-                                *pane_id,
-                            )
-                        );
-                        self.send_to_foreground_client(ServerMessage::Notify {
-                            kind: toast_notify_kind(self.app.state.toast_config.delivery)
-                                .expect("toast forwarding requires a client notification kind"),
-                            message: msg_text,
-                            target_pane_id: self.app.public_pane_id(*ws_idx, *pane_id),
-                        });
-                    }
-                }
+                )
+                .is_some()
+            {
+                let msg_text = crate::app::actions::notification_message_for_pane(
+                    &self.app.state,
+                    *ws_idx,
+                    *pane_id,
+                );
+                self.send_to_foreground_client(ServerMessage::Notify {
+                    kind: toast_notify_kind(self.app.state.toast_config.delivery)
+                        .expect("toast forwarding requires a client notification kind"),
+                    message: msg_text,
+                    target_pane_id: self.app.public_pane_id(*ws_idx, *pane_id),
+                });
             }
 
             // Forward sound notification when server-side sound policy allows it.

@@ -130,45 +130,39 @@ impl App {
                             is_active_tab,
                             self.state.outer_terminal_focus,
                         );
-                    let Some(kind) = crate::app::actions::notification_toast_for_state_change(
+                    if crate::app::actions::notification_toast_for_state_change(
                         suppress_active_tab_notifications,
                         update.previous_state,
                         update.state,
-                    ) else {
+                    )
+                    .is_none()
+                    {
                         continue;
-                    };
+                    }
                     let Some(ws) = self.state.workspaces.get(update.ws_idx) else {
                         continue;
                     };
-                    let Some(pane) = ws
+                    if !ws
                         .tabs
                         .iter()
-                        .find_map(|tab| tab.panes.get(&update.pane_id))
-                    else {
+                        .any(|tab| tab.panes.contains_key(&update.pane_id))
+                    {
                         continue;
-                    };
-                    let Some(agent_label) = self
-                        .state
-                        .terminals
-                        .get(&pane.attached_terminal_id)
-                        .and_then(|terminal| terminal.effective_agent_label())
-                    else {
-                        continue;
-                    };
-                    let event_text = match kind {
-                        ToastKind::NeedsAttention => "needs attention",
-                        ToastKind::Finished => "finished",
-                        ToastKind::UpdateInstalled => "updated",
-                    };
-                    let title = format!("{} {}", agent_label, event_text);
-                    let body = crate::app::actions::notification_context(
-                        ws,
+                    }
+                    let title = crate::app::actions::notification_title_for_pane(
+                        &self.state,
+                        update.ws_idx,
+                        update.pane_id,
+                    );
+                    let body = crate::app::actions::notification_body_for_pane(
+                        &self.state,
                         update.ws_idx,
                         update.pane_id,
                     );
                     match self.state.toast_config.delivery {
                         crate::config::ToastDelivery::Terminal => {
-                            let _ = crate::terminal_notify::show_notification(&title, Some(&body));
+                            let _ =
+                                crate::terminal_notify::show_notification(&title, body.as_deref());
                         }
                         crate::config::ToastDelivery::System => {
                             let click_command = self
@@ -176,7 +170,7 @@ impl App {
                                 .and_then(|pane_id| pane_focus_command(&pane_id));
                             let _ = crate::platform::show_desktop_notification_with_action(
                                 &title,
-                                Some(&body),
+                                body.as_deref(),
                                 click_command.as_deref(),
                             );
                         }

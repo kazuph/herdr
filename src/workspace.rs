@@ -611,7 +611,7 @@ impl Workspace {
             .unwrap_or_else(|| "workspace".into());
         self.root_pane_title(terminals)
             .filter(|title| title != &base)
-            .map(|title| format!("{base} -{title}"))
+            .map(|title| format!("{base}-{title}"))
             .unwrap_or(base)
     }
 
@@ -850,7 +850,7 @@ mod tests {
 
         assert_eq!(
             ws.display_name_from(&terminals, &terminal_runtimes),
-            "pion -planner"
+            "pion-planner"
         );
     }
 
