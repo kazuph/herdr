@@ -96,7 +96,8 @@ pub fn notification_body_for_pane(
     pane_id: PaneId,
 ) -> Option<String> {
     let runtime = state.runtime_for_pane_in_workspace(ws_idx, pane_id)?;
-    notification_body_excerpt(&runtime.recent_unwrapped_text(80))
+    let title = notification_title_for_pane(state, ws_idx, pane_id);
+    notification_body_excerpt_ignoring_chrome(&runtime.recent_unwrapped_text(80), Some(&title))
 }
 
 pub fn notification_message_for_pane(state: &AppState, ws_idx: usize, pane_id: PaneId) -> String {
@@ -107,24 +108,41 @@ pub fn notification_message_for_pane(state: &AppState, ws_idx: usize, pane_id: P
     }
 }
 
-pub fn notification_body_excerpt(text: &str) -> Option<String> {
-    let mut last_block = Vec::new();
+fn notification_body_excerpt_ignoring_chrome(text: &str, title: Option<&str>) -> Option<String> {
+    let mut blocks = Vec::new();
     let mut current_block = Vec::new();
     for line in text.lines() {
         let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
         if line.is_empty() {
             if !current_block.is_empty() {
-                last_block = std::mem::take(&mut current_block);
+                blocks.push(std::mem::take(&mut current_block));
             }
             continue;
         }
         current_block.push(line);
     }
     if !current_block.is_empty() {
-        last_block = current_block;
+        blocks.push(current_block);
     }
-    let excerpt = last_block.into_iter().next()?;
+    let excerpt = blocks
+        .into_iter()
+        .rev()
+        .flat_map(|block| block.into_iter())
+        .find(|line| !is_notification_chrome_line(line, title))?;
     Some(truncate_notification_body(&excerpt, 120))
+}
+
+fn is_notification_chrome_line(line: &str, title: Option<&str>) -> bool {
+    if title.is_some_and(|title| line == title) {
+        return true;
+    }
+
+    let lower = line.to_lowercase();
+    if lower.starts_with("gpt-") {
+        return true;
+    }
+
+    line.starts_with('›') || line.starts_with("─ Worked for ") || lower.contains("% left")
 }
 
 fn truncate_notification_body(text: &str, max_chars: usize) -> String {
@@ -1733,8 +1751,54 @@ mod tests {
     #[test]
     fn notification_body_excerpt_uses_first_line_of_last_non_empty_block() {
         assert_eq!(
-            notification_body_excerpt("old\n\n  Here is the answer  \nsecond line\n"),
+            notification_body_excerpt_ignoring_chrome(
+                "old\n\n  Here is the answer  \nsecond line\n",
+                None
+            ),
             Some("Here is the answer".into())
+        );
+    }
+
+    #[test]
+    fn notification_body_excerpt_skips_trailing_codex_status_block() {
+        assert_eq!(
+            notification_body_excerpt_ignoring_chrome(
+                "old\n\nAIがユーザーに言いたいことです。\n\n\
+                 gpt-5.5 medium · HoelAI · main · Context\n\
+                 59% left · 5h 96% left · weekly 87% left",
+                None
+            ),
+            Some("AIがユーザーに言いたいことです。".into())
+        );
+    }
+
+    #[test]
+    fn notification_body_excerpt_skips_matching_notification_title() {
+        assert_eq!(
+            notification_body_excerpt_ignoring_chrome(
+                "AIの本文\n\n5 HoelAI-⠸ HoelAI\n\
+                 gpt-5.5 medium · HoelAI · main · Context\n\
+                 59% left",
+                Some("5 HoelAI-⠸ HoelAI")
+            ),
+            Some("AIの本文".into())
+        );
+    }
+
+    #[test]
+    fn notification_body_excerpt_skips_codex_status_prompt_and_turn_summary() {
+        assert_eq!(
+            notification_body_excerpt_ignoring_chrome(
+                "  - 55_Podcast 全体: 約 430MB\n\
+                   - 元WAV退避先: /Users/kazuph/Downloads/Kindle-work/retired_55_Podcast_wav_20260603\n\
+                   - 退避WAV合計: 約 2.6GB\n\n\
+                  変換後 .m4a は ffprobe で全16本の duration を確認済み、失敗 0 です。\n\n\
+                 ─ Worked for 4m 12s • Local tools: 9 calls (138.2s) • WebSocket: 6 events send (17ms) • 273 events received (112.3s) ─\n\n\
+                 › Improve documentation in @filename\n\n\
+                   gpt-5.5 medium · HoelAI · main · Context 56% left · 5h 95% left · weekly 87% left",
+                Some("4 HoelAI")
+            ),
+            Some("変換後 .m4a は ffprobe で全16本の duration を確認済み、失敗 0 です。".into())
         );
     }
 

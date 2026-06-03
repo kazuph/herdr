@@ -19,6 +19,7 @@
 ### Fixed
 - The default expanded sidebar maximum width is now 72 columns, making long branch names easier to read.
 - Agent notifications now title background events as `number workspace-OSC title` and use the latest response excerpt as the body.
+- Agent notification bodies now skip Codex status chrome such as context and quota lines, so the toast shows the agent's latest message when available.
 - Workspace names with root pane OSC titles now render as `workspace-OSC title` without a space before the hyphen.
 - Workspace cards now show Git branch names after upstream and diff stats so activity indicators stay closer to the workspace name.
 - Pane context menu splits now use the selected pane's current working directory.
