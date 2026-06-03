@@ -1354,7 +1354,7 @@ impl AppState {
             default_sidebar_width: 26,
             sidebar_width: 26,
             sidebar_min_width: 18,
-            sidebar_max_width: 36,
+            sidebar_max_width: 72,
             sidebar_width_source: SidebarWidthSource::ConfigDefault,
             sidebar_width_auto: false,
             sidebar_collapsed: false,

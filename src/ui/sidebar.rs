@@ -781,6 +781,22 @@ pub(crate) fn workspace_drop_indicator_row(
         .filter(|y| *y < list_bottom)
 }
 
+fn workspace_drop_indicator_row_for_section(
+    app: &AppState,
+    area: Rect,
+    section: crate::workspace::WorkspaceSection,
+    insert_idx: usize,
+) -> Option<u16> {
+    let cards = app
+        .view
+        .workspace_card_areas
+        .iter()
+        .copied()
+        .filter(|card| workspace_effective_section(app, card.ws_idx) == section)
+        .collect::<Vec<_>>();
+    workspace_drop_indicator_row(&cards, area, insert_idx)
+}
+
 pub(super) fn render_sidebar(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
     let is_navigating = matches!(app.mode, Mode::Navigate);
@@ -852,10 +868,15 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
     };
     let insertion_row = match app.drag.as_ref().map(|drag| &drag.target) {
         Some(crate::app::state::DragTarget::WorkspaceReorder {
+            source_ws_idx,
             insert_idx: Some(insert_idx),
-            target_section: None,
+            target_section,
             ..
-        }) => workspace_drop_indicator_row(&app.view.workspace_card_areas, area, *insert_idx),
+        }) => {
+            let section =
+                target_section.unwrap_or_else(|| workspace_effective_section(app, *source_ws_idx));
+            workspace_drop_indicator_row_for_section(app, area, section, *insert_idx)
+        }
         _ => None,
     };
     let target_section = match app.drag.as_ref().map(|drag| &drag.target) {
@@ -1490,6 +1511,54 @@ mod tests {
         let row = (0..32).map(|x| buffer[(x, 3)].symbol()).collect::<String>();
 
         assert!(row.contains("nogit"));
+    }
+
+    #[test]
+    fn workspace_reorder_indicator_renders_at_target_section_bottom() {
+        let mut app = crate::app::state::AppState::test_new();
+        let source = Workspace::test_new("source");
+        let mut work_a = Workspace::test_new("work-a");
+        work_a.section = crate::workspace::WorkspaceSection::Work;
+        let mut work_b = Workspace::test_new("work-b");
+        work_b.section = crate::workspace::WorkspaceSection::Work;
+        app.workspaces = vec![source, work_a, work_b];
+        app.ensure_test_terminals();
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 80, 30));
+
+        let work_cards = app
+            .view
+            .workspace_card_areas
+            .iter()
+            .copied()
+            .filter(|card| {
+                workspace_effective_section(&app, card.ws_idx)
+                    == crate::workspace::WorkspaceSection::Work
+            })
+            .collect::<Vec<_>>();
+        let last = work_cards.last().expect("work card");
+        let insert_idx = last.ws_idx + 1;
+        let indicator_row = last.rect.y + last.rect.height;
+        app.drag = Some(crate::app::state::DragState {
+            target: crate::app::state::DragTarget::WorkspaceReorder {
+                source_ws_idx: 0,
+                insert_idx: Some(insert_idx),
+                target_section: Some(crate::workspace::WorkspaceSection::Work),
+            },
+        });
+
+        let area = workspace_list_rect(app.view.sidebar_rect, app.sidebar_section_split);
+        let backend = ratatui::backend::TestBackend::new(80, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_workspace_list(&app, frame, area, false))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row = (area.x..area.x + area.width)
+            .map(|x| buffer[(x, indicator_row)].symbol())
+            .collect::<String>();
+
+        assert!(row.contains("─"));
     }
 
     #[test]

@@ -327,7 +327,7 @@ impl Default for UiConfig {
         Self {
             sidebar_width: 26,
             sidebar_min_width: 18,
-            sidebar_max_width: 36,
+            sidebar_max_width: 72,
             mouse_capture: true,
             confirm_close: true,
             prompt_new_tab_name: true,
@@ -476,7 +476,7 @@ show_tab_bar = false
     fn sidebar_bounds_default_and_parse() {
         let default_config = Config::default();
         assert_eq!(default_config.ui.sidebar_min_width, 18);
-        assert_eq!(default_config.ui.sidebar_max_width, 36);
+        assert_eq!(default_config.ui.sidebar_max_width, 72);
 
         let toml = r#"
 [ui]

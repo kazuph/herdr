@@ -493,11 +493,11 @@ impl AppState {
 
                 let workspace_target_section =
                     self.workspace_section_drop_target_at(mouse.column, mouse.row);
-                let workspace_drop_index = if workspace_target_section.is_some() {
-                    None
-                } else {
-                    self.workspace_drop_index_at_row(mouse.row)
-                };
+                let workspace_drop_index = workspace_target_section
+                    .and_then(|section| {
+                        self.workspace_drop_index_at_row_in_section(mouse.row, section)
+                    })
+                    .or_else(|| self.workspace_drop_index_at_row(mouse.row));
                 let tab_drop_index = self.tab_drop_index_at(mouse.column, mouse.row);
                 if self.drag.is_none() {
                     if let Some(press) = &self.workspace_press {
@@ -673,11 +673,15 @@ impl AppState {
                         target:
                             DragTarget::WorkspaceReorder {
                                 source_ws_idx,
+                                insert_idx,
                                 target_section: Some(section),
                                 ..
                             },
                     }) => {
                         self.set_workspace_section(source_ws_idx, section);
+                        if let Some(insert_idx) = insert_idx {
+                            self.move_workspace(source_ws_idx, insert_idx);
+                        }
                     }
                     Some(DragState {
                         target:

@@ -318,9 +318,9 @@ impl App {
             tracing::warn!(
                 min = config.ui.sidebar_min_width,
                 max = config.ui.sidebar_max_width,
-                "ui.sidebar_min_width is greater than sidebar_max_width; falling back to default bounds (18, 36)"
+                "ui.sidebar_min_width is greater than sidebar_max_width; falling back to default bounds (18, 72)"
             );
-            (18, 36)
+            (18, 72)
         });
 
         info!(
@@ -1458,7 +1458,7 @@ mod tests {
         let mut app = test_app();
         // Default bounds.
         assert_eq!(app.state.sidebar_min_width, 18);
-        assert_eq!(app.state.sidebar_max_width, 36);
+        assert_eq!(app.state.sidebar_max_width, 72);
 
         // Manually set a width and flip the source so the existing
         // sidebar_width-only-when-config-owned guard does NOT update it.
@@ -1512,7 +1512,7 @@ mod tests {
             "App::new must fall back to default min when bounds are inverted"
         );
         assert_eq!(
-            app.state.sidebar_max_width, 36,
+            app.state.sidebar_max_width, 72,
             "App::new must fall back to default max when bounds are inverted"
         );
     }

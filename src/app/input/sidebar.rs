@@ -367,21 +367,7 @@ impl AppState {
         col: u16,
         row: u16,
     ) -> Option<crate::workspace::WorkspaceSection> {
-        let sections = if self.view.workspace_section_header_areas.is_empty() {
-            crate::ui::compute_workspace_section_header_areas(self, self.view.sidebar_rect)
-        } else {
-            self.view.workspace_section_header_areas.clone()
-        };
-        let section = sections.iter().enumerate().find_map(|(idx, area)| {
-            if col < area.rect.x || col >= area.rect.x + area.rect.width || row < area.rect.y {
-                return None;
-            }
-            let next_section_y = sections
-                .get(idx + 1)
-                .map(|next| next.rect.y)
-                .unwrap_or_else(|| self.sidebar_footer_rect().y);
-            (row < next_section_y).then_some(area.section)
-        })?;
+        let section = self.workspace_section_at_list_row(col, row)?;
         if self
             .workspace_press
             .as_ref()
@@ -391,6 +377,38 @@ impl AppState {
             return None;
         }
         Some(section)
+    }
+
+    fn workspace_section_at_list_row(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<crate::workspace::WorkspaceSection> {
+        let sections = if self.view.workspace_section_header_areas.is_empty() {
+            crate::ui::compute_workspace_section_header_areas(self, self.view.sidebar_rect)
+        } else {
+            self.view.workspace_section_header_areas.clone()
+        };
+        if let Some(first) = sections.first() {
+            if col >= first.rect.x
+                && col < first.rect.x + first.rect.width
+                && row >= self.workspace_list_rect().y
+                && row < first.rect.y
+            {
+                return Some(first.section);
+            }
+        }
+
+        sections.iter().enumerate().find_map(|(idx, area)| {
+            if col < area.rect.x || col >= area.rect.x + area.rect.width || row < area.rect.y {
+                return None;
+            }
+            let next_section_y = sections
+                .get(idx + 1)
+                .map(|next| next.rect.y)
+                .unwrap_or_else(|| self.sidebar_footer_rect().y);
+            (row < next_section_y).then_some(area.section)
+        })
     }
 
     pub(super) fn set_workspace_section(
@@ -486,16 +504,30 @@ impl AppState {
 
     pub(super) fn workspace_drop_index_at_row(&self, row: u16) -> Option<usize> {
         let area = self.workspace_list_rect();
+        let section = self.workspace_section_at_list_row(area.x, row)?;
+        self.workspace_drop_index_at_row_in_section(row, section)
+    }
+
+    pub(super) fn workspace_drop_index_at_row_in_section(
+        &self,
+        row: u16,
+        section: crate::workspace::WorkspaceSection,
+    ) -> Option<usize> {
+        let area = self.workspace_list_rect();
         let footer = self.sidebar_footer_rect();
         if area == Rect::default() || row < area.y || row >= footer.y {
             return None;
         }
+        if self.workspace_section_at_row(row).is_some() {
+            return None;
+        }
 
-        let cards = if self.view.workspace_card_areas.is_empty() {
+        let mut cards = if self.view.workspace_card_areas.is_empty() {
             crate::ui::compute_workspace_card_areas(self, self.view.sidebar_rect)
         } else {
             self.view.workspace_card_areas.clone()
         };
+        cards.retain(|card| crate::ui::workspace_effective_section(self, card.ws_idx) == section);
         if cards.is_empty() {
             return Some(0);
         }
@@ -1367,7 +1399,7 @@ mod tests {
             app.state.drag.as_ref().map(|drag| &drag.target),
             Some(DragTarget::WorkspaceReorder {
                 source_ws_idx: 1,
-                insert_idx: None,
+                insert_idx: Some(1),
                 target_section: Some(WorkspaceSection::Work),
             })
         ));
@@ -1379,6 +1411,61 @@ mod tests {
         ));
 
         assert_eq!(app.state.workspaces[1].section, WorkspaceSection::Work);
+    }
+
+    #[test]
+    fn section_bottom_drop_slots_stay_inside_each_section() {
+        let mut app = app_for_mouse_test();
+        let mut fav_a = Workspace::test_new("fav-a");
+        fav_a.section = WorkspaceSection::Favorite;
+        let mut fav_b = Workspace::test_new("fav-b");
+        fav_b.section = WorkspaceSection::Favorite;
+        let mut work_a = Workspace::test_new("work-a");
+        work_a.section = WorkspaceSection::Work;
+        let mut work_b = Workspace::test_new("work-b");
+        work_b.section = WorkspaceSection::Work;
+        let mut personal_a = Workspace::test_new("personal-a");
+        personal_a.section = WorkspaceSection::Personal;
+        let mut personal_b = Workspace::test_new("personal-b");
+        personal_b.section = WorkspaceSection::Personal;
+        let space_a = Workspace::test_new("space-a");
+        let space_b = Workspace::test_new("space-b");
+        app.state.workspaces = vec![
+            fav_a, fav_b, work_a, work_b, personal_a, personal_b, space_a, space_b,
+        ];
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 80));
+
+        for section in WorkspaceSection::ALL {
+            let cards = app
+                .state
+                .view
+                .workspace_card_areas
+                .iter()
+                .copied()
+                .filter(|card| {
+                    crate::ui::workspace_effective_section(&app.state, card.ws_idx) == section
+                })
+                .collect::<Vec<_>>();
+            let last = cards.last().expect("section card");
+            let expected_insert_idx = last.ws_idx + 1;
+            let bottom_row = last.rect.y + last.rect.height;
+
+            assert_eq!(
+                app.state
+                    .workspace_drop_index_at_row_in_section(bottom_row, section),
+                Some(expected_insert_idx),
+                "{section:?} bottom slot should target the end of that section"
+            );
+            assert_eq!(
+                crate::ui::workspace_drop_indicator_row(
+                    &cards,
+                    app.state.workspace_list_rect(),
+                    expected_insert_idx,
+                ),
+                Some(bottom_row),
+                "{section:?} bottom indicator should sit below the last card"
+            );
+        }
     }
 
     #[test]

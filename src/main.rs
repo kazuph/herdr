@@ -159,7 +159,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # sidebar_min_width = 18
 
 # Maximum sidebar width when expanded (columns)
-# sidebar_max_width = 36
+# sidebar_max_width = 72
 
 # Capture mouse input for Herdr's mouse UI.
 # Set false to let the terminal handle normal clicks, such as Cmd-clicking URLs.
