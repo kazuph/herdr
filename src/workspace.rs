@@ -618,7 +618,10 @@ impl Workspace {
     fn root_pane_title(&self, terminals: &HashMap<TerminalId, TerminalState>) -> Option<String> {
         let tab = self.tabs.first()?;
         let terminal_id = tab.terminal_id(tab.root_pane)?;
-        terminals.get(terminal_id)?.pane_title.clone()
+        let terminal = terminals.get(terminal_id)?;
+        terminal
+            .is_agent_terminal()
+            .then(|| terminal.pane_title.clone())?
     }
 
     pub fn branch(&self) -> Option<String> {
@@ -836,13 +839,30 @@ mod tests {
     }
 
     #[test]
-    fn workspace_identity_appends_root_pane_title() {
+    fn workspace_identity_ignores_shell_root_pane_title() {
         let mut ws = Workspace::test_new("ignored");
         ws.custom_name = None;
         let root_pane = ws.tabs[0].root_pane;
         let terminal_id = ws.tabs[0].terminal_id(root_pane).unwrap().clone();
         let mut terminal =
             TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"));
+        terminal.set_pane_title(Some("kazuph@host:pion".into()));
+        let mut terminals = HashMap::new();
+        terminals.insert(terminal_id, terminal);
+        let terminal_runtimes = HashMap::new();
+
+        assert_eq!(ws.display_name_from(&terminals, &terminal_runtimes), "pion");
+    }
+
+    #[test]
+    fn workspace_identity_appends_agent_root_pane_title() {
+        let mut ws = Workspace::test_new("ignored");
+        ws.custom_name = None;
+        let root_pane = ws.tabs[0].root_pane;
+        let terminal_id = ws.tabs[0].terminal_id(root_pane).unwrap().clone();
+        let mut terminal =
+            TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"));
+        terminal.detected_agent = Some(crate::detect::Agent::Codex);
         terminal.set_pane_title(Some("planner".into()));
         let mut terminals = HashMap::new();
         terminals.insert(terminal_id, terminal);

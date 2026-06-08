@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 pub fn derive_label_from_cwd(cwd: &Path) -> String {
-    if let Some(repo_root) = git_repo_root(cwd) {
+    if let Some(repo_root) = repo_label_root(cwd) {
         if let Some(name) = repo_root.file_name().and_then(|n| n.to_str()) {
             return name.to_string();
         }
@@ -42,6 +42,43 @@ fn git_dir_for_repo_root(repo_root: &Path) -> Option<PathBuf> {
     } else {
         repo_root.join(resolved)
     })
+}
+
+fn repo_label_root(cwd: &Path) -> Option<PathBuf> {
+    let repo_root = git_repo_root(cwd)?;
+    linked_worktree_main_root(&repo_root).or(Some(repo_root))
+}
+
+fn linked_worktree_main_root(repo_root: &Path) -> Option<PathBuf> {
+    let git_path = repo_root.join(".git");
+    if git_path.is_dir() {
+        return None;
+    }
+
+    let git_dir = git_dir_for_repo_root(repo_root)?;
+    let common_dir = std::fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let common_dir = common_dir.trim();
+    if common_dir.is_empty() {
+        return None;
+    }
+
+    let common_git_dir = resolve_git_path(&git_dir, common_dir);
+    if common_git_dir.file_name().and_then(|name| name.to_str()) == Some(".git") {
+        common_git_dir.parent().map(Path::to_path_buf)
+    } else {
+        common_git_dir.file_name().and_then(|name| name.to_str())?;
+        Some(common_git_dir)
+    }
+}
+
+fn resolve_git_path(base: &Path, path: &str) -> PathBuf {
+    let path = Path::new(path);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    };
+    std::fs::canonicalize(&resolved).unwrap_or(resolved)
 }
 
 fn parse_git_head_branch(head: &str) -> Option<String> {
@@ -166,6 +203,29 @@ mod tests {
         assert_eq!(git_branch(&root).as_deref(), Some("feature"));
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn derive_label_from_worktree_cwd_uses_main_repository_name() {
+        let repo_root = temp_test_dir("main-repo");
+        let worktree_root = temp_test_dir("feature-worktree");
+        let worktree_git_dir = repo_root.join(".git/worktrees/feature");
+        std::fs::create_dir_all(&worktree_git_dir).unwrap();
+        std::fs::write(
+            worktree_root.join(".git"),
+            format!("gitdir: {}\n", worktree_git_dir.display()),
+        )
+        .unwrap();
+        std::fs::write(worktree_git_dir.join("HEAD"), "ref: refs/heads/feature\n").unwrap();
+        std::fs::write(worktree_git_dir.join("commondir"), "../..\n").unwrap();
+
+        assert_eq!(
+            derive_label_from_cwd(&worktree_root),
+            repo_root.file_name().unwrap().to_str().unwrap()
+        );
+
+        std::fs::remove_dir_all(repo_root).unwrap();
+        std::fs::remove_dir_all(worktree_root).unwrap();
     }
 
     #[test]

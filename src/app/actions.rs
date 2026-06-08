@@ -1726,7 +1726,8 @@ mod tests {
     }
 
     #[test]
-    fn notification_title_uses_workspace_number_name_and_osc_title_without_space_before_dash() {
+    fn notification_title_uses_workspace_number_name_and_agent_osc_title_without_space_before_dash()
+    {
         let mut state = app_with_workspaces(&["active", "background"]);
         state.workspaces[1].custom_name = None;
         let pane_id = *state.workspaces[1].panes.keys().next().unwrap();
@@ -1736,6 +1737,11 @@ mod tests {
             .unwrap()
             .attached_terminal_id
             .clone();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .detected_agent = Some(crate::detect::Agent::Codex);
         state
             .terminals
             .get_mut(&terminal_id)
