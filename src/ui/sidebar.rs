@@ -364,21 +364,6 @@ pub(super) fn workspace_diff_labels(ws: &crate::workspace::Workspace) -> Vec<(St
         .unwrap_or_default()
 }
 
-fn workspace_git_meta_width(
-    branch: &str,
-    upstream_labels: &[(String, bool)],
-    diff_labels: &[(String, bool)],
-) -> usize {
-    let labels_width = upstream_labels
-        .iter()
-        .chain(diff_labels.iter())
-        .map(|(label, _)| label.chars().count())
-        .sum::<usize>()
-        + upstream_labels.len()
-        + diff_labels.len();
-    branch.chars().count() + labels_width + 1
-}
-
 pub(super) fn push_git_labels(
     spans: &mut Vec<Span<'static>>,
     upstream_labels: Vec<(String, bool)>,
@@ -1006,38 +991,60 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
         ];
         if row_height == 1 {
             if let Some(branch) = ws.branch() {
-                let upstream_labels = workspace_upstream_labels(ws);
-                let diff_labels = workspace_diff_labels(ws);
+                let mut upstream_labels = workspace_upstream_labels(ws);
+                let mut diff_labels = workspace_diff_labels(ws);
                 let prefix_width = 2 + workspace_number.chars().count();
-                let labels_width = upstream_labels
-                    .iter()
-                    .chain(diff_labels.iter())
-                    .map(|(label, _)| label.chars().count())
-                    .sum::<usize>()
-                    + upstream_labels.len()
-                    + diff_labels.len();
-                let max_branch_width = (content_rect.width as usize)
-                    .saturating_sub(prefix_width + labels_width + 2)
+                // Keep the last column free for the scrollbar overlay.
+                let available = (content_rect.width as usize)
+                    .saturating_sub(prefix_width + 1)
                     .max(1);
-                let branch_display = truncate_to_width(&branch, max_branch_width);
-                let reserved =
-                    workspace_git_meta_width(&branch_display, &upstream_labels, &diff_labels);
-                let max_name_width = (content_rect.width as usize)
-                    .saturating_sub(prefix_width + reserved)
-                    .max(1);
-                line1[3] =
-                    Span::styled(truncate_to_width(&display_name, max_name_width), name_style);
-                let branch_color = if selected || is_active {
-                    p.mauve
-                } else {
-                    p.overlay0
+                // The workspace name always wins the row; git metadata only
+                // gets leftover width, shedding diff stats first, then
+                // upstream arrows, then the branch itself.
+                let name_width = display_name.chars().count().min(available);
+                line1[3] = Span::styled(truncate_to_width(&display_name, name_width), name_style);
+                let remaining = available.saturating_sub(name_width);
+
+                let labels_width = |labels: &[(String, bool)]| -> usize {
+                    labels
+                        .iter()
+                        .map(|(label, _)| label.chars().count() + 1)
+                        .sum()
                 };
+                const MIN_BRANCH_WIDTH: usize = 5;
+                let min_branch = branch.chars().count().min(MIN_BRANCH_WIDTH) + 1;
+                if labels_width(&upstream_labels) + labels_width(&diff_labels) + min_branch
+                    > remaining
+                {
+                    diff_labels.clear();
+                }
+                if labels_width(&upstream_labels) + min_branch > remaining {
+                    upstream_labels.clear();
+                }
+                let branch_budget = remaining
+                    .saturating_sub(labels_width(&upstream_labels) + labels_width(&diff_labels))
+                    .saturating_sub(1);
+                let branch_display = if branch_budget + 1 >= min_branch {
+                    truncate_to_width(&branch, branch_budget)
+                } else {
+                    String::new()
+                };
+                if !upstream_labels.is_empty() || !diff_labels.is_empty() {
+                    line1.push(Span::styled(" ", Style::default()));
+                }
                 push_git_labels(&mut line1, upstream_labels, diff_labels, p);
-                line1.push(Span::styled(" ", Style::default()));
-                line1.push(Span::styled(
-                    branch_display,
-                    Style::default().fg(branch_color),
-                ));
+                if !branch_display.is_empty() {
+                    let branch_color = if selected || is_active {
+                        p.mauve
+                    } else {
+                        p.overlay0
+                    };
+                    line1.push(Span::styled(" ", Style::default()));
+                    line1.push(Span::styled(
+                        branch_display,
+                        Style::default().fg(branch_color),
+                    ));
+                }
             }
         }
 
@@ -1604,6 +1611,42 @@ mod tests {
         assert!(row.contains("-11"));
         assert!(row.find("↑2").unwrap() < row.find("main").unwrap());
         assert!(row.find("-11").unwrap() < row.find("main").unwrap());
+    }
+
+    #[test]
+    fn slim_workspace_panel_prefers_name_over_diff_stats_when_narrow() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("very-long-space-name")];
+        app.ensure_test_terminals();
+        app.workspace_panel_density = WorkspacePanelDensity::Slim;
+        app.mouse_capture = false;
+        let workspace_id = app.workspaces[0].id.clone();
+        let resolved_identity_cwd = app.workspaces[0].resolved_identity_cwd().unwrap();
+        app.apply_workspace_git_statuses(vec![crate::workspace::WorkspaceGitStatus {
+            workspace_id,
+            resolved_identity_cwd,
+            branch: Some("main".into()),
+            ahead_behind: Some((2, 1)),
+            diff_stats: Some((203, 31)),
+        }]);
+
+        let area = Rect::new(0, 0, 28, 6);
+        app.view.workspace_card_areas = vec![crate::app::state::WorkspaceCardArea {
+            ws_idx: 0,
+            rect: Rect::new(0, 2, 28, 1),
+        }];
+        let backend = ratatui::backend::TestBackend::new(28, 6);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_workspace_list(&app, frame, area, false))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row = (0..28).map(|x| buffer[(x, 2)].symbol()).collect::<String>();
+
+        assert!(row.contains("very-long-space-name"), "row: {row:?}");
+        assert!(!row.contains("+203"), "row: {row:?}");
+        assert!(!row.contains("-31"), "row: {row:?}");
     }
 
     #[test]
