@@ -108,18 +108,32 @@ pub fn notification_message_for_pane(state: &AppState, ws_idx: usize, pane_id: P
     }
 }
 
+const NOTIFICATION_BODY_MAX_CHARS: usize = 120;
+
 fn notification_body_excerpt_ignoring_chrome(text: &str, title: Option<&str>) -> Option<String> {
+    let cleaned: Vec<String> = text.lines().map(clean_notification_line).collect();
+    // Everything from the composer prompt down is input-box chrome and status
+    // line territory (custom statuslines included), so cut it off wholesale.
+    let cutoff = cleaned
+        .iter()
+        .rposition(|line| is_composer_prompt_line(line))
+        .unwrap_or(cleaned.len());
+    let lines = &cleaned[..cutoff];
+
+    if let Some(excerpt) = excerpt_from_last_response_marker(lines, title) {
+        return Some(excerpt);
+    }
+
     let mut blocks = Vec::new();
     let mut current_block = Vec::new();
-    for line in text.lines() {
-        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    for line in lines {
         if line.is_empty() {
             if !current_block.is_empty() {
                 blocks.push(std::mem::take(&mut current_block));
             }
             continue;
         }
-        current_block.push(line);
+        current_block.push(line.clone());
     }
     if !current_block.is_empty() {
         blocks.push(current_block);
@@ -129,20 +143,112 @@ fn notification_body_excerpt_ignoring_chrome(text: &str, title: Option<&str>) ->
         .rev()
         .flat_map(|block| block.into_iter())
         .find(|line| !is_notification_chrome_line(line, title))?;
-    Some(truncate_notification_body(&excerpt, 120))
+    Some(truncate_notification_body(
+        &excerpt,
+        NOTIFICATION_BODY_MAX_CHARS,
+    ))
+}
+
+/// Codex prefixes agent messages with "• " and Claude Code with "⏺ ". The last
+/// such marker is the agent's most recent message, which makes the best
+/// notification body. Lines after it are appended until chrome interrupts.
+fn excerpt_from_last_response_marker(lines: &[String], title: Option<&str>) -> Option<String> {
+    let start = lines.iter().rposition(|line| {
+        is_agent_response_marker(line) && !is_notification_chrome_line(line, title)
+    })?;
+    let mut collected = String::new();
+    for line in &lines[start..] {
+        if line.is_empty() {
+            continue;
+        }
+        if !collected.is_empty()
+            && (is_agent_response_marker(line) || is_notification_chrome_line(line, title))
+        {
+            break;
+        }
+        let segment = line
+            .strip_prefix("• ")
+            .or_else(|| line.strip_prefix("⏺ "))
+            .unwrap_or(line);
+        if !collected.is_empty() {
+            collected.push(' ');
+        }
+        collected.push_str(segment);
+        if collected.chars().count() >= NOTIFICATION_BODY_MAX_CHARS {
+            break;
+        }
+    }
+    if collected.is_empty() {
+        return None;
+    }
+    Some(truncate_notification_body(
+        &collected,
+        NOTIFICATION_BODY_MAX_CHARS,
+    ))
+}
+
+/// Collapse runs of whitespace and trim box-drawing/border characters so that
+/// separator rows ("────…") become empty and boxed content ("│ text │")
+/// surfaces its inner text.
+fn clean_notification_line(raw: &str) -> String {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed
+        .trim_matches(|ch: char| ch.is_whitespace() || is_decoration_char(ch))
+        .to_string()
+}
+
+fn is_decoration_char(ch: char) -> bool {
+    // Box drawing (U+2500–U+257F) and block elements (U+2580–U+259F).
+    ('\u{2500}'..='\u{259F}').contains(&ch)
+}
+
+fn is_composer_prompt_line(line: &str) -> bool {
+    matches!(line, "❯" | "›" | ">")
+}
+
+fn is_agent_response_marker(line: &str) -> bool {
+    line.starts_with("• ") || line.starts_with("⏺ ")
 }
 
 fn is_notification_chrome_line(line: &str, title: Option<&str>) -> bool {
     if title.is_some_and(|title| line == title) {
         return true;
     }
-
-    let lower = line.to_lowercase();
-    if lower.starts_with("gpt-") {
+    if line.starts_with('›')
+        || line.starts_with('❯')
+        || line == ">"
+        || line.starts_with('⎿')
+        || line.starts_with('└')
+        || line.starts_with("⏵⏵")
+        || line.starts_with('※')
+    {
         return true;
     }
+    // Claude Code turn summaries ("✻ Crunched for 9m 24s · …") and spinners.
+    if matches!(line.chars().next(), Some(ch) if "✻✽✶✢✳✣✤❋✺".contains(ch)) {
+        return true;
+    }
+    // Claude Code task list summary ("8 tasks (0 done, 6 in progress, 2 open)").
+    if let Some((count, rest)) = line.split_once(' ') {
+        if !count.is_empty()
+            && count.chars().all(|ch| ch.is_ascii_digit())
+            && (rest.starts_with("tasks (") || rest.starts_with("task ("))
+        {
+            return true;
+        }
+    }
 
-    line.starts_with('›') || line.starts_with("─ Worked for ") || lower.contains("% left")
+    let lower = line.to_lowercase();
+    lower.starts_with("gpt-")
+        || lower.starts_with("worked for ")
+        || lower.contains("% left")
+        || lower.contains("esc to interrupt")
+        || lower.contains("ctrl+c to interrupt")
+        || lower.contains("ctrl+o to expand")
+        || lower.contains("? for shortcuts")
+        || lower.contains("/ps to view")
+        || lower.contains("tokens used")
+        || lower.contains("disable recaps in /config")
 }
 
 fn truncate_notification_body(text: &str, max_chars: usize) -> String {
@@ -1805,6 +1911,85 @@ mod tests {
                 Some("4 HoelAI")
             ),
             Some("変換後 .m4a は ffprobe で全16本の duration を確認済み、失敗 0 です。".into())
+        );
+    }
+
+    #[test]
+    fn notification_body_excerpt_skips_claude_prompt_box_and_statusline() {
+        // Real Claude Code bottom-of-screen layout: separator rows around the
+        // composer prompt, followed by a custom statusline.
+        assert_eq!(
+            notification_body_excerpt_ignoring_chrome(
+                "説明テキスト\n\n\
+                 ─────────────────────────────\n\
+                 ❯ \n\
+                 ─────────────────────────────\n\
+                 \u{20}\u{20}Fable 5 |  main +1722/-915 | ~/s/g/k/gtype\n\
+                 \u{20}\u{20}¥11164 ctx ▓▓▓▓░░░░░░░░ 38%/1M\n\
+                 \u{20}\u{20}⏵⏵ auto mode on · 1 shell · ← for agents",
+                None
+            ),
+            Some("説明テキスト".into())
+        );
+    }
+
+    #[test]
+    fn notification_body_excerpt_returns_none_when_only_chrome_remains() {
+        assert_eq!(
+            notification_body_excerpt_ignoring_chrome(
+                "─────────────────────────────\n\
+                 ❯ \n\
+                 ─────────────────────────────\n\
+                 \u{20}\u{20}Fable 5 |  main +1722/-915 | ~/s/g/k/gtype",
+                None
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn notification_body_excerpt_prefers_last_claude_response_marker() {
+        assert_eq!(
+            notification_body_excerpt_ignoring_chrome(
+                "⏺ Bash(npx reviw REPORT.md --port 4990)\n\
+                 \u{20}\u{20}⎿  Running in the background (↓ to manage)\n\n\
+                 ⏺ マスター、Round 4 きたよ〜！今回は自信作💕 reviw開いてるから見て！\n\n\
+                 \u{20}\u{20}Round 4 対応報告\n\n\
+                 ✻ Crunched for 9m 24s · 1 shell still running\n\n\
+                 ※ recap: gtypeのmacOS HUDとAndroid UI/アニメ刷新中。 (disable recaps in /config)\n\n\
+                 \u{20}\u{20}8 tasks (0 done, 6 in progress, 2 open)\n\
+                 \u{20}\u{20}◼ macOS: 録音中・APIリクエスト中のHUDアニメーションを改善\n\n\
+                 ─────────────────────────────\n\
+                 ❯ \n\
+                 ─────────────────────────────\n\
+                 \u{20}\u{20}Fable 5 |  main +1722/-915 | ~/s/g/k/gtype",
+                Some("12 gtype")
+            ),
+            Some(
+                "マスター、Round 4 きたよ〜！今回は自信作💕 reviw開いてるから見て！ Round 4 対応報告"
+                    .into()
+            )
+        );
+    }
+
+    #[test]
+    fn notification_body_excerpt_prefers_last_codex_response_marker() {
+        assert_eq!(
+            notification_body_excerpt_ignoring_chrome(
+                "• Ran git status --short && git log -1 --oneline\n\
+                 \u{20}\u{20}└ 9cf357c docs: add Gemma 4 12B benchmark results\n\n\
+                 ─────────────────────────────\n\n\
+                 • 完了です。ベンチ結果を README.md:305 に追記し、push 済みです。\n\n\
+                 \u{20}\u{20}追記した実測値は、共有 API の起動中モデルで取得しました。\n\n\
+                 ─ Worked for 3m 01s • Local tools: 22 calls (22.0s) ─────────────\n\n\
+                 › Run /review on my current changes\n\n\
+                 \u{20}\u{20}gpt-5.5 medium · qwen-3.5-chat · main · Context 71% left",
+                Some("6 qwen-3.5-chat")
+            ),
+            Some(
+                "完了です。ベンチ結果を README.md:305 に追記し、push 済みです。 追記した実測値は、共有 API の起動中モデルで取得しました。"
+                    .into()
+            )
         );
     }
 
