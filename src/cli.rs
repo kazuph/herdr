@@ -391,6 +391,7 @@ fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         "wait" => agent_wait(&args[1..]),
         "attach" => agent_attach(&args[1..]),
         "start" => agent_start(&args[1..]),
+        "restore" => agent_restore(&args[1..]),
         "help" | "--help" | "-h" => {
             print_agent_help();
             Ok(0)
@@ -977,6 +978,24 @@ fn agent_list(args: &[String]) -> std::io::Result<i32> {
     print_response(&send_request(&Request {
         id: "cli:agent:list".into(),
         method: Method::AgentList(EmptyParams::default()),
+    })?)
+}
+
+fn agent_restore(args: &[String]) -> std::io::Result<i32> {
+    let mut dry_run = false;
+    for arg in args {
+        match arg.as_str() {
+            "--dry-run" => dry_run = true,
+            _ => {
+                eprintln!("usage: herdr agent restore [--dry-run]");
+                return Ok(2);
+            }
+        }
+    }
+
+    print_response(&send_request(&Request {
+        id: "cli:agent:restore".into(),
+        method: Method::AgentRestore(crate::api::schema::AgentRestoreParams { dry_run }),
     })?)
 }
 
@@ -1601,7 +1620,7 @@ fn pane_run(args: &[String]) -> std::io::Result<i32> {
 
 fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
-        eprintln!("usage: herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N]");
+        eprintln!("usage: herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--session-id ID]");
         return Ok(2);
     };
 
@@ -1612,6 +1631,7 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
     let mut message = None;
     let mut custom_status = None;
     let mut seq = None;
+    let mut session_id = None;
 
     let mut index = 1;
     while index < args.len() {
@@ -1664,6 +1684,14 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
                 seq = Some(parse_u64_flag("--seq", value)?);
                 index += 2;
             }
+            "--session-id" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --session-id");
+                    return Ok(2);
+                };
+                session_id = Some(value.clone());
+                index += 2;
+            }
             other => {
                 eprintln!("unknown option: {other}");
                 return Ok(2);
@@ -1692,6 +1720,7 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
         message,
         custom_status,
         seq,
+        session_id,
     }))
 }
 
@@ -2153,6 +2182,7 @@ fn print_agent_help() {
     eprintln!("  herdr agent wait <target> --status <idle|working|blocked|unknown> [--timeout MS]");
     eprintln!("  herdr agent attach <target> [--takeover]");
     eprintln!("  herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--focus|--no-focus] -- <argv...>");
+    eprintln!("  herdr agent restore [--dry-run]   relaunch agents recorded in the restored session ([agent_restore] config)");
     eprintln!("  targets accept terminal ids, unique agent names, detected/reported agent labels, and legacy pane ids");
     eprintln!(
         "  agent send writes literal text; use pane run when you want command text plus Enter"
@@ -2179,7 +2209,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane close <pane_id>");
     eprintln!("  herdr pane send-text <pane_id> <text>");
     eprintln!("  herdr pane send-keys <pane_id> <key> [key ...]");
-    eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N]");
+    eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--session-id ID]");
     eprintln!("  herdr pane run <pane_id> <command>");
 }
 

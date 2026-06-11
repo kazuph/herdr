@@ -54,6 +54,8 @@ pub enum Method {
     AgentFocus(AgentTarget),
     #[serde(rename = "agent.start")]
     AgentStart(AgentStartParams),
+    #[serde(rename = "agent.restore")]
+    AgentRestore(AgentRestoreParams),
     #[serde(rename = "pane.split")]
     PaneSplit(PaneSplitParams),
     #[serde(rename = "pane.list")]
@@ -272,6 +274,28 @@ pub struct PaneReportAgentParams {
     pub custom_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<u64>,
+    /// Resumable CLI session id (e.g. Claude Code's session uuid), used by
+    /// `[agent_restore]` to relaunch the agent after a server restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AgentRestoreParams {
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRestoreActionInfo {
+    pub pane_id: String,
+    pub agent: String,
+    /// `launched`, `would_launch`, or `skipped`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -550,6 +574,9 @@ pub enum ResponseResult {
         status: crate::config::ConfigReloadStatus,
         diagnostics: Vec<String>,
     },
+    AgentRestore {
+        actions: Vec<AgentRestoreActionInfo>,
+    },
     Ok {},
 }
 
@@ -801,6 +828,7 @@ mod tests {
                 message: Some("thinking".into()),
                 custom_status: Some("indexing".into()),
                 seq: Some(42),
+                session_id: Some("0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9".into()),
             }),
         };
 

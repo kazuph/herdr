@@ -188,6 +188,10 @@ impl App {
 
         self.start_git_status_refresh_if_due(now);
 
+        if self.maybe_run_scheduled_agent_restore(now) {
+            changed = true;
+        }
+
         if self
             .next_auto_update_check
             .is_some_and(|deadline| now >= deadline)
@@ -421,6 +425,7 @@ impl App {
             self.next_auto_update_check,
             self.session_save_deadline,
             self.selection_autoscroll_deadline,
+            self.agent_restore_due,
             render_deadline,
         ]
         .into_iter()

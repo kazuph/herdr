@@ -180,6 +180,10 @@ fn restore_tab(
             .get(id)
             .and_then(|old_id| snap.panes.get(old_id))
             .and_then(|p| p.agent_name.clone());
+        let saved_agent_restore = reverse_id_map
+            .get(id)
+            .and_then(|old_id| snap.panes.get(old_id))
+            .and_then(|p| p.agent_restore.clone());
 
         match TerminalRuntime::spawn(
             *id,
@@ -201,6 +205,12 @@ fn restore_tab(
                 }
                 if let Some(agent_name) = saved_agent_name {
                     terminal.set_agent_name(agent_name);
+                }
+                if let Some(agent_restore) = saved_agent_restore {
+                    terminal.pending_restore = Some(crate::terminal::PendingAgentRestore {
+                        agent: agent_restore.agent,
+                        session_id: agent_restore.session_id,
+                    });
                 }
                 panes.insert(*id, PaneState::new(terminal_id.clone()));
                 terminal_runtimes.insert(terminal_id, runtime);

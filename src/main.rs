@@ -18,6 +18,7 @@ const NESTED_HERDR_MESSAGES: [&str; 6] = [
     "recursion detected. base case not found. aborting.",
 ];
 
+mod agent_sessions;
 mod api;
 mod app;
 mod cli;
@@ -215,6 +216,22 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Maximum scrollback buffer size in bytes retained per pane terminal.
 # Matches Ghostty's default scrollback-limit behavior.
 # scrollback_limit_bytes = 10000000
+
+[agent_restore]
+# Relaunch agent CLIs (claude, codex, ...) in restored panes after a server
+# restart. Disabled by default; `herdr agent restore [--dry-run]` always works.
+# enabled = false
+# Delay before typing restore commands, letting pane shells finish init.
+# restore_delay_ms = 3000
+
+# Command templates per agent. {session_id} is replaced with the agent's last
+# session; commands without the placeholder relaunch the agent fresh.
+# Entries overlay the built-in defaults:
+#   claude = "claude --resume {session_id}"
+#   codex  = "codex resume {session_id}"
+# [agent_restore.commands]
+# claude = "claude --permission-mode acceptEdits --resume {session_id}"
+# pi = "pi"
 "##;
 
 fn should_block_nested(config: &config::Config) -> bool {

@@ -44,6 +44,19 @@ pub struct TerminalState {
     pub state: AgentState,
     pub revision: u64,
     pub launch_argv: Option<Vec<String>>,
+    /// Resumable session id reported by an agent integration hook.
+    pub agent_session_id: Option<String>,
+    /// Agent metadata restored from the session snapshot, consumed by
+    /// `[agent_restore]` to relaunch the agent in this pane.
+    pub pending_restore: Option<PendingAgentRestore>,
+}
+
+/// What ran in a pane before the server restarted, as captured in the
+/// session snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingAgentRestore {
+    pub agent: String,
+    pub session_id: Option<String>,
 }
 
 impl TerminalState {
@@ -61,6 +74,8 @@ impl TerminalState {
             state: AgentState::Unknown,
             revision: 0,
             launch_argv: None,
+            agent_session_id: None,
+            pending_restore: None,
         }
     }
 

@@ -3,7 +3,7 @@ pub mod state;
 
 pub use id::TerminalId;
 pub(crate) use state::stabilize_agent_state;
-pub use state::{EffectiveStateChange, TerminalState};
+pub use state::{EffectiveStateChange, PendingAgentRestore, TerminalState};
 
 /// Live runtime for a server-owned terminal.
 ///

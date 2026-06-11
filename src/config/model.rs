@@ -62,6 +62,37 @@ pub struct TerminalConfig {
     pub default_shell: String,
 }
 
+/// `[agent_restore]` — relaunch agent CLIs in restored panes after a server
+/// restart.
+///
+/// `commands` maps an agent name (as shown in the sidebar, e.g. `claude`,
+/// `codex`) to the command typed into the restored pane. `{session_id}` is
+/// replaced with the agent's last session id; commands without the
+/// placeholder are typed as-is (plain relaunch). User entries overlay the
+/// built-in defaults instead of replacing them.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AgentRestoreConfig {
+    /// Automatically relaunch agents after the session is restored.
+    /// `herdr agent restore` works regardless of this flag.
+    pub enabled: bool,
+    /// Delay before typing restore commands, giving pane shells time to
+    /// finish their init (direnv, slow rc files).
+    pub restore_delay_ms: u64,
+    /// Agent name -> command template overrides.
+    pub commands: std::collections::BTreeMap<String, String>,
+}
+
+impl Default for AgentRestoreConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            restore_delay_ms: 3000,
+            commands: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigReloadStatus {
@@ -100,6 +131,7 @@ pub struct Config {
     pub ui: UiConfig,
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
+    pub agent_restore: AgentRestoreConfig,
 }
 
 #[derive(Debug)]
@@ -559,6 +591,42 @@ delivery = "terminal"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.toast.delivery, ToastDelivery::Terminal);
+    }
+
+    #[test]
+    fn agent_restore_config_defaults_to_disabled() {
+        let config = Config::default();
+        assert!(!config.agent_restore.enabled);
+        assert_eq!(config.agent_restore.restore_delay_ms, 3000);
+        assert!(config.agent_restore.commands.is_empty());
+    }
+
+    #[test]
+    fn agent_restore_config_parses_commands_table() {
+        let toml = r#"
+[agent_restore]
+enabled = true
+restore_delay_ms = 500
+
+[agent_restore.commands]
+claude = "ccam --resume {session_id}"
+pi = "pi"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.agent_restore.enabled);
+        assert_eq!(config.agent_restore.restore_delay_ms, 500);
+        assert_eq!(
+            config
+                .agent_restore
+                .commands
+                .get("claude")
+                .map(String::as_str),
+            Some("ccam --resume {session_id}")
+        );
+        assert_eq!(
+            config.agent_restore.commands.get("pi").map(String::as_str),
+            Some("pi")
+        );
     }
 
     #[test]

@@ -1316,7 +1316,7 @@ impl App {
                 }
             }
             Method::PaneReportAgent(params) => {
-                let Some((_ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+                let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
                     return serde_json::to_string(&ErrorResponse {
                         id: request.id,
                         error: ErrorBody {
@@ -1336,6 +1336,24 @@ impl App {
                     })
                     .unwrap();
                 };
+                if let Some(session_id) = params
+                    .session_id
+                    .clone()
+                    .filter(|id| crate::agent_sessions::is_safe_session_id(id))
+                {
+                    if let Some(terminal_id) = self
+                        .state
+                        .workspaces
+                        .get(ws_idx)
+                        .and_then(|ws| ws.pane_state(pane_id))
+                        .map(|pane| pane.attached_terminal_id.clone())
+                    {
+                        if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
+                            terminal.agent_session_id = Some(session_id);
+                            self.state.mark_session_dirty();
+                        }
+                    }
+                }
                 self.handle_internal_event(crate::events::AppEvent::HookStateReported {
                     pane_id,
                     source: params.source,
@@ -1348,6 +1366,13 @@ impl App {
                 SuccessResponse {
                     id: request.id,
                     result: ResponseResult::Ok {},
+                }
+            }
+            Method::AgentRestore(params) => {
+                let actions = self.execute_agent_restore(params.dry_run);
+                SuccessResponse {
+                    id: request.id,
+                    result: ResponseResult::AgentRestore { actions },
                 }
             }
             Method::PaneClearAgentAuthority(params) => {

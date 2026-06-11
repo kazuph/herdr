@@ -18,8 +18,9 @@ pub use self::{
         IndexedKeybind, Keybinds, LiveKeybindConfig,
     },
     model::{
-        validated_sidebar_bounds, AgentPanelScopeConfig, Config, ConfigReloadReport,
-        ConfigReloadStatus, ToastConfig, ToastDelivery, WorkspacePanelDensityConfig,
+        validated_sidebar_bounds, AgentPanelScopeConfig, AgentRestoreConfig, Config,
+        ConfigReloadReport, ConfigReloadStatus, ToastConfig, ToastDelivery,
+        WorkspacePanelDensityConfig,
     },
     sound::SoundConfig,
     theme::{parse_color, CustomThemeColors, ThemeConfig},

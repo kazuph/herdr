@@ -77,6 +77,18 @@ pub struct PaneSnapshot {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_restore: Option<AgentRestoreSnapshot>,
+}
+
+/// Live agent running in a pane when the snapshot was captured, recorded so
+/// `[agent_restore]` can relaunch it after a server restart. Distinct from
+/// `agent_name`, which is a user-assigned display name.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AgentRestoreSnapshot {
+    pub agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// Serializable BSP tree.
@@ -289,12 +301,27 @@ fn capture_tab(
             .get(id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id))
             .and_then(|terminal| terminal.agent_name.clone());
+        let agent_restore = tab
+            .panes
+            .get(id)
+            .and_then(|pane| terminals.get(&pane.attached_terminal_id))
+            .and_then(|terminal| {
+                let agent = terminal
+                    .effective_known_agent()
+                    .map(|agent| crate::detect::agent_label(agent).to_string())
+                    .or_else(|| terminal.effective_agent_label().map(str::to_string))?;
+                Some(AgentRestoreSnapshot {
+                    agent,
+                    session_id: terminal.agent_session_id.clone(),
+                })
+            });
         panes.insert(
             id.raw(),
             PaneSnapshot {
                 cwd,
                 label,
                 agent_name,
+                agent_restore,
             },
         );
     }
@@ -406,6 +433,39 @@ mod tests {
     }
 
     #[test]
+    fn capture_records_live_agent_for_restore() {
+        let mut state = state_with_workspaces(&["one"]);
+        let ws = &state.workspaces[0];
+        let pane_id = ws.tabs[0].root_pane;
+        let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.detected_agent = Some(crate::detect::Agent::Claude);
+        terminal.agent_session_id = Some("11111111-2222-3333-4444-555555555555".into());
+
+        let snap = capture_from_state(&state);
+
+        let pane = snap.workspaces[0].tabs[0]
+            .panes
+            .values()
+            .next()
+            .expect("captured pane");
+        assert_eq!(
+            pane.agent_restore,
+            Some(AgentRestoreSnapshot {
+                agent: "claude".into(),
+                session_id: Some("11111111-2222-3333-4444-555555555555".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn pane_snapshot_without_agent_restore_field_still_parses() {
+        let pane: PaneSnapshot = serde_json::from_str(r#"{"cwd":"/tmp"}"#).unwrap();
+        assert!(pane.agent_restore.is_none());
+        assert!(pane.label.is_none());
+    }
+
+    #[test]
     fn round_trip_empty_session() {
         let snap = SessionSnapshot {
             version: SNAPSHOT_VERSION,
@@ -456,6 +516,7 @@ mod tests {
                 cwd: PathBuf::from("/home/can/Projects/herdr"),
                 label: None,
                 agent_name: None,
+                agent_restore: None,
             },
         );
         panes.insert(
@@ -464,6 +525,7 @@ mod tests {
                 cwd: PathBuf::from("/home/can/Projects/website"),
                 label: Some("website".into()),
                 agent_name: None,
+                agent_restore: None,
             },
         );
 
@@ -780,6 +842,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test"),
                 label: None,
                 agent_name: None,
+                agent_restore: None,
             },
         );
         panes.insert(
@@ -790,6 +853,7 @@ mod tests {
                     .unwrap_or_else(|_| PathBuf::from("/tmp")),
                 label: None,
                 agent_name: None,
+                agent_restore: None,
             },
         );
 

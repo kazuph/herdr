@@ -2137,6 +2137,10 @@ impl HeadlessServer {
 
         self.app.start_git_status_refresh_if_due(now);
 
+        if self.app.maybe_run_scheduled_agent_restore(now) {
+            changed = true;
+        }
+
         if self
             .app
             .next_auto_update_check
@@ -3730,6 +3734,7 @@ mod tests {
                     message: None,
                     custom_status: None,
                     seq: Some(19),
+                    session_id: None,
                 }),
             },
             respond_to,

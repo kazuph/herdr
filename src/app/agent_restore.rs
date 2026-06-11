@@ -1,0 +1,308 @@
+//! `[agent_restore]` — relaunch agent CLIs in restored panes.
+//!
+//! Panes restored from a session snapshot carry the agent that was running
+//! when the snapshot was captured (`TerminalState::pending_restore`). This
+//! module turns those into resume commands typed into the pane shells,
+//! either automatically after startup (config `enabled = true`) or on demand
+//! through `herdr agent restore [--dry-run]`.
+
+use tracing::info;
+
+use crate::api::schema::AgentRestoreActionInfo;
+use crate::layout::PaneId;
+
+pub(crate) struct AgentRestorePlanEntry {
+    pub ws_idx: usize,
+    pub pane_id: PaneId,
+    pub agent: String,
+    pub outcome: AgentRestoreOutcome,
+}
+
+pub(crate) enum AgentRestoreOutcome {
+    Launch(String),
+    Skip(&'static str),
+}
+
+/// Decide what to do for every pane that had an agent before the restart.
+///
+/// Skips panes with live agent evidence (`detected_agent`), so a relaunch is
+/// never typed into a pane where the user already brought the agent back.
+pub(crate) fn agent_restore_plan(
+    state: &crate::app::state::AppState,
+) -> Vec<AgentRestorePlanEntry> {
+    let mut entries = Vec::new();
+    for (ws_idx, workspace) in state.workspaces.iter().enumerate() {
+        for tab in &workspace.tabs {
+            for (pane_id, pane) in &tab.panes {
+                let Some(terminal) = state.terminals.get(&pane.attached_terminal_id) else {
+                    continue;
+                };
+                let Some(pending) = terminal.pending_restore.as_ref() else {
+                    continue;
+                };
+                let agent = pending.agent.clone();
+                let outcome = if terminal.detected_agent.is_some() {
+                    AgentRestoreOutcome::Skip("agent already running")
+                } else if let Some(template) = crate::agent_sessions::restore_template(
+                    &state.agent_restore_config.commands,
+                    &agent,
+                ) {
+                    let session_id = pending
+                        .session_id
+                        .clone()
+                        .filter(|id| crate::agent_sessions::is_safe_session_id(id))
+                        .or_else(|| {
+                            crate::agent_sessions::discover_session_id(&agent, &terminal.cwd)
+                        });
+                    match crate::agent_sessions::render_restore_command(
+                        template,
+                        session_id.as_deref(),
+                    ) {
+                        Some(command) => AgentRestoreOutcome::Launch(command),
+                        None => AgentRestoreOutcome::Skip("no resumable session found"),
+                    }
+                } else {
+                    AgentRestoreOutcome::Skip("no restore command configured")
+                };
+                entries.push(AgentRestorePlanEntry {
+                    ws_idx,
+                    pane_id: *pane_id,
+                    agent,
+                    outcome,
+                });
+            }
+        }
+    }
+    entries.sort_by_key(|entry| (entry.ws_idx, entry.pane_id.raw()));
+    entries
+}
+
+impl crate::app::App {
+    /// Execute (or, with `dry_run`, just report) the agent restore plan.
+    pub(crate) fn execute_agent_restore(&mut self, dry_run: bool) -> Vec<AgentRestoreActionInfo> {
+        let entries = agent_restore_plan(&self.state);
+        let mut actions = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let pane_id = self
+                .public_pane_id(entry.ws_idx, entry.pane_id)
+                .unwrap_or_else(|| format!("{}-{}", entry.ws_idx + 1, entry.pane_id.raw()));
+            let action = match entry.outcome {
+                AgentRestoreOutcome::Skip(reason) => {
+                    if reason == "agent already running" {
+                        self.clear_pending_restore(entry.ws_idx, entry.pane_id);
+                    }
+                    AgentRestoreActionInfo {
+                        pane_id,
+                        agent: entry.agent,
+                        status: "skipped".into(),
+                        command: None,
+                        reason: Some(reason.into()),
+                    }
+                }
+                AgentRestoreOutcome::Launch(command) if dry_run => AgentRestoreActionInfo {
+                    pane_id,
+                    agent: entry.agent,
+                    status: "would_launch".into(),
+                    command: Some(command),
+                    reason: None,
+                },
+                AgentRestoreOutcome::Launch(command) => {
+                    match self.type_command_into_pane(entry.ws_idx, entry.pane_id, &command) {
+                        Ok(()) => {
+                            self.clear_pending_restore(entry.ws_idx, entry.pane_id);
+                            info!(
+                                pane = %pane_id,
+                                agent = %entry.agent,
+                                command = %command,
+                                "agent restore launched"
+                            );
+                            AgentRestoreActionInfo {
+                                pane_id,
+                                agent: entry.agent,
+                                status: "launched".into(),
+                                command: Some(command),
+                                reason: None,
+                            }
+                        }
+                        Err(reason) => AgentRestoreActionInfo {
+                            pane_id,
+                            agent: entry.agent,
+                            status: "skipped".into(),
+                            command: Some(command),
+                            reason: Some(reason),
+                        },
+                    }
+                }
+            };
+            actions.push(action);
+        }
+        actions
+    }
+
+    /// Run the scheduled startup restore once its delay elapses.
+    pub(crate) fn maybe_run_scheduled_agent_restore(&mut self, now: std::time::Instant) -> bool {
+        if self.agent_restore_due.is_none_or(|due| now < due) {
+            return false;
+        }
+        self.agent_restore_due = None;
+        let actions = self.execute_agent_restore(false);
+        for action in &actions {
+            info!(
+                pane = %action.pane_id,
+                agent = %action.agent,
+                status = %action.status,
+                reason = action.reason.as_deref().unwrap_or(""),
+                "startup agent restore"
+            );
+        }
+        actions.iter().any(|action| action.status == "launched")
+    }
+
+    fn clear_pending_restore(&mut self, ws_idx: usize, pane_id: PaneId) {
+        let Some(terminal_id) = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.pane_state(pane_id))
+            .map(|pane| pane.attached_terminal_id.clone())
+        else {
+            return;
+        };
+        if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
+            terminal.pending_restore = None;
+        }
+    }
+
+    /// Type `command` + Enter into the pane shell, using the same
+    /// bracketed-paste-aware encoding as `pane.send_input`.
+    fn type_command_into_pane(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        command: &str,
+    ) -> Result<(), String> {
+        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+            return Err("pane runtime not found".into());
+        };
+        let text = super::api_helpers::encode_api_text(runtime, command);
+        runtime
+            .try_send_bytes(bytes::Bytes::from(text))
+            .map_err(|err| err.to_string())?;
+        let enter = super::api_helpers::encode_api_keys(runtime, &["enter".to_string()])
+            .map_err(|key| format!("unsupported key {key}"))?;
+        for bytes in enter {
+            runtime
+                .try_send_bytes(bytes::Bytes::from(bytes))
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal::PendingAgentRestore;
+
+    fn terminal_id_for(
+        state: &crate::app::state::AppState,
+        ws_idx: usize,
+    ) -> crate::terminal::TerminalId {
+        let ws = &state.workspaces[ws_idx];
+        let pane_id = ws.tabs[0].root_pane;
+        ws.tabs[0].panes[&pane_id].attached_terminal_id.clone()
+    }
+
+    #[test]
+    fn plan_builds_commands_and_skips_live_or_unconfigured_agents() {
+        let mut state = crate::app::state::AppState::test_new();
+        state.workspaces = vec![
+            crate::workspace::Workspace::test_new("claude-ws"),
+            crate::workspace::Workspace::test_new("codex-ws"),
+            crate::workspace::Workspace::test_new("pi-ws"),
+            crate::workspace::Workspace::test_new("lost-ws"),
+        ];
+        state.ensure_test_terminals();
+
+        let claude_tid = terminal_id_for(&state, 0);
+        let claude = state.terminals.get_mut(&claude_tid).unwrap();
+        claude.pending_restore = Some(PendingAgentRestore {
+            agent: "claude".into(),
+            session_id: Some("11111111-2222-3333-4444-555555555555".into()),
+        });
+
+        let codex_tid = terminal_id_for(&state, 1);
+        let codex = state.terminals.get_mut(&codex_tid).unwrap();
+        codex.pending_restore = Some(PendingAgentRestore {
+            agent: "codex".into(),
+            session_id: Some("019e8d78-4a5e-78d2-968c-02240ac6e9e9".into()),
+        });
+        codex.detected_agent = Some(crate::detect::Agent::Codex);
+
+        let pi_tid = terminal_id_for(&state, 2);
+        let pi = state.terminals.get_mut(&pi_tid).unwrap();
+        pi.pending_restore = Some(PendingAgentRestore {
+            agent: "pi".into(),
+            session_id: None,
+        });
+
+        // claude pane without a recorded session id and a cwd that cannot
+        // exist: discovery finds nothing, so the pane is reported, not typed.
+        let lost_tid = terminal_id_for(&state, 3);
+        let lost = state.terminals.get_mut(&lost_tid).unwrap();
+        lost.pending_restore = Some(PendingAgentRestore {
+            agent: "claude".into(),
+            session_id: None,
+        });
+        lost.cwd = "/nonexistent/herdr-agent-restore-test".into();
+
+        state
+            .agent_restore_config
+            .commands
+            .insert("pi".into(), "pi".into());
+
+        let entries = agent_restore_plan(&state);
+        assert_eq!(entries.len(), 4);
+
+        match &entries[0].outcome {
+            AgentRestoreOutcome::Launch(command) => assert_eq!(
+                command,
+                "claude --resume 11111111-2222-3333-4444-555555555555"
+            ),
+            AgentRestoreOutcome::Skip(reason) => panic!("claude skipped: {reason}"),
+        }
+        match &entries[1].outcome {
+            AgentRestoreOutcome::Skip(reason) => assert_eq!(*reason, "agent already running"),
+            AgentRestoreOutcome::Launch(command) => panic!("codex launched: {command}"),
+        }
+        match &entries[2].outcome {
+            AgentRestoreOutcome::Launch(command) => assert_eq!(command, "pi"),
+            AgentRestoreOutcome::Skip(reason) => panic!("pi skipped: {reason}"),
+        }
+        match &entries[3].outcome {
+            AgentRestoreOutcome::Skip(reason) => assert_eq!(*reason, "no resumable session found"),
+            AgentRestoreOutcome::Launch(command) => panic!("lost claude launched: {command}"),
+        }
+    }
+
+    #[test]
+    fn plan_rejects_unsafe_persisted_session_ids() {
+        let mut state = crate::app::state::AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("ws")];
+        state.ensure_test_terminals();
+        let tid = terminal_id_for(&state, 0);
+        let terminal = state.terminals.get_mut(&tid).unwrap();
+        terminal.pending_restore = Some(PendingAgentRestore {
+            agent: "claude".into(),
+            session_id: Some("evil; rm -rf /".into()),
+        });
+        terminal.cwd = "/nonexistent/herdr-agent-restore-test".into();
+
+        let entries = agent_restore_plan(&state);
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(
+            entries[0].outcome,
+            AgentRestoreOutcome::Skip("no resumable session found")
+        ));
+    }
+}

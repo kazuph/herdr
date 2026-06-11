@@ -5,6 +5,7 @@
 //! - `input.rs` — key/mouse → action translation
 
 pub(crate) mod actions;
+mod agent_restore;
 mod agents;
 mod api;
 mod api_helpers;
@@ -81,6 +82,8 @@ pub struct App {
     pub(crate) next_auto_update_check: Option<Instant>,
     pub(crate) selection_autoscroll_deadline: Option<Instant>,
     pub(crate) session_save_deadline: Option<Instant>,
+    /// When set, run the `[agent_restore]` startup relaunch at this instant.
+    pub(crate) agent_restore_due: Option<Instant>,
     pub(crate) last_render_at: Option<Instant>,
     pub(crate) suppressed_repeat_keys:
         HashSet<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
@@ -449,6 +452,7 @@ impl App {
             sound: config.ui.sound.clone(),
             local_sound_playback: true,
             toast_config: config.ui.toast.clone(),
+            agent_restore_config: config.agent_restore.clone(),
             keybinds: config.keybinds(),
             spinner_tick: 0,
             palette: resolve_palette(config),
@@ -491,10 +495,22 @@ impl App {
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
 
+        let agent_restore_due = if config.agent_restore.enabled
+            && state
+                .terminals
+                .values()
+                .any(|terminal| terminal.pending_restore.is_some())
+        {
+            Some(Instant::now() + Duration::from_millis(config.agent_restore.restore_delay_ms))
+        } else {
+            None
+        };
+
         Self {
             config_diagnostic_deadline: None,
             toast_deadline: None,
             selection_copy_status_deadline: None,
+            agent_restore_due,
             state,
             event_tx,
             event_rx,
@@ -923,6 +939,10 @@ impl App {
 
         if !invalid_section("terminal") {
             self.state.default_shell = config.terminal.default_shell.clone();
+        }
+
+        if !invalid_section("agent_restore") {
+            self.state.agent_restore_config = config.agent_restore.clone();
         }
 
         if !invalid_section("theme") {

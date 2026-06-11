@@ -15,6 +15,7 @@
 - Added global menu sidebar width presets for narrow, normal, and wide widths, giving touch-only clients a non-drag resize path.
 - Added a workspace context menu Duplicate action that opens a new workspace with the same tab, pane layout, and working directories.
 - Pane context menus can now rearrange all panes into vertical or horizontal splits and equalize pane sizes.
+- Added `[agent_restore]` to relaunch agent CLIs in restored panes after a server restart: per-agent command templates with a `{session_id}` placeholder (built-in defaults for claude and codex), opt-in automatic relaunch after startup via `enabled = true` and `restore_delay_ms`, and a manual `herdr agent restore [--dry-run]` command. Session ids come from `pane.report_agent`'s new optional `session_id` field (CLI `--session-id`) when integrations report them, with filesystem discovery of the latest claude/codex session per pane cwd as the fallback.
 
 ### Fixed
 - The default expanded sidebar maximum width is now 72 columns, making long branch names easier to read.
