@@ -130,13 +130,18 @@ impl App {
                             is_active_tab,
                             self.state.outer_terminal_focus,
                         );
-                    if crate::app::actions::notification_toast_for_state_change(
+                    let Some(kind) = crate::app::actions::notification_toast_for_state_change(
                         suppress_active_tab_notifications,
                         update.previous_state,
                         update.state,
-                    )
-                    .is_none()
-                    {
+                    ) else {
+                        continue;
+                    };
+                    if !self.state.notification_throttle.allow(
+                        update.pane_id,
+                        kind,
+                        std::time::Instant::now(),
+                    ) {
                         continue;
                     }
                     let Some(ws) = self.state.workspaces.get(update.ws_idx) else {

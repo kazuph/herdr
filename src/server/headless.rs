@@ -112,30 +112,33 @@ fn toast_notify_kind(delivery: config::ToastDelivery) -> Option<protocol::Notify
 }
 
 fn toast_message_from_state_change(
-    state: &AppState,
+    state: &mut AppState,
     pane_id: PaneId,
     suppress_active_tab_notifications: bool,
     prev_state: AgentState,
     new_state: AgentState,
 ) -> Option<String> {
-    app::actions::notification_toast_for_state_change(
+    let kind = app::actions::notification_toast_for_state_change(
         suppress_active_tab_notifications,
         prev_state,
         new_state,
     )?;
 
-    state
+    let ws_idx = state
         .workspaces
         .iter()
-        .enumerate()
-        .find_map(|(ws_idx, ws)| {
-            ws.tabs.iter().find_map(|tab| {
-                tab.panes.get(&pane_id)?;
-                Some(app::actions::notification_message_for_pane(
-                    state, ws_idx, pane_id,
-                ))
-            })
-        })
+        .position(|ws| ws.tabs.iter().any(|tab| tab.panes.contains_key(&pane_id)))?;
+
+    if !state
+        .notification_throttle
+        .allow(pane_id, kind, std::time::Instant::now())
+    {
+        return None;
+    }
+
+    Some(app::actions::notification_message_for_pane(
+        state, ws_idx, pane_id,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -986,7 +989,7 @@ impl HeadlessServer {
                                 .map(|toast| format!("{}: {}", toast.title, toast.context))
                         } else {
                             toast_message_from_state_change(
-                                &self.app.state,
+                                &mut self.app.state,
                                 pane_id_val,
                                 suppress_active_tab_notifications,
                                 prev_state,
@@ -1076,7 +1079,7 @@ impl HeadlessServer {
                                 .map(|toast| format!("{}: {}", toast.title, toast.context))
                         } else {
                             toast_message_from_state_change(
-                                &self.app.state,
+                                &mut self.app.state,
                                 pane_id_val,
                                 suppress_active_tab_notifications,
                                 prev_state,
@@ -1770,24 +1773,21 @@ impl HeadlessServer {
 
             if !forwarded_toast_from_state
                 && should_forward_toast_to_clients(self.app.state.toast_config.delivery)
-                && crate::app::actions::notification_toast_for_state_change(
+            {
+                if let Some(msg_text) = toast_message_from_state_change(
+                    &mut self.app.state,
+                    *pane_id,
                     suppress_active_tab_notifications,
                     *prev_state,
                     new_state,
-                )
-                .is_some()
-            {
-                let msg_text = crate::app::actions::notification_message_for_pane(
-                    &self.app.state,
-                    *ws_idx,
-                    *pane_id,
-                );
-                self.send_to_foreground_client(ServerMessage::Notify {
-                    kind: toast_notify_kind(self.app.state.toast_config.delivery)
-                        .expect("toast forwarding requires a client notification kind"),
-                    message: msg_text,
-                    target_pane_id: self.app.public_pane_id(*ws_idx, *pane_id),
-                });
+                ) {
+                    self.send_to_foreground_client(ServerMessage::Notify {
+                        kind: toast_notify_kind(self.app.state.toast_config.delivery)
+                            .expect("toast forwarding requires a client notification kind"),
+                        message: msg_text,
+                        target_pane_id: self.app.public_pane_id(*ws_idx, *pane_id),
+                    });
+                }
             }
 
             // Forward sound notification when server-side sound policy allows it.
@@ -3615,6 +3615,60 @@ mod tests {
             }
             other => panic!("expected system toast notify, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn flapping_blocked_state_forwards_single_system_toast() {
+        let mut server = test_headless_server();
+        let background = crate::workspace::Workspace::test_new("background");
+        let pane_id = background.tabs[0].root_pane;
+        let foreground = crate::workspace::Workspace::test_new("foreground");
+        server.app.state.workspaces = vec![background, foreground];
+        server.app.state.ensure_test_terminals();
+        server.app.state.active = Some(1);
+        server.app.state.toast_config.delivery = crate::config::ToastDelivery::System;
+
+        let (client_tx, client_control_rx, _client_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (80, 24),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(client_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+
+        for state in [
+            crate::detect::AgentState::Blocked,
+            crate::detect::AgentState::Working,
+            crate::detect::AgentState::Blocked,
+        ] {
+            server.handle_internal_event_with_forwarding(AppEvent::StateChanged {
+                pane_id,
+                agent: Some(crate::detect::Agent::Pi),
+                state,
+            });
+        }
+
+        let mut system_toasts = 0;
+        while let Ok(framed) = client_control_rx.recv_timeout(Duration::from_millis(50)) {
+            if let ServerMessage::Notify {
+                kind: protocol::NotifyKind::SystemToast,
+                ..
+            } = read_server_message(framed)
+            {
+                system_toasts += 1;
+            }
+        }
+        assert_eq!(
+            system_toasts, 1,
+            "flapping blocked detection must notify only once"
+        );
     }
 
     #[test]

@@ -21,6 +21,7 @@
 - Agent notifications now title background events as `number workspace-OSC title` and use the latest response excerpt as the body.
 - Agent notification bodies now skip Codex status chrome such as context and quota lines, so the toast shows the agent's latest message when available.
 - Agent notification bodies no longer show separator rows ("────…") or composer/status-line chrome; they now extract the agent's latest response from the `•`/`⏺` message marker for Codex and Claude Code, including the lines that follow it.
+- Agent notifications are now rate limited: repeats of the same notification for the same pane are dropped for 10 seconds, and completion notifications are held back for 10 seconds after a needs-attention notification so they cannot bury a question banner you are about to click.
 - Narrow workspace sidebar rows now keep the workspace name visible and drop git metadata instead, shedding diff stats first, then upstream arrows, then the branch name.
 - Workspace names with root pane OSC titles now render as `workspace-OSC title` without a space before the hyphen.
 - Workspace cards now show Git branch names after upstream and diff stats so activity indicators stay closer to the workspace name.

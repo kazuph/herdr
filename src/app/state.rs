@@ -976,6 +976,52 @@ pub struct ToastNotification {
     pub target: Option<ToastTarget>,
 }
 
+/// Rate limiter for agent toast/desktop notifications.
+///
+/// Without it, agent state flapping (hook and heuristic detection racing
+/// around a transition) fires several notifications within seconds, and a
+/// `Finished` banner can bury a `NeedsAttention` banner the user was about to
+/// click.
+#[derive(Debug, Default)]
+pub struct NotificationThrottle {
+    last_by_pane: std::collections::HashMap<PaneId, (ToastKind, std::time::Instant)>,
+    last_attention_at: Option<std::time::Instant>,
+}
+
+/// Repeats of the same notification kind for the same pane are dropped
+/// within this window.
+const NOTIFICATION_DUPLICATE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
+/// `Finished` notifications are dropped for this long after any
+/// `NeedsAttention` notification, so completion banners cannot bury a
+/// question the user still has to answer.
+const NOTIFICATION_ATTENTION_SHIELD: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl NotificationThrottle {
+    pub fn allow(&mut self, pane_id: PaneId, kind: ToastKind, now: std::time::Instant) -> bool {
+        if kind == ToastKind::Finished
+            && self
+                .last_attention_at
+                .is_some_and(|at| now.duration_since(at) < NOTIFICATION_ATTENTION_SHIELD)
+        {
+            return false;
+        }
+        if self
+            .last_by_pane
+            .get(&pane_id)
+            .is_some_and(|(last_kind, at)| {
+                *last_kind == kind && now.duration_since(*at) < NOTIFICATION_DUPLICATE_COOLDOWN
+            })
+        {
+            return false;
+        }
+        self.last_by_pane.insert(pane_id, (kind, now));
+        if kind == ToastKind::NeedsAttention {
+            self.last_attention_at = Some(now);
+        }
+        true
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClipboardWriteRequest {
     pub content: Vec<u8>,
@@ -1081,6 +1127,7 @@ pub struct AppState {
     pub update_dismissed: bool,
     pub config_diagnostic: Option<String>,
     pub toast: Option<ToastNotification>,
+    pub notification_throttle: NotificationThrottle,
     pub selection_copy_status: Option<SelectionCopyStatus>,
     /// Last reported focus state for the outer terminal hosting herdr.
     /// None means unsupported or not yet reported, which preserves active-pane suppression.
@@ -1347,6 +1394,7 @@ impl AppState {
             update_dismissed: false,
             config_diagnostic: None,
             toast: None,
+            notification_throttle: NotificationThrottle::default(),
             selection_copy_status: None,
             outer_terminal_focus: None,
             prefix_code: KeyCode::Char('b'),
@@ -1432,6 +1480,84 @@ impl AppState {
 mod tests {
     use super::*;
     use crossterm::event::KeyEvent;
+
+    #[test]
+    fn notification_throttle_drops_same_kind_repeats_within_cooldown() {
+        let mut throttle = NotificationThrottle::default();
+        let pane = PaneId::from_raw(1);
+        let t0 = std::time::Instant::now();
+
+        assert!(throttle.allow(pane, ToastKind::NeedsAttention, t0));
+        assert!(!throttle.allow(
+            pane,
+            ToastKind::NeedsAttention,
+            t0 + std::time::Duration::from_secs(3)
+        ));
+        assert!(throttle.allow(
+            pane,
+            ToastKind::NeedsAttention,
+            t0 + std::time::Duration::from_secs(11)
+        ));
+    }
+
+    #[test]
+    fn notification_throttle_shields_attention_from_finished_burial() {
+        let mut throttle = NotificationThrottle::default();
+        let asking_pane = PaneId::from_raw(1);
+        let other_pane = PaneId::from_raw(2);
+        let t0 = std::time::Instant::now();
+
+        assert!(throttle.allow(asking_pane, ToastKind::NeedsAttention, t0));
+        // Finished from the same pane or any other pane must not bury the
+        // question banner the user is about to click.
+        assert!(!throttle.allow(
+            asking_pane,
+            ToastKind::Finished,
+            t0 + std::time::Duration::from_secs(2)
+        ));
+        assert!(!throttle.allow(
+            other_pane,
+            ToastKind::Finished,
+            t0 + std::time::Duration::from_secs(5)
+        ));
+        assert!(throttle.allow(
+            other_pane,
+            ToastKind::Finished,
+            t0 + std::time::Duration::from_secs(11)
+        ));
+    }
+
+    #[test]
+    fn notification_throttle_always_lets_new_attention_through() {
+        let mut throttle = NotificationThrottle::default();
+        let t0 = std::time::Instant::now();
+
+        assert!(throttle.allow(PaneId::from_raw(1), ToastKind::Finished, t0));
+        assert!(throttle.allow(
+            PaneId::from_raw(2),
+            ToastKind::NeedsAttention,
+            t0 + std::time::Duration::from_secs(1)
+        ));
+        assert!(throttle.allow(
+            PaneId::from_raw(3),
+            ToastKind::NeedsAttention,
+            t0 + std::time::Duration::from_secs(2)
+        ));
+    }
+
+    #[test]
+    fn notification_throttle_drops_duplicate_finished_per_pane() {
+        let mut throttle = NotificationThrottle::default();
+        let pane = PaneId::from_raw(1);
+        let t0 = std::time::Instant::now();
+
+        assert!(throttle.allow(pane, ToastKind::Finished, t0));
+        assert!(!throttle.allow(
+            pane,
+            ToastKind::Finished,
+            t0 + std::time::Duration::from_secs(4)
+        ));
+    }
 
     #[test]
     fn built_in_theme_names_resolve() {

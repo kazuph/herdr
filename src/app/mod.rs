@@ -421,6 +421,7 @@ impl App {
             update_dismissed: false,
             config_diagnostic,
             toast: None,
+            notification_throttle: crate::app::state::NotificationThrottle::default(),
             selection_copy_status: None,
             outer_terminal_focus: None,
             prefix_code,

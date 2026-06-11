@@ -1176,7 +1176,11 @@ impl AppState {
                 is_active_tab,
                 change.previous_state,
                 change.state,
-            ) {
+            )
+            .filter(|kind| {
+                self.notification_throttle
+                    .allow(pane_id, *kind, std::time::Instant::now())
+            }) {
                 let title = notification_title_for_pane(self, ws_idx, pane_id);
                 let context =
                     notification_body_for_pane(self, ws_idx, pane_id).unwrap_or_else(|| {
@@ -2010,6 +2014,67 @@ mod tests {
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
         assert_eq!(toast.title, "2 background");
         assert_eq!(toast.context, "background · 2");
+    }
+
+    #[test]
+    fn flapping_blocked_state_does_not_refire_attention_toast() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.active = Some(0);
+        state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        let bg_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: bg_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Blocked,
+        });
+        assert!(state.toast.is_some());
+        state.toast = None;
+
+        // Detection flaps working and immediately back to blocked.
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: bg_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Working,
+        });
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: bg_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Blocked,
+        });
+
+        assert_eq!(state.toast, None);
+    }
+
+    #[test]
+    fn finished_toast_does_not_bury_recent_attention_toast() {
+        let mut state = app_with_workspaces(&["active", "asking", "finishing"]);
+        state.active = Some(0);
+        state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        let asking_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+        let finishing_pane_id = *state.workspaces[2].panes.keys().next().unwrap();
+
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: finishing_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Working,
+        });
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: asking_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Blocked,
+        });
+        let attention_toast = state.toast.clone().expect("attention toast");
+        assert_eq!(attention_toast.kind, ToastKind::NeedsAttention);
+
+        // Another pane finishing right after must not replace the question.
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: finishing_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Idle,
+        });
+
+        assert_eq!(state.toast, Some(attention_toast));
     }
 
     #[test]
