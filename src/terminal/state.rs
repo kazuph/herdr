@@ -333,6 +333,54 @@ impl TerminalState {
     }
 }
 
+/// How long a Claude activity fingerprint may stay frozen before the
+/// `working` evidence is treated as fossilized scrollback rather than a live
+/// spinner. A live spinner animates its frame glyph and elapsed-time counter
+/// every second, so a fingerprint that does not change for this long cannot
+/// be a running turn.
+pub(crate) const CLAUDE_ACTIVITY_STALE_AFTER: std::time::Duration =
+    std::time::Duration::from_secs(15);
+
+/// Downgrade `working` to `idle` when the only working evidence is a Claude
+/// activity fingerprint that has been frozen for `CLAUDE_ACTIVITY_STALE_AFTER`.
+///
+/// Claude Code sometimes leaves old spinner lines (with their task lists) in
+/// the transcript right above the prompt box, which is indistinguishable
+/// from a live spinner by position or content alone. Tracking change over
+/// time is the discriminator: real spinners tick, fossils do not. The state
+/// self-heals — any new turn redraws the spinner, changes the fingerprint,
+/// and working detection resumes immediately.
+pub(crate) fn filter_stale_claude_working(
+    agent: Option<Agent>,
+    raw: AgentState,
+    fingerprint: Option<String>,
+    now: std::time::Instant,
+    tracker: &mut Option<(String, std::time::Instant)>,
+) -> AgentState {
+    if agent != Some(Agent::Claude) || raw != AgentState::Working {
+        *tracker = None;
+        return raw;
+    }
+    let Some(fingerprint) = fingerprint else {
+        // Working for a non-fingerprintable reason; nothing to expire.
+        *tracker = None;
+        return raw;
+    };
+    match tracker {
+        Some((last, frozen_since)) if *last == fingerprint => {
+            if now.duration_since(*frozen_since) >= CLAUDE_ACTIVITY_STALE_AFTER {
+                AgentState::Idle
+            } else {
+                raw
+            }
+        }
+        _ => {
+            *tracker = Some((fingerprint, now));
+            raw
+        }
+    }
+}
+
 pub(crate) fn stabilize_agent_state(
     agent: Option<Agent>,
     previous: AgentState,
@@ -369,6 +417,158 @@ mod tests {
 
     fn test_terminal() -> TerminalState {
         TerminalState::new(TerminalId::alloc(), "/tmp".into())
+    }
+
+    #[test]
+    fn frozen_claude_activity_fingerprint_expires_to_idle() {
+        let now = std::time::Instant::now();
+        let mut tracker = None;
+        let fossil = "✢ herdrで並行実装を監督… (13m 47s · thinking)".to_string();
+
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                Some(fossil.clone()),
+                now,
+                &mut tracker,
+            ),
+            AgentState::Working,
+            "first observation is trusted"
+        );
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                Some(fossil.clone()),
+                now + std::time::Duration::from_secs(5),
+                &mut tracker,
+            ),
+            AgentState::Working,
+            "still within the staleness window"
+        );
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                Some(fossil.clone()),
+                now + CLAUDE_ACTIVITY_STALE_AFTER,
+                &mut tracker,
+            ),
+            AgentState::Idle,
+            "a fingerprint frozen past the window is fossilized scrollback"
+        );
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                Some(fossil),
+                now + CLAUDE_ACTIVITY_STALE_AFTER + std::time::Duration::from_secs(60),
+                &mut tracker,
+            ),
+            AgentState::Idle,
+            "stays idle while the fossil remains unchanged"
+        );
+    }
+
+    #[test]
+    fn ticking_claude_activity_fingerprint_stays_working() {
+        let now = std::time::Instant::now();
+        let mut tracker = None;
+        for second in 0..60u64 {
+            // A live spinner updates its frame glyph and timer every second.
+            let frame = if second % 2 == 0 { "✻" } else { "✽" };
+            let fingerprint = format!("{frame} Cogitating… ({second}s · ↓ 1.2k tokens)");
+            assert_eq!(
+                filter_stale_claude_working(
+                    Some(Agent::Claude),
+                    AgentState::Working,
+                    Some(fingerprint),
+                    now + std::time::Duration::from_secs(second),
+                    &mut tracker,
+                ),
+                AgentState::Working,
+                "live spinner at {second}s must stay working"
+            );
+        }
+    }
+
+    #[test]
+    fn new_turn_after_fossil_resumes_working_immediately() {
+        let now = std::time::Instant::now();
+        let mut tracker = None;
+        let fossil = "✢ old task… (13m 47s · thinking)".to_string();
+
+        filter_stale_claude_working(
+            Some(Agent::Claude),
+            AgentState::Working,
+            Some(fossil.clone()),
+            now,
+            &mut tracker,
+        );
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                Some(fossil.clone()),
+                now + CLAUDE_ACTIVITY_STALE_AFTER,
+                &mut tracker,
+            ),
+            AgentState::Idle,
+        );
+
+        // A new turn adds a fresh spinner below the fossil: fingerprint changes.
+        let fresh = format!("{fossil}\n✻ Sprouting… (1s · ↑ 0.1k tokens)");
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                Some(fresh),
+                now + CLAUDE_ACTIVITY_STALE_AFTER + std::time::Duration::from_secs(1),
+                &mut tracker,
+            ),
+            AgentState::Working,
+            "changed fingerprint resumes working immediately"
+        );
+    }
+
+    #[test]
+    fn stale_filter_resets_tracker_outside_claude_working() {
+        let now = std::time::Instant::now();
+        let mut tracker = None;
+        let fossil = "✢ task… (1m 0s)".to_string();
+
+        filter_stale_claude_working(
+            Some(Agent::Claude),
+            AgentState::Working,
+            Some(fossil.clone()),
+            now,
+            &mut tracker,
+        );
+        // An idle observation in between resets the freeze clock.
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Idle,
+                None,
+                now + std::time::Duration::from_secs(5),
+                &mut tracker,
+            ),
+            AgentState::Idle,
+        );
+        assert!(tracker.is_none());
+        // Other agents pass through untouched.
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Codex),
+                AgentState::Working,
+                Some(fossil),
+                now + std::time::Duration::from_secs(6),
+                &mut tracker,
+            ),
+            AgentState::Working,
+        );
+        assert!(tracker.is_none());
     }
 
     #[test]

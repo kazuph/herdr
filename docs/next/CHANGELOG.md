@@ -24,6 +24,7 @@
 - Agent notification bodies no longer show separator rows ("────…") or composer/status-line chrome; they now extract the agent's latest response from the `•`/`⏺` message marker for Codex and Claude Code, including the lines that follow it.
 - Agent notifications are now rate limited: repeats of the same notification for the same pane are dropped for 10 seconds, and completion notifications are held back for 10 seconds after a needs-attention notification so they cannot bury a question banner you are about to click.
 - Narrow workspace sidebar rows now keep the workspace name visible and drop git metadata instead, shedding diff stats first, then upstream arrows, then the branch name.
+- Claude Code panes no longer stay `working` after a turn finishes when an old spinner line is left in the transcript: spinner evidence that does not animate for 15 seconds is treated as fossilized scrollback and the pane returns to idle.
 - Workspace names with root pane OSC titles now render as `workspace-OSC title` without a space before the hyphen.
 - Workspace cards now show Git branch names after upstream and diff stats so activity indicators stay closer to the workspace name.
 - Pane context menu splits now use the selected pane's current working directory.

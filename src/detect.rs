@@ -660,23 +660,47 @@ fn has_interrupt_pattern(lower_content: &str) -> bool {
 /// on the spinner glyph + trailing ellipsis rather than specific wording.
 /// Include Claude's narrow-pane middle-dot frame too.
 fn has_spinner_activity(content: &str) -> bool {
+    content.lines().any(is_spinner_line)
+}
+
+fn is_spinner_line(line: &str) -> bool {
     const SPINNER_CHARS: &str = "·✱✲✳✴✵✶✷✸✹✺✻✼✽✾✿❀❁❂❃❇❈❉❊❋✢✣✤✥✦✧✨⊛⊕⊙◉◎◍⁂⁕※⍟☼★☆";
-    for line in content.lines() {
-        let trimmed = line.trim();
-        let mut chars = trimmed.chars();
-        if let Some(first) = chars.next() {
-            if SPINNER_CHARS.contains(first) {
-                let rest: String = chars.collect();
-                if rest.starts_with(' ')
-                    && rest.contains('\u{2026}')
-                    && rest.chars().any(|c| c.is_alphanumeric())
-                {
-                    return true;
-                }
-            }
-        }
+    let trimmed = line.trim();
+    let mut chars = trimmed.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !SPINNER_CHARS.contains(first) {
+        return false;
     }
-    false
+    let rest: String = chars.collect();
+    rest.starts_with(' ') && rest.contains('\u{2026}') && rest.chars().any(|c| c.is_alphanumeric())
+}
+
+/// Snapshot of the Claude activity indicators visible above the prompt box.
+///
+/// A live spinner animates: its frame glyph and elapsed-time counter change
+/// on every redraw, so this fingerprint keeps changing while Claude works.
+/// Old spinner lines fossilized in the transcript (Claude sometimes commits
+/// them to scrollback instead of erasing them) produce a fingerprint that
+/// never changes, letting callers expire them instead of reporting
+/// `working` forever.
+pub fn claude_activity_fingerprint(content: &str) -> Option<String> {
+    let above = content_above_prompt_box(content);
+    let lines: Vec<&str> = above
+        .lines()
+        .filter(|line| {
+            let lower = line.to_lowercase();
+            is_spinner_line(line)
+                || lower.contains("esc to interrupt")
+                || lower.contains("ctrl+c to interrupt")
+        })
+        .collect();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
 }
 
 fn has_codex_working_header(content: &str) -> bool {
@@ -1744,6 +1768,103 @@ mod tests {
         let screen = "just some text\nno borders here";
         let above = content_above_prompt_box(screen);
         assert_eq!(above, screen);
+    }
+
+    /// Real-world regression shape: Claude finished, but an old spinner line
+    /// plus its task list fossilized in the transcript right above the
+    /// prompt box. Position alone cannot distinguish this from a live
+    /// spinner — `detect_state` reports working, and the time-based
+    /// staleness filter is what corrects it.
+    #[test]
+    fn fossilized_spinner_above_prompt_still_reads_working_with_stable_fingerprint() {
+        let screen = "⏺ 完了したよ。\n\n\
+             ✢ herdrで並行実装を監督… (13m 47s · thinking)\n\
+             \u{20}\u{20}⎿  ◼ taskの一つ目\n\
+             \u{20}\u{20}\u{20}\u{20}◻ taskの二つ目\n\n\
+             ──────────\n\
+             ❯ \n\
+             ──────────\n\
+             \u{20}\u{20}statusline";
+
+        assert_eq!(
+            detect_state(Some(Agent::Claude), screen),
+            AgentState::Working
+        );
+        let fingerprint = claude_activity_fingerprint(screen).expect("fingerprint");
+        assert!(fingerprint.contains("13m 47s"));
+        // The fingerprint is stable across redraws of a finished screen.
+        assert_eq!(
+            claude_activity_fingerprint(screen).as_deref(),
+            Some(fingerprint.as_str())
+        );
+    }
+
+    #[test]
+    fn idle_screen_has_no_activity_fingerprint() {
+        let screen = "⏺ 完了したよ。\n\n\
+             ──────────\n\
+             ❯ \n\
+             ──────────\n\
+             \u{20}\u{20}? for shortcuts";
+        assert_eq!(detect_state(Some(Agent::Claude), screen), AgentState::Idle);
+        assert_eq!(claude_activity_fingerprint(screen), None);
+    }
+
+    /// Real-world regression: an agent whose *answer text* quotes a spinner
+    /// line or mentions the interrupt hint (docs, code reviews, bug reports
+    /// about this very feature) trips the working heuristics after the turn
+    /// finished. The quoted lines are static, so the activity fingerprint is
+    /// frozen and the staleness filter clears the false `working`. The turn
+    /// summary line ("✻ Cooked for 13m 55s") has no ellipsis and is not a
+    /// trigger by itself.
+    #[test]
+    fn transcript_quoting_spinner_lines_reads_working_until_staleness_filter() {
+        let screen = "\u{20}\u{20}修正方針の説明:\n\
+             \u{20}\u{20}✢ herdrで並行実装を監督… (13m 47s · thinking)   ← 過去ターンのスピナーの化石\n\
+             \u{20}\u{20}- スピナー行＋esc to interrupt 行を指紋として抽出\n\n\
+             ✻ Cooked for 13m 55s\n\n\
+             ※ recap: 修正を実装済み。 (disable recaps in /config)\n\n\
+             ──────────\n\
+             ❯ \n\
+             ──────────\n\
+             \u{20}\u{20}statusline";
+
+        // Raw heuristics still read this as working — by design, since a
+        // static screen cannot distinguish quotes from live indicators.
+        assert_eq!(
+            detect_state(Some(Agent::Claude), screen),
+            AgentState::Working
+        );
+
+        let summary_only = "✻ Cooked for 13m 55s\n\n──────────\n❯ \n──────────";
+        assert_eq!(
+            detect_state(Some(Agent::Claude), summary_only),
+            AgentState::Idle,
+            "turn summary without ellipsis must not read as working"
+        );
+
+        // The frozen fingerprint lets the staleness filter settle on idle.
+        let now = std::time::Instant::now();
+        let mut tracker = None;
+        let fingerprint = || claude_activity_fingerprint(screen);
+        assert!(fingerprint().is_some());
+        crate::terminal::state::filter_stale_claude_working(
+            Some(Agent::Claude),
+            AgentState::Working,
+            fingerprint(),
+            now,
+            &mut tracker,
+        );
+        assert_eq!(
+            crate::terminal::state::filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                fingerprint(),
+                now + crate::terminal::state::CLAUDE_ACTIVITY_STALE_AFTER,
+                &mut tracker,
+            ),
+            AgentState::Idle,
+        );
     }
 
     #[test]
