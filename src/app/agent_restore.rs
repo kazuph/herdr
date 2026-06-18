@@ -23,6 +23,42 @@ pub(crate) enum AgentRestoreOutcome {
     Skip(&'static str),
 }
 
+fn running_agent_count(state: &crate::app::state::AppState) -> usize {
+    state
+        .terminals
+        .values()
+        .filter(|terminal| terminal.effective_agent_label().is_some())
+        .count()
+}
+
+fn restore_toast_context(actions: &[AgentRestoreActionInfo], running_agents: usize) -> String {
+    let launched = actions
+        .iter()
+        .filter(|action| action.status == "launched")
+        .count();
+    let would_launch = actions
+        .iter()
+        .filter(|action| action.status == "would_launch")
+        .count();
+    let skipped = actions
+        .iter()
+        .filter(|action| action.status == "skipped")
+        .count();
+    let total = actions.len();
+
+    if total == 0 {
+        if running_agents == 0 {
+            "no pending restore".to_string()
+        } else {
+            format!("no pending restore, {running_agents} already running")
+        }
+    } else if would_launch > 0 {
+        format!("would launch {would_launch}, skipped {skipped}")
+    } else {
+        format!("launched {launched}, skipped {skipped}")
+    }
+}
+
 /// Decide what to do for every pane that had an agent before the restart.
 ///
 /// Skips panes with live agent evidence (`detected_agent`), so a relaunch is
@@ -85,26 +121,7 @@ impl crate::app::App {
         self.state.request_agent_restore = false;
         let previous_toast = self.state.toast.clone();
         let actions = self.execute_agent_restore(false);
-        let launched = actions
-            .iter()
-            .filter(|action| action.status == "launched")
-            .count();
-        let would_launch = actions
-            .iter()
-            .filter(|action| action.status == "would_launch")
-            .count();
-        let skipped = actions
-            .iter()
-            .filter(|action| action.status == "skipped")
-            .count();
-        let total = actions.len();
-        let context = if total == 0 {
-            "no pending agent sessions".to_string()
-        } else if would_launch > 0 {
-            format!("would launch {would_launch}, skipped {skipped}")
-        } else {
-            format!("launched {launched}, skipped {skipped}")
-        };
+        let context = restore_toast_context(&actions, running_agent_count(&self.state));
         self.state.toast = Some(crate::app::state::ToastNotification {
             kind: crate::app::state::ToastKind::Finished,
             title: "agent restore".into(),
@@ -342,5 +359,14 @@ mod tests {
             entries[0].outcome,
             AgentRestoreOutcome::Skip("no resumable session found")
         ));
+    }
+
+    #[test]
+    fn empty_restore_toast_mentions_running_agents_when_present() {
+        assert_eq!(restore_toast_context(&[], 0), "no pending restore");
+        assert_eq!(
+            restore_toast_context(&[], 3),
+            "no pending restore, 3 already running"
+        );
     }
 }
