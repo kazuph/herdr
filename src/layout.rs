@@ -173,6 +173,7 @@ impl TileLayout {
     }
 
     /// Rebuild every pane in one split direction while preserving pane order.
+    #[cfg(test)]
     pub fn arrange_all(&mut self, direction: Direction) {
         let ids = self.pane_ids();
         if ids.len() <= 1 {
@@ -208,28 +209,35 @@ impl TileLayout {
         true
     }
 
-    /// Cycle through broad pane layout presets while preserving pane order.
+    /// Cycle through broad pane layout presets using PaneId order.
     pub fn cycle_layout(&mut self) -> bool {
-        let ids = self.pane_ids();
+        let mut ids = self.pane_ids();
+        ids.sort_by_key(|id| id.raw());
         if ids.len() <= 1 {
             return false;
         }
 
         if is_uniform_split(&self.root, Direction::Horizontal) {
-            self.arrange_all(Direction::Vertical);
-            return true;
+            self.root = build_even_split(&ids, Direction::Vertical);
         } else if is_uniform_split(&self.root, Direction::Vertical) {
-            self.root = build_main_split(&ids, Direction::Horizontal, Direction::Vertical);
-        } else if is_main_split(
+            self.root = build_main_split(&ids, Direction::Horizontal, build_two_row_grid);
+        } else if is_main_first_split(&self.root, Direction::Horizontal, is_two_row_grid, ids[0]) {
+            self.root = build_main_split_reversed(&ids, Direction::Horizontal, build_two_row_grid);
+        } else if is_main_second_split(&self.root, Direction::Horizontal, is_two_row_grid, ids[0]) {
+            self.root = build_main_split(&ids, Direction::Vertical, |ids| {
+                build_even_split(ids, Direction::Horizontal)
+            });
+        } else if is_main_first_split(
             &self.root,
-            Direction::Horizontal,
             Direction::Vertical,
+            |node| is_uniform_split(node, Direction::Horizontal),
             ids[0],
         ) {
-            self.root = build_main_split(&ids, Direction::Vertical, Direction::Horizontal);
+            self.root = build_main_split_reversed(&ids, Direction::Vertical, |ids| {
+                build_even_split(ids, Direction::Horizontal)
+            });
         } else {
-            self.arrange_all(Direction::Horizontal);
-            return true;
+            self.root = build_even_split(&ids, Direction::Horizontal);
         }
         if !ids.contains(&self.focus) {
             self.focus = ids[0];
@@ -456,7 +464,11 @@ fn build_even_split(ids: &[PaneId], direction: Direction) -> Node {
     }
 }
 
-fn build_main_split(ids: &[PaneId], root_direction: Direction, rest_direction: Direction) -> Node {
+fn build_main_split(
+    ids: &[PaneId],
+    root_direction: Direction,
+    build_rest: impl Fn(&[PaneId]) -> Node,
+) -> Node {
     match ids {
         [] => Node::Pane(PaneId::from_raw(0)),
         [id] => Node::Pane(*id),
@@ -464,8 +476,42 @@ fn build_main_split(ids: &[PaneId], root_direction: Direction, rest_direction: D
             direction: root_direction,
             ratio: 0.5,
             first: Box::new(Node::Pane(*first)),
-            second: Box::new(build_even_split(rest, rest_direction)),
+            second: Box::new(build_rest(rest)),
         },
+    }
+}
+
+fn build_main_split_reversed(
+    ids: &[PaneId],
+    root_direction: Direction,
+    build_rest: impl Fn(&[PaneId]) -> Node,
+) -> Node {
+    match ids {
+        [] => Node::Pane(PaneId::from_raw(0)),
+        [id] => Node::Pane(*id),
+        [first, rest @ ..] => Node::Split {
+            direction: root_direction,
+            ratio: 0.5,
+            first: Box::new(build_rest(rest)),
+            second: Box::new(Node::Pane(*first)),
+        },
+    }
+}
+
+fn build_two_row_grid(ids: &[PaneId]) -> Node {
+    match ids {
+        [] => Node::Pane(PaneId::from_raw(0)),
+        [id] => Node::Pane(*id),
+        _ => {
+            let top_count = ids.len().div_ceil(2);
+            let (top, bottom) = ids.split_at(top_count);
+            Node::Split {
+                direction: Direction::Vertical,
+                ratio: 0.5,
+                first: Box::new(build_even_split(top, Direction::Horizontal)),
+                second: Box::new(build_even_split(bottom, Direction::Horizontal)),
+            }
+        }
     }
 }
 
@@ -485,10 +531,26 @@ fn is_uniform_split(node: &Node, expected: Direction) -> bool {
     }
 }
 
-fn is_main_split(
+fn is_two_row_grid(node: &Node) -> bool {
+    match node {
+        Node::Pane(_) => true,
+        Node::Split {
+            direction,
+            first,
+            second,
+            ..
+        } if *direction == Direction::Vertical => {
+            is_uniform_split(first, Direction::Horizontal)
+                && is_uniform_split(second, Direction::Horizontal)
+        }
+        _ => false,
+    }
+}
+
+fn is_main_first_split(
     node: &Node,
     root_direction: Direction,
-    rest_direction: Direction,
+    rest_matches: impl Fn(&Node) -> bool,
     first_pane: PaneId,
 ) -> bool {
     match node {
@@ -498,8 +560,26 @@ fn is_main_split(
             second,
             ..
         } if *direction == root_direction => {
-            matches!(first.as_ref(), Node::Pane(id) if *id == first_pane)
-                && is_uniform_split(second, rest_direction)
+            matches!(first.as_ref(), Node::Pane(id) if *id == first_pane) && rest_matches(second)
+        }
+        _ => false,
+    }
+}
+
+fn is_main_second_split(
+    node: &Node,
+    root_direction: Direction,
+    rest_matches: impl Fn(&Node) -> bool,
+    first_pane: PaneId,
+) -> bool {
+    match node {
+        Node::Split {
+            direction,
+            first,
+            second,
+            ..
+        } if *direction == root_direction => {
+            rest_matches(first) && matches!(second.as_ref(), Node::Pane(id) if *id == first_pane)
         }
         _ => false,
     }
@@ -684,36 +764,57 @@ mod tests {
     #[test]
     fn cycle_layout_steps_through_layout_presets() {
         let (mut layout, root) = TileLayout::new();
-        let second = layout.split_focused(Direction::Horizontal);
-        let third = layout.split_focused(Direction::Horizontal);
+        let mut ids = vec![root];
+        for _ in 0..8 {
+            ids.push(layout.split_focused(Direction::Horizontal));
+        }
         layout.arrange_all(Direction::Horizontal);
-        layout.focus_pane(second);
+        layout.focus_pane(ids[1]);
+        let rect_of = |panes: &[PaneInfo], id: PaneId| -> Rect {
+            panes.iter().find(|pane| pane.id == id).unwrap().rect
+        };
 
         assert!(layout.cycle_layout());
-        assert_eq!(layout.pane_ids(), vec![root, second, third]);
-        assert_eq!(layout.focused(), second);
-        let panes = layout.panes(Rect::new(0, 0, 90, 30));
-        assert_eq!(panes[0].rect, Rect::new(0, 0, 90, 10));
-        assert_eq!(panes[1].rect, Rect::new(0, 10, 90, 10));
-        assert_eq!(panes[2].rect, Rect::new(0, 20, 90, 10));
+        assert_eq!(layout.pane_ids(), ids);
+        assert_eq!(layout.focused(), ids[1]);
+        let panes = layout.panes(Rect::new(0, 0, 180, 45));
+        assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 0, 180, 5));
+        assert_eq!(rect_of(&panes, ids[8]), Rect::new(0, 40, 180, 5));
 
         assert!(layout.cycle_layout());
-        let panes = layout.panes(Rect::new(0, 0, 90, 30));
-        assert_eq!(panes[0].rect, Rect::new(0, 0, 45, 30));
-        assert_eq!(panes[1].rect, Rect::new(45, 0, 45, 15));
-        assert_eq!(panes[2].rect, Rect::new(45, 15, 45, 15));
+        let panes = layout.panes(Rect::new(0, 0, 160, 40));
+        assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 0, 80, 40));
+        assert_eq!(rect_of(&panes, ids[1]), Rect::new(80, 0, 20, 20));
+        assert_eq!(rect_of(&panes, ids[2]), Rect::new(100, 0, 20, 20));
+        assert_eq!(rect_of(&panes, ids[3]), Rect::new(120, 0, 20, 20));
+        assert_eq!(rect_of(&panes, ids[4]), Rect::new(140, 0, 20, 20));
+        assert_eq!(rect_of(&panes, ids[5]), Rect::new(80, 20, 20, 20));
+        assert_eq!(rect_of(&panes, ids[8]), Rect::new(140, 20, 20, 20));
 
         assert!(layout.cycle_layout());
-        let panes = layout.panes(Rect::new(0, 0, 90, 30));
-        assert_eq!(panes[0].rect, Rect::new(0, 0, 90, 15));
-        assert_eq!(panes[1].rect, Rect::new(0, 15, 45, 15));
-        assert_eq!(panes[2].rect, Rect::new(45, 15, 45, 15));
+        let panes = layout.panes(Rect::new(0, 0, 160, 40));
+        assert_eq!(rect_of(&panes, ids[0]), Rect::new(80, 0, 80, 40));
+        assert_eq!(rect_of(&panes, ids[1]), Rect::new(0, 0, 20, 20));
+        assert_eq!(rect_of(&panes, ids[4]), Rect::new(60, 0, 20, 20));
+        assert_eq!(rect_of(&panes, ids[5]), Rect::new(0, 20, 20, 20));
+        assert_eq!(rect_of(&panes, ids[8]), Rect::new(60, 20, 20, 20));
 
         assert!(layout.cycle_layout());
-        let panes = layout.panes(Rect::new(0, 0, 90, 30));
-        assert_eq!(panes[0].rect, Rect::new(0, 0, 30, 30));
-        assert_eq!(panes[1].rect, Rect::new(30, 0, 30, 30));
-        assert_eq!(panes[2].rect, Rect::new(60, 0, 30, 30));
+        let panes = layout.panes(Rect::new(0, 0, 160, 40));
+        assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 0, 160, 20));
+        assert_eq!(rect_of(&panes, ids[1]), Rect::new(0, 20, 20, 20));
+        assert_eq!(rect_of(&panes, ids[8]), Rect::new(140, 20, 20, 20));
+
+        assert!(layout.cycle_layout());
+        let panes = layout.panes(Rect::new(0, 0, 160, 40));
+        assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 20, 160, 20));
+        assert_eq!(rect_of(&panes, ids[1]), Rect::new(0, 0, 20, 20));
+        assert_eq!(rect_of(&panes, ids[8]), Rect::new(140, 0, 20, 20));
+
+        assert!(layout.cycle_layout());
+        let panes = layout.panes(Rect::new(0, 0, 180, 40));
+        assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 0, 20, 40));
+        assert_eq!(rect_of(&panes, ids[8]), Rect::new(160, 0, 20, 40));
     }
 
     #[test]
