@@ -899,6 +899,7 @@ impl ContextMenuState {
                 "Equalize pane sizes",
                 "Zoom",
                 "Close pane",
+                "Cycle pane layout",
             ],
             ContextMenuKind::Pane {
                 has_manual_label: true,
@@ -924,6 +925,7 @@ impl ContextMenuState {
                 "Equalize pane sizes",
                 "Zoom",
                 "Close pane",
+                "Cycle pane layout",
             ],
             ContextMenuKind::Pane {
                 has_manual_label: false,

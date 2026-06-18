@@ -739,7 +739,7 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
             {
                 ws.layout.focus_pane(pane_id);
             }
-            state.arrange_panes(Direction::Horizontal);
+            state.move_focused_pane_to_split(Direction::Horizontal);
             state.mode = Mode::Terminal;
         }
         (ContextMenuKind::Pane { pane_id, .. }, Some("Move to horizontal split")) => {
@@ -749,7 +749,7 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
             {
                 ws.layout.focus_pane(pane_id);
             }
-            state.arrange_panes(Direction::Vertical);
+            state.move_focused_pane_to_split(Direction::Vertical);
             state.mode = Mode::Terminal;
         }
         (ContextMenuKind::Pane { pane_id, .. }, Some("Equalize pane sizes")) => {
@@ -760,6 +760,16 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
                 ws.layout.focus_pane(pane_id);
             }
             state.equalize_pane_sizes();
+            state.mode = Mode::Terminal;
+        }
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Cycle pane layout")) => {
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
+            state.cycle_pane_layout();
             state.mode = Mode::Terminal;
         }
         (ContextMenuKind::Pane { .. }, Some("Zoom")) => {
@@ -1389,6 +1399,8 @@ mod tests {
         assert!(menu.items().contains(&"Move to vertical split"));
         assert!(menu.items().contains(&"Move to horizontal split"));
         assert!(menu.items().contains(&"Equalize pane sizes"));
+        assert!(menu.items().contains(&"Cycle pane layout"));
+        assert_eq!(menu.items().last(), Some(&"Cycle pane layout"));
     }
 
     #[test]
@@ -1407,11 +1419,12 @@ mod tests {
         assert!(!menu.items().contains(&"Move to vertical split"));
         assert!(!menu.items().contains(&"Move to horizontal split"));
         assert!(!menu.items().contains(&"Equalize pane sizes"));
+        assert!(!menu.items().contains(&"Cycle pane layout"));
         assert!(!menu.items().contains(&"Zoom"));
     }
 
     #[test]
-    fn pane_context_menu_moves_all_panes_to_horizontal_split() {
+    fn pane_context_menu_moves_clicked_pane_to_horizontal_split() {
         let mut state = state_with_workspaces(&["a"]);
         state.active = Some(0);
         let root = state.workspaces[0].tabs[0].root_pane;
@@ -1431,6 +1444,45 @@ mod tests {
             .items()
             .iter()
             .position(|item| *item == "Move to horizontal split")
+            .unwrap();
+
+        apply_context_menu_action(&mut state, menu, idx);
+
+        let tab = &state.workspaces[0].tabs[0];
+        assert_eq!(tab.layout.focused(), second);
+        assert_eq!(tab.layout.pane_ids(), vec![root, third, second]);
+        let panes = tab.layout.panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(panes[0].rect, Rect::new(0, 0, 45, 20));
+        assert_eq!(panes[1].rect, Rect::new(45, 0, 45, 20));
+        assert_eq!(panes[2].rect, Rect::new(0, 20, 90, 10));
+        assert_eq!(state.mode, Mode::Terminal);
+        assert!(state.session_dirty);
+    }
+
+    #[test]
+    fn pane_context_menu_cycles_pane_layout() {
+        let mut state = state_with_workspaces(&["a"]);
+        state.active = Some(0);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let second = state.workspaces[0].test_split(Direction::Horizontal);
+        let third = state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].tabs[0]
+            .layout
+            .arrange_all(Direction::Horizontal);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                pane_id: second,
+                has_manual_label: false,
+                has_layout_actions: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Cycle pane layout")
             .unwrap();
 
         apply_context_menu_action(&mut state, menu, idx);

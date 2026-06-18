@@ -789,14 +789,27 @@ impl AppState {
         }
     }
 
-    pub fn arrange_panes(&mut self, direction: Direction) {
+    pub fn move_focused_pane_to_split(&mut self, direction: Direction) {
         if let Some(tab) = self
             .active
             .and_then(|i| self.workspaces.get_mut(i))
             .and_then(|ws| ws.active_tab_mut())
         {
-            tab.layout.arrange_all(direction);
-            self.mark_session_dirty();
+            if tab.layout.move_focused_to_root_split(direction) {
+                self.mark_session_dirty();
+            }
+        }
+    }
+
+    pub fn cycle_pane_layout(&mut self) {
+        if let Some(tab) = self
+            .active
+            .and_then(|i| self.workspaces.get_mut(i))
+            .and_then(|ws| ws.active_tab_mut())
+        {
+            if tab.layout.cycle_layout() {
+                self.mark_session_dirty();
+            }
         }
     }
 
