@@ -461,6 +461,7 @@ impl AppState {
                 | Mode::RenameWorkspace
                 | Mode::Resize
                 | Mode::ConfirmClose
+                | Mode::ConfirmDanger
                 | Mode::ContextMenu
                 | Mode::Settings
                 | Mode::GlobalMenu
@@ -638,8 +639,9 @@ mod tests {
     use ratatui::layout::Rect;
 
     use super::super::{
-        app_for_mouse_test, capture_snapshot, modal::apply_context_menu_action, mouse,
-        unique_temp_path,
+        app_for_mouse_test, capture_snapshot,
+        modal::{apply_context_menu_action, confirm_danger_accept},
+        mouse, unique_temp_path,
     };
     use crate::{
         app::state::{
@@ -1793,17 +1795,62 @@ mod tests {
                 "Keybinds",
                 "Reload config",
                 "--",
+                "Restore agents...",
+                "--",
+                "Detach",
+                "--",
                 "Stop server",
                 "Restart",
-                "Detach",
             ]
         );
         assert!(menu.is_separator(2));
         assert!(menu.is_separator(6));
+        assert!(menu.is_separator(8));
+        assert!(menu.is_separator(10));
     }
 
     #[test]
-    fn right_click_sidebar_blank_menu_stop_server_sets_flag() {
+    fn right_click_sidebar_blank_menu_stop_server_confirms_before_quit() {
+        let mut app = app_for_mouse_test();
+
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::SidebarBlank,
+            x: 0,
+            y: 0,
+            list: MenuListState::new(11),
+        };
+
+        apply_context_menu_action(&mut app.state, menu, 11);
+
+        assert_eq!(app.state.mode, Mode::ConfirmDanger);
+        assert!(!app.state.should_quit);
+        confirm_danger_accept(&mut app.state);
+        assert!(app.state.should_quit);
+        assert!(!app.state.request_restart);
+    }
+
+    #[test]
+    fn right_click_sidebar_blank_menu_restart_confirms_before_quit() {
+        let mut app = app_for_mouse_test();
+
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::SidebarBlank,
+            x: 0,
+            y: 0,
+            list: MenuListState::new(12),
+        };
+
+        apply_context_menu_action(&mut app.state, menu, 12);
+
+        assert_eq!(app.state.mode, Mode::ConfirmDanger);
+        assert!(!app.state.should_quit);
+        confirm_danger_accept(&mut app.state);
+        assert!(app.state.should_quit);
+        assert!(app.state.request_restart);
+    }
+
+    #[test]
+    fn right_click_sidebar_blank_menu_restore_agents_confirms_before_request() {
         let mut app = app_for_mouse_test();
 
         let menu = ContextMenuState {
@@ -1815,25 +1862,11 @@ mod tests {
 
         apply_context_menu_action(&mut app.state, menu, 7);
 
-        assert!(app.state.should_quit);
-        assert!(!app.state.request_restart);
-    }
-
-    #[test]
-    fn right_click_sidebar_blank_menu_restart_sets_flags() {
-        let mut app = app_for_mouse_test();
-
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(8),
-        };
-
-        apply_context_menu_action(&mut app.state, menu, 8);
-
-        assert!(app.state.should_quit);
-        assert!(app.state.request_restart);
+        assert_eq!(app.state.mode, Mode::ConfirmDanger);
+        assert!(!app.state.request_agent_restore);
+        confirm_danger_accept(&mut app.state);
+        assert!(app.state.request_agent_restore);
+        assert!(!app.state.should_quit);
     }
 
     #[test]

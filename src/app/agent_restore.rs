@@ -78,6 +78,43 @@ pub(crate) fn agent_restore_plan(
 }
 
 impl crate::app::App {
+    pub(crate) fn run_pending_agent_restore_request(&mut self) -> bool {
+        if !self.state.request_agent_restore {
+            return false;
+        }
+        self.state.request_agent_restore = false;
+        let previous_toast = self.state.toast.clone();
+        let actions = self.execute_agent_restore(false);
+        let launched = actions
+            .iter()
+            .filter(|action| action.status == "launched")
+            .count();
+        let would_launch = actions
+            .iter()
+            .filter(|action| action.status == "would_launch")
+            .count();
+        let skipped = actions
+            .iter()
+            .filter(|action| action.status == "skipped")
+            .count();
+        let total = actions.len();
+        let context = if total == 0 {
+            "no pending agent sessions".to_string()
+        } else if would_launch > 0 {
+            format!("would launch {would_launch}, skipped {skipped}")
+        } else {
+            format!("launched {launched}, skipped {skipped}")
+        };
+        self.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::Finished,
+            title: "agent restore".into(),
+            context,
+            target: None,
+        });
+        self.sync_toast_deadline(previous_toast);
+        true
+    }
+
     /// Execute (or, with `dry_run`, just report) the agent restore plan.
     pub(crate) fn execute_agent_restore(&mut self, dry_run: bool) -> Vec<AgentRestoreActionInfo> {
         let entries = agent_restore_plan(&self.state);

@@ -34,8 +34,8 @@ mod terminal;
 
 pub(crate) use self::{
     modal::{
-        handle_confirm_close_key, handle_context_menu_key, handle_global_menu_key,
-        handle_keybind_help_key, handle_rename_key, handle_resize_key,
+        handle_confirm_close_key, handle_confirm_danger_key, handle_context_menu_key,
+        handle_global_menu_key, handle_keybind_help_key, handle_rename_key, handle_resize_key,
     },
     navigate::terminal_direct_navigation_action,
 };
@@ -73,6 +73,7 @@ impl App {
                     Mode::ConfirmRemoveWorktree => self.handle_worktree_remove_key(key_event),
                     Mode::Resize => handle_resize_key(&mut self.state, key),
                     Mode::ConfirmClose => handle_confirm_close_key(&mut self.state, key_event),
+                    Mode::ConfirmDanger => handle_confirm_danger_key(&mut self.state, key_event),
                     Mode::ContextMenu => handle_context_menu_key(&mut self.state, key_event),
                     Mode::Settings => self.handle_settings_key(key_event),
                     Mode::GlobalMenu => handle_global_menu_key(&mut self.state, key_event),

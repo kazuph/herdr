@@ -607,6 +607,7 @@ pub enum Mode {
     ConfirmRemoveWorktree,
     Resize,
     ConfirmClose,
+    ConfirmDanger,
     ContextMenu,
     Settings,
     GlobalMenu,
@@ -981,9 +982,12 @@ impl ContextMenuState {
                 "Keybinds",
                 "Reload config",
                 "--",
+                "Restore agents...",
+                "--",
+                "Detach",
+                "--",
                 "Stop server",
                 "Restart",
-                "Detach",
             ],
         }
     }
@@ -1098,6 +1102,39 @@ pub enum SidebarWidthSource {
     Manual,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DangerousAction {
+    StopServer,
+    Restart,
+    RestoreAgents,
+}
+
+impl DangerousAction {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::StopServer => "Stop server?",
+            Self::Restart => "Restart Herdr?",
+            Self::RestoreAgents => "Restore agents?",
+        }
+    }
+
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::StopServer => "Stops the Herdr server and all running panes.",
+            Self::Restart => "Restarts the Herdr server. The saved session can be restored.",
+            Self::RestoreAgents => "Types resume commands into panes with recorded agent sessions.",
+        }
+    }
+
+    pub fn confirm_label(self) -> &'static str {
+        match self {
+            Self::StopServer => "stop",
+            Self::Restart => "restart",
+            Self::RestoreAgents => "restore",
+        }
+    }
+}
+
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 pub struct AppState {
@@ -1120,6 +1157,8 @@ pub struct AppState {
     pub request_new_workspace: bool,
     pub request_new_tab: bool,
     pub request_reload_config: bool,
+    /// Set when UI interaction requested agent restore to run from the App loop.
+    pub request_agent_restore: bool,
     /// Stop the server and relaunch herdr after shutdown completes.
     pub request_restart: bool,
     /// Set when the headless server should ask attached clients to reload
@@ -1136,6 +1175,7 @@ pub struct AppState {
     pub worktree_remove: Option<WorktreeRemoveState>,
     pub pending_worktree_action: Option<WorktreeActionRequest>,
     pub pending_duplicate_workspace: Option<usize>,
+    pub pending_danger_action: Option<DangerousAction>,
     pub rename_pane_target: Option<PaneId>,
     pub request_complete_onboarding: bool,
     pub name_input: String,
@@ -1379,6 +1419,7 @@ impl AppState {
             request_new_workspace: false,
             request_new_tab: false,
             request_reload_config: false,
+            request_agent_restore: false,
             request_restart: false,
             request_client_sound_config_reload: false,
             request_clipboard_write: None,
@@ -1390,6 +1431,7 @@ impl AppState {
             worktree_remove: None,
             pending_worktree_action: None,
             pending_duplicate_workspace: None,
+            pending_danger_action: None,
             rename_pane_target: None,
             request_complete_onboarding: false,
             name_input: String::new(),

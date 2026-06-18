@@ -199,11 +199,92 @@ pub(super) fn render_confirm_close_overlay(app: &AppState, frame: &mut Frame, ar
     }
 }
 
+pub(super) fn render_confirm_danger_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    let Some(action) = app.pending_danger_action else {
+        return;
+    };
+    super::dim_background(frame, area);
+
+    let Some(popup) = confirm_danger_popup_rect(area) else {
+        return;
+    };
+
+    let warn = Style::default()
+        .fg(app.palette.red)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(app.palette.overlay0);
+
+    let title_line = Line::from(vec![Span::styled(format!(" {}", action.title()), warn)]);
+    let detail_line = Line::from(vec![Span::styled(format!(" {}", action.detail()), dim)]);
+
+    let Some(inner) = render_panel_shell(frame, popup, app.palette.red, app.palette.panel_bg)
+    else {
+        return;
+    };
+
+    if inner.height >= 3 {
+        let rows = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas::<3>(inner);
+
+        frame.render_widget(Paragraph::new(title_line), rows[0]);
+        frame.render_widget(Paragraph::new(detail_line), rows[1]);
+
+        let (confirm_rect, cancel_rect) = confirm_danger_button_rects(inner);
+        render_action_button(
+            frame,
+            confirm_rect,
+            Some("↵"),
+            action.confirm_label(),
+            Style::default()
+                .fg(panel_contrast_fg(&app.palette))
+                .bg(app.palette.red)
+                .add_modifier(Modifier::BOLD),
+        );
+        render_action_button(
+            frame,
+            cancel_rect,
+            Some("esc"),
+            "cancel",
+            Style::default()
+                .fg(app.palette.text)
+                .bg(app.palette.surface0)
+                .add_modifier(Modifier::BOLD),
+        );
+    }
+}
+
 pub(crate) fn confirm_close_popup_rect(area: Rect) -> Option<Rect> {
     centered_popup_rect(area, 44, 5)
 }
 
 pub(crate) fn confirm_close_button_rects(inner: Rect) -> (Rect, Rect) {
+    let rects = action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: Some("↵"),
+                label: "confirm",
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "cancel",
+            },
+        ],
+        2,
+        2,
+    );
+    (rects[0], rects[1])
+}
+
+pub(crate) fn confirm_danger_popup_rect(area: Rect) -> Option<Rect> {
+    centered_popup_rect(area, 64, 5)
+}
+
+pub(crate) fn confirm_danger_button_rects(inner: Rect) -> (Rect, Rect) {
     let rects = action_button_row_rects(
         inner,
         &[

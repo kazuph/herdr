@@ -76,6 +76,7 @@ fn agent_panel_current_workspace_idx(app: &AppState) -> Option<usize> {
             | Mode::RenamePane
             | Mode::Resize
             | Mode::ConfirmClose
+            | Mode::ConfirmDanger
             | Mode::ContextMenu
             | Mode::Settings
             | Mode::GlobalMenu

@@ -20,8 +20,9 @@ use super::WheelRouting;
 use super::{
     modal::{
         apply_context_menu_action, apply_global_menu_action, apply_rename_action,
-        confirm_close_accept, confirm_close_cancel, global_menu_actions, leave_modal,
-        modal_action_from_buttons, open_global_menu, open_new_tab_dialog, ModalAction,
+        confirm_close_accept, confirm_close_cancel, confirm_danger_accept, confirm_danger_cancel,
+        global_menu_actions, leave_modal, modal_action_from_buttons, open_global_menu,
+        open_new_tab_dialog, ModalAction,
     },
     settings::SettingsAction,
     ScrollbarClickTarget, TAB_DRAG_THRESHOLD, WORKSPACE_DRAG_THRESHOLD,
@@ -213,6 +214,30 @@ impl AppState {
                     ) {
                         Some(ModalAction::Confirm) => confirm_close_accept(self),
                         Some(ModalAction::Cancel) | None => confirm_close_cancel(self),
+                        _ => {}
+                    }
+                    return None;
+                }
+
+                if self.mode == Mode::ConfirmDanger {
+                    let popup = self.confirm_danger_rect();
+                    let inner = Rect::new(
+                        popup.x + 1,
+                        popup.y + 1,
+                        popup.width.saturating_sub(2),
+                        popup.height.saturating_sub(2),
+                    );
+                    let (confirm, cancel) = crate::ui::confirm_danger_button_rects(inner);
+                    match modal_action_from_buttons(
+                        mouse.column,
+                        mouse.row,
+                        &[
+                            (confirm, ModalAction::Confirm),
+                            (cancel, ModalAction::Cancel),
+                        ],
+                    ) {
+                        Some(ModalAction::Confirm) => confirm_danger_accept(self),
+                        Some(ModalAction::Cancel) | None => confirm_danger_cancel(self),
                         _ => {}
                     }
                     return None;
@@ -996,6 +1021,10 @@ impl AppState {
 
     pub(crate) fn confirm_close_rect(&self) -> Rect {
         crate::ui::confirm_close_popup_rect(self.view.terminal_area).unwrap_or_default()
+    }
+
+    pub(crate) fn confirm_danger_rect(&self) -> Rect {
+        crate::ui::confirm_danger_popup_rect(self.view.terminal_area).unwrap_or_default()
     }
 
     fn context_menu_item_at(&self, col: u16, row: u16) -> Option<usize> {

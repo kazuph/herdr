@@ -490,6 +490,10 @@ impl HeadlessServer {
                 needs_render = true;
             }
 
+            if self.app.run_pending_agent_restore_request() {
+                needs_render = true;
+            }
+
             self.drain_client_sound_config_reload_request();
             self.stream_host_mouse_capture_mode();
 
@@ -2138,6 +2142,10 @@ impl HeadlessServer {
         self.app.start_git_status_refresh_if_due(now);
 
         if self.app.maybe_run_scheduled_agent_restore(now) {
+            changed = true;
+        }
+
+        if self.app.run_pending_agent_restore_request() {
             changed = true;
         }
 

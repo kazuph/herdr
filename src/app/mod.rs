@@ -361,6 +361,7 @@ impl App {
             request_new_workspace: false,
             request_new_tab: false,
             request_reload_config: false,
+            request_agent_restore: false,
             request_restart: false,
             request_client_sound_config_reload: false,
             request_clipboard_write: None,
@@ -372,6 +373,7 @@ impl App {
             worktree_remove: None,
             pending_worktree_action: None,
             pending_duplicate_workspace: None,
+            pending_danger_action: None,
             rename_pane_target: None,
             request_complete_onboarding: false,
             name_input: String::new(),
@@ -632,6 +634,10 @@ impl App {
             if self.state.request_reload_config {
                 self.state.request_reload_config = false;
                 self.reload_config();
+                needs_render = true;
+            }
+
+            if self.run_pending_agent_restore_request() {
                 needs_render = true;
             }
 
@@ -1112,6 +1118,9 @@ impl App {
             }
             Mode::ConfirmClose => {
                 input::handle_confirm_close_key(&mut self.state, key_event);
+            }
+            Mode::ConfirmDanger => {
+                input::handle_confirm_danger_key(&mut self.state, key_event);
             }
             Mode::ContextMenu => {
                 input::handle_context_menu_key(&mut self.state, key_event);

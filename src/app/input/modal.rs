@@ -2,7 +2,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Direction, Rect};
 
 use crate::{
-    app::state::{AppState, ContextMenuKind, ContextMenuState, MenuListState, Mode},
+    app::state::{
+        AppState, ContextMenuKind, ContextMenuState, DangerousAction, MenuListState, Mode,
+    },
     input::TerminalKey,
     layout::NavDirection,
 };
@@ -537,6 +539,11 @@ pub(super) fn open_confirm_close(state: &mut AppState) {
     state.mode = Mode::ConfirmClose;
 }
 
+pub(super) fn open_confirm_danger(state: &mut AppState, action: DangerousAction) {
+    state.pending_danger_action = Some(action);
+    state.mode = Mode::ConfirmDanger;
+}
+
 pub(super) fn confirm_close_accept(state: &mut AppState) {
     state.close_selected_workspace();
     if state.workspaces.is_empty() {
@@ -550,10 +557,45 @@ pub(super) fn confirm_close_cancel(state: &mut AppState) {
     state.mode = Mode::Navigate;
 }
 
+pub(super) fn confirm_danger_accept(state: &mut AppState) {
+    let Some(action) = state.pending_danger_action.take() else {
+        leave_modal(state);
+        return;
+    };
+    match action {
+        DangerousAction::StopServer => {
+            state.should_quit = true;
+            leave_modal(state);
+        }
+        DangerousAction::Restart => {
+            state.request_restart = true;
+            state.should_quit = true;
+            leave_modal(state);
+        }
+        DangerousAction::RestoreAgents => {
+            state.request_agent_restore = true;
+            leave_modal(state);
+        }
+    }
+}
+
+pub(super) fn confirm_danger_cancel(state: &mut AppState) {
+    state.pending_danger_action = None;
+    leave_modal(state);
+}
+
 pub(crate) fn handle_confirm_close_key(state: &mut AppState, key: KeyEvent) {
     match modal_action_from_key(&key, CONFIRM_CLOSE_ACTIONS) {
         Some(ModalAction::Confirm) => confirm_close_accept(state),
         Some(ModalAction::Cancel) => confirm_close_cancel(state),
+        _ => {}
+    }
+}
+
+pub(crate) fn handle_confirm_danger_key(state: &mut AppState, key: KeyEvent) {
+    match modal_action_from_key(&key, CONFIRM_CLOSE_ACTIONS) {
+        Some(ModalAction::Confirm) => confirm_danger_accept(state),
+        Some(ModalAction::Cancel) => confirm_danger_cancel(state),
         _ => {}
     }
 }
@@ -801,14 +843,14 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
             state.request_reload_config = true;
             leave_modal(state);
         }
+        (ContextMenuKind::SidebarBlank, Some("Restore agents...")) => {
+            open_confirm_danger(state, DangerousAction::RestoreAgents);
+        }
         (ContextMenuKind::SidebarBlank, Some("Stop server")) => {
-            state.should_quit = true;
-            leave_modal(state);
+            open_confirm_danger(state, DangerousAction::StopServer);
         }
         (ContextMenuKind::SidebarBlank, Some("Restart")) => {
-            state.request_restart = true;
-            state.should_quit = true;
-            leave_modal(state);
+            open_confirm_danger(state, DangerousAction::Restart);
         }
         (ContextMenuKind::SidebarBlank, Some("Detach")) => {
             request_detach(state);
