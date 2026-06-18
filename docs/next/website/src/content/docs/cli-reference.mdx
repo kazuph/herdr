@@ -105,7 +105,7 @@ herdr pane send-keys <pane_id> <key> [key ...]
 herdr pane run <pane_id> <command>
 ```
 
-`pane run` submits text plus Enter atomically. Prefer it over `send-text` plus `send-keys Enter` for commands.
+`pane send-text` writes literal text only and does not press Enter. `pane run` submits command text with Enter. Prefer `pane run` over `send-text` plus `send-keys Enter` for shell commands.
 
 Report agent state from custom tools:
 
@@ -135,9 +135,9 @@ herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right
 
 Agent targets can be terminal IDs, unique agent names, detected or reported agent labels, or legacy pane IDs. Names and labels are agent identities. Terminal IDs and legacy pane IDs are low-level escape hatches.
 
-`agent read` reads the resolved terminal stream. `agent send` writes literal text to that stream. `agent get`, `agent focus`, `agent wait`, and `agent attach` require the resolved terminal to have agent identity. `agent rename` can assign that identity.
+`agent read` reads the resolved terminal stream. `agent send` writes text to the resolved AI CLI and submits it with Enter so the message is not left in the prompt input. `agent get`, `agent focus`, `agent wait`, and `agent attach` require the resolved terminal to have agent identity. `agent rename` can assign that identity.
 
-Use `pane send-text`, `pane send-keys`, `pane run`, and `terminal attach` for ordinary terminals, servers, tests, shells, or low-level terminal control. Use `pane run` when you want to submit a command with Enter.
+Use `pane send-text`, `pane send-keys`, `pane run`, and `terminal attach` for ordinary terminals, servers, tests, shells, or low-level terminal control. Use `pane run` when you want to submit a command with Enter; use `agent send` when you want to deliver a message to an agent CLI and submit it.
 
 ## Direct terminal attach
 

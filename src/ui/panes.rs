@@ -90,7 +90,11 @@ fn terminal_pane_label(terminal: &TerminalState) -> &str {
 
 fn pane_title(pane_id: crate::layout::PaneId, terminal: Option<&TerminalState>) -> String {
     let label = terminal.map(terminal_pane_label).unwrap_or("terminal");
-    format!("%{} {label}", pane_id.raw())
+    let osc_title = terminal.and_then(|terminal| terminal.pane_title.as_deref());
+    match osc_title {
+        Some(title) => format!("%{} {label} {title}", pane_id.raw()),
+        None => format!("%{} {label}", pane_id.raw()),
+    }
 }
 
 fn runtime_for_tab_pane<'a>(
@@ -433,6 +437,18 @@ mod tests {
         assert_eq!(pane_title(pane_id, Some(&terminal)), "%5 reviewer");
 
         assert_eq!(pane_title(pane_id, None), "%5 terminal");
+    }
+
+    #[test]
+    fn pane_title_appends_osc_title_after_agent_label() {
+        let pane_id = crate::layout::PaneId::from_raw(81);
+        let terminal_id = TerminalId::alloc();
+        let mut terminal = TerminalState::new(terminal_id, "/tmp".into())
+            .with_launch_argv(vec!["/usr/local/bin/codex".into()]);
+
+        terminal.set_pane_title(Some("thinking".into()));
+
+        assert_eq!(pane_title(pane_id, Some(&terminal)), "%81 codex thinking");
     }
 
     #[tokio::test]

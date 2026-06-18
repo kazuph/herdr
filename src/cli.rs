@@ -2184,9 +2184,7 @@ fn print_agent_help() {
     eprintln!("  herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--focus|--no-focus] -- <argv...>");
     eprintln!("  herdr agent restore [--dry-run]   relaunch agents recorded in the restored session ([agent_restore] config)");
     eprintln!("  targets accept terminal ids, unique agent names, detected/reported agent labels, and legacy pane ids");
-    eprintln!(
-        "  agent send writes literal text; use pane run when you want command text plus Enter"
-    );
+    eprintln!("  agent send writes text and submits it with Enter");
 }
 
 fn print_terminal_help() {
@@ -2211,6 +2209,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane send-keys <pane_id> <key> [key ...]");
     eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--session-id ID]");
     eprintln!("  herdr pane run <pane_id> <command>");
+    eprintln!("  pane send-text writes literal text without Enter; pane run submits command text with Enter");
 }
 
 fn print_wait_help() {

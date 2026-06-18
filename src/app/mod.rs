@@ -2191,6 +2191,37 @@ mod tests {
             .is_none());
     }
 
+    #[tokio::test]
+    async fn agent_send_request_submits_text_with_enter() {
+        let mut app = test_app();
+        let workspace = Workspace::test_new("api-agent-send");
+        let pane = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        app.state.insert_test_runtime(pane, runtime);
+        let pane_id = app.pane_info(0, pane).unwrap().pane_id;
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_agent_send".into(),
+            method: crate::api::schema::Method::AgentSend(crate::api::schema::AgentSendParams {
+                target: pane_id,
+                text: "hello agent".into(),
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"]["type"], "ok");
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"hello agent")
+        );
+        assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"\r"));
+    }
+
     #[test]
     fn terminal_target_resolves_terminal_id() {
         let mut app = test_app();

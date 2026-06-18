@@ -1,6 +1,8 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+const AGENT_SEND_SUBMIT_DELAY: Duration = Duration::from_millis(500);
+
 use super::{
     api_helpers::{
         detect_state_from_api, encode_api_keys, encode_api_text, normalize_custom_status,
@@ -1047,7 +1049,32 @@ impl App {
                     })
                     .unwrap();
                 };
-                if let Err(err) = runtime.try_send_bytes(Bytes::from(params.text)) {
+                let text_bytes = encode_api_text(runtime, &params.text);
+                let enter = match encode_api_keys(runtime, &["enter".to_string()]) {
+                    Ok(mut encoded_keys) => encoded_keys.pop().unwrap_or_default(),
+                    Err(key) => {
+                        return serde_json::to_string(&ErrorResponse {
+                            id: request.id,
+                            error: ErrorBody {
+                                code: "invalid_key".into(),
+                                message: format!("unsupported key {key}"),
+                            },
+                        })
+                        .unwrap();
+                    }
+                };
+                if let Err(err) = runtime.try_send_bytes(Bytes::from(text_bytes)) {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error: ErrorBody {
+                            code: "agent_send_failed".into(),
+                            message: err.to_string(),
+                        },
+                    })
+                    .unwrap();
+                }
+                std::thread::sleep(AGENT_SEND_SUBMIT_DELAY);
+                if let Err(err) = runtime.try_send_bytes(Bytes::from(enter)) {
                     return serde_json::to_string(&ErrorResponse {
                         id: request.id,
                         error: ErrorBody {
