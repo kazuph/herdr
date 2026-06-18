@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-const AGENT_SEND_SUBMIT_DELAY: Duration = Duration::from_millis(500);
+pub(crate) const AGENT_SEND_SUBMIT_DELAY: Duration = Duration::from_millis(500);
 
 use super::{
     api_helpers::{

@@ -225,6 +225,7 @@ impl crate::app::App {
         runtime
             .try_send_bytes(bytes::Bytes::from(text))
             .map_err(|err| err.to_string())?;
+        std::thread::sleep(super::api::AGENT_SEND_SUBMIT_DELAY);
         let enter = super::api_helpers::encode_api_keys(runtime, &["enter".to_string()])
             .map_err(|key| format!("unsupported key {key}"))?;
         for bytes in enter {
