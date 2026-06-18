@@ -856,6 +856,7 @@ pub enum ContextMenuKind {
         pane_id: PaneId,
         has_manual_label: bool,
         has_layout_actions: bool,
+        is_zoomed: bool,
     },
     SidebarBlank,
 }
@@ -888,6 +889,7 @@ impl ContextMenuState {
             ContextMenuKind::Pane {
                 has_manual_label: true,
                 has_layout_actions: true,
+                is_zoomed: false,
                 ..
             } => &[
                 "Rename pane",
@@ -898,6 +900,23 @@ impl ContextMenuState {
                 "Move to horizontal split",
                 "Equalize pane sizes",
                 "Zoom",
+                "Close pane",
+                "Cycle pane layout",
+            ],
+            ContextMenuKind::Pane {
+                has_manual_label: true,
+                has_layout_actions: true,
+                is_zoomed: true,
+                ..
+            } => &[
+                "Rename pane",
+                "Clear pane name",
+                "Split vertical",
+                "Split horizontal",
+                "Move to vertical split",
+                "Move to horizontal split",
+                "Equalize pane sizes",
+                "Unzoom",
                 "Close pane",
                 "Cycle pane layout",
             ],
@@ -915,6 +934,7 @@ impl ContextMenuState {
             ContextMenuKind::Pane {
                 has_manual_label: false,
                 has_layout_actions: true,
+                is_zoomed: false,
                 ..
             } => &[
                 "Rename pane",
@@ -924,6 +944,22 @@ impl ContextMenuState {
                 "Move to horizontal split",
                 "Equalize pane sizes",
                 "Zoom",
+                "Close pane",
+                "Cycle pane layout",
+            ],
+            ContextMenuKind::Pane {
+                has_manual_label: false,
+                has_layout_actions: true,
+                is_zoomed: true,
+                ..
+            } => &[
+                "Rename pane",
+                "Split vertical",
+                "Split horizontal",
+                "Move to vertical split",
+                "Move to horizontal split",
+                "Equalize pane sizes",
+                "Unzoom",
                 "Close pane",
                 "Cycle pane layout",
             ],

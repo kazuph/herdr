@@ -772,7 +772,7 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
             state.cycle_pane_layout();
             state.mode = Mode::Terminal;
         }
-        (ContextMenuKind::Pane { .. }, Some("Zoom")) => {
+        (ContextMenuKind::Pane { .. }, Some("Zoom" | "Unzoom")) => {
             state.toggle_zoom();
             state.mode = Mode::Terminal;
         }
@@ -1390,6 +1390,7 @@ mod tests {
                 pane_id: crate::layout::PaneId::from_raw(1),
                 has_manual_label: false,
                 has_layout_actions: true,
+                is_zoomed: false,
             },
             x: 0,
             y: 0,
@@ -1410,6 +1411,7 @@ mod tests {
                 pane_id: crate::layout::PaneId::from_raw(1),
                 has_manual_label: false,
                 has_layout_actions: false,
+                is_zoomed: false,
             },
             x: 0,
             y: 0,
@@ -1424,6 +1426,25 @@ mod tests {
     }
 
     #[test]
+    fn zoomed_pane_context_menu_shows_unzoom() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                pane_id: crate::layout::PaneId::from_raw(1),
+                has_manual_label: false,
+                has_layout_actions: true,
+                is_zoomed: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        assert!(menu.items().contains(&"Unzoom"));
+        assert!(!menu.items().contains(&"Zoom"));
+        assert_eq!(menu.items().last(), Some(&"Cycle pane layout"));
+    }
+
+    #[test]
     fn pane_context_menu_moves_clicked_pane_to_horizontal_split() {
         let mut state = state_with_workspaces(&["a"]);
         state.active = Some(0);
@@ -1435,6 +1456,7 @@ mod tests {
                 pane_id: second,
                 has_manual_label: false,
                 has_layout_actions: true,
+                is_zoomed: false,
             },
             x: 0,
             y: 0,
@@ -1474,6 +1496,7 @@ mod tests {
                 pane_id: second,
                 has_manual_label: false,
                 has_layout_actions: true,
+                is_zoomed: false,
             },
             x: 0,
             y: 0,
@@ -1513,6 +1536,7 @@ mod tests {
                 pane_id: second,
                 has_manual_label: false,
                 has_layout_actions: true,
+                is_zoomed: false,
             },
             x: 0,
             y: 0,

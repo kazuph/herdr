@@ -42,11 +42,17 @@ impl AppState {
             .and_then(|ws_idx| self.workspaces.get(ws_idx))
             .and_then(|ws| ws.active_tab())
             .is_some_and(|tab| tab.layout.pane_count() > 1);
+        let is_zoomed = self
+            .active
+            .and_then(|ws_idx| self.workspaces.get(ws_idx))
+            .and_then(|ws| ws.active_tab())
+            .is_some_and(|tab| tab.zoomed);
         self.context_menu = Some(ContextMenuState {
             kind: ContextMenuKind::Pane {
                 pane_id: info.id,
                 has_manual_label,
                 has_layout_actions,
+                is_zoomed,
             },
             x: col,
             y: row,
