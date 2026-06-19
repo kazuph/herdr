@@ -60,6 +60,8 @@ pub enum Method {
     PaneSplit(PaneSplitParams),
     #[serde(rename = "pane.list")]
     PaneList(PaneListParams),
+    #[serde(rename = "pane.current")]
+    PaneCurrent(PaneCurrentParams),
     #[serde(rename = "pane.get")]
     PaneGet(PaneTarget),
     #[serde(rename = "pane.focus")]
@@ -104,6 +106,11 @@ pub struct WorkspaceTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneTarget {
     pub pane_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneCurrentParams {
+    pub process_id: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

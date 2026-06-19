@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -13,6 +14,54 @@ use super::{
 use crate::events::AppEvent;
 
 impl App {
+    fn pane_for_process_id(
+        &self,
+        process_id: u32,
+    ) -> Result<(usize, crate::layout::PaneId), String> {
+        if process_id == 0 {
+            return Err("process_id must be non-zero".into());
+        }
+
+        let session_pids = crate::platform::session_processes(process_id);
+        if session_pids.is_empty() {
+            return Err(format!(
+                "could not inspect process session for pid {process_id}"
+            ));
+        }
+        self.pane_for_session_processes(&session_pids)
+    }
+
+    fn pane_for_session_processes(
+        &self,
+        session_pids: &[u32],
+    ) -> Result<(usize, crate::layout::PaneId), String> {
+        let session_pids = session_pids.iter().copied().collect::<HashSet<_>>();
+        let mut matches = Vec::new();
+
+        for (ws_idx, workspace) in self.state.workspaces.iter().enumerate() {
+            for tab in &workspace.tabs {
+                for pane_id in tab.layout.pane_ids() {
+                    let Some(terminal_id) = tab.terminal_id(pane_id) else {
+                        continue;
+                    };
+                    let Some(runtime) = self.state.terminal_runtimes.get(terminal_id) else {
+                        continue;
+                    };
+                    let child_pid = runtime.child_pid();
+                    if child_pid != 0 && session_pids.contains(&child_pid) {
+                        matches.push((ws_idx, pane_id));
+                    }
+                }
+            }
+        }
+
+        match matches.as_slice() {
+            [one] => Ok(*one),
+            [] => Err("no Herdr pane owns that process session".into()),
+            _ => Err("process session matches multiple Herdr panes".into()),
+        }
+    }
+
     pub(crate) fn handle_internal_event(&mut self, ev: AppEvent) {
         if let AppEvent::ClipboardWrite { content } = ev {
             crate::selection::write_osc52_bytes(&content);
@@ -1203,6 +1252,35 @@ impl App {
                     }
                 }
             }
+            Method::PaneCurrent(params) => {
+                let (ws_idx, pane_id) = match self.pane_for_process_id(params.process_id) {
+                    Ok(target) => target,
+                    Err(message) => {
+                        return serde_json::to_string(&ErrorResponse {
+                            id: request.id,
+                            error: ErrorBody {
+                                code: "pane_current_unresolved".into(),
+                                message,
+                            },
+                        })
+                        .unwrap();
+                    }
+                };
+                let Some(pane) = self.pane_info(ws_idx, pane_id) else {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error: ErrorBody {
+                            code: "pane_not_found".into(),
+                            message: "current pane not found".into(),
+                        },
+                    })
+                    .unwrap();
+                };
+                SuccessResponse {
+                    id: request.id,
+                    result: ResponseResult::PaneInfo { pane },
+                }
+            }
             Method::PaneGet(target) => {
                 let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
                     return serde_json::to_string(&ErrorResponse {
@@ -1691,4 +1769,48 @@ fn pane_focus_command(pane_id: &str) -> Option<String> {
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{config::Config, workspace::Workspace};
+    use ratatui::layout::Direction;
+
+    fn test_app() -> App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        )
+    }
+
+    #[tokio::test]
+    async fn current_pane_resolves_unique_process_session_owner() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("current");
+        let root = workspace.tabs[0].root_pane;
+        let second = workspace.test_split(Direction::Horizontal);
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+
+        let root_terminal = app.state.workspaces[0].terminal_id(root).unwrap().clone();
+        let second_terminal = app.state.workspaces[0].terminal_id(second).unwrap().clone();
+        app.state.terminal_runtimes.insert(
+            root_terminal,
+            crate::terminal::TerminalRuntime::test_with_child_pid(80, 24, 111),
+        );
+        app.state.terminal_runtimes.insert(
+            second_terminal,
+            crate::terminal::TerminalRuntime::test_with_child_pid(80, 24, 222),
+        );
+
+        assert_eq!(app.pane_for_session_processes(&[9, 111]), Ok((0, root)));
+        assert_eq!(app.pane_for_session_processes(&[9, 222]), Ok((0, second)));
+        assert!(app.pane_for_session_processes(&[9]).is_err());
+        assert!(app.pane_for_session_processes(&[111, 222]).is_err());
+    }
 }

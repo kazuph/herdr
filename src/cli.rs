@@ -7,11 +7,12 @@ use serde::Serialize;
 use crate::api;
 use crate::api::schema::{
     AgentReadParams, AgentRenameParams, AgentSendParams, AgentStartParams, AgentStatus,
-    AgentTarget, EmptyParams, Method, OutputMatch, PaneAgentState, PaneListParams, PaneReadParams,
-    PaneRenameParams, PaneReportAgentParams, PaneSendInputParams, PaneSendKeysParams,
-    PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams, PingParams,
-    ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams, TabListParams,
-    TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
+    AgentTarget, EmptyParams, Method, OutputMatch, PaneAgentState, PaneCurrentParams,
+    PaneListParams, PaneReadParams, PaneRenameParams, PaneReportAgentParams, PaneSendInputParams,
+    PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams,
+    PingParams, ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams,
+    TabListParams, TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams,
+    WorkspaceTarget,
 };
 
 pub enum CommandOutcome {
@@ -1325,23 +1326,31 @@ fn pane_current(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
-    let pane_id = match std::env::var(crate::integration::HERDR_PANE_ID_ENV_VAR) {
-        Ok(value) if !value.trim().is_empty() => normalize_pane_id(value.trim()),
-        _ => {
-            eprintln!(
-                "{} is not set; refusing to infer the current pane from focus",
-                crate::integration::HERDR_PANE_ID_ENV_VAR
-            );
-            return Ok(1);
+    let (request, fallback) = match std::env::var(crate::integration::HERDR_PANE_ID_ENV_VAR) {
+        Ok(value) if !value.trim().is_empty() => {
+            let pane_id = normalize_pane_id(value.trim());
+            (
+                Request {
+                    id: "cli:pane:current".into(),
+                    method: Method::PaneGet(PaneTarget {
+                        pane_id: pane_id.clone(),
+                    }),
+                },
+                pane_id,
+            )
         }
+        _ => (
+            Request {
+                id: "cli:pane:current".into(),
+                method: Method::PaneCurrent(PaneCurrentParams {
+                    process_id: std::process::id(),
+                }),
+            },
+            String::new(),
+        ),
     };
 
-    let response = send_request(&Request {
-        id: "cli:pane:current".into(),
-        method: Method::PaneGet(PaneTarget {
-            pane_id: pane_id.clone(),
-        }),
-    })?;
+    let response = send_request(&request)?;
 
     if let Some(error) = response.get("error") {
         eprintln!(
@@ -1351,7 +1360,7 @@ fn pane_current(args: &[String]) -> std::io::Result<i32> {
         return Ok(1);
     }
 
-    println!("{}", current_pane_id_from_response(&response, &pane_id));
+    println!("{}", current_pane_id_from_response(&response, &fallback));
     Ok(0)
 }
 
@@ -2209,6 +2218,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane send-keys <pane_id> <key> [key ...]");
     eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--session-id ID]");
     eprintln!("  herdr pane run <pane_id> <command>");
+    eprintln!("  pane current uses HERDR_PANE_ID first, then resolves the calling process session");
     eprintln!("  pane send-text writes literal text without Enter; pane run submits command text with Enter");
 }
 

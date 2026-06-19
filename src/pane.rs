@@ -272,6 +272,10 @@ impl PaneRuntime {
         shutdown_pane_processes(self.pane_id, self.child_pid.load(Ordering::Acquire));
     }
 
+    pub fn child_pid(&self) -> u32 {
+        self.child_pid.load(Ordering::Acquire)
+    }
+
     pub fn apply_host_terminal_theme(&self, theme: crate::terminal_theme::TerminalTheme) {
         self.terminal.apply_host_terminal_theme(theme);
     }
@@ -1064,6 +1068,12 @@ impl PaneRuntime {
         bytes: &[u8],
     ) -> Self {
         Self::test_with_channel_and_scrollback_bytes(cols, rows, scrollback_limit_bytes, bytes, 4).0
+    }
+
+    pub(crate) fn test_with_child_pid(cols: u16, rows: u16, child_pid: u32) -> Self {
+        let runtime = Self::test_with_screen_bytes(cols, rows, &[]);
+        runtime.child_pid.store(child_pid, Ordering::Release);
+        runtime
     }
 
     pub(crate) fn test_with_channel_and_scrollback_bytes(
