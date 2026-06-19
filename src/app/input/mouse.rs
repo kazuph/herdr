@@ -15,6 +15,13 @@ use crate::{
 
 const PANE_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(500);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaneActionBarAction {
+    CycleLayout,
+    Rotate,
+    Equalize,
+}
+
 #[cfg(test)]
 use super::WheelRouting;
 use super::{
@@ -297,6 +304,11 @@ impl AppState {
                 }
 
                 if !in_sidebar {
+                    if let Some(action) = self.pane_action_bar_action_at(mouse.column, mouse.row) {
+                        self.apply_pane_action_bar_action(action);
+                        return None;
+                    }
+
                     if let Some(border) = self.find_border_at(mouse.column, mouse.row) {
                         self.drag = Some(DragState {
                             target: DragTarget::PaneSplit {
@@ -328,6 +340,15 @@ impl AppState {
                         if self.mode != Mode::Terminal {
                             self.mode = Mode::Terminal;
                         }
+                        return None;
+                    }
+
+                    if let Some(info) = self.pane_title_at(mouse.column, mouse.row).cloned() {
+                        self.focus_pane(info.id);
+                        if self.mode != Mode::Terminal {
+                            self.mode = Mode::Terminal;
+                        }
+                        self.toggle_zoom();
                         return None;
                     }
                 }
@@ -513,6 +534,17 @@ impl AppState {
                 }
 
                 if self.drag.is_none() {
+                    if self
+                        .pane_action_bar_action_at(mouse.column, mouse.row)
+                        .is_some()
+                        || self.pane_title_at(mouse.column, mouse.row).is_some()
+                    {
+                        self.workspace_press = None;
+                        self.tab_press = None;
+                        self.drag = None;
+                        return None;
+                    }
+
                     if let Some(info) = self.pane_mouse_target(mouse.column, mouse.row).cloned() {
                         if self.forward_pane_mouse_button(&info, mouse) {
                             self.selection = None;
@@ -1212,6 +1244,44 @@ impl AppState {
         })
     }
 
+    fn pane_title_at(&self, col: u16, row: u16) -> Option<&PaneInfo> {
+        self.view.pane_infos.iter().find(|p| {
+            p.rect.width > 4
+                && p.rect.height > 2
+                && p.inner_rect.y > p.rect.y
+                && row == p.rect.y
+                && col >= p.rect.x
+                && col < p.rect.x + p.rect.width
+        })
+    }
+
+    fn pane_action_bar_action_at(&self, col: u16, row: u16) -> Option<PaneActionBarAction> {
+        [
+            (
+                self.view.pane_action_cycle_layout_rect,
+                PaneActionBarAction::CycleLayout,
+            ),
+            (
+                self.view.pane_action_rotate_rect,
+                PaneActionBarAction::Rotate,
+            ),
+            (
+                self.view.pane_action_equalize_rect,
+                PaneActionBarAction::Equalize,
+            ),
+        ]
+        .into_iter()
+        .find_map(|(rect, action)| rect_contains(rect, col, row).then_some(action))
+    }
+
+    fn apply_pane_action_bar_action(&mut self, action: PaneActionBarAction) {
+        match action {
+            PaneActionBarAction::CycleLayout => self.cycle_pane_layout(),
+            PaneActionBarAction::Rotate => self.rotate_panes(false),
+            PaneActionBarAction::Equalize => self.equalize_pane_sizes(),
+        }
+    }
+
     pub(super) fn focus_pane(&mut self, pane_id: crate::layout::PaneId) {
         if let Some(ws) = self.active.and_then(|i| self.workspaces.get_mut(i)) {
             if ws.layout.focused() != pane_id {
@@ -1571,6 +1641,94 @@ mod tests {
         assert!(!items.contains(&"Move to vertical split"));
         assert!(!items.contains(&"Move to horizontal split"));
         assert!(!items.contains(&"Equalize pane sizes"));
+    }
+
+    #[test]
+    fn clicking_pane_title_toggles_zoom_for_that_pane() {
+        let mut app = app_for_mouse_test();
+        let mut workspace = Workspace::test_new("active");
+        let second_pane = workspace.test_split(Direction::Horizontal);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 24));
+        let pane = app
+            .state
+            .view
+            .pane_infos
+            .iter()
+            .find(|pane| pane.id == second_pane)
+            .cloned()
+            .unwrap();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            pane.rect.x + 2,
+            pane.rect.y,
+        ));
+
+        let tab = app.state.workspaces[0].active_tab().unwrap();
+        assert!(tab.zoomed);
+        assert_eq!(tab.layout.focused(), second_pane);
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 24));
+        let zoomed_pane = app.state.view.pane_infos[0].clone();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            zoomed_pane.rect.x + 2,
+            zoomed_pane.rect.y,
+        ));
+
+        assert!(!app.state.workspaces[0].active_tab().unwrap().zoomed);
+    }
+
+    #[test]
+    fn clicking_pane_action_bar_buttons_runs_layout_actions() {
+        let mut app = app_for_mouse_test();
+        let mut workspace = Workspace::test_new("active");
+        workspace.test_split(Direction::Horizontal);
+        workspace.test_split(Direction::Vertical);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 28));
+
+        let before_layout = app.state.workspaces[0]
+            .active_tab()
+            .unwrap()
+            .layout
+            .pane_ids();
+        let rotate = app.state.view.pane_action_rotate_rect;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            rotate.x + 1,
+            rotate.y,
+        ));
+        let after_rotate = app.state.workspaces[0]
+            .active_tab()
+            .unwrap()
+            .layout
+            .pane_ids();
+        assert_eq!(before_layout, after_rotate);
+        assert!(app.state.session_dirty);
+
+        app.state.session_dirty = false;
+        let cycle = app.state.view.pane_action_cycle_layout_rect;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            cycle.x + 1,
+            cycle.y,
+        ));
+        assert!(app.state.session_dirty);
+
+        app.state.session_dirty = false;
+        let equalize = app.state.view.pane_action_equalize_rect;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            equalize.x + 1,
+            equalize.y,
+        ));
+        assert!(app.state.session_dirty);
     }
 
     #[test]

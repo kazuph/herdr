@@ -49,7 +49,10 @@ pub(crate) use self::scrollbar::{
 };
 use self::settings::render_settings_overlay;
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};
-use self::status::{render_config_diagnostic, render_toast_notification, toast_notification_rect};
+use self::status::{
+    pane_action_bar_rects, render_config_diagnostic, render_pane_action_bar,
+    render_toast_notification, toast_notification_rect,
+};
 use self::tabs::render_tab_bar;
 pub(crate) use self::{
     dialogs::{
@@ -164,14 +167,24 @@ fn compute_view_internal(
     let [sidebar_area, main_area] =
         Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).areas(area);
 
-    let show_tab_bar = app.show_tab_bar && app.active.and_then(|i| app.workspaces.get(i)).is_some();
-    let (tab_bar_rect, terminal_area) = if show_tab_bar && main_area.height > 1 {
-        let [tab_bar_rect, terminal_area] =
+    let has_active_workspace = app.active.and_then(|i| app.workspaces.get(i)).is_some();
+    let show_tab_bar = app.show_tab_bar && has_active_workspace;
+    let (tab_bar_rect, main_body_area) = if show_tab_bar && main_area.height > 1 {
+        let [tab_bar_rect, main_body_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
-        (tab_bar_rect, terminal_area)
+        (tab_bar_rect, main_body_area)
     } else {
         (Rect::default(), main_area)
     };
+    let show_pane_action_bar = has_active_workspace && main_body_area.height > 1;
+    let (terminal_area, pane_action_bar_rect) = if show_pane_action_bar {
+        let [terminal_area, pane_action_bar_rect] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(main_body_area);
+        (terminal_area, pane_action_bar_rect)
+    } else {
+        (main_body_area, Rect::default())
+    };
+    let pane_action_rects = pane_action_bar_rects(pane_action_bar_rect);
 
     app.workspace_scroll = app
         .workspace_scroll
@@ -238,6 +251,10 @@ fn compute_view_internal(
         tab_scroll_right_hit_area: tab_bar_view.scroll_right_hit_area,
         new_tab_hit_area: tab_bar_view.new_tab_hit_area,
         terminal_area,
+        pane_action_bar_rect,
+        pane_action_cycle_layout_rect: pane_action_rects.cycle_layout,
+        pane_action_rotate_rect: pane_action_rects.rotate,
+        pane_action_equalize_rect: pane_action_rects.equalize,
         mobile_header_rect: Rect::default(),
         mobile_menu_hit_area: Rect::default(),
         toast_hit_area,
@@ -296,6 +313,10 @@ fn compute_mobile_view(
         tab_scroll_right_hit_area: Rect::default(),
         new_tab_hit_area: Rect::default(),
         terminal_area,
+        pane_action_bar_rect: Rect::default(),
+        pane_action_cycle_layout_rect: Rect::default(),
+        pane_action_rotate_rect: Rect::default(),
+        pane_action_equalize_rect: Rect::default(),
         mobile_header_rect: header_rect,
         mobile_menu_hit_area: header_hits.menu,
         toast_hit_area,
@@ -321,6 +342,7 @@ pub fn render(app: &AppState, frame: &mut Frame) {
         render_tab_bar(app, frame, tab_bar_area);
     }
     render_panes(app, frame, terminal_area);
+    render_pane_action_bar(frame, app.view.pane_action_bar_rect, &app.palette);
 
     match app.mode {
         Mode::Onboarding => render_onboarding_overlay(app, frame, frame.area()),
@@ -507,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_tab_bar_gives_main_height_to_terminal() {
+    fn hidden_tab_bar_gives_main_area_to_terminal_and_action_bar() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("one")];
         app.active = Some(0);
@@ -519,7 +541,9 @@ mod tests {
 
         assert_eq!(app.view.tab_bar_rect, Rect::default());
         assert_eq!(app.view.terminal_area.y, 0);
-        assert_eq!(app.view.terminal_area.height, 20);
+        assert_eq!(app.view.terminal_area.height, 19);
+        assert_eq!(app.view.pane_action_bar_rect.y, 19);
+        assert_eq!(app.view.pane_action_bar_rect.height, 1);
     }
 
     #[test]

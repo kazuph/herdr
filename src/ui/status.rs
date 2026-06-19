@@ -12,6 +12,94 @@ use crate::{
     detect::AgentState,
 };
 
+const PANE_ACTION_CYCLE_LAYOUT_LABEL: &str = " Cycle layout ";
+const PANE_ACTION_ROTATE_LABEL: &str = " Rotate panes ";
+const PANE_ACTION_EQUALIZE_LABEL: &str = " Equalize ";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PaneActionBarRects {
+    pub cycle_layout: Rect,
+    pub rotate: Rect,
+    pub equalize: Rect,
+}
+
+pub(crate) fn pane_action_bar_rects(area: Rect) -> PaneActionBarRects {
+    if area.width == 0 || area.height == 0 {
+        return PaneActionBarRects::default();
+    }
+
+    let cycle_width = PANE_ACTION_CYCLE_LAYOUT_LABEL.len() as u16;
+    let rotate_width = PANE_ACTION_ROTATE_LABEL.len() as u16;
+    let equalize_width = PANE_ACTION_EQUALIZE_LABEL.len() as u16;
+    let gap = 1;
+    let total = cycle_width + rotate_width + equalize_width + gap * 2;
+    let right_margin = 1;
+    let mut x = if area.width > total + right_margin {
+        area.x + area.width - total - right_margin
+    } else {
+        area.x
+    };
+    let right = area.x + area.width;
+
+    let cycle_layout = button_rect(area, &mut x, cycle_width, right, gap);
+    let rotate = button_rect(area, &mut x, rotate_width, right, gap);
+    let equalize = button_rect(area, &mut x, equalize_width, right, 0);
+
+    PaneActionBarRects {
+        cycle_layout,
+        rotate,
+        equalize,
+    }
+}
+
+pub(super) fn render_pane_action_bar(frame: &mut Frame, area: Rect, p: &Palette) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let bar_style = Style::default().fg(p.subtext0).bg(p.surface0);
+    frame.render_widget(Paragraph::new("").style(bar_style), area);
+
+    let label_area = Rect::new(area.x, area.y, area.width.min(17), 1);
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            " panes ",
+            Style::default().fg(p.overlay1).bg(p.surface0),
+        )),
+        label_area,
+    );
+
+    let rects = pane_action_bar_rects(area);
+    render_action_button(frame, rects.cycle_layout, PANE_ACTION_CYCLE_LAYOUT_LABEL, p);
+    render_action_button(frame, rects.rotate, PANE_ACTION_ROTATE_LABEL, p);
+    render_action_button(frame, rects.equalize, PANE_ACTION_EQUALIZE_LABEL, p);
+}
+
+fn button_rect(area: Rect, x: &mut u16, width: u16, right: u16, gap: u16) -> Rect {
+    if *x >= right || width == 0 || *x + width > right {
+        return Rect::default();
+    }
+    let rect = Rect::new(*x, area.y, width, 1);
+    *x = x.saturating_add(width + gap);
+    rect
+}
+
+fn render_action_button(frame: &mut Frame, rect: Rect, label: &'static str, p: &Palette) {
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            label,
+            Style::default()
+                .fg(p.text)
+                .bg(p.surface1)
+                .add_modifier(Modifier::BOLD),
+        )),
+        rect,
+    );
+}
+
 pub(crate) fn toast_notification_rect(
     area: Rect,
     toast: &ToastNotification,

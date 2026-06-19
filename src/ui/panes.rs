@@ -92,11 +92,16 @@ fn pane_title(
     pane_id: crate::layout::PaneId,
     terminal: Option<&TerminalState>,
     cwd: Option<&std::path::Path>,
+    zoomed: bool,
 ) -> String {
     let label = terminal.map(terminal_pane_label).unwrap_or("terminal");
     let osc_title = terminal.and_then(|terminal| terminal.pane_title.as_deref());
     let branch = cwd.and_then(crate::workspace::git_branch);
-    let mut parts = vec![format!("%{}", pane_id.raw()), label.to_string()];
+    let mut parts = Vec::new();
+    if zoomed {
+        parts.push("ZOOM".to_string());
+    }
+    parts.extend([format!("%{}", pane_id.raw()), label.to_string()]);
     if let Some(title) = osc_title {
         parts.push(title.to_string());
     }
@@ -312,9 +317,11 @@ pub(super) fn render_panes(app: &AppState, frame: &mut Frame, area: Rect) {
                 let title_cwd = runtime_cwd
                     .as_deref()
                     .or_else(|| terminal.map(|terminal| terminal.cwd.as_path()));
-                if let Some(title) =
-                    pane_border_title(&pane_title(info.id, terminal, title_cwd), info.rect.width)
-                {
+                let is_zoomed_title = ws.zoomed && info.is_focused;
+                if let Some(title) = pane_border_title(
+                    &pane_title(info.id, terminal, title_cwd, is_zoomed_title),
+                    info.rect.width,
+                ) {
                     block = block.title(Line::from(Span::styled(title, border_style)));
                 }
                 frame.render_widget(block, info.rect);
@@ -438,18 +445,37 @@ mod tests {
         let mut terminal = TerminalState::new(terminal_id, "/tmp".into())
             .with_launch_argv(vec!["/usr/local/bin/codex".into()]);
 
-        assert_eq!(pane_title(pane_id, Some(&terminal), None), "%5 codex");
+        assert_eq!(
+            pane_title(pane_id, Some(&terminal), None, false),
+            "%5 codex"
+        );
 
         terminal.set_detected_state(Some(Agent::Claude), AgentState::Idle);
-        assert_eq!(pane_title(pane_id, Some(&terminal), None), "%5 claude");
+        assert_eq!(
+            pane_title(pane_id, Some(&terminal), None, false),
+            "%5 claude"
+        );
 
         terminal.set_agent_name("agent-one".into());
-        assert_eq!(pane_title(pane_id, Some(&terminal), None), "%5 agent-one");
+        assert_eq!(
+            pane_title(pane_id, Some(&terminal), None, false),
+            "%5 agent-one"
+        );
 
         terminal.set_manual_label(" reviewer ".into());
-        assert_eq!(pane_title(pane_id, Some(&terminal), None), "%5 reviewer");
+        assert_eq!(
+            pane_title(pane_id, Some(&terminal), None, false),
+            "%5 reviewer"
+        );
 
-        assert_eq!(pane_title(pane_id, None, None), "%5 terminal");
+        assert_eq!(pane_title(pane_id, None, None, false), "%5 terminal");
+    }
+
+    #[test]
+    fn pane_title_prefixes_zoom_state() {
+        let pane_id = crate::layout::PaneId::from_raw(5);
+
+        assert_eq!(pane_title(pane_id, None, None, true), "ZOOM %5 terminal");
     }
 
     #[test]
@@ -462,7 +488,7 @@ mod tests {
         terminal.set_pane_title(Some("thinking".into()));
 
         assert_eq!(
-            pane_title(pane_id, Some(&terminal), None),
+            pane_title(pane_id, Some(&terminal), None, false),
             "%81 codex thinking"
         );
     }
@@ -485,7 +511,7 @@ mod tests {
         std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/feature\n").unwrap();
 
         assert_eq!(
-            pane_title(pane_id, Some(&terminal), Some(&repo)),
+            pane_title(pane_id, Some(&terminal), Some(&repo), false),
             "%81 codex thinking feature"
         );
 
