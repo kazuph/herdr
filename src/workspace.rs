@@ -893,4 +893,30 @@ mod tests {
         assert_eq!(ws.tabs[2].root_pane, moved_root);
         assert_eq!(ws.tabs[ws.active_tab].root_pane, active_root);
     }
+
+    #[test]
+    fn rotate_panes_keeps_layout_and_moves_attached_terminals() {
+        let mut ws = Workspace::test_new("rotate");
+        let first = ws.tabs[0].root_pane;
+        let second = ws.test_split(Direction::Horizontal);
+        let third = ws.test_split(Direction::Horizontal);
+        let ids = ws.tabs[0].layout.pane_ids();
+        let first_terminal = ws.tabs[0].terminal_id(first).unwrap().clone();
+        let second_terminal = ws.tabs[0].terminal_id(second).unwrap().clone();
+        let third_terminal = ws.tabs[0].terminal_id(third).unwrap().clone();
+
+        assert!(ws.tabs[0].rotate_panes(false));
+
+        assert_eq!(ws.tabs[0].layout.pane_ids(), ids);
+        assert_eq!(ws.tabs[0].terminal_id(first), Some(&third_terminal));
+        assert_eq!(ws.tabs[0].terminal_id(second), Some(&first_terminal));
+        assert_eq!(ws.tabs[0].terminal_id(third), Some(&second_terminal));
+
+        assert!(ws.tabs[0].rotate_panes(true));
+
+        assert_eq!(ws.tabs[0].layout.pane_ids(), ids);
+        assert_eq!(ws.tabs[0].terminal_id(first), Some(&first_terminal));
+        assert_eq!(ws.tabs[0].terminal_id(second), Some(&second_terminal));
+        assert_eq!(ws.tabs[0].terminal_id(third), Some(&third_terminal));
+    }
 }

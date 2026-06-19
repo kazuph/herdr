@@ -814,6 +814,26 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
             state.cycle_pane_layout();
             state.mode = Mode::Terminal;
         }
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Rotate panes")) => {
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
+            state.rotate_panes(false);
+            state.mode = Mode::Terminal;
+        }
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Rotate panes reverse")) => {
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
+            state.rotate_panes(true);
+            state.mode = Mode::Terminal;
+        }
         (ContextMenuKind::Pane { .. }, Some("Zoom" | "Unzoom")) => {
             state.toggle_zoom();
             state.mode = Mode::Terminal;
@@ -1443,7 +1463,10 @@ mod tests {
         assert!(menu.items().contains(&"Move to horizontal split"));
         assert!(menu.items().contains(&"Equalize pane sizes"));
         assert!(menu.items().contains(&"Cycle pane layout"));
-        assert_eq!(menu.items().last(), Some(&"Cycle pane layout"));
+        assert!(menu.items().contains(&"Rotate panes"));
+        assert!(menu.items().contains(&"Rotate panes reverse"));
+        assert!(menu.items().iter().filter(|item| **item == "--").count() >= 3);
+        assert_eq!(menu.items().last(), Some(&"Close pane"));
     }
 
     #[test]
@@ -1464,7 +1487,10 @@ mod tests {
         assert!(!menu.items().contains(&"Move to horizontal split"));
         assert!(!menu.items().contains(&"Equalize pane sizes"));
         assert!(!menu.items().contains(&"Cycle pane layout"));
+        assert!(!menu.items().contains(&"Rotate panes"));
+        assert!(!menu.items().contains(&"Rotate panes reverse"));
         assert!(!menu.items().contains(&"Zoom"));
+        assert!(menu.items().contains(&"--"));
     }
 
     #[test]
@@ -1483,7 +1509,8 @@ mod tests {
 
         assert!(menu.items().contains(&"Unzoom"));
         assert!(!menu.items().contains(&"Zoom"));
-        assert_eq!(menu.items().last(), Some(&"Cycle pane layout"));
+        assert!(menu.items().iter().filter(|item| **item == "--").count() >= 3);
+        assert_eq!(menu.items().last(), Some(&"Close pane"));
     }
 
     #[test]
@@ -1559,6 +1586,50 @@ mod tests {
         assert_eq!(panes[0].rect, Rect::new(0, 0, 90, 10));
         assert_eq!(panes[1].rect, Rect::new(0, 10, 90, 10));
         assert_eq!(panes[2].rect, Rect::new(0, 20, 90, 10));
+        assert_eq!(state.mode, Mode::Terminal);
+        assert!(state.session_dirty);
+    }
+
+    #[test]
+    fn pane_context_menu_rotates_panes_without_changing_layout() {
+        let mut state = state_with_workspaces(&["a"]);
+        state.active = Some(0);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let second = state.workspaces[0].test_split(Direction::Horizontal);
+        state.ensure_test_terminals();
+        state.workspaces[0].tabs[0].layout.focus_pane(root);
+        let before_layout = state.workspaces[0].tabs[0].layout.pane_ids();
+        let root_terminal_before = state.terminal_id_for_pane(0, root).unwrap();
+        let second_terminal_before = state.terminal_id_for_pane(0, second).unwrap();
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                pane_id: second,
+                has_manual_label: false,
+                has_layout_actions: true,
+                is_zoomed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Rotate panes")
+            .unwrap();
+
+        apply_context_menu_action(&mut state, menu, idx);
+
+        assert_eq!(state.workspaces[0].tabs[0].layout.pane_ids(), before_layout);
+        assert_eq!(
+            state.terminal_id_for_pane(0, root).unwrap(),
+            second_terminal_before
+        );
+        assert_eq!(
+            state.terminal_id_for_pane(0, second).unwrap(),
+            root_terminal_before
+        );
+        assert_eq!(state.workspaces[0].tabs[0].layout.focused(), second);
         assert_eq!(state.mode, Mode::Terminal);
         assert!(state.session_dirty);
     }

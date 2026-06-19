@@ -895,14 +895,19 @@ impl ContextMenuState {
             } => &[
                 "Rename pane",
                 "Clear pane name",
+                "--",
                 "Split vertical",
                 "Split horizontal",
+                "--",
                 "Move to vertical split",
                 "Move to horizontal split",
                 "Equalize pane sizes",
+                "Cycle pane layout",
+                "Rotate panes",
+                "Rotate panes reverse",
+                "--",
                 "Zoom",
                 "Close pane",
-                "Cycle pane layout",
             ],
             ContextMenuKind::Pane {
                 has_manual_label: true,
@@ -912,14 +917,19 @@ impl ContextMenuState {
             } => &[
                 "Rename pane",
                 "Clear pane name",
+                "--",
                 "Split vertical",
                 "Split horizontal",
+                "--",
                 "Move to vertical split",
                 "Move to horizontal split",
                 "Equalize pane sizes",
+                "Cycle pane layout",
+                "Rotate panes",
+                "Rotate panes reverse",
+                "--",
                 "Unzoom",
                 "Close pane",
-                "Cycle pane layout",
             ],
             ContextMenuKind::Pane {
                 has_manual_label: true,
@@ -928,8 +938,10 @@ impl ContextMenuState {
             } => &[
                 "Rename pane",
                 "Clear pane name",
+                "--",
                 "Split vertical",
                 "Split horizontal",
+                "--",
                 "Close pane",
             ],
             ContextMenuKind::Pane {
@@ -939,14 +951,19 @@ impl ContextMenuState {
                 ..
             } => &[
                 "Rename pane",
+                "--",
                 "Split vertical",
                 "Split horizontal",
+                "--",
                 "Move to vertical split",
                 "Move to horizontal split",
                 "Equalize pane sizes",
+                "Cycle pane layout",
+                "Rotate panes",
+                "Rotate panes reverse",
+                "--",
                 "Zoom",
                 "Close pane",
-                "Cycle pane layout",
             ],
             ContextMenuKind::Pane {
                 has_manual_label: false,
@@ -955,14 +972,19 @@ impl ContextMenuState {
                 ..
             } => &[
                 "Rename pane",
+                "--",
                 "Split vertical",
                 "Split horizontal",
+                "--",
                 "Move to vertical split",
                 "Move to horizontal split",
                 "Equalize pane sizes",
+                "Cycle pane layout",
+                "Rotate panes",
+                "Rotate panes reverse",
+                "--",
                 "Unzoom",
                 "Close pane",
-                "Cycle pane layout",
             ],
             ContextMenuKind::Pane {
                 has_manual_label: false,
@@ -970,8 +992,10 @@ impl ContextMenuState {
                 ..
             } => &[
                 "Rename pane",
+                "--",
                 "Split vertical",
                 "Split horizontal",
+                "--",
                 "Close pane",
             ],
             ContextMenuKind::SidebarBlank => &[
