@@ -357,6 +357,7 @@ impl App {
             mode,
             vim_mode_enabled: config.ui.vim_mode,
             vim_insert_mode: false,
+            copy_mode: None,
             pane_focus_back: Vec::new(),
             pane_focus_forward: Vec::new(),
             should_quit: false,
@@ -1118,6 +1119,9 @@ impl App {
             }
             Mode::Navigate => {
                 self.handle_navigate_key(key);
+            }
+            Mode::Copy => {
+                self.handle_copy_mode_key(key);
             }
             Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
                 input::handle_rename_key(&mut self.state, key_event);

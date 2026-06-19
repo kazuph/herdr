@@ -351,8 +351,32 @@ pub(super) fn render_panes(app: &AppState, frame: &mut Frame, area: Rect) {
                 rt.scroll_metrics(),
                 &app.palette,
             );
+            render_copy_mode_cursor(app, frame, info);
         }
     }
+}
+
+fn render_copy_mode_cursor(app: &AppState, frame: &mut Frame, info: &PaneInfo) {
+    if app.mode != Mode::Copy {
+        return;
+    }
+    let Some(copy_mode) = app.copy_mode else {
+        return;
+    };
+    if copy_mode.pane_id != info.id
+        || copy_mode.cursor_row >= info.inner_rect.height
+        || copy_mode.cursor_col >= info.inner_rect.width
+    {
+        return;
+    }
+
+    let x = info.inner_rect.x + copy_mode.cursor_col;
+    let y = info.inner_rect.y + copy_mode.cursor_row;
+    let style = Style::default()
+        .fg(app.palette.panel_bg)
+        .bg(app.palette.accent)
+        .add_modifier(Modifier::BOLD);
+    frame.buffer_mut()[(x, y)].set_style(style);
 }
 
 fn render_selection_highlight(

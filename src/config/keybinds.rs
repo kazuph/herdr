@@ -278,6 +278,7 @@ pub struct Keybinds {
     pub split_vertical: ActionKeybinds,
     pub split_horizontal: ActionKeybinds,
     pub close_pane: ActionKeybinds,
+    pub copy_mode: ActionKeybinds,
     pub zoom: ActionKeybinds,
     pub resize_mode: ActionKeybinds,
     pub toggle_sidebar: ActionKeybinds,
@@ -416,6 +417,7 @@ impl Config {
             split_vertical: action!("keys.split_vertical", &self.keys.split_vertical),
             split_horizontal: action!("keys.split_horizontal", &self.keys.split_horizontal),
             close_pane: action!("keys.close_pane", &self.keys.close_pane),
+            copy_mode: action!("keys.copy_mode", &self.keys.copy_mode),
             zoom: action!("keys.zoom", &self.keys.zoom),
             resize_mode: action!("keys.resize_mode", &self.keys.resize_mode),
             toggle_sidebar: action!("keys.toggle_sidebar", &self.keys.toggle_sidebar),
@@ -1321,6 +1323,13 @@ switch_workspace = "prefix+shift+1..9"
             .bindings
             .iter()
             .all(|binding| binding.trigger.is_prefix()));
+        assert_eq!(
+            binding_triggers(&kb.copy_mode),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('['),
+                KeyModifiers::empty()
+            ))]
+        );
     }
 
     #[test]

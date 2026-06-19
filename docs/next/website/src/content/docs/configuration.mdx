@@ -95,10 +95,15 @@ focus_pane_right = "prefix+l"
 split_vertical = "prefix+v"
 split_horizontal = "prefix+minus"
 close_pane = "prefix+x"
+copy_mode = "prefix+["
 zoom = "prefix+z"
 resize_mode = "prefix+r"
 toggle_sidebar = "prefix+b"
 ```
+
+`copy_mode` opens a Vim-style scrollback view for the focused pane. Use
+`h`/`j`/`k`/`l` to move, `v` or `V` to select, and `y` or Enter to copy the
+selection to the system clipboard.
 
 Optional actions are unset by default. Bind them with `prefix+` for prefix-mode behavior, or with an explicit modified chord when you intentionally want a direct shortcut:
 

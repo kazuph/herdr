@@ -102,6 +102,7 @@ pub(super) fn keybind_help_groups(
         (keybind_label(&kb.split_horizontal), "split horizontal"),
         (keybind_label(&kb.close_pane), "close pane"),
         (keybind_label(&kb.rename_pane), "rename pane"),
+        (keybind_label(&kb.copy_mode), "copy mode"),
         (keybind_label(&kb.edit_scrollback), "edit scrollback"),
         (keybind_label(&kb.zoom), "zoom pane"),
         (keybind_label(&kb.resize_mode), "resize mode"),

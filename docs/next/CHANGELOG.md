@@ -21,6 +21,7 @@
 - `herdr pane current` now falls back to resolving the calling process session when `HERDR_PANE_ID` is not set, instead of relying on focus inference.
 - Added `herdr pane run-notify` for long-running pane commands: output streams in the target pane, a job log is saved, and the parent pane receives an exit notification with a tail sample.
 - Added `[agent_restore]` to relaunch agent CLIs in restored panes after a server restart: per-agent command templates with a `{session_id}` placeholder (built-in defaults for claude and codex), opt-in automatic relaunch after startup via `enabled = true` and `restore_delay_ms`, and a manual `herdr agent restore [--dry-run]` command. Session ids come from `pane.report_agent`'s new optional `session_id` field (CLI `--session-id`) when integrations report them, with filesystem discovery of the latest claude/codex session per pane cwd as the fallback.
+- Added keyboard copy mode for focused panes: `prefix+[` enters a Vim-style scrollback view, `v`/`V` selects text, and `y` or Enter copies it to the system clipboard.
 
 ### Fixed
 - The default expanded sidebar maximum width is now 72 columns, making long branch names easier to read.

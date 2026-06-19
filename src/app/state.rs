@@ -602,6 +602,7 @@ pub enum Mode {
     ProductAnnouncement,
     Navigate,
     Prefix,
+    Copy,
     Terminal,
     RenameWorkspace,
     RenameTab,
@@ -616,6 +617,21 @@ pub enum Mode {
     Settings,
     GlobalMenu,
     KeybindHelp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CopyModeState {
+    pub pane_id: PaneId,
+    pub cursor_row: u16,
+    pub cursor_col: u16,
+    pub entry_offset_from_bottom: usize,
+    pub selection: Option<CopyModeSelection>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CopyModeSelection {
+    Character,
+    Linewise { anchor_row: u32 },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1178,6 +1194,7 @@ pub struct AppState {
     pub mode: Mode,
     pub vim_mode_enabled: bool,
     pub vim_insert_mode: bool,
+    pub(crate) copy_mode: Option<CopyModeState>,
     pub pane_focus_back: Vec<PaneFocusLocation>,
     pub pane_focus_forward: Vec<PaneFocusLocation>,
     pub should_quit: bool,
@@ -1454,6 +1471,7 @@ impl AppState {
             mode: Mode::Navigate,
             vim_mode_enabled: false,
             vim_insert_mode: false,
+            copy_mode: None,
             pane_focus_back: Vec::new(),
             pane_focus_forward: Vec::new(),
             should_quit: false,

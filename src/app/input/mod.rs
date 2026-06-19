@@ -23,6 +23,7 @@ const WORKSPACE_DRAG_THRESHOLD: u16 = 1;
 const TAB_DRAG_THRESHOLD: u16 = 1;
 const SELECTION_COPY_STATUS_DURATION: std::time::Duration = std::time::Duration::from_secs(2);
 
+mod copy_mode;
 mod modal;
 mod mouse;
 mod navigate;
@@ -58,13 +59,14 @@ impl App {
             Mode::Terminal => self.handle_terminal_key(key).await,
             Mode::Prefix => self.handle_prefix_key(key),
             Mode::Navigate => self.handle_navigate_key(key),
+            Mode::Copy => self.handle_copy_mode_key(key),
             _ => {
                 let key_event = key.as_key_event();
                 match self.state.mode {
                     Mode::Onboarding => self.handle_onboarding_key(key_event),
                     Mode::ReleaseNotes => self.handle_release_notes_key(key_event),
                     Mode::ProductAnnouncement => self.handle_product_announcement_key(key_event),
-                    Mode::Prefix | Mode::Navigate => unreachable!(),
+                    Mode::Prefix | Mode::Navigate | Mode::Copy => unreachable!(),
                     Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
                         handle_rename_key(&mut self.state, key_event)
                     }
