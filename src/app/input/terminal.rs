@@ -1,10 +1,11 @@
 use bytes::Bytes;
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use tracing::{debug, warn};
 
 use crate::{
     app::{App, Mode},
     input::TerminalKey,
+    layout::NavDirection,
 };
 
 struct PreparedPaneInput {
@@ -17,9 +18,25 @@ fn is_modifier_only_key(code: &KeyCode) -> bool {
     matches!(code, KeyCode::Modifier(_))
 }
 
+fn is_ctrl_bracket_key(key: TerminalKey, ch: char) -> bool {
+    key.code == KeyCode::Char(ch)
+        && key.modifiers == KeyModifiers::CONTROL
+        && matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+}
+
+fn is_key_press_or_repeat(key: TerminalKey) -> bool {
+    matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+}
+
+enum VimKeyDisposition {
+    Handled,
+    Forward,
+    ForwardWithoutHerdrBindings,
+}
+
 impl App {
     pub(crate) async fn handle_terminal_key_headless(&mut self, key: TerminalKey) {
-        let Some(input) = self.prepare_terminal_key_forward(key) else {
+        let Some(input) = self.prepare_terminal_key_for_terminal_mode(key) else {
             return;
         };
         if let Some(runtime) = self.lookup_runtime_sender(input.ws_idx, input.pane_id) {
@@ -48,52 +65,129 @@ impl App {
         true
     }
 
-    fn prepare_terminal_key_forward(&mut self, key: TerminalKey) -> Option<PreparedPaneInput> {
+    fn prepare_terminal_key_for_terminal_mode(
+        &mut self,
+        key: TerminalKey,
+    ) -> Option<PreparedPaneInput> {
+        match self.handle_vim_terminal_key(key) {
+            VimKeyDisposition::Handled => None,
+            VimKeyDisposition::Forward => self.prepare_terminal_key_forward(key, true),
+            VimKeyDisposition::ForwardWithoutHerdrBindings => {
+                self.prepare_terminal_key_forward(key, false)
+            }
+        }
+    }
+
+    fn handle_vim_terminal_key(&mut self, key: TerminalKey) -> VimKeyDisposition {
+        if !self.state.vim_mode_enabled {
+            return VimKeyDisposition::Forward;
+        }
+
+        if self.state.vim_insert_mode {
+            if is_ctrl_bracket_key(key, '[') || is_ctrl_bracket_key(key, ']') {
+                self.state.vim_insert_mode = false;
+                return VimKeyDisposition::Handled;
+            }
+            return VimKeyDisposition::ForwardWithoutHerdrBindings;
+        }
+
+        if !is_key_press_or_repeat(key) {
+            return VimKeyDisposition::Handled;
+        }
+
+        match key.code {
+            KeyCode::Char('i') if key.modifiers.is_empty() => {
+                self.state.vim_insert_mode = true;
+                VimKeyDisposition::Handled
+            }
+            KeyCode::Enter if key.modifiers.is_empty() => {
+                self.state.vim_insert_mode = true;
+                VimKeyDisposition::Handled
+            }
+            KeyCode::Char('h') if key.modifiers.is_empty() => {
+                self.state.navigate_pane(NavDirection::Left);
+                VimKeyDisposition::Handled
+            }
+            KeyCode::Char('l') if key.modifiers.is_empty() => {
+                self.state.navigate_pane(NavDirection::Right);
+                VimKeyDisposition::Handled
+            }
+            KeyCode::Char('j') if key.modifiers.is_empty() => {
+                self.state.next_workspace();
+                VimKeyDisposition::Handled
+            }
+            KeyCode::Char('k') if key.modifiers.is_empty() => {
+                self.state.previous_workspace();
+                VimKeyDisposition::Handled
+            }
+            KeyCode::Char('[') if key.modifiers == KeyModifiers::CONTROL => {
+                self.state.pane_focus_history_back();
+                VimKeyDisposition::Handled
+            }
+            KeyCode::Char(']') if key.modifiers == KeyModifiers::CONTROL => {
+                self.state.pane_focus_history_forward();
+                VimKeyDisposition::Handled
+            }
+            _ if self.state.is_prefix_key(key) => {
+                self.state.mode = Mode::Prefix;
+                VimKeyDisposition::Handled
+            }
+            _ => VimKeyDisposition::Handled,
+        }
+    }
+
+    fn prepare_terminal_key_forward(
+        &mut self,
+        key: TerminalKey,
+        intercept_herdr_bindings: bool,
+    ) -> Option<PreparedPaneInput> {
         self.state.clear_selection();
         self.selection_autoscroll_deadline = None;
         self.state.update_dismissed = true;
 
         let key_event = key.as_key_event();
 
-        if let Some(action) = super::terminal_direct_navigation_action(&self.state, key) {
-            debug!(
-                code = ?key_event.code,
-                modifiers = ?key_event.modifiers,
-                kind = ?key_event.kind,
-                action = ?action,
-                "intercepted terminal direct keybinding before forwarding to pane"
-            );
-            if action == super::navigate::NavigateAction::EditScrollback {
-                self.launch_focused_scrollback_editor();
-            } else {
-                super::navigate::execute_navigate_action_in_context(
-                    &mut self.state,
-                    action,
-                    super::navigate::ActionContext::Direct,
+        if intercept_herdr_bindings {
+            if let Some(action) = super::terminal_direct_navigation_action(&self.state, key) {
+                debug!(
+                    code = ?key_event.code,
+                    modifiers = ?key_event.modifiers,
+                    kind = ?key_event.kind,
+                    action = ?action,
+                    "intercepted terminal direct keybinding before forwarding to pane"
                 );
+                if action == super::navigate::NavigateAction::EditScrollback {
+                    self.launch_focused_scrollback_editor();
+                } else {
+                    super::navigate::execute_navigate_action_in_context(
+                        &mut self.state,
+                        action,
+                        super::navigate::ActionContext::Direct,
+                    );
+                }
+                return None;
             }
-            return None;
-        }
 
-        if let Some(binding) = super::navigate::command_for_key(
-            &self.state,
-            key,
-            super::navigate::BindingDispatch::Direct,
-        ) {
-            debug!(
-                code = ?key_event.code,
-                modifiers = ?key_event.modifiers,
-                kind = ?key_event.kind,
-                command = %binding.label,
-                "intercepted terminal direct custom command before forwarding to pane"
-            );
-            self.launch_custom_command(binding, super::navigate::ActionContext::Direct);
-            return None;
-        }
+            if let Some(binding) = super::navigate::command_for_key(
+                &self.state,
+                key,
+                super::navigate::BindingDispatch::Direct,
+            ) {
+                debug!(
+                    code = ?key_event.code,
+                    modifiers = ?key_event.modifiers,
+                    kind = ?key_event.kind,
+                    command = %binding.label,
+                    "intercepted terminal direct custom command before forwarding to pane"
+                );
+                self.launch_custom_command(binding, super::navigate::ActionContext::Direct);
+                return None;
+            }
 
-        if self.state.is_prefix_key(key) {
-            self.state.mode = Mode::Prefix;
-            return None;
+            if self.state.is_prefix_key(key) {
+                self.state.mode = Mode::Prefix;
+                return None;
+            }
         }
 
         if is_modifier_only_key(&key_event.code) {
@@ -199,7 +293,7 @@ impl App {
     }
 
     pub(super) async fn handle_terminal_key(&mut self, key: TerminalKey) {
-        let Some(input) = self.prepare_terminal_key_forward(key) else {
+        let Some(input) = self.prepare_terminal_key_for_terminal_mode(key) else {
             return;
         };
         if let Some(runtime) = self.lookup_runtime_sender(input.ws_idx, input.pane_id) {
@@ -692,6 +786,147 @@ mod tests {
         let bytes = rx.try_recv().unwrap();
         assert_eq!(bytes.as_ref(), b"\x1b\x7f");
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn vim_normal_h_l_moves_pane_focus_and_history_navigates_back_forward() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let mut ws = Workspace::test_new("test");
+        let first_pane = ws.tabs[0].root_pane;
+        let second_pane = ws.test_split(ratatui::layout::Direction::Horizontal);
+        ws.tabs[0].layout.focus_pane(first_pane);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.vim_mode_enabled = true;
+        app.state.view.pane_infos = app.state.workspaces[0]
+            .active_tab()
+            .unwrap()
+            .layout
+            .panes(Rect::new(0, 0, 80, 24));
+
+        app.handle_terminal_key(TerminalKey::new(KeyCode::Char('l'), KeyModifiers::empty()))
+            .await;
+        assert_eq!(app.state.workspaces[0].layout.focused(), second_pane);
+
+        app.handle_terminal_key(TerminalKey::new(KeyCode::Char('['), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(app.state.workspaces[0].layout.focused(), first_pane);
+
+        app.handle_terminal_key(TerminalKey::new(KeyCode::Char(']'), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(app.state.workspaces[0].layout.focused(), second_pane);
+    }
+
+    #[tokio::test]
+    async fn vim_insert_forwards_control_c_and_escape_but_ctrl_brackets_exit_insert() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(0, 0, 80, 24));
+        let info = pane_infos[0].clone();
+        let (runtime, mut rx) = crate::pane::PaneRuntime::test_with_channel(
+            info.inner_rect.width,
+            info.inner_rect.height,
+        );
+        ws.tabs[0].runtimes.insert(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.vim_mode_enabled = true;
+        app.state.view.pane_infos = pane_infos;
+
+        app.handle_terminal_key_headless(TerminalKey::new(
+            KeyCode::Char('i'),
+            KeyModifiers::empty(),
+        ))
+        .await;
+        assert!(app.state.vim_insert_mode);
+
+        app.handle_terminal_key_headless(TerminalKey::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        ))
+        .await;
+        assert_eq!(rx.try_recv().unwrap().as_ref(), b"\x03");
+
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Esc, KeyModifiers::empty()))
+            .await;
+        assert_eq!(rx.try_recv().unwrap().as_ref(), b"\x1b");
+        assert!(app.state.vim_insert_mode);
+
+        app.handle_terminal_key_headless(TerminalKey::new(
+            KeyCode::Char('['),
+            KeyModifiers::CONTROL,
+        ))
+        .await;
+        assert!(!app.state.vim_insert_mode);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn vim_insert_does_not_intercept_direct_herdr_keybindings() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(0, 0, 80, 24));
+        let info = pane_infos[0].clone();
+        let (runtime, mut rx) = crate::pane::PaneRuntime::test_with_channel(
+            info.inner_rect.width,
+            info.inner_rect.height,
+        );
+        ws.tabs[0].runtimes.insert(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.vim_mode_enabled = true;
+        app.state.vim_insert_mode = true;
+        app.state.view.pane_infos = pane_infos;
+        app.state.keybinds.focus_pane_left = crate::config::ActionKeybinds::direct("alt+h");
+
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Char('h'), KeyModifiers::ALT))
+            .await;
+
+        assert_eq!(rx.try_recv().unwrap().as_ref(), b"\x1bh");
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn vim_normal_j_k_switch_workspaces() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.vim_mode_enabled = true;
+
+        app.handle_terminal_key(TerminalKey::new(KeyCode::Char('j'), KeyModifiers::empty()))
+            .await;
+        assert_eq!(app.state.active, Some(1));
+
+        app.handle_terminal_key(TerminalKey::new(KeyCode::Char('k'), KeyModifiers::empty()))
+            .await;
+        assert_eq!(app.state.active, Some(0));
     }
 
     #[tokio::test]

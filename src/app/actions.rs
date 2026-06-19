@@ -11,7 +11,9 @@ use crate::layout::{find_in_direction, NavDirection, PaneId};
 use crate::terminal::EffectiveStateChange;
 use crate::workspace::WorkspaceGitStatus;
 
-use super::state::{AppState, Mode, ToastKind, ToastNotification, ToastTarget, ViewLayout};
+use super::state::{
+    AppState, Mode, PaneFocusLocation, ToastKind, ToastNotification, ToastTarget, ViewLayout,
+};
 
 fn is_background_completion_transition(prev_state: AgentState, new_state: AgentState) -> bool {
     matches!(new_state, AgentState::Idle)
@@ -278,6 +280,88 @@ pub struct PaneStateUpdate {
 // ---------------------------------------------------------------------------
 
 impl AppState {
+    pub(crate) fn current_pane_focus_location(&self) -> Option<PaneFocusLocation> {
+        let ws_idx = self.active?;
+        let ws = self.workspaces.get(ws_idx)?;
+        let tab_idx = ws.active_tab;
+        let pane_id = ws.active_tab()?.layout.focused();
+        Some(PaneFocusLocation {
+            ws_idx,
+            tab_idx,
+            pane_id,
+        })
+    }
+
+    fn pane_focus_location_exists(&self, location: PaneFocusLocation) -> bool {
+        self.workspaces
+            .get(location.ws_idx)
+            .and_then(|ws| ws.tabs.get(location.tab_idx))
+            .is_some_and(|tab| tab.panes.contains_key(&location.pane_id))
+    }
+
+    fn focus_pane_location_without_history(&mut self, location: PaneFocusLocation) -> bool {
+        if !self.pane_focus_location_exists(location) {
+            return false;
+        }
+        self.switch_workspace(location.ws_idx);
+        self.switch_tab(location.tab_idx);
+        let Some(tab) = self
+            .workspaces
+            .get_mut(location.ws_idx)
+            .and_then(|ws| ws.tabs.get_mut(location.tab_idx))
+        else {
+            return false;
+        };
+        tab.layout.focus_pane(location.pane_id);
+        self.mark_session_dirty();
+        true
+    }
+
+    fn record_pane_focus_change(&mut self, before: Option<PaneFocusLocation>) {
+        let Some(before) = before else {
+            return;
+        };
+        if self.current_pane_focus_location() == Some(before) {
+            return;
+        }
+        if self.pane_focus_back.last().copied() != Some(before) {
+            self.pane_focus_back.push(before);
+        }
+        self.pane_focus_forward.clear();
+    }
+
+    pub(crate) fn pane_focus_history_back(&mut self) -> bool {
+        let Some(current) = self.current_pane_focus_location() else {
+            return false;
+        };
+        while let Some(previous) = self.pane_focus_back.pop() {
+            if previous == current || !self.pane_focus_location_exists(previous) {
+                continue;
+            }
+            if self.focus_pane_location_without_history(previous) {
+                self.pane_focus_forward.push(current);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(crate) fn pane_focus_history_forward(&mut self) -> bool {
+        let Some(current) = self.current_pane_focus_location() else {
+            return false;
+        };
+        while let Some(next) = self.pane_focus_forward.pop() {
+            if next == current || !self.pane_focus_location_exists(next) {
+                continue;
+            }
+            if self.focus_pane_location_without_history(next) {
+                self.pane_focus_back.push(current);
+                return true;
+            }
+        }
+        false
+    }
+
     pub(crate) fn pane_is_in_active_tab(&self, ws_idx: usize, pane_id: PaneId) -> bool {
         let Some(active_ws_idx) = self.active else {
             return false;
@@ -548,6 +632,7 @@ impl AppState {
     }
 
     pub(crate) fn focus_pane_target(&mut self, ws_idx: usize, pane_id: PaneId) -> bool {
+        let before = self.current_pane_focus_location();
         let Some(tab_idx) = self
             .workspaces
             .get(ws_idx)
@@ -570,6 +655,7 @@ impl AppState {
         }
         tab.layout.focus_pane(pane_id);
         self.mark_session_dirty();
+        self.record_pane_focus_change(before);
         true
     }
 
@@ -745,6 +831,7 @@ impl AppState {
 
 impl AppState {
     pub fn navigate_pane(&mut self, direction: NavDirection) {
+        let before = self.current_pane_focus_location();
         let Some(ws_idx) = self.active else {
             return;
         };
@@ -766,6 +853,7 @@ impl AppState {
                 {
                     tab.layout.focus_pane(target);
                     self.mark_session_dirty();
+                    self.record_pane_focus_change(before);
                 }
             }
         }
@@ -837,6 +925,7 @@ impl AppState {
     }
 
     pub fn cycle_pane(&mut self, reverse: bool) {
+        let before = self.current_pane_focus_location();
         if let Some(tab) = self
             .active
             .and_then(|i| self.workspaces.get_mut(i))
@@ -848,6 +937,7 @@ impl AppState {
                 tab.layout.focus_next();
             }
             self.mark_session_dirty();
+            self.record_pane_focus_change(before);
         }
     }
 

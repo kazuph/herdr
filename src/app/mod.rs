@@ -355,6 +355,10 @@ impl App {
             active,
             selected,
             mode,
+            vim_mode_enabled: config.ui.vim_mode,
+            vim_insert_mode: false,
+            pane_focus_back: Vec::new(),
+            pane_focus_forward: Vec::new(),
             should_quit: false,
             detach_exits: no_session,
             detach_requested: false,
@@ -920,6 +924,10 @@ impl App {
                 self.state.show_tab_bar = config.ui.show_tab_bar;
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
+                if !config.ui.vim_mode {
+                    self.state.vim_insert_mode = false;
+                }
+                self.state.vim_mode_enabled = config.ui.vim_mode;
                 self.state.workspace_panel_density =
                     workspace_panel_density_from_config(config.ui.workspace_panel_density);
                 self.state.agent_panel_scope =
@@ -1411,7 +1419,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "[terminal]\ndefault_shell = \"nu\"\n[keys]\nnew_workspace = \"prefix+g\"\nprefix = \"ctrl+a\"\n[ui]\nworkspace_panel_density = \"slim\"\nagent_panel_scope = \"sort\"\nshow_tab_bar = false\n[ui.toast]\ndelivery = \"herdr\"\n",
+            "[terminal]\ndefault_shell = \"nu\"\n[keys]\nnew_workspace = \"prefix+g\"\nprefix = \"ctrl+a\"\n[ui]\nworkspace_panel_density = \"slim\"\nagent_panel_scope = \"sort\"\nshow_tab_bar = false\nvim_mode = true\n[ui.toast]\ndelivery = \"herdr\"\n",
         )
         .unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -1440,6 +1448,7 @@ mod tests {
             state::WorkspacePanelDensity::Slim
         );
         assert!(!app.state.show_tab_bar);
+        assert!(app.state.vim_mode_enabled);
         assert_eq!(app.state.default_shell, "nu");
         assert!(app.state.config_diagnostic.is_none());
         let toast = app.state.toast.as_ref().unwrap();

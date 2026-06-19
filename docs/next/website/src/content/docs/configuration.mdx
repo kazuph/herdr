@@ -204,6 +204,7 @@ confirm_close = true
 prompt_new_tab_name = true
 show_tab_bar = true
 show_agent_labels_on_pane_borders = false
+vim_mode = false
 agent_panel_scope = "all"
 workspace_panel_density = "full"
 accent = "cyan"
@@ -218,6 +219,8 @@ accent = "cyan"
 The default pane split bindings include tmux-style `prefix+percent` for side-by-side splits and `prefix+double_quote` for stacked splits. The older `prefix+v` and `prefix+minus` bindings remain available too.
 
 `confirm_close` controls whether closing a workspace asks for confirmation. `prompt_new_tab_name` controls whether new tabs ask for a label first. Set `show_tab_bar = false` to hide the main content tab bar.
+
+Set `vim_mode = true` to start terminal input in Vim Normal mode. Normal mode uses `j`/`k` for spaces, `h`/`l` for panes, `i` or `Enter` for Insert mode, and `Ctrl+[`/`Ctrl+]` for pane focus history. In Insert mode, keys are forwarded to the pane except `Ctrl+[`/`Ctrl+]`, which return to Normal mode.
 
 Set `mouse_capture = false` if you want your terminal to handle normal clicks, such as command-clicking URLs.
 

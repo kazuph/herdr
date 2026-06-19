@@ -761,6 +761,7 @@ mod tests {
                 "settings",
                 "keybinds",
                 "reload config",
+                "vim mode off",
                 "sidebar narrow",
                 "sidebar normal",
                 "sidebar wide",
@@ -789,6 +790,7 @@ mod tests {
                 "settings",
                 "keybinds",
                 "reload config",
+                "vim mode off",
                 "sidebar narrow",
                 "sidebar normal",
                 "sidebar wide",
@@ -800,7 +802,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             menu.x + 2,
-            menu.y + 7,
+            menu.y + 8,
         ));
 
         assert!(app.state.detach_requested);
@@ -819,6 +821,7 @@ mod tests {
                 "settings",
                 "keybinds",
                 "reload config",
+                "vim mode off",
                 "sidebar narrow",
                 "sidebar normal",
                 "sidebar wide",

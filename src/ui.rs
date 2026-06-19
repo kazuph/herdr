@@ -342,7 +342,21 @@ pub fn render(app: &AppState, frame: &mut Frame) {
         render_tab_bar(app, frame, tab_bar_area);
     }
     render_panes(app, frame, terminal_area);
-    render_pane_action_bar(frame, app.view.pane_action_bar_rect, &app.palette);
+    let vim_mode_label = if app.vim_mode_enabled {
+        Some(if app.vim_insert_mode {
+            " vim insert "
+        } else {
+            " vim normal "
+        })
+    } else {
+        None
+    };
+    render_pane_action_bar(
+        frame,
+        app.view.pane_action_bar_rect,
+        &app.palette,
+        vim_mode_label,
+    );
 
     match app.mode {
         Mode::Onboarding => render_onboarding_overlay(app, frame, frame.area()),

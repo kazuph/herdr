@@ -100,6 +100,7 @@ pub(crate) enum GlobalMenuAction {
     WhatsNew,
     Keybinds,
     ReloadConfig,
+    ToggleVimMode,
     Settings,
     SetSidebarWidth(SidebarWidthPreset),
 }
@@ -109,6 +110,7 @@ pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
         GlobalMenuAction::Settings,
         GlobalMenuAction::Keybinds,
         GlobalMenuAction::ReloadConfig,
+        GlobalMenuAction::ToggleVimMode,
         GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Narrow),
         GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Normal),
         GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Wide),
@@ -132,6 +134,13 @@ pub(super) fn global_menu_action_label(state: &AppState, action: GlobalMenuActio
         }
         GlobalMenuAction::Keybinds => "keybinds",
         GlobalMenuAction::ReloadConfig => "reload config",
+        GlobalMenuAction::ToggleVimMode => {
+            if state.vim_mode_enabled {
+                "vim mode on"
+            } else {
+                "vim mode off"
+            }
+        }
         GlobalMenuAction::Settings => "settings",
         GlobalMenuAction::SetSidebarWidth(preset) => preset.label(),
     }
@@ -179,6 +188,11 @@ pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuA
         GlobalMenuAction::Keybinds => open_keybind_help(state),
         GlobalMenuAction::ReloadConfig => {
             state.request_reload_config = true;
+            leave_modal(state);
+        }
+        GlobalMenuAction::ToggleVimMode => {
+            state.vim_mode_enabled = !state.vim_mode_enabled;
+            state.vim_insert_mode = false;
             leave_modal(state);
         }
         GlobalMenuAction::Settings => super::settings::open_settings(state),
@@ -1057,6 +1071,30 @@ mod tests {
             crate::app::state::SidebarWidthSource::ConfigDefault
         );
         assert_eq!(capture_snapshot(&state).sidebar_width, Some(26));
+    }
+
+    #[test]
+    fn global_menu_toggles_vim_mode_and_returns_to_normal() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.mode = Mode::GlobalMenu;
+        state.vim_mode_enabled = false;
+        state.vim_insert_mode = true;
+
+        assert!(global_menu_actions(&state).contains(&GlobalMenuAction::ToggleVimMode));
+        assert_eq!(
+            global_menu_action_label(&state, GlobalMenuAction::ToggleVimMode),
+            "vim mode off"
+        );
+
+        apply_global_menu_action(&mut state, GlobalMenuAction::ToggleVimMode);
+
+        assert_eq!(state.mode, Mode::Terminal);
+        assert!(state.vim_mode_enabled);
+        assert!(!state.vim_insert_mode);
+        assert_eq!(
+            global_menu_action_label(&state, GlobalMenuAction::ToggleVimMode),
+            "vim mode on"
+        );
     }
 
     #[test]

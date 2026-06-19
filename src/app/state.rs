@@ -1176,6 +1176,10 @@ pub struct AppState {
     pub active: Option<usize>,
     pub selected: usize,
     pub mode: Mode,
+    pub vim_mode_enabled: bool,
+    pub vim_insert_mode: bool,
+    pub pane_focus_back: Vec<PaneFocusLocation>,
+    pub pane_focus_forward: Vec<PaneFocusLocation>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -1285,6 +1289,13 @@ pub struct AppState {
     pub host_terminal_theme: TerminalTheme,
     /// Set when a persisted session snapshot would change.
     pub session_dirty: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneFocusLocation {
+    pub ws_idx: usize,
+    pub tab_idx: usize,
+    pub pane_id: PaneId,
 }
 
 impl AppState {
@@ -1441,6 +1452,10 @@ impl AppState {
             active: None,
             selected: 0,
             mode: Mode::Navigate,
+            vim_mode_enabled: false,
+            vim_insert_mode: false,
+            pane_focus_back: Vec::new(),
+            pane_focus_forward: Vec::new(),
             should_quit: false,
             detach_exits: false,
             detach_requested: false,
