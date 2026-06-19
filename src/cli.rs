@@ -318,11 +318,16 @@ fn compatibility_label(protocol: Option<u32>) -> &'static str {
 
 fn restart_needed_label(server: &ServerRuntimeStatus) -> &'static str {
     match server {
-        ServerRuntimeStatus::Running { version, .. } => match version.as_deref() {
-            Some(env!("CARGO_PKG_VERSION")) => "no",
-            Some(_) => "yes",
-            None => "unknown",
-        },
+        ServerRuntimeStatus::Running { version, protocol } => {
+            if *protocol != Some(crate::server::protocol::PROTOCOL_VERSION) {
+                return "yes";
+            }
+            match version.as_deref() {
+                Some(env!("CARGO_PKG_VERSION")) => "no",
+                Some(_) => "yes",
+                None => "unknown",
+            }
+        }
         ServerRuntimeStatus::NotRunning => "no",
     }
 }
@@ -1373,6 +1378,11 @@ fn resolve_current_pane_id() -> std::io::Result<String> {
     let response = send_request(&request)?;
 
     if let Some(error) = response.get("error") {
+        if current_pane_unsupported_error(error) {
+            return Err(std::io::Error::other(
+                "running herdr server does not support `pane.current`; restart the server so the installed herdr binary takes effect",
+            ));
+        }
         return Err(std::io::Error::other(
             serde_json::to_string(error).unwrap_or_else(|_| error.to_string()),
         ));
@@ -1392,6 +1402,13 @@ fn current_pane_id_from_response(response: &serde_json::Value, fallback: &str) -
         .as_str()
         .unwrap_or(fallback)
         .to_string()
+}
+
+fn current_pane_unsupported_error(error: &serde_json::Value) -> bool {
+    let text = serde_json::to_string(error).unwrap_or_else(|_| error.to_string());
+    text.contains("unknown variant")
+        && text.contains("pane.current")
+        && text.contains("expected one of")
 }
 
 fn pane_get(args: &[String]) -> std::io::Result<i32> {
@@ -2620,6 +2637,30 @@ mod tests {
         });
 
         assert_eq!(current_pane_id_from_response(&response, "p_1"), "p_1");
+    }
+
+    #[test]
+    fn current_pane_unsupported_error_detects_old_server_schema() {
+        let error = serde_json::json!({
+            "code": "invalid_request",
+            "message": "invalid request: unknown variant `pane.current`, expected one of `ping`, `pane.list`"
+        });
+
+        assert!(current_pane_unsupported_error(&error));
+    }
+
+    #[test]
+    fn restart_needed_when_running_server_protocol_differs() {
+        let status = ServerRuntimeStatus::Running {
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            protocol: Some(crate::server::protocol::PROTOCOL_VERSION - 1),
+        };
+
+        assert_eq!(
+            compatibility_label(Some(crate::server::protocol::PROTOCOL_VERSION - 1)),
+            "no"
+        );
+        assert_eq!(restart_needed_label(&status), "yes");
     }
 
     #[test]

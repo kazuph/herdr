@@ -52,7 +52,7 @@
 - `herdr --remote` now offers to restart the remote server after installing or replacing a remote binary, or when the running server version differs, even if the client/server protocol is still compatible.
 
 ### Breaking Changes
-- The client/server protocol is now version 9. Stop and restart any running v0.6.0 server before attaching with this release.
+- The client/server protocol is now version 10. Stop and restart any running v0.6.0 server before attaching with this release.
 
 ## [0.6.0] - 2026-05-20
 
