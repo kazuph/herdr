@@ -18,6 +18,7 @@
 - Pane context menus can now rotate pane contents forward or backward while keeping the current split layout.
 - Added a bottom pane action bar for cycling layouts, rotating panes, and equalizing pane sizes, plus clickable pane titles that toggle zoom and show a `ZOOM` prefix while active.
 - `herdr pane current` now falls back to resolving the calling process session when `HERDR_PANE_ID` is not set, instead of relying on focus inference.
+- Added `herdr pane run-notify` for long-running pane commands: output streams in the target pane, a job log is saved, and the parent pane receives an exit notification with a tail sample.
 - Added `[agent_restore]` to relaunch agent CLIs in restored panes after a server restart: per-agent command templates with a `{session_id}` placeholder (built-in defaults for claude and codex), opt-in automatic relaunch after startup via `enabled = true` and `restore_delay_ms`, and a manual `herdr agent restore [--dry-run]` command. Session ids come from `pane.report_agent`'s new optional `session_id` field (CLI `--session-id`) when integrations report them, with filesystem discovery of the latest claude/codex session per pane cwd as the fallback.
 
 ### Fixed

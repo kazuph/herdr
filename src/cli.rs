@@ -1,5 +1,7 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -8,12 +10,14 @@ use crate::api;
 use crate::api::schema::{
     AgentReadParams, AgentRenameParams, AgentSendParams, AgentStartParams, AgentStatus,
     AgentTarget, EmptyParams, Method, OutputMatch, PaneAgentState, PaneCurrentParams,
-    PaneListParams, PaneReadParams, PaneRenameParams, PaneReportAgentParams, PaneSendInputParams,
-    PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams,
-    PingParams, ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams,
-    TabListParams, TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams,
-    WorkspaceTarget,
+    PaneListParams, PaneReadParams, PaneRenameParams, PaneReportAgentParams, PaneSendKeysParams,
+    PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams, PingParams,
+    ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams, TabListParams,
+    TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
 };
+
+const CLI_SUBMIT_DELAY: Duration = Duration::from_millis(500);
+const PANE_NOTIFY_SAMPLE_CHARS: usize = 1200;
 
 pub enum CommandOutcome {
     Handled(i32),
@@ -41,6 +45,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "pane" => run_pane_command(&args[2..])?,
         "wait" => run_wait_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
+        "__pane-notify-run" => pane_notify_runner(&args[2..])?,
         _ => return Ok(CommandOutcome::NotCli),
     };
 
@@ -442,6 +447,8 @@ fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
         "send-keys" => pane_send_keys(&args[1..]),
         "report-agent" => pane_report_agent(&args[1..]),
         "run" => pane_run(&args[1..]),
+        "run-notify" => pane_run_notify(&args[1..]),
+        "job-log" => pane_job_log(&args[1..]),
         "help" | "--help" | "-h" => {
             print_pane_help();
             Ok(0)
@@ -1326,6 +1333,19 @@ fn pane_current(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
+    match resolve_current_pane_id() {
+        Ok(pane_id) => {
+            println!("{pane_id}");
+            Ok(0)
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            Ok(1)
+        }
+    }
+}
+
+fn resolve_current_pane_id() -> std::io::Result<String> {
     let (request, fallback) = match std::env::var(crate::integration::HERDR_PANE_ID_ENV_VAR) {
         Ok(value) if !value.trim().is_empty() => {
             let pane_id = normalize_pane_id(value.trim());
@@ -1353,15 +1373,18 @@ fn pane_current(args: &[String]) -> std::io::Result<i32> {
     let response = send_request(&request)?;
 
     if let Some(error) = response.get("error") {
-        eprintln!(
-            "{}",
-            serde_json::to_string(error).unwrap_or_else(|_| error.to_string())
-        );
-        return Ok(1);
+        return Err(std::io::Error::other(
+            serde_json::to_string(error).unwrap_or_else(|_| error.to_string()),
+        ));
     }
 
-    println!("{}", current_pane_id_from_response(&response, &fallback));
-    Ok(0)
+    let pane_id = current_pane_id_from_response(&response, &fallback);
+    if pane_id.is_empty() {
+        return Err(std::io::Error::other(
+            "current pane response did not include pane id",
+        ));
+    }
+    Ok(pane_id)
 }
 
 fn current_pane_id_from_response(response: &serde_json::Value, fallback: &str) -> String {
@@ -1620,11 +1643,60 @@ fn pane_run(args: &[String]) -> std::io::Result<i32> {
 
     let pane_id = normalize_pane_id(&args[0]);
     let text = args[1..].join(" ");
-    send_ok_request(Method::PaneSendInput(PaneSendInputParams {
-        pane_id,
-        text,
-        keys: vec!["Enter".into()],
-    }))
+    send_pane_text_then_enter(pane_id, text)
+}
+
+fn pane_run_notify(args: &[String]) -> std::io::Result<i32> {
+    if args.len() < 2 {
+        eprintln!("usage: herdr pane run-notify <pane_id> <command>");
+        return Ok(2);
+    }
+
+    let target_pane = normalize_pane_id(&args[0]);
+    let command_args = if args.get(1).is_some_and(|arg| arg == "--") {
+        &args[2..]
+    } else {
+        &args[1..]
+    };
+    if command_args.is_empty() {
+        eprintln!("usage: herdr pane run-notify <pane_id> <command>");
+        return Ok(2);
+    }
+    let command = command_args.join(" ");
+    let parent_pane = resolve_current_pane_id()?;
+    let job_id = new_pane_job_id();
+    let exe = std::env::current_exe()?;
+    let runner = format!(
+        "{} __pane-notify-run --parent {} --target {} --job-id {} -- {}",
+        shell_quote(&exe.display().to_string()),
+        shell_quote(&parent_pane),
+        shell_quote(&target_pane),
+        shell_quote(&job_id),
+        shell_quote(&command)
+    );
+
+    send_pane_text_then_enter(target_pane, runner)
+}
+
+fn pane_job_log(args: &[String]) -> std::io::Result<i32> {
+    let Some(job_id) = args.first() else {
+        eprintln!("usage: herdr pane job-log <job_id>");
+        return Ok(2);
+    };
+    if args.len() != 1 || !valid_pane_job_id(job_id) {
+        eprintln!("usage: herdr pane job-log <job_id>");
+        return Ok(2);
+    }
+
+    let log_path = pane_job_log_path(job_id)?;
+    let text = std::fs::read_to_string(&log_path).map_err(|err| {
+        std::io::Error::new(
+            err.kind(),
+            format!("failed to read {}: {err}", log_path.display()),
+        )
+    })?;
+    print!("{text}");
+    Ok(0)
 }
 
 fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
@@ -1972,6 +2044,282 @@ fn send_request(request: &Request) -> std::io::Result<serde_json::Value> {
     serde_json::from_str(&line).map_err(std::io::Error::other)
 }
 
+fn send_pane_text_then_enter(pane_id: String, text: String) -> std::io::Result<i32> {
+    let response = send_request(&Request {
+        id: "cli:pane:send-text".into(),
+        method: Method::PaneSendText(PaneSendTextParams {
+            pane_id: pane_id.clone(),
+            text,
+        }),
+    })?;
+    if response.get("error").is_some() {
+        eprintln!("{}", serde_json::to_string(&response).unwrap());
+        return Ok(1);
+    }
+
+    std::thread::sleep(CLI_SUBMIT_DELAY);
+
+    let response = send_request(&Request {
+        id: "cli:pane:send-enter".into(),
+        method: Method::PaneSendKeys(PaneSendKeysParams {
+            pane_id,
+            keys: vec!["Enter".into()],
+        }),
+    })?;
+    if response.get("error").is_some() {
+        eprintln!("{}", serde_json::to_string(&response).unwrap());
+        return Ok(1);
+    }
+    Ok(0)
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
+    let mut parent = None;
+    let mut target = None;
+    let mut job_id = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--parent" => {
+                parent = args.get(index + 1).cloned();
+                index += 2;
+            }
+            "--target" => {
+                target = args.get(index + 1).cloned();
+                index += 2;
+            }
+            "--job-id" => {
+                job_id = args.get(index + 1).cloned();
+                index += 2;
+            }
+            "--" => {
+                index += 1;
+                break;
+            }
+            _ => break,
+        }
+    }
+
+    let Some(parent) = parent else {
+        eprintln!(
+            "usage: herdr __pane-notify-run --parent PANE --target PANE --job-id ID -- <command>"
+        );
+        return Ok(2);
+    };
+    let Some(target) = target else {
+        eprintln!(
+            "usage: herdr __pane-notify-run --parent PANE --target PANE --job-id ID -- <command>"
+        );
+        return Ok(2);
+    };
+    let Some(job_id) = job_id.filter(|id| valid_pane_job_id(id)) else {
+        eprintln!(
+            "usage: herdr __pane-notify-run --parent PANE --target PANE --job-id ID -- <command>"
+        );
+        return Ok(2);
+    };
+    if index >= args.len() {
+        eprintln!(
+            "usage: herdr __pane-notify-run --parent PANE --target PANE --job-id ID -- <command>"
+        );
+        return Ok(2);
+    }
+    let command = args[index..].join(" ");
+
+    let started = SystemTime::now();
+    let log_path = pane_job_log_path(&job_id)?;
+    if let Some(parent_dir) = log_path.parent() {
+        std::fs::create_dir_all(parent_dir)?;
+    }
+    let log = Arc::new(Mutex::new(std::fs::File::create(&log_path)?));
+    {
+        let mut log = log.lock().unwrap();
+        writeln!(log, "job_id: {job_id}")?;
+        writeln!(log, "target_pane: {target}")?;
+        writeln!(log, "parent_pane: {parent}")?;
+        writeln!(log, "command: {command}")?;
+        writeln!(log, "started_unix_ms: {}", unix_millis(started))?;
+        writeln!(log)?;
+    }
+
+    let tail = Arc::new(Mutex::new(String::new()));
+    let mut child = Command::new("/bin/sh")
+        .arg("-lc")
+        .arg(&command)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_thread = stdout.map(|stdout| {
+        stream_job_output(
+            stdout,
+            std::io::stdout(),
+            log.clone(),
+            tail.clone(),
+            "stdout",
+        )
+    });
+    let stderr_thread = stderr.map(|stderr| {
+        stream_job_output(
+            stderr,
+            std::io::stderr(),
+            log.clone(),
+            tail.clone(),
+            "stderr",
+        )
+    });
+
+    let status = child.wait()?;
+    if let Some(thread) = stdout_thread {
+        let _ = thread.join();
+    }
+    if let Some(thread) = stderr_thread {
+        let _ = thread.join();
+    }
+
+    let finished = SystemTime::now();
+    let code = status.code();
+    {
+        let mut log = log.lock().unwrap();
+        writeln!(log)?;
+        writeln!(log, "finished_unix_ms: {}", unix_millis(finished))?;
+        writeln!(log, "exit_code: {}", exit_code_label(code))?;
+    }
+
+    let sample = tail.lock().unwrap().clone();
+    let message = pane_notify_message(&job_id, &target, &command, code, &log_path, &sample);
+    let _ = send_ok_request(Method::AgentSend(AgentSendParams {
+        target: parent,
+        text: message,
+    }));
+
+    Ok(code.unwrap_or(1))
+}
+
+fn stream_job_output<R, W>(
+    mut reader: R,
+    mut output: W,
+    log: Arc<Mutex<std::fs::File>>,
+    tail: Arc<Mutex<String>>,
+    stream_name: &'static str,
+) -> std::thread::JoinHandle<()>
+where
+    R: Read + Send + 'static,
+    W: Write + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let n = match reader.read(&mut buffer) {
+                Ok(0) => return,
+                Ok(n) => n,
+                Err(_) => return,
+            };
+            let chunk = &buffer[..n];
+            let _ = output.write_all(chunk);
+            let _ = output.flush();
+            if let Ok(mut log) = log.lock() {
+                let _ = write!(log, "[{stream_name}] ");
+                let _ = log.write_all(chunk);
+                if !chunk.ends_with(b"\n") {
+                    let _ = writeln!(log);
+                }
+            }
+            append_tail_sample(&tail, &String::from_utf8_lossy(chunk));
+        }
+    })
+}
+
+fn append_tail_sample(tail: &Arc<Mutex<String>>, chunk: &str) {
+    let mut tail = tail.lock().unwrap();
+    tail.push_str(chunk);
+    let count = tail.chars().count();
+    if count > PANE_NOTIFY_SAMPLE_CHARS {
+        *tail = tail
+            .chars()
+            .skip(count - PANE_NOTIFY_SAMPLE_CHARS)
+            .collect();
+    }
+}
+
+fn pane_notify_message(
+    job_id: &str,
+    target: &str,
+    command: &str,
+    code: Option<i32>,
+    log_path: &std::path::Path,
+    sample: &str,
+) -> String {
+    let mut message = format!(
+        "[herdr] pane job exited\npane: {target}\njob: {job_id}\nexit: {}\ncommand: {}\n\ndetails: herdr pane job-log {job_id}\nlog: {}\n",
+        exit_code_label(code),
+        truncate_for_message(command, 160),
+        log_path.display()
+    );
+    let sample = sample.trim();
+    if !sample.is_empty() {
+        message.push_str("\n--- tail sample ---\n");
+        message.push_str(sample);
+    }
+    message
+}
+
+fn truncate_for_message(value: &str, max_chars: usize) -> String {
+    let count = value.chars().count();
+    if count <= max_chars {
+        return value.to_string();
+    }
+    let keep = max_chars.saturating_sub(1);
+    format!("{}…", value.chars().take(keep).collect::<String>())
+}
+
+fn exit_code_label(code: Option<i32>) -> String {
+    code.map(|code| code.to_string())
+        .unwrap_or_else(|| "signal".to_string())
+}
+
+fn new_pane_job_id() -> String {
+    format!(
+        "job-{}-{}",
+        unix_millis(SystemTime::now()),
+        std::process::id()
+    )
+}
+
+fn unix_millis(time: SystemTime) -> u128 {
+    time.duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+fn valid_pane_job_id(job_id: &str) -> bool {
+    !job_id.is_empty()
+        && job_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn pane_job_log_path(job_id: &str) -> std::io::Result<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .map(|home| home.join(".local/state"))
+        })
+        .ok_or_else(|| std::io::Error::other("HOME is not set"))?;
+    Ok(base
+        .join("herdr")
+        .join("job-logs")
+        .join(format!("{job_id}.log")))
+}
+
 fn normalize_workspace_id(value: &str) -> String {
     value.to_string()
 }
@@ -2218,8 +2566,11 @@ fn print_pane_help() {
     eprintln!("  herdr pane send-keys <pane_id> <key> [key ...]");
     eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--session-id ID]");
     eprintln!("  herdr pane run <pane_id> <command>");
+    eprintln!("  herdr pane run-notify <pane_id> <command>");
+    eprintln!("  herdr pane job-log <job_id>");
     eprintln!("  pane current uses HERDR_PANE_ID first, then resolves the calling process session");
     eprintln!("  pane send-text writes literal text without Enter; pane run submits command text with Enter");
+    eprintln!("  pane run-notify streams output in the target pane and reports exit with a tail sample to the parent pane");
 }
 
 fn print_wait_help() {
@@ -2269,5 +2620,21 @@ mod tests {
         });
 
         assert_eq!(current_pane_id_from_response(&response, "p_1"), "p_1");
+    }
+
+    #[test]
+    fn pane_notify_tail_sample_keeps_last_1200_chars() {
+        let tail = Arc::new(Mutex::new(String::new()));
+        append_tail_sample(&tail, &"a".repeat(1300));
+
+        let sample = tail.lock().unwrap().clone();
+        assert_eq!(sample.chars().count(), PANE_NOTIFY_SAMPLE_CHARS);
+    }
+
+    #[test]
+    fn pane_job_ids_reject_paths() {
+        assert!(valid_pane_job_id("job-123_abc"));
+        assert!(!valid_pane_job_id("../secret"));
+        assert!(!valid_pane_job_id(""));
     }
 }

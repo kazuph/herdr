@@ -1617,6 +1617,9 @@ impl App {
                         .unwrap();
                     }
                 }
+                if !params.text.is_empty() && !encoded_keys.is_empty() {
+                    std::thread::sleep(AGENT_SEND_SUBMIT_DELAY);
+                }
                 for bytes in encoded_keys {
                     if let Err(err) = runtime.try_send_bytes(Bytes::from(bytes)) {
                         return serde_json::to_string(&ErrorResponse {
