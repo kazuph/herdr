@@ -677,6 +677,24 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
                 Mode::Navigate
             };
         }
+        (ContextMenuKind::Workspace { ws_idx }, Some(label))
+            if crate::app::state::AgentPreset::from_menu_label(label).is_some() =>
+        {
+            let Some(preset) = crate::app::state::AgentPreset::from_menu_label(label) else {
+                leave_modal(state);
+                return;
+            };
+            state.selected = ws_idx;
+            state.pending_agent_start = Some(crate::app::state::PendingAgentStartRequest {
+                target: crate::app::state::AgentStartTarget::Workspace { ws_idx },
+                preset,
+            });
+            state.mode = if state.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
         (ContextMenuKind::Workspace { ws_idx }, Some("New worktree")) => {
             state.selected = ws_idx;
             state.pending_worktree_action =
@@ -768,6 +786,25 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
             }
             state.mode = Mode::Terminal;
         }
+        (ContextMenuKind::Pane { pane_id, .. }, Some(label))
+            if crate::app::state::AgentPreset::from_menu_label(label).is_some() =>
+        {
+            let Some(preset) = crate::app::state::AgentPreset::from_menu_label(label) else {
+                leave_modal(state);
+                return;
+            };
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
+            state.pending_agent_start = Some(crate::app::state::PendingAgentStartRequest {
+                target: crate::app::state::AgentStartTarget::Pane { pane_id },
+                preset,
+            });
+            state.mode = Mode::Terminal;
+        }
         (ContextMenuKind::Pane { pane_id, .. }, Some("Split vertical")) => {
             if let Some(ws) = state
                 .active
@@ -788,24 +825,56 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
             state.split_pane(Direction::Vertical);
             state.mode = Mode::Terminal;
         }
-        (ContextMenuKind::Pane { pane_id, .. }, Some("Move to vertical split")) => {
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Move to left split")) => {
             if let Some(ws) = state
                 .active
                 .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
             {
                 ws.layout.focus_pane(pane_id);
             }
-            state.move_focused_pane_to_split(Direction::Horizontal);
+            state.move_focused_pane_to_split_side(
+                Direction::Horizontal,
+                crate::layout::RootSplitSide::First,
+            );
             state.mode = Mode::Terminal;
         }
-        (ContextMenuKind::Pane { pane_id, .. }, Some("Move to horizontal split")) => {
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Move to right split")) => {
             if let Some(ws) = state
                 .active
                 .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
             {
                 ws.layout.focus_pane(pane_id);
             }
-            state.move_focused_pane_to_split(Direction::Vertical);
+            state.move_focused_pane_to_split_side(
+                Direction::Horizontal,
+                crate::layout::RootSplitSide::Second,
+            );
+            state.mode = Mode::Terminal;
+        }
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Move to upper split")) => {
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
+            state.move_focused_pane_to_split_side(
+                Direction::Vertical,
+                crate::layout::RootSplitSide::First,
+            );
+            state.mode = Mode::Terminal;
+        }
+        (ContextMenuKind::Pane { pane_id, .. }, Some("Move to lower split")) => {
+            if let Some(ws) = state
+                .active
+                .and_then(|ws_idx| state.workspaces.get_mut(ws_idx))
+            {
+                ws.layout.focus_pane(pane_id);
+            }
+            state.move_focused_pane_to_split_side(
+                Direction::Vertical,
+                crate::layout::RootSplitSide::Second,
+            );
             state.mode = Mode::Terminal;
         }
         (ContextMenuKind::Pane { pane_id, .. }, Some("Equalize pane sizes")) => {
@@ -1443,7 +1512,7 @@ mod tests {
             list: MenuListState::new(0),
         };
 
-        apply_context_menu_action(&mut state, menu, 0);
+        apply_context_menu_action(&mut state, menu, 4);
 
         assert_eq!(
             state.pending_worktree_action,
@@ -1462,7 +1531,7 @@ mod tests {
             list: MenuListState::new(0),
         };
 
-        apply_context_menu_action(&mut state, menu, 3);
+        apply_context_menu_action(&mut state, menu, 7);
 
         assert_eq!(state.pending_duplicate_workspace, Some(0));
         assert_eq!(state.mode, Mode::Terminal);
@@ -1479,8 +1548,32 @@ mod tests {
 
         assert!(menu.items().contains(&"--"));
         assert!(!menu.items().contains(&"Toggle section"));
-        assert_eq!(menu.items()[7], "⭐ favorite");
-        assert!(menu.is_separator(6));
+        assert_eq!(menu.items()[12], "⭐ favorite");
+        assert!(menu.is_separator(3));
+        assert!(menu.is_separator(8));
+        assert!(menu.is_separator(11));
+    }
+
+    #[test]
+    fn workspace_context_menu_agent_action_defers_to_app_runtime() {
+        let mut state = state_with_workspaces(&["a"]);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        apply_context_menu_action(&mut state, menu, 1);
+
+        assert_eq!(
+            state.pending_agent_start,
+            Some(crate::app::state::PendingAgentStartRequest {
+                target: crate::app::state::AgentStartTarget::Workspace { ws_idx: 0 },
+                preset: crate::app::state::AgentPreset::Codex,
+            })
+        );
+        assert_eq!(state.mode, Mode::Terminal);
     }
 
     #[test]
@@ -1497,14 +1590,47 @@ mod tests {
             list: MenuListState::new(0),
         };
 
-        assert!(menu.items().contains(&"Move to vertical split"));
-        assert!(menu.items().contains(&"Move to horizontal split"));
+        assert!(menu.items().contains(&"Move to left split"));
+        assert!(menu.items().contains(&"Move to right split"));
+        assert!(menu.items().contains(&"Move to upper split"));
+        assert!(menu.items().contains(&"Move to lower split"));
+        assert!(menu.items().contains(&"New Claude Code agent"));
+        assert!(menu.items().contains(&"New Codex agent"));
+        assert!(menu.items().contains(&"New Gemini agent"));
         assert!(menu.items().contains(&"Equalize pane sizes"));
         assert!(menu.items().contains(&"Cycle pane layout"));
         assert!(menu.items().contains(&"Rotate panes"));
         assert!(menu.items().contains(&"Rotate panes reverse"));
         assert!(menu.items().iter().filter(|item| **item == "--").count() >= 3);
         assert_eq!(menu.items().last(), Some(&"Close pane"));
+    }
+
+    #[test]
+    fn pane_context_menu_agent_action_defers_to_app_runtime() {
+        let mut state = state_with_workspaces(&["a"]);
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                pane_id,
+                has_manual_label: false,
+                has_layout_actions: false,
+                is_zoomed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        apply_context_menu_action(&mut state, menu, 2);
+
+        assert_eq!(
+            state.pending_agent_start,
+            Some(crate::app::state::PendingAgentStartRequest {
+                target: crate::app::state::AgentStartTarget::Pane { pane_id },
+                preset: crate::app::state::AgentPreset::Claude,
+            })
+        );
+        assert_eq!(state.mode, Mode::Terminal);
     }
 
     #[test]
@@ -1521,8 +1647,10 @@ mod tests {
             list: MenuListState::new(0),
         };
 
-        assert!(!menu.items().contains(&"Move to vertical split"));
-        assert!(!menu.items().contains(&"Move to horizontal split"));
+        assert!(!menu.items().contains(&"Move to left split"));
+        assert!(!menu.items().contains(&"Move to right split"));
+        assert!(!menu.items().contains(&"Move to upper split"));
+        assert!(!menu.items().contains(&"Move to lower split"));
         assert!(!menu.items().contains(&"Equalize pane sizes"));
         assert!(!menu.items().contains(&"Cycle pane layout"));
         assert!(!menu.items().contains(&"Rotate panes"));
@@ -1552,7 +1680,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_context_menu_moves_clicked_pane_to_horizontal_split() {
+    fn pane_context_menu_moves_clicked_pane_to_lower_split() {
         let mut state = state_with_workspaces(&["a"]);
         state.active = Some(0);
         let root = state.workspaces[0].tabs[0].root_pane;
@@ -1572,7 +1700,7 @@ mod tests {
         let idx = menu
             .items()
             .iter()
-            .position(|item| *item == "Move to horizontal split")
+            .position(|item| *item == "Move to lower split")
             .unwrap();
 
         apply_context_menu_action(&mut state, menu, idx);
@@ -1584,6 +1712,43 @@ mod tests {
         assert_eq!(panes[0].rect, Rect::new(0, 0, 45, 20));
         assert_eq!(panes[1].rect, Rect::new(45, 0, 45, 20));
         assert_eq!(panes[2].rect, Rect::new(0, 20, 90, 10));
+        assert_eq!(state.mode, Mode::Terminal);
+        assert!(state.session_dirty);
+    }
+
+    #[test]
+    fn pane_context_menu_moves_clicked_pane_to_left_split() {
+        let mut state = state_with_workspaces(&["a"]);
+        state.active = Some(0);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let second = state.workspaces[0].test_split(Direction::Horizontal);
+        let third = state.workspaces[0].test_split(Direction::Horizontal);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                pane_id: second,
+                has_manual_label: false,
+                has_layout_actions: true,
+                is_zoomed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Move to left split")
+            .unwrap();
+
+        apply_context_menu_action(&mut state, menu, idx);
+
+        let tab = &state.workspaces[0].tabs[0];
+        assert_eq!(tab.layout.focused(), second);
+        assert_eq!(tab.layout.pane_ids(), vec![second, root, third]);
+        let panes = tab.layout.panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(panes[0].rect, Rect::new(0, 0, 30, 30));
+        assert_eq!(panes[1].rect, Rect::new(30, 0, 30, 30));
+        assert_eq!(panes[2].rect, Rect::new(60, 0, 30, 30));
         assert_eq!(state.mode, Mode::Terminal);
         assert!(state.session_dirty);
     }
@@ -1718,7 +1883,7 @@ mod tests {
             kind: ContextMenuKind::Workspace { ws_idx: 0 },
             x: 0,
             y: 0,
-            list: MenuListState::new(5),
+            list: MenuListState::new(7),
         });
         state.mode = Mode::ContextMenu;
 
@@ -1727,6 +1892,6 @@ mod tests {
             KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
         );
 
-        assert_eq!(state.context_menu.as_ref().unwrap().list.highlighted, 7);
+        assert_eq!(state.context_menu.as_ref().unwrap().list.highlighted, 9);
     }
 }

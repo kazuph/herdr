@@ -207,6 +207,11 @@ impl App {
                 .store(true, std::sync::atomic::Ordering::Release);
             self.render_notify.notify_one();
         }
+        if self.run_pending_agent_start() {
+            self.render_dirty
+                .store(true, std::sync::atomic::Ordering::Release);
+            self.render_notify.notify_one();
+        }
         let _ = previous_settings_section;
         if self.state.agent_panel_scope != previous_agent_panel_scope {
             self.save_agent_panel_scope(self.state.agent_panel_scope);

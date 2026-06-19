@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 
-use super::{terminal_targets::TerminalTargetError, App, Mode};
+use super::{
+    state::{AgentPreset, AgentStartTarget, PendingAgentStartRequest},
+    terminal_targets::TerminalTargetError,
+    App, Mode,
+};
 use crate::api::schema::{AgentStartParams, SplitDirection};
 
 impl App {
@@ -206,6 +210,119 @@ impl App {
             .ok_or_else(|| AgentStartError::SpawnFailed("agent disappeared".into()))?;
         debug_assert_eq!(agent.tab_id, self.public_tab_id(ws_idx, tab_idx).unwrap());
         Ok((agent, argv))
+    }
+
+    pub(super) fn run_pending_agent_start(&mut self) -> bool {
+        let Some(request) = self.state.pending_agent_start.take() else {
+            return false;
+        };
+        match self.start_agent_from_menu(request) {
+            Ok(()) => true,
+            Err(err) => {
+                let body = self.agent_start_error_body(err);
+                self.state.config_diagnostic =
+                    Some(format!("agent start failed: {}", body.message));
+                true
+            }
+        }
+    }
+
+    fn start_agent_from_menu(
+        &mut self,
+        request: PendingAgentStartRequest,
+    ) -> Result<(), AgentStartError> {
+        let (ws_idx, tab_idx, target_pane) = self.agent_menu_target(request.target)?;
+        let cwd = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tabs.get(tab_idx))
+            .and_then(|tab| {
+                tab.cwd_for_pane(
+                    target_pane,
+                    &self.state.terminals,
+                    &self.state.terminal_runtimes,
+                )
+            })
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("/"));
+        let argv = agent_preset_argv(request.preset);
+        let name = self.unique_agent_name(request.preset.base_name());
+        let (ws_idx, tab_idx, pane_id) =
+            self.spawn_agent_split(ws_idx, target_pane, SplitDirection::Right, cwd, &argv, true)?;
+
+        let terminal_id = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.terminal_id(pane_id))
+            .cloned()
+            .ok_or_else(|| AgentStartError::SpawnFailed("terminal disappeared".into()))?;
+        let Some(terminal) = self.state.terminals.get_mut(&terminal_id) else {
+            return Err(AgentStartError::SpawnFailed("terminal disappeared".into()));
+        };
+        terminal.set_agent_name(name.clone());
+        terminal.set_manual_label(name);
+        self.state.switch_workspace(ws_idx);
+        self.state.switch_tab(tab_idx);
+        if let Some(tab) = self
+            .state
+            .workspaces
+            .get_mut(ws_idx)
+            .and_then(|ws| ws.tabs.get_mut(tab_idx))
+        {
+            tab.layout.focus_pane(pane_id);
+        }
+        self.state.mode = Mode::Terminal;
+        self.state.mark_session_dirty();
+        Ok(())
+    }
+
+    fn agent_menu_target(
+        &self,
+        target: AgentStartTarget,
+    ) -> Result<(usize, usize, crate::layout::PaneId), AgentStartError> {
+        match target {
+            AgentStartTarget::Workspace { ws_idx } => {
+                let ws = self.state.workspaces.get(ws_idx).ok_or_else(|| {
+                    AgentStartError::TargetNotFound {
+                        target: format!("workspace index {ws_idx}"),
+                    }
+                })?;
+                let tab_idx = ws.active_tab;
+                let pane_id = ws.tabs[tab_idx].layout.focused();
+                Ok((ws_idx, tab_idx, pane_id))
+            }
+            AgentStartTarget::Pane { pane_id } => self
+                .state
+                .workspaces
+                .iter()
+                .enumerate()
+                .find_map(|(ws_idx, ws)| {
+                    ws.tabs.iter().enumerate().find_map(|(tab_idx, tab)| {
+                        tab.layout
+                            .pane_ids()
+                            .contains(&pane_id)
+                            .then_some((ws_idx, tab_idx, pane_id))
+                    })
+                })
+                .ok_or_else(|| AgentStartError::TargetNotFound {
+                    target: pane_id.raw().to_string(),
+                }),
+        }
+    }
+
+    fn unique_agent_name(&self, base: &str) -> String {
+        if self.agent_name_conflicts(base, "").is_empty() {
+            return base.to_string();
+        }
+        for index in 2.. {
+            let candidate = format!("{base}-{index}");
+            if self.agent_name_conflicts(&candidate, "").is_empty() {
+                return candidate;
+            }
+        }
+        base.to_string()
     }
 
     pub(super) fn agent_start_error_body(
@@ -442,6 +559,10 @@ impl App {
             })
             .collect()
     }
+}
+
+fn agent_preset_argv(preset: AgentPreset) -> Vec<String> {
+    preset.argv().iter().map(|arg| (*arg).to_string()).collect()
 }
 
 pub(super) enum AgentStartError {

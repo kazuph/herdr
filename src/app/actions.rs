@@ -877,13 +877,17 @@ impl AppState {
         }
     }
 
-    pub fn move_focused_pane_to_split(&mut self, direction: Direction) {
+    pub fn move_focused_pane_to_split_side(
+        &mut self,
+        direction: Direction,
+        side: crate::layout::RootSplitSide,
+    ) {
         if let Some(tab) = self
             .active
             .and_then(|i| self.workspaces.get_mut(i))
             .and_then(|ws| ws.active_tab_mut())
         {
-            if tab.layout.move_focused_to_root_split(direction) {
+            if tab.layout.move_focused_to_root_split_side(direction, side) {
                 self.mark_session_dirty();
             }
         }

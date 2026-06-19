@@ -378,6 +378,7 @@ impl App {
             worktree_remove: None,
             pending_worktree_action: None,
             pending_duplicate_workspace: None,
+            pending_agent_start: None,
             pending_danger_action: None,
             rename_pane_target: None,
             request_complete_onboarding: false,
@@ -637,6 +638,10 @@ impl App {
             }
 
             if self.run_pending_duplicate_workspace() {
+                needs_render = true;
+            }
+
+            if self.run_pending_agent_start() {
                 needs_render = true;
             }
 

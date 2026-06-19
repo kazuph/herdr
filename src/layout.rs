@@ -60,6 +60,12 @@ pub enum NavDirection {
     Down,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootSplitSide {
+    First,
+    Second,
+}
+
 /// A node in the BSP tree. Public for serialization.
 pub enum Node {
     Pane(PaneId),
@@ -185,8 +191,12 @@ impl TileLayout {
         }
     }
 
-    /// Move the focused pane to a root split while preserving the other panes.
-    pub fn move_focused_to_root_split(&mut self, direction: Direction) -> bool {
+    /// Move the focused pane to a specific side of a root split.
+    pub fn move_focused_to_root_split_side(
+        &mut self,
+        direction: Direction,
+        side: RootSplitSide,
+    ) -> bool {
         if self.pane_count() <= 1 {
             return false;
         }
@@ -199,11 +209,25 @@ impl TileLayout {
             return false;
         };
         let total = count_panes(&remaining) + 1;
+        let target_ratio = 1.0 / total as f32;
+        let remaining_ratio = (total - 1) as f32 / total as f32;
+        let (ratio, first, second) = match side {
+            RootSplitSide::First => (
+                target_ratio,
+                Box::new(Node::Pane(target)),
+                Box::new(remaining),
+            ),
+            RootSplitSide::Second => (
+                remaining_ratio,
+                Box::new(remaining),
+                Box::new(Node::Pane(target)),
+            ),
+        };
         self.root = Node::Split {
             direction,
-            ratio: (total - 1) as f32 / total as f32,
-            first: Box::new(remaining),
-            second: Box::new(Node::Pane(target)),
+            ratio,
+            first,
+            second,
         };
         self.focus = target;
         true
@@ -745,13 +769,13 @@ mod tests {
     }
 
     #[test]
-    fn move_focused_to_root_split_only_moves_target_pane() {
+    fn move_focused_to_root_split_second_only_moves_target_pane() {
         let (mut layout, root) = TileLayout::new();
         let second = layout.split_focused(Direction::Horizontal);
         let third = layout.split_focused(Direction::Horizontal);
         layout.focus_pane(second);
 
-        assert!(layout.move_focused_to_root_split(Direction::Vertical));
+        assert!(layout.move_focused_to_root_split_side(Direction::Vertical, RootSplitSide::Second));
 
         assert_eq!(layout.pane_ids(), vec![root, third, second]);
         assert_eq!(layout.focused(), second);
@@ -759,6 +783,40 @@ mod tests {
         assert_eq!(panes[0].rect, Rect::new(0, 0, 45, 20));
         assert_eq!(panes[1].rect, Rect::new(45, 0, 45, 20));
         assert_eq!(panes[2].rect, Rect::new(0, 20, 90, 10));
+    }
+
+    #[test]
+    fn move_focused_to_root_split_side_can_place_target_first() {
+        let (mut layout, root) = TileLayout::new();
+        let second = layout.split_focused(Direction::Horizontal);
+        let third = layout.split_focused(Direction::Horizontal);
+        layout.focus_pane(second);
+
+        assert!(layout.move_focused_to_root_split_side(Direction::Horizontal, RootSplitSide::First));
+
+        assert_eq!(layout.pane_ids(), vec![second, root, third]);
+        assert_eq!(layout.focused(), second);
+        let panes = layout.panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(panes[0].rect, Rect::new(0, 0, 30, 30));
+        assert_eq!(panes[1].rect, Rect::new(30, 0, 30, 30));
+        assert_eq!(panes[2].rect, Rect::new(60, 0, 30, 30));
+    }
+
+    #[test]
+    fn move_focused_to_root_split_side_can_place_target_upper() {
+        let (mut layout, root) = TileLayout::new();
+        let second = layout.split_focused(Direction::Horizontal);
+        let third = layout.split_focused(Direction::Horizontal);
+        layout.focus_pane(second);
+
+        assert!(layout.move_focused_to_root_split_side(Direction::Vertical, RootSplitSide::First));
+
+        assert_eq!(layout.pane_ids(), vec![second, root, third]);
+        assert_eq!(layout.focused(), second);
+        let panes = layout.panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(panes[0].rect, Rect::new(0, 0, 90, 10));
+        assert_eq!(panes[1].rect, Rect::new(0, 10, 45, 20));
+        assert_eq!(panes[2].rect, Rect::new(45, 10, 45, 20));
     }
 
     #[test]

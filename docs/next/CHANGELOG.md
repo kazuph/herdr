@@ -14,8 +14,9 @@
 - Added a touch-friendly workspace menu trigger: tapping the active workspace card opens the same context menu as right click.
 - Added global menu sidebar width presets for narrow, normal, and wide widths, giving touch-only clients a non-drag resize path.
 - Added a workspace context menu Duplicate action that opens a new workspace with the same tab, pane layout, and working directories.
-- Pane context menus can now rearrange all panes into vertical or horizontal splits and equalize pane sizes.
+- Pane context menus can now move the selected pane to the left, right, upper, or lower root split and equalize pane sizes.
 - Pane context menus can now rotate pane contents forward or backward while keeping the current split layout.
+- Workspace and pane context menus can now start Claude Code, Codex, or Gemini directly as agent panes instead of creating a plain terminal first.
 - Added a bottom pane action bar for cycling layouts, rotating panes, and equalizing pane sizes, plus clickable pane titles that toggle zoom and show a `ZOOM` prefix while active.
 - Added `ui.vim_mode = true` for Vim-style terminal control: Normal mode uses `j`/`k` for spaces, `h`/`l` for panes, `i`/`Enter` for Insert mode, and `Ctrl+[`/`Ctrl+]` for pane focus history or leaving Insert mode.
 - `herdr pane current` now falls back to resolving the calling process session when `HERDR_PANE_ID` is not set, instead of relying on focus inference.

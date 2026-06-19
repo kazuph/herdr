@@ -1603,10 +1603,16 @@ mod tests {
         app.state.mode = Mode::ContextMenu;
 
         let menu = app.state.context_menu_rect().unwrap();
+        let item_index = app
+            .state
+            .context_menu
+            .as_ref()
+            .and_then(|menu| menu.items().iter().position(|item| *item == "New worktree"))
+            .expect("workspace menu should include New worktree");
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             menu.x + 2,
-            menu.y + 1,
+            menu.y + 1 + item_index as u16,
         ));
 
         assert!(app.state.pending_worktree_action.is_none());
@@ -1817,7 +1823,7 @@ mod tests {
             kind: ContextMenuKind::Workspace { ws_idx: 1 },
             x: 2,
             y: 2,
-            list: MenuListState::new(5),
+            list: MenuListState::new(10),
         });
         app.state.mode = Mode::ContextMenu;
         handle_context_menu_key(

@@ -882,6 +882,57 @@ pub enum ContextMenuKind {
     SidebarBlank,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentPreset {
+    Claude,
+    Codex,
+    Gemini,
+}
+
+impl AgentPreset {
+    pub(crate) fn menu_label(self) -> &'static str {
+        match self {
+            Self::Claude => "New Claude Code agent",
+            Self::Codex => "New Codex agent",
+            Self::Gemini => "New Gemini agent",
+        }
+    }
+
+    pub(crate) fn base_name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+            Self::Gemini => "gemini",
+        }
+    }
+
+    pub(crate) fn argv(self) -> &'static [&'static str] {
+        match self {
+            Self::Claude => &["claude"],
+            Self::Codex => &["codex"],
+            Self::Gemini => &["gemini"],
+        }
+    }
+
+    pub(crate) fn from_menu_label(label: &str) -> Option<Self> {
+        [Self::Claude, Self::Codex, Self::Gemini]
+            .into_iter()
+            .find(|preset| preset.menu_label() == label)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AgentStartTarget {
+    Workspace { ws_idx: usize },
+    Pane { pane_id: PaneId },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PendingAgentStartRequest {
+    pub target: AgentStartTarget,
+    pub preset: AgentPreset,
+}
+
 /// Right-click context menu state.
 pub struct ContextMenuState {
     pub kind: ContextMenuKind,
@@ -894,10 +945,15 @@ impl ContextMenuState {
     pub fn items(&self) -> &[&'static str] {
         match self.kind {
             ContextMenuKind::Workspace { .. } => &[
+                "New Claude Code agent",
+                "New Codex agent",
+                "New Gemini agent",
+                "--",
                 "New worktree",
                 "Open worktree",
                 "Remove worktree",
                 "Duplicate",
+                "--",
                 "Rename",
                 "Close",
                 "--",
@@ -916,11 +972,17 @@ impl ContextMenuState {
                 "Rename pane",
                 "Clear pane name",
                 "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New Gemini agent",
+                "--",
                 "Split vertical",
                 "Split horizontal",
                 "--",
-                "Move to vertical split",
-                "Move to horizontal split",
+                "Move to left split",
+                "Move to right split",
+                "Move to upper split",
+                "Move to lower split",
                 "Equalize pane sizes",
                 "Cycle pane layout",
                 "Rotate panes",
@@ -938,11 +1000,17 @@ impl ContextMenuState {
                 "Rename pane",
                 "Clear pane name",
                 "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New Gemini agent",
+                "--",
                 "Split vertical",
                 "Split horizontal",
                 "--",
-                "Move to vertical split",
-                "Move to horizontal split",
+                "Move to left split",
+                "Move to right split",
+                "Move to upper split",
+                "Move to lower split",
                 "Equalize pane sizes",
                 "Cycle pane layout",
                 "Rotate panes",
@@ -958,6 +1026,10 @@ impl ContextMenuState {
             } => &[
                 "Rename pane",
                 "Clear pane name",
+                "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New Gemini agent",
                 "--",
                 "Split vertical",
                 "Split horizontal",
@@ -972,11 +1044,17 @@ impl ContextMenuState {
             } => &[
                 "Rename pane",
                 "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New Gemini agent",
+                "--",
                 "Split vertical",
                 "Split horizontal",
                 "--",
-                "Move to vertical split",
-                "Move to horizontal split",
+                "Move to left split",
+                "Move to right split",
+                "Move to upper split",
+                "Move to lower split",
                 "Equalize pane sizes",
                 "Cycle pane layout",
                 "Rotate panes",
@@ -993,11 +1071,17 @@ impl ContextMenuState {
             } => &[
                 "Rename pane",
                 "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New Gemini agent",
+                "--",
                 "Split vertical",
                 "Split horizontal",
                 "--",
-                "Move to vertical split",
-                "Move to horizontal split",
+                "Move to left split",
+                "Move to right split",
+                "Move to upper split",
+                "Move to lower split",
                 "Equalize pane sizes",
                 "Cycle pane layout",
                 "Rotate panes",
@@ -1012,6 +1096,10 @@ impl ContextMenuState {
                 ..
             } => &[
                 "Rename pane",
+                "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New Gemini agent",
                 "--",
                 "Split vertical",
                 "Split horizontal",
@@ -1224,6 +1312,7 @@ pub struct AppState {
     pub worktree_remove: Option<WorktreeRemoveState>,
     pub pending_worktree_action: Option<WorktreeActionRequest>,
     pub pending_duplicate_workspace: Option<usize>,
+    pub(crate) pending_agent_start: Option<PendingAgentStartRequest>,
     pub pending_danger_action: Option<DangerousAction>,
     pub rename_pane_target: Option<PaneId>,
     pub request_complete_onboarding: bool,
@@ -1492,6 +1581,7 @@ impl AppState {
             worktree_remove: None,
             pending_worktree_action: None,
             pending_duplicate_workspace: None,
+            pending_agent_start: None,
             pending_danger_action: None,
             rename_pane_target: None,
             request_complete_onboarding: false,
