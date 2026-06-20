@@ -251,6 +251,8 @@ impl App {
                 24,
                 80,
                 config.advanced.scrollback_limit_bytes,
+                crate::terminal_theme::TerminalTheme::default(),
+                true,
                 &config.terminal.default_shell,
                 event_tx.clone(),
                 render_notify.clone(),

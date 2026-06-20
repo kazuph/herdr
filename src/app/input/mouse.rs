@@ -1715,7 +1715,9 @@ mod tests {
             .unwrap()
             .layout
             .pane_ids();
-        assert_eq!(before_layout, after_rotate);
+        let mut expected_rotate = before_layout.clone();
+        expected_rotate.rotate_right(1);
+        assert_eq!(after_rotate, expected_rotate);
         assert!(app.state.session_dirty);
 
         app.state.session_dirty = false;

@@ -178,6 +178,8 @@ impl App {
             rows,
             cols,
             self.state.pane_scrollback_limit_bytes,
+            self.state.host_terminal_theme,
+            false,
             &self.state.default_shell,
             self.event_tx.clone(),
             self.render_notify.clone(),

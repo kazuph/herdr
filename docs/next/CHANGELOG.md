@@ -15,7 +15,7 @@
 - Added global menu sidebar width presets for narrow, normal, and wide widths, giving touch-only clients a non-drag resize path.
 - Added a workspace context menu Duplicate action that opens a new workspace with the same tab, pane layout, and working directories.
 - Pane context menus can now move the selected pane to the left, right, upper, or lower root split and equalize pane sizes.
-- Pane context menus can now rotate pane contents forward or backward while keeping the current split layout.
+- Pane context menus can now rotate pane positions forward or backward while keeping the current split layout and each pane's ID/terminal pairing intact.
 - Workspace and pane context menus can now start Claude Code, Codex, or Gemini directly as agent panes instead of creating a plain terminal first.
 - Added a bottom pane action bar for cycling layouts, rotating panes, and equalizing pane sizes, plus clickable pane titles that toggle zoom and show a `ZOOM` prefix while active.
 - Added `ui.vim_mode = true` for Vim-style terminal control: Normal mode uses `j`/`k` for spaces, `h`/`l` for panes, `i`/`Enter` for Insert mode, and `Ctrl+[`/`Ctrl+]` for pane focus history or leaving Insert mode.
@@ -52,6 +52,7 @@
 - Added a spaces sidebar context menu on right click or double click in blank workspace-list areas, with workspace actions plus settings, keybinds, reload config, stop server, restart, and detach.
 - Mobile switcher workspace lists now use the same collapsible workspace sections as the desktop sidebar.
 - `herdr --remote` now offers to restart the remote server after installing or replacing a remote binary, or when the running server version differs, even if the client/server protocol is still compatible.
+- Restored sessions now preserve saved pane IDs and workspace-local pane numbers so agent-targeted commands continue to point at the same panes after restart.
 
 ### Breaking Changes
 - The client/server protocol is now version 10. Stop and restart any running v0.6.0 server before attaching with this release.

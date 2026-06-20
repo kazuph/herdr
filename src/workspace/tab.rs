@@ -390,29 +390,7 @@ impl Tab {
     }
 
     pub fn rotate_panes(&mut self, reverse: bool) -> bool {
-        let ids = self.layout.pane_ids();
-        if ids.len() <= 1 {
-            return false;
-        }
-
-        let mut states: Vec<PaneState> =
-            ids.iter().filter_map(|id| self.panes.remove(id)).collect();
-        if states.len() != ids.len() {
-            for (id, state) in ids.into_iter().zip(states.into_iter()) {
-                self.panes.insert(id, state);
-            }
-            return false;
-        }
-
-        if reverse {
-            states.rotate_left(1);
-        } else {
-            states.rotate_right(1);
-        }
-        for (id, state) in ids.into_iter().zip(states.into_iter()) {
-            self.panes.insert(id, state);
-        }
-        true
+        self.layout.rotate_panes(reverse)
     }
 
     pub fn cwd_for_pane(

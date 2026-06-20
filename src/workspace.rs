@@ -895,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn rotate_panes_keeps_layout_and_moves_attached_terminals() {
+    fn rotate_panes_moves_ids_and_keeps_attached_terminals() {
         let mut ws = Workspace::test_new("rotate");
         let first = ws.tabs[0].root_pane;
         let second = ws.test_split(Direction::Horizontal);
@@ -907,10 +907,10 @@ mod tests {
 
         assert!(ws.tabs[0].rotate_panes(false));
 
-        assert_eq!(ws.tabs[0].layout.pane_ids(), ids);
-        assert_eq!(ws.tabs[0].terminal_id(first), Some(&third_terminal));
-        assert_eq!(ws.tabs[0].terminal_id(second), Some(&first_terminal));
-        assert_eq!(ws.tabs[0].terminal_id(third), Some(&second_terminal));
+        assert_eq!(ws.tabs[0].layout.pane_ids(), vec![third, first, second]);
+        assert_eq!(ws.tabs[0].terminal_id(first), Some(&first_terminal));
+        assert_eq!(ws.tabs[0].terminal_id(second), Some(&second_terminal));
+        assert_eq!(ws.tabs[0].terminal_id(third), Some(&third_terminal));
 
         assert!(ws.tabs[0].rotate_panes(true));
 

@@ -21,6 +21,8 @@ pub fn restore(
     rows: u16,
     cols: u16,
     scrollback_limit_bytes: usize,
+    host_terminal_theme: crate::terminal_theme::TerminalTheme,
+    preserve_pane_ids: bool,
     default_shell: &str,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -39,6 +41,8 @@ pub fn restore(
             rows,
             cols,
             scrollback_limit_bytes,
+            host_terminal_theme,
+            preserve_pane_ids,
             default_shell,
             events.clone(),
             render_notify.clone(),
@@ -59,6 +63,8 @@ fn restore_workspace(
     rows: u16,
     cols: u16,
     scrollback_limit_bytes: usize,
+    host_terminal_theme: crate::terminal_theme::TerminalTheme,
+    preserve_pane_ids: bool,
     default_shell: &str,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -81,14 +87,21 @@ fn restore_workspace(
             rows,
             cols,
             scrollback_limit_bytes,
+            host_terminal_theme,
+            preserve_pane_ids,
             default_shell,
             events.clone(),
             render_notify.clone(),
             render_dirty.clone(),
         )?;
         for pane_id in tab.layout.pane_ids() {
-            public_pane_numbers.insert(pane_id, next_public_pane_number);
-            next_public_pane_number += 1;
+            let pane_number = if preserve_pane_ids {
+                pane_id.raw() as usize
+            } else {
+                next_public_pane_number
+            };
+            public_pane_numbers.insert(pane_id, pane_number);
+            next_public_pane_number = next_public_pane_number.max(pane_number.saturating_add(1));
         }
         terminals.extend(restored_terminals);
         terminal_runtimes.extend(restored_runtimes);
@@ -129,6 +142,8 @@ fn restore_tab(
     rows: u16,
     cols: u16,
     scrollback_limit_bytes: usize,
+    host_terminal_theme: crate::terminal_theme::TerminalTheme,
+    preserve_pane_ids: bool,
     default_shell: &str,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -138,20 +153,29 @@ fn restore_tab(
     Vec<TerminalState>,
     HashMap<TerminalId, TerminalRuntime>,
 )> {
-    let (node, id_map) = restore_node_remapped(&snap.layout);
-    let reverse_id_map: HashMap<PaneId, u32> = id_map
-        .iter()
-        .map(|(&old_id, &new_id)| (new_id, old_id))
-        .collect();
+    let (node, saved_id_for_pane) = if preserve_pane_ids {
+        (restore_node_preserving_ids(&snap.layout), HashMap::new())
+    } else {
+        let (node, id_map) = restore_node_remapped(&snap.layout);
+        let reverse_id_map: HashMap<PaneId, u32> = id_map
+            .iter()
+            .map(|(&old_id, &new_id)| (new_id, old_id))
+            .collect();
+        (node, reverse_id_map)
+    };
     let pane_ids = collect_pane_ids(&node);
 
     let mut panes = HashMap::new();
     let mut terminals = Vec::new();
     let mut terminal_runtimes = HashMap::new();
     for id in &pane_ids {
-        let saved_cwd = reverse_id_map
+        let saved_id = saved_id_for_pane
             .get(id)
-            .and_then(|old_id| snap.panes.get(old_id))
+            .copied()
+            .unwrap_or_else(|| id.raw());
+        let saved_cwd = snap
+            .panes
+            .get(&saved_id)
             .map(|p| p.cwd.clone())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
 
@@ -172,17 +196,11 @@ fn restore_tab(
             }
         };
 
-        let saved_label = reverse_id_map
-            .get(id)
-            .and_then(|old_id| snap.panes.get(old_id))
-            .and_then(|p| p.label.clone());
-        let saved_agent_name = reverse_id_map
-            .get(id)
-            .and_then(|old_id| snap.panes.get(old_id))
-            .and_then(|p| p.agent_name.clone());
-        let saved_agent_restore = reverse_id_map
-            .get(id)
-            .and_then(|old_id| snap.panes.get(old_id))
+        let saved_label = snap.panes.get(&saved_id).and_then(|p| p.label.clone());
+        let saved_agent_name = snap.panes.get(&saved_id).and_then(|p| p.agent_name.clone());
+        let saved_agent_restore = snap
+            .panes
+            .get(&saved_id)
             .and_then(|p| p.agent_restore.clone());
 
         match TerminalRuntime::spawn(
@@ -191,7 +209,7 @@ fn restore_tab(
             cols,
             cwd.clone(),
             scrollback_limit_bytes,
-            crate::terminal_theme::TerminalTheme::default(),
+            host_terminal_theme,
             default_shell,
             events.clone(),
             render_notify.clone(),
@@ -244,8 +262,8 @@ fn restore_tab(
         return None;
     };
     let pane_ids = collect_pane_ids(&node);
-    let focus = resolve_restored_pane(snap.focused, &id_map, &surviving, &pane_ids)?;
-    let root_pane = resolve_restored_pane(snap.root_pane, &id_map, &surviving, &pane_ids)?;
+    let focus = resolve_restored_pane(snap.focused, &surviving, &pane_ids)?;
+    let root_pane = resolve_restored_pane(snap.root_pane, &surviving, &pane_ids)?;
     let layout = TileLayout::from_saved(node, focus);
 
     Some((
@@ -293,23 +311,55 @@ pub(super) fn prune_restored_node(node: Node, surviving: &HashSet<PaneId>) -> Op
 }
 
 pub(super) fn resolve_restored_pane(
-    saved_old_id: Option<u32>,
-    id_map: &HashMap<u32, PaneId>,
+    saved_id: Option<u32>,
     surviving: &HashSet<PaneId>,
     pane_ids: &[PaneId],
 ) -> Option<PaneId> {
-    saved_old_id
-        .and_then(|old_id| id_map.get(&old_id).copied())
+    saved_id
+        .map(PaneId::from_raw)
         .filter(|pane_id| surviving.contains(pane_id))
         .or_else(|| pane_ids.first().copied())
 }
 
-/// Restore a layout tree, remapping every pane ID to a fresh globally unique one.
-/// Returns the new tree and a map of old_raw_id → new PaneId.
+/// Restore a layout tree with the saved PaneIds intact.
+pub(super) fn restore_node_preserving_ids(snap: &LayoutSnapshot) -> Node {
+    restore_inner(snap)
+}
+
+/// Restore a layout tree for duplication by assigning fresh PaneIds.
 pub(super) fn restore_node_remapped(snap: &LayoutSnapshot) -> (Node, HashMap<u32, PaneId>) {
     let mut id_map = HashMap::new();
     let node = remap_inner(snap, &mut id_map);
     (node, id_map)
+}
+
+fn restore_inner(snap: &LayoutSnapshot) -> Node {
+    match snap {
+        LayoutSnapshot::Pane(id) => {
+            let pane_id = PaneId::from_raw(*id);
+            PaneId::reserve_next_after(pane_id);
+            Node::Pane(pane_id)
+        }
+        LayoutSnapshot::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        } => {
+            let first_node = restore_inner(first);
+            let second_node = restore_inner(second);
+            let dir = match direction {
+                DirectionSnapshot::Horizontal => Direction::Horizontal,
+                DirectionSnapshot::Vertical => Direction::Vertical,
+            };
+            Node::Split {
+                direction: dir,
+                ratio: *ratio,
+                first: Box::new(first_node),
+                second: Box::new(second_node),
+            }
+        }
+    }
 }
 
 fn remap_inner(snap: &LayoutSnapshot, id_map: &mut HashMap<u32, PaneId>) -> Node {
@@ -362,7 +412,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn capture_and_restore_node_round_trip() {
+    fn capture_and_restore_node_preserves_pane_ids() {
         let node = Node::Split {
             direction: Direction::Horizontal,
             ratio: 0.5,
@@ -376,13 +426,13 @@ mod tests {
         };
 
         let snap = super::super::snapshot::capture_node(&node);
-        let (restored, id_map) = restore_node_remapped(&snap);
+        let restored = restore_node_preserving_ids(&snap);
 
-        assert_eq!(id_map.len(), 3);
-        let ids = collect_pane_ids(&restored);
-        assert_eq!(ids.len(), 3);
-        let unique: std::collections::HashSet<u32> = ids.iter().map(|id| id.raw()).collect();
-        assert_eq!(unique.len(), 3);
+        let ids: Vec<u32> = collect_pane_ids(&restored)
+            .into_iter()
+            .map(|id| id.raw())
+            .collect();
+        assert_eq!(ids, vec![0, 1, 2]);
     }
 
     #[test]
@@ -405,17 +455,15 @@ mod tests {
     #[test]
     fn resolve_restored_pane_prefers_surviving_saved_id_and_falls_back_to_first_remaining() {
         let first = PaneId::from_raw(21);
-        let second = PaneId::from_raw(22);
-        let id_map = HashMap::from([(0_u32, first), (1_u32, second)]);
         let surviving = std::collections::HashSet::from([first]);
         let pane_ids = vec![first];
 
         assert_eq!(
-            resolve_restored_pane(Some(0), &id_map, &surviving, &pane_ids),
+            resolve_restored_pane(Some(21), &surviving, &pane_ids),
             Some(first)
         );
         assert_eq!(
-            resolve_restored_pane(Some(1), &id_map, &surviving, &pane_ids),
+            resolve_restored_pane(Some(22), &surviving, &pane_ids),
             Some(first)
         );
     }

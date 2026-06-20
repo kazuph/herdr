@@ -1794,7 +1794,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_context_menu_rotates_panes_without_changing_layout() {
+    fn pane_context_menu_rotates_pane_ids_without_reassigning_terminals() {
         let mut state = state_with_workspaces(&["a"]);
         state.active = Some(0);
         let root = state.workspaces[0].tabs[0].root_pane;
@@ -1823,14 +1823,18 @@ mod tests {
 
         apply_context_menu_action(&mut state, menu, idx);
 
-        assert_eq!(state.workspaces[0].tabs[0].layout.pane_ids(), before_layout);
+        assert_eq!(
+            state.workspaces[0].tabs[0].layout.pane_ids(),
+            vec![second, root]
+        );
+        assert_ne!(state.workspaces[0].tabs[0].layout.pane_ids(), before_layout);
         assert_eq!(
             state.terminal_id_for_pane(0, root).unwrap(),
-            second_terminal_before
+            root_terminal_before
         );
         assert_eq!(
             state.terminal_id_for_pane(0, second).unwrap(),
-            root_terminal_before
+            second_terminal_before
         );
         assert_eq!(state.workspaces[0].tabs[0].layout.focused(), second);
         assert_eq!(state.mode, Mode::Terminal);

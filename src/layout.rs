@@ -22,6 +22,16 @@ impl PaneId {
     pub fn from_raw(id: u32) -> Self {
         Self(id)
     }
+
+    /// Keep future allocations above ids restored from a session snapshot.
+    pub fn reserve_next_after(id: Self) {
+        let next = id.0.saturating_add(1);
+        let _ = NEXT_PANE_ID.fetch_update(
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed,
+            |current| (current < next).then_some(next),
+        );
+    }
 }
 
 /// Snapshot of a pane's position and focus state after layout.
@@ -269,6 +279,26 @@ impl TileLayout {
         true
     }
 
+    /// Rotate pane identities through the existing leaf positions.
+    ///
+    /// This preserves the split tree shape and keeps each pane's terminal state
+    /// attached to its PaneId, so external commands targeting `%N` continue to
+    /// follow the same pane after rotation.
+    pub fn rotate_panes(&mut self, reverse: bool) -> bool {
+        let mut ids = self.pane_ids();
+        if ids.len() <= 1 {
+            return false;
+        }
+        if reverse {
+            ids.rotate_left(1);
+        } else {
+            ids.rotate_right(1);
+        }
+        let mut rotated = ids.into_iter();
+        replace_leaf_ids(&mut self.root, &mut rotated);
+        true
+    }
+
     /// Equalize split ratios while preserving the current split directions.
     pub fn equalize(&mut self) {
         equalize_ratios(&mut self.root);
@@ -471,6 +501,20 @@ fn collect_ids(node: &Node, ids: &mut Vec<PaneId>) {
         Node::Split { first, second, .. } => {
             collect_ids(first, ids);
             collect_ids(second, ids);
+        }
+    }
+}
+
+fn replace_leaf_ids(node: &mut Node, ids: &mut impl Iterator<Item = PaneId>) {
+    match node {
+        Node::Pane(id) => {
+            if let Some(next) = ids.next() {
+                *id = next;
+            }
+        }
+        Node::Split { first, second, .. } => {
+            replace_leaf_ids(first, ids);
+            replace_leaf_ids(second, ids);
         }
     }
 }
@@ -873,6 +917,28 @@ mod tests {
         let panes = layout.panes(Rect::new(0, 0, 180, 40));
         assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 0, 20, 40));
         assert_eq!(rect_of(&panes, ids[8]), Rect::new(160, 0, 20, 40));
+    }
+
+    #[test]
+    fn rotate_panes_rotates_ids_through_existing_leaf_positions() {
+        let (mut layout, root) = TileLayout::new();
+        let second = layout.split_focused(Direction::Horizontal);
+        let third = layout.split_focused(Direction::Vertical);
+        let before = layout.panes(Rect::new(0, 0, 90, 30));
+        let rect_of = |panes: &[PaneInfo], id: PaneId| -> Rect {
+            panes.iter().find(|pane| pane.id == id).unwrap().rect
+        };
+        let root_rect = rect_of(&before, root);
+        let second_rect = rect_of(&before, second);
+        let third_rect = rect_of(&before, third);
+
+        assert!(layout.rotate_panes(false));
+
+        assert_eq!(layout.pane_ids(), vec![third, root, second]);
+        let after = layout.panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(rect_of(&after, third), root_rect);
+        assert_eq!(rect_of(&after, root), second_rect);
+        assert_eq!(rect_of(&after, second), third_rect);
     }
 
     #[test]

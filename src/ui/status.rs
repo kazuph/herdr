@@ -62,7 +62,7 @@ pub(super) fn render_pane_action_bar(
         return;
     }
 
-    let bar_style = Style::default().fg(p.subtext0).bg(p.surface0);
+    let bar_style = Style::default().fg(p.overlay0).bg(p.panel_bg);
     frame.render_widget(Paragraph::new("").style(bar_style), area);
 
     let label = vim_mode_label.unwrap_or(" panes ");
@@ -70,7 +70,7 @@ pub(super) fn render_pane_action_bar(
     frame.render_widget(
         Paragraph::new(Span::styled(
             label,
-            Style::default().fg(p.overlay1).bg(p.surface0),
+            Style::default().fg(p.overlay0).bg(p.panel_bg),
         )),
         label_area,
     );
@@ -98,8 +98,8 @@ fn render_action_button(frame: &mut Frame, rect: Rect, label: &'static str, p: &
         Paragraph::new(Span::styled(
             label,
             Style::default()
-                .fg(p.text)
-                .bg(p.surface1)
+                .fg(p.overlay1)
+                .bg(p.surface0)
                 .add_modifier(Modifier::BOLD),
         )),
         rect,
