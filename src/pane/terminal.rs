@@ -220,6 +220,10 @@ impl PaneTerminal {
             .maybe_restore_host_terminal_theme(pane_id, shell_pid)
     }
 
+    pub fn force_restore_host_terminal_theme(&self, pane_id: PaneId) -> bool {
+        self.ghostty.force_restore_host_terminal_theme(pane_id)
+    }
+
     pub fn keyboard_protocol(
         &self,
         fallback: crate::input::KeyboardProtocol,
@@ -339,6 +343,13 @@ impl GhosttyPaneTerminal {
             alternate_screen,
             foreground_job.as_ref(),
         )
+    }
+
+    pub fn force_restore_host_terminal_theme(&self, pane_id: PaneId) -> bool {
+        let Ok(mut core) = self.core.lock() else {
+            return false;
+        };
+        super::osc::force_restore_host_terminal_theme(&mut core, pane_id)
     }
 
     pub fn process_pty_bytes(

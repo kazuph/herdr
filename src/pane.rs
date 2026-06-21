@@ -38,6 +38,9 @@ fn apply_pane_terminal_env(cmd: &mut CommandBuilder) {
     // when the remote side lacks matching terminfo entries.
     cmd.env("TERM", PANE_TERM);
     cmd.env("COLORTERM", PANE_COLORTERM);
+    // Herdr panes are interactive color-capable TTYs. A global NO_COLOR from the
+    // launching environment makes nested TUI status helpers render monochrome.
+    cmd.env_remove("NO_COLOR");
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -443,6 +446,9 @@ impl PaneRuntime {
             let child_pid = child_pid.clone();
             let slave = pair.slave;
             let events = events.clone();
+            let terminal = terminal.clone();
+            let render_dirty = render_dirty.clone();
+            let render_notify = render_notify.clone();
             let rt = tokio::runtime::Handle::current();
             tokio::task::spawn_blocking(move || {
                 match slave.spawn_command(cmd) {
@@ -462,6 +468,11 @@ impl PaneRuntime {
                         }
                     }
                     Err(e) => error!(pane = pane_id.raw(), err = %e, "{spawn_error_message}"),
+                }
+                if terminal.force_restore_host_terminal_theme(pane_id)
+                    && !render_dirty.swap(true, Ordering::AcqRel)
+                {
+                    render_notify.notify_one();
                 }
                 // Use blocking send — PaneDied is critical, must not be dropped
                 if let Err(e) = rt.block_on(events.send(AppEvent::PaneDied { pane_id })) {
@@ -1176,6 +1187,16 @@ mod tests {
     fn pane_terminal_identity_overrides_outer_terminal_env() {
         let output = capture_shell_output("printf '%s\\n%s\\n' \"$TERM\" \"$COLORTERM\"", &[]);
         assert_eq!(output, "xterm-256color\ntruecolor\n");
+    }
+
+    #[test]
+    fn pane_terminal_identity_removes_outer_no_color() {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.env("NO_COLOR", "1");
+
+        apply_pane_terminal_env(&mut cmd);
+
+        assert!(cmd.get_env("NO_COLOR").is_none());
     }
 
     #[test]

@@ -417,6 +417,26 @@ pub(super) fn restore_host_terminal_theme_if_needed(
     true
 }
 
+pub(super) fn force_restore_host_terminal_theme(
+    core: &mut GhosttyPaneCore,
+    pane_id: PaneId,
+) -> bool {
+    let Some(owner_pgid) = core.transient_default_color_owner_pgid else {
+        return false;
+    };
+    if core.host_terminal_theme.is_empty() {
+        return false;
+    }
+
+    core.transient_default_color_owner_pgid = None;
+    write_host_terminal_theme(&mut core.terminal, core.host_terminal_theme);
+    info!(
+        pane = pane_id.raw(),
+        owner_pgid, "restored host terminal default colors after pane exit"
+    );
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use tokio::sync::mpsc;
@@ -795,6 +815,49 @@ mod tests {
                 false,
                 Some(&shell_job(shell_pid)),
             ));
+        }
+
+        assert_eq!(pane_default_theme(&pane).background, host_theme.background);
+        assert_eq!(pane_default_theme(&pane).foreground, host_theme.foreground);
+    }
+
+    #[test]
+    fn force_restore_host_terminal_theme_reapplies_cached_colors_without_foreground_probe() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = super::super::GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        let host_theme = crate::terminal_theme::TerminalTheme {
+            foreground: Some(crate::terminal_theme::RgbColor {
+                r: 0xaa,
+                g: 0xbb,
+                b: 0xcc,
+            }),
+            background: Some(crate::terminal_theme::RgbColor {
+                r: 0x11,
+                g: 0x22,
+                b: 0x33,
+            }),
+        };
+
+        pane.apply_host_terminal_theme(host_theme);
+        {
+            let mut core = pane.core.lock().unwrap();
+            core.transient_default_color_owner_pgid = Some(42);
+            core.terminal.write(b"\x1b]11;rgb:dd/ee/ff\x1b\\");
+        }
+        assert_eq!(
+            pane_default_theme(&pane).background,
+            Some(crate::terminal_theme::RgbColor {
+                r: 0xdd,
+                g: 0xee,
+                b: 0xff,
+            })
+        );
+
+        {
+            let mut core = pane.core.lock().unwrap();
+            assert!(force_restore_host_terminal_theme(&mut core, pane_id));
         }
 
         assert_eq!(pane_default_theme(&pane).background, host_theme.background);

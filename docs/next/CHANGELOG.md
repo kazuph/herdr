@@ -26,6 +26,8 @@
 
 ### Fixed
 - The default expanded sidebar maximum width is now 72 columns, making long branch names easier to read.
+- Panes no longer inherit outer `NO_COLOR`, so Claude Code, Codex, and other nested TUI status helpers keep color inside Herdr.
+- Pane default colors are restored after a child process exits when that process changed the terminal defaults.
 - Agent notifications now title background events as `number workspace-OSC title` and use the latest response excerpt as the body.
 - Agent notification bodies now skip Codex status chrome such as context and quota lines, so the toast shows the agent's latest message when available.
 - Agent notification bodies no longer show separator rows ("────…") or composer/status-line chrome; they now extract the agent's latest response from the `•`/`⏺` message marker for Codex and Claude Code, including the lines that follow it.
