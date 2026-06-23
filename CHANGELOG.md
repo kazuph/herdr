@@ -9,7 +9,7 @@
 - Pane context menus can now be opened with a double-click in the main content area, matching the existing right-click menu without replacing text selection or scrolling.
 - Text selection copies now show a short sidebar confirmation such as `Copied 3 lines`.
 - Added `ui.show_tab_bar = false` to hide the main content tab bar when tabs are not part of your workflow.
-- Added `herdr pane current` to safely print the calling pane from `HERDR_PANE_ID` without falling back to UI focus.
+- Added `herdr pane current` to safely print the calling pane from `HERDR_PANE_ID` or the calling process session without falling back to UI focus.
 - Workspace cards can now be dragged onto sidebar section headers such as `💼 work`, `🏠 personal`, `⭐ favorites`, or `spaces` to change their section.
 - The agents panel now follows expanded workspace sections, so agents in collapsed sections stay hidden while you focus on the visible spaces.
 - Added sidebar Git worktree actions for creating a new branch checkout, opening existing worktrees, and removing a selected linked checkout.

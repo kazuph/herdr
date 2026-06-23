@@ -87,7 +87,10 @@ herdr pane split <pane_id> --direction right|down [--cwd PATH] [--focus] [--no-f
 herdr pane close <pane_id>
 ```
 
-`pane current` prints the `HERDR_PANE_ID` for the calling pane after validating it with the running server. It fails instead of falling back to the focused pane when `HERDR_PANE_ID` is not set.
+`pane current` prints the calling pane after validating it with the running
+server. It uses `HERDR_PANE_ID` first; when that variable is absent, it asks
+the server to resolve the calling process session. It does not fall back to
+the focused pane, active tab, or pane list.
 
 Read output:
 
