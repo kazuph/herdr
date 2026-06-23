@@ -90,7 +90,7 @@ Remote attach supports Linux and macOS hosts on x86_64 and aarch64. Herdr checks
 
 If you SSH into the server first and run `herdr` there, Herdr runs entirely on the server. That mode is useful and simple, but it cannot access your local desktop clipboard beyond normal terminal text paste.
 
-When your local and remote platforms match, Herdr can copy the current local binary. Otherwise it downloads the matching release asset from `https://herdr.dev/latest.json`.
+When your local and remote platforms match, Herdr can copy the current local binary. Automatic release downloads are disabled in this fork, so cross-platform remote attach requires an explicit local binary.
 
 For local builds or custom binaries, set `HERDR_REMOTE_BINARY` to a local file path before running remote attach.
 

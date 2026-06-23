@@ -1473,6 +1473,34 @@ impl App {
                     result: ResponseResult::Ok {},
                 }
             }
+            Method::PaneNotify(params) => {
+                let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error: ErrorBody {
+                            code: "pane_not_found".into(),
+                            message: format!("pane {} not found", params.pane_id),
+                        },
+                    })
+                    .unwrap();
+                };
+                let previous_toast = self.state.toast.clone();
+                self.state.toast = Some(crate::app::state::ToastNotification {
+                    kind: ToastKind::Finished,
+                    title: params.title,
+                    context: params.context,
+                    target: Some(crate::app::state::ToastTarget {
+                        workspace_id: self.public_workspace_id(ws_idx),
+                        pane_id,
+                    }),
+                });
+                self.sync_toast_deadline(previous_toast);
+                self.render_notify.notify_one();
+                SuccessResponse {
+                    id: request.id,
+                    result: ResponseResult::Ok {},
+                }
+            }
             Method::AgentRestore(params) => {
                 let actions = self.execute_agent_restore(params.dry_run);
                 SuccessResponse {

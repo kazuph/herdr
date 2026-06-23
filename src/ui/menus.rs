@@ -229,9 +229,37 @@ pub(super) fn render_copy_mode_overlay(app: &AppState, frame: &mut Frame, area: 
         Span::styled(" cancel", dim),
     ]);
 
-    let overlay_y = area.y + area.height.saturating_sub(1);
+    let overlay_y = copy_mode_overlay_y(app, area);
     let overlay_area = Rect::new(area.x, overlay_y, area.width, 1);
     render_bottom_bar(frame, overlay_area, line, app.palette.panel_bg);
+}
+
+fn copy_mode_overlay_y(app: &AppState, area: Rect) -> u16 {
+    let bottom = area.y + area.height.saturating_sub(1);
+    if area.height <= 1 {
+        return bottom;
+    }
+    let Some(copy_mode) = app.copy_mode else {
+        return bottom;
+    };
+    let Some(info) = app
+        .view
+        .pane_infos
+        .iter()
+        .find(|info| info.id == copy_mode.pane_id)
+    else {
+        return bottom;
+    };
+    if copy_mode.cursor_row >= info.inner_rect.height {
+        return bottom;
+    }
+
+    let cursor_y = info.inner_rect.y + copy_mode.cursor_row;
+    if cursor_y == bottom {
+        area.y
+    } else {
+        bottom
+    }
 }
 
 pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
@@ -272,4 +300,50 @@ pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
         .highlight_symbol(" ");
     let mut state = ListState::default().with_selected(Some(menu.list.highlighted));
     frame.render_stateful_widget(list, inner, &mut state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        app::state::{CopyModeState, Mode},
+        layout::{PaneId, PaneInfo},
+    };
+
+    fn app_with_copy_cursor(cursor_row: u16, pane_inner: Rect) -> AppState {
+        let pane_id = PaneId::from_raw(1);
+        let mut app = AppState::test_new();
+        app.mode = Mode::Copy;
+        app.copy_mode = Some(CopyModeState {
+            pane_id,
+            cursor_row,
+            cursor_col: 0,
+            entry_offset_from_bottom: 0,
+            selection: None,
+        });
+        app.view.pane_infos = vec![PaneInfo {
+            id: pane_id,
+            rect: pane_inner,
+            inner_rect: pane_inner,
+            scrollbar_rect: None,
+            is_focused: true,
+        }];
+        app
+    }
+
+    #[test]
+    fn copy_mode_overlay_uses_bottom_when_cursor_is_elsewhere() {
+        let area = Rect::new(0, 0, 80, 24);
+        let app = app_with_copy_cursor(3, Rect::new(0, 0, 80, 24));
+
+        assert_eq!(copy_mode_overlay_y(&app, area), 23);
+    }
+
+    #[test]
+    fn copy_mode_overlay_moves_to_top_when_cursor_is_on_bottom_row() {
+        let area = Rect::new(0, 0, 80, 24);
+        let app = app_with_copy_cursor(23, Rect::new(0, 0, 80, 24));
+
+        assert_eq!(copy_mode_overlay_y(&app, area), 0);
+    }
 }

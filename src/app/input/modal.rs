@@ -68,62 +68,43 @@ pub(super) fn modal_action_from_buttons<A: Copy>(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SidebarWidthPreset {
-    Narrow,
-    Normal,
-    Wide,
-}
-
-impl SidebarWidthPreset {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Narrow => "sidebar narrow",
-            Self::Normal => "sidebar normal",
-            Self::Wide => "sidebar wide",
-        }
-    }
-
-    fn width(self, state: &AppState) -> u16 {
-        match self {
-            Self::Narrow => state.sidebar_min_width,
-            Self::Normal => state
-                .default_sidebar_width
-                .clamp(state.sidebar_min_width, state.sidebar_max_width),
-            Self::Wide => state.sidebar_max_width,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GlobalMenuAction {
+    NewWorkspace,
+    NewTab,
     Detach,
     WhatsNew,
     Keybinds,
     ReloadConfig,
     ToggleVimMode,
     Settings,
-    SetSidebarWidth(SidebarWidthPreset),
+    RestoreAgents,
+    StopServer,
+    Restart,
 }
 
 pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
     let mut actions = vec![
+        GlobalMenuAction::NewWorkspace,
+        GlobalMenuAction::NewTab,
         GlobalMenuAction::Settings,
         GlobalMenuAction::Keybinds,
         GlobalMenuAction::ReloadConfig,
         GlobalMenuAction::ToggleVimMode,
-        GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Narrow),
-        GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Normal),
-        GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Wide),
     ];
     if state.update_available.is_some() || state.latest_release_notes_available {
         actions.push(GlobalMenuAction::WhatsNew);
     }
+    actions.push(GlobalMenuAction::RestoreAgents);
     actions.push(GlobalMenuAction::Detach);
+    actions.push(GlobalMenuAction::StopServer);
+    actions.push(GlobalMenuAction::Restart);
     actions
 }
 
 pub(super) fn global_menu_action_label(state: &AppState, action: GlobalMenuAction) -> &'static str {
     match action {
+        GlobalMenuAction::NewWorkspace => "New workspace",
+        GlobalMenuAction::NewTab => "New tab",
         GlobalMenuAction::Detach => "detach",
         GlobalMenuAction::WhatsNew => {
             if state.update_available.is_some() {
@@ -142,7 +123,9 @@ pub(super) fn global_menu_action_label(state: &AppState, action: GlobalMenuActio
             }
         }
         GlobalMenuAction::Settings => "settings",
-        GlobalMenuAction::SetSidebarWidth(preset) => preset.label(),
+        GlobalMenuAction::RestoreAgents => "Restore agents...",
+        GlobalMenuAction::StopServer => "Stop server",
+        GlobalMenuAction::Restart => "Restart",
     }
 }
 
@@ -180,6 +163,12 @@ pub(super) fn request_detach(state: &mut AppState) {
 
 pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuAction) {
     match action {
+        GlobalMenuAction::NewWorkspace => {
+            state.requested_new_workspace_section = None;
+            state.request_new_workspace = true;
+            leave_modal(state);
+        }
+        GlobalMenuAction::NewTab => open_new_tab_dialog(state),
         GlobalMenuAction::Detach => {
             leave_modal(state);
             request_detach(state);
@@ -196,18 +185,11 @@ pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuA
             leave_modal(state);
         }
         GlobalMenuAction::Settings => super::settings::open_settings(state),
-        GlobalMenuAction::SetSidebarWidth(preset) => {
-            state.sidebar_width = preset.width(state);
-            state.sidebar_width_source = match preset {
-                SidebarWidthPreset::Normal => crate::app::state::SidebarWidthSource::ConfigDefault,
-                SidebarWidthPreset::Narrow | SidebarWidthPreset::Wide => {
-                    crate::app::state::SidebarWidthSource::Manual
-                }
-            };
-            state.sidebar_width_auto = false;
-            state.mark_session_dirty();
-            leave_modal(state);
+        GlobalMenuAction::RestoreAgents => {
+            open_confirm_danger(state, DangerousAction::RestoreAgents)
         }
+        GlobalMenuAction::StopServer => open_confirm_danger(state, DangerousAction::StopServer),
+        GlobalMenuAction::Restart => open_confirm_danger(state, DangerousAction::Restart),
     }
 }
 
@@ -929,36 +911,6 @@ pub(super) fn apply_context_menu_action(state: &mut AppState, menu: ContextMenuS
                 Mode::Navigate
             };
         }
-        (ContextMenuKind::SidebarBlank, Some("New workspace")) => {
-            state.request_new_workspace = true;
-            leave_modal(state);
-        }
-        (ContextMenuKind::SidebarBlank, Some("New tab")) => {
-            open_new_tab_dialog(state);
-        }
-        (ContextMenuKind::SidebarBlank, Some("Settings")) => {
-            super::settings::open_settings(state);
-        }
-        (ContextMenuKind::SidebarBlank, Some("Keybinds")) => {
-            open_keybind_help(state);
-        }
-        (ContextMenuKind::SidebarBlank, Some("Reload config")) => {
-            state.request_reload_config = true;
-            leave_modal(state);
-        }
-        (ContextMenuKind::SidebarBlank, Some("Restore agents...")) => {
-            open_confirm_danger(state, DangerousAction::RestoreAgents);
-        }
-        (ContextMenuKind::SidebarBlank, Some("Stop server")) => {
-            open_confirm_danger(state, DangerousAction::StopServer);
-        }
-        (ContextMenuKind::SidebarBlank, Some("Restart")) => {
-            open_confirm_danger(state, DangerousAction::Restart);
-        }
-        (ContextMenuKind::SidebarBlank, Some("Detach")) => {
-            request_detach(state);
-            leave_modal(state);
-        }
         _ => leave_modal(state),
     }
 }
@@ -1039,8 +991,7 @@ mod tests {
     use super::*;
 
     fn config_env_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        crate::app::config_env_test_lock()
     }
 
     fn temp_config_path(name: &str) -> std::path::PathBuf {
@@ -1102,44 +1053,32 @@ mod tests {
     }
 
     #[test]
-    fn global_menu_sidebar_width_presets_update_width_source_and_snapshot() {
+    fn global_menu_new_workspace_requests_plain_space() {
         let mut state = state_with_workspaces(&["test"]);
-        state.sidebar_min_width = 18;
-        state.default_sidebar_width = 26;
-        state.sidebar_max_width = 36;
+        state.mode = Mode::GlobalMenu;
 
-        apply_global_menu_action(
-            &mut state,
-            GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Narrow),
-        );
-        assert_eq!(state.sidebar_width, 18);
-        assert_eq!(
-            state.sidebar_width_source,
-            crate::app::state::SidebarWidthSource::Manual
-        );
-        assert_eq!(capture_snapshot(&state).sidebar_width, Some(18));
+        apply_global_menu_action(&mut state, GlobalMenuAction::NewWorkspace);
 
-        apply_global_menu_action(
-            &mut state,
-            GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Wide),
-        );
-        assert_eq!(state.sidebar_width, 36);
-        assert_eq!(
-            state.sidebar_width_source,
-            crate::app::state::SidebarWidthSource::Manual
-        );
-        assert_eq!(capture_snapshot(&state).sidebar_width, Some(36));
+        assert!(state.request_new_workspace);
+        assert_eq!(state.requested_new_workspace_section, None);
+        assert_eq!(state.mode, Mode::Terminal);
+    }
 
-        apply_global_menu_action(
-            &mut state,
-            GlobalMenuAction::SetSidebarWidth(SidebarWidthPreset::Normal),
-        );
-        assert_eq!(state.sidebar_width, 26);
-        assert_eq!(
-            state.sidebar_width_source,
-            crate::app::state::SidebarWidthSource::ConfigDefault
-        );
-        assert_eq!(capture_snapshot(&state).sidebar_width, Some(26));
+    #[test]
+    fn global_menu_danger_actions_confirm_before_requesting_side_effects() {
+        let mut state = state_with_workspaces(&["test"]);
+
+        apply_global_menu_action(&mut state, GlobalMenuAction::RestoreAgents);
+        assert_eq!(state.mode, Mode::ConfirmDanger);
+        assert!(!state.request_agent_restore);
+        confirm_danger_accept(&mut state);
+        assert!(state.request_agent_restore);
+
+        apply_global_menu_action(&mut state, GlobalMenuAction::StopServer);
+        assert_eq!(state.mode, Mode::ConfirmDanger);
+        assert!(!state.should_quit);
+        confirm_danger_accept(&mut state);
+        assert!(state.should_quit);
     }
 
     #[test]
@@ -1596,7 +1535,9 @@ mod tests {
         assert!(menu.items().contains(&"Move to lower split"));
         assert!(menu.items().contains(&"New Claude Code agent"));
         assert!(menu.items().contains(&"New Codex agent"));
-        assert!(menu.items().contains(&"New Gemini agent"));
+        assert_eq!(menu.items().first(), Some(&"Split vertical"));
+        assert_eq!(menu.items().get(1), Some(&"Split horizontal"));
+        assert!(menu.items().contains(&"New agy agent"));
         assert!(menu.items().contains(&"Equalize pane sizes"));
         assert!(menu.items().contains(&"Cycle pane layout"));
         assert!(menu.items().contains(&"Rotate panes"));
@@ -1621,7 +1562,7 @@ mod tests {
             list: MenuListState::new(0),
         };
 
-        apply_context_menu_action(&mut state, menu, 2);
+        apply_context_menu_action(&mut state, menu, 5);
 
         assert_eq!(
             state.pending_agent_start,

@@ -62,6 +62,8 @@ Read pane output:
 herdr pane read 1-2 --source recent --lines 50
 ```
 
+Pane commands accept short pane targets like `1-2`, global pane numbers like `23`, tmux-style global pane numbers like `%23`, and full stable IDs like `w6525bc3670d718-2`. The sidebar shows workspace numbers and agent pane IDs, and `herdr pane list` includes both the short ID and global ID for each pane.
+
 ## Raw methods
 
 Raw socket method names use dot notation:
@@ -71,7 +73,7 @@ Raw socket method names use dot notation:
 | Server | `ping`, `server.stop`, `server.reload_config` |
 | Workspace | `workspace.create`, `workspace.list`, `workspace.get`, `workspace.focus`, `workspace.rename`, `workspace.close` |
 | Tab | `tab.create`, `tab.list`, `tab.get`, `tab.focus`, `tab.rename`, `tab.close` |
-| Pane | `pane.split`, `pane.list`, `pane.get`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.report_agent`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.wait_for_output` |
+| Pane | `pane.split`, `pane.list`, `pane.get`, `pane.focus`, `pane.rename`, `pane.send_text`, `pane.send_keys`, `pane.send_input`, `pane.read`, `pane.report_agent`, `pane.clear_agent_authority`, `pane.release_agent`, `pane.close`, `pane.wait_for_output` |
 | Agent | `agent.list`, `agent.get`, `agent.read`, `agent.send`, `agent.rename`, `agent.focus`, `agent.start` |
 | Events | `events.subscribe`, `events.wait` |
 

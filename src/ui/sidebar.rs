@@ -9,7 +9,9 @@ use ratatui::{
 use super::scrollbar::{render_scrollbar, should_show_scrollbar};
 use super::status::{agent_icon, state_label, state_label_color, state_summary_icon};
 use super::widgets::panel_contrast_fg;
-use crate::app::state::{AgentPanelScope, Palette, WorkspacePanelDensity};
+use crate::app::state::{
+    AgentPanelScope, Palette, SidebarWidthPreset, SidebarWidthToggleRects, WorkspacePanelDensity,
+};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 
@@ -91,9 +93,9 @@ fn agent_panel_current_workspace_idx(app: &AppState) -> Option<usize> {
 
 fn agent_panel_toggle_label(scope: AgentPanelScope) -> &'static str {
     match scope {
-        AgentPanelScope::CurrentWorkspace => "current",
-        AgentPanelScope::AllWorkspaces => "all",
-        AgentPanelScope::SortedAllWorkspaces => "sort",
+        AgentPanelScope::CurrentWorkspace => "[current]",
+        AgentPanelScope::AllWorkspaces => "[all]",
+        AgentPanelScope::SortedAllWorkspaces => "[sort]",
     }
 }
 
@@ -125,11 +127,21 @@ pub(crate) fn sectioned_workspace_indices(
     crate::workspace::WorkspaceSection::ALL
         .into_iter()
         .filter_map(|section| {
-            let indices = (0..app.workspaces.len())
-                .filter(|idx| workspace_effective_section(app, *idx) == section)
-                .collect::<Vec<_>>();
+            let indices = section_indices(app, section);
             (!indices.is_empty()).then_some((section, indices))
         })
+        .collect()
+}
+
+fn sidebar_workspace_sections(
+    app: &AppState,
+) -> Vec<(crate::workspace::WorkspaceSection, Vec<usize>)> {
+    sectioned_workspace_indices(app)
+}
+
+fn section_indices(app: &AppState, section: crate::workspace::WorkspaceSection) -> Vec<usize> {
+    (0..app.workspaces.len())
+        .filter(|idx| workspace_effective_section(app, *idx) == section)
         .collect()
 }
 
@@ -150,8 +162,8 @@ pub(crate) fn agent_panel_toggle_rect(area: Rect, scope: AgentPanelScope) -> Rec
 
 fn workspace_panel_density_label(density: WorkspacePanelDensity) -> &'static str {
     match density {
-        WorkspacePanelDensity::Full => "full",
-        WorkspacePanelDensity::Slim => "slim",
+        WorkspacePanelDensity::Full => "[full]",
+        WorkspacePanelDensity::Slim => "[slim]",
     }
 }
 
@@ -416,7 +428,7 @@ fn workspace_list_visible_count(app: &AppState, area: Rect, scroll: usize) -> us
     let mut used_rows = 0u16;
     let mut visible = 0usize;
     let mut skipped = 0usize;
-    for (section, indices) in sectioned_workspace_indices(app) {
+    for (section, indices) in sidebar_workspace_sections(app) {
         if used_rows.saturating_add(2) > body.height {
             break;
         }
@@ -448,7 +460,7 @@ pub(crate) fn workspace_list_scroll_metrics(
     area: Rect,
 ) -> crate::pane::ScrollMetrics {
     let viewport_rows = workspace_list_visible_count(app, area, app.workspace_scroll);
-    let total_rows: usize = sectioned_workspace_indices(app)
+    let total_rows: usize = sidebar_workspace_sections(app)
         .into_iter()
         .filter(|(section, _)| workspace_section_is_expanded(app, *section))
         .map(|(_, indices)| indices.len())
@@ -477,14 +489,56 @@ pub(crate) fn workspace_list_scrollbar_rect(app: &AppState, area: Rect) -> Optio
 }
 
 pub(crate) fn agent_panel_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
-    if area.width == 0 || area.height <= AGENT_PANEL_HEADER_ROWS {
+    if area.width == 0 || area.height <= AGENT_PANEL_HEADER_ROWS + 1 {
         return Rect::default();
     }
 
     let body_y = area.y.saturating_add(AGENT_PANEL_HEADER_ROWS);
-    let body_height = (area.y + area.height).saturating_sub(body_y);
+    let footer_y = area.y + area.height.saturating_sub(1);
+    let body_height = footer_y.saturating_sub(body_y);
     let body_width = area.width.saturating_sub(u16::from(has_scrollbar));
     Rect::new(area.x, body_y, body_width, body_height)
+}
+
+pub(crate) fn workspace_section_new_button_rect(header: Rect) -> Rect {
+    const LABEL: &str = "[new]";
+    let width = LABEL.len() as u16;
+    if header.width < width + 1 || header.height == 0 {
+        return Rect::default();
+    }
+    Rect::new(
+        header.x + header.width.saturating_sub(width),
+        header.y,
+        width,
+        1,
+    )
+}
+
+fn sidebar_width_toggle_footer_rect(area: Rect) -> Rect {
+    if area.width == 0 || area.height == 0 {
+        return Rect::default();
+    }
+    Rect::new(
+        area.x,
+        area.y + area.height.saturating_sub(1),
+        area.width,
+        1,
+    )
+}
+
+pub(crate) fn sidebar_width_toggle_rects(area: Rect) -> SidebarWidthToggleRects {
+    let footer = sidebar_width_toggle_footer_rect(area);
+    if footer.width == 0 {
+        return SidebarWidthToggleRects::default();
+    }
+
+    let button_w = 8;
+    if footer.width < button_w {
+        return SidebarWidthToggleRects::default();
+    }
+    SidebarWidthToggleRects {
+        button: Rect::new(footer.x, footer.y, button_w, 1),
+    }
 }
 
 fn agent_panel_visible_count(area: Rect) -> usize {
@@ -569,7 +623,7 @@ fn compute_workspace_list_areas(
     let mut section_areas = Vec::new();
     let mut skipped = 0usize;
 
-    for (section, indices) in sectioned_workspace_indices(app) {
+    for (section, indices) in sidebar_workspace_sections(app) {
         if row_y >= body_bottom {
             break;
         }
@@ -915,14 +969,42 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                 frame.buffer_mut()[(x, section_area.rect.y)].set_style(style);
             }
         }
+        let new_rect = workspace_section_new_button_rect(section_area.rect);
+        let label_width = if new_rect == Rect::default() {
+            section_area.rect.width
+        } else {
+            new_rect
+                .x
+                .saturating_sub(section_area.rect.x)
+                .saturating_sub(1)
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(arrow, style),
                 Span::styled(" ", style),
-                Span::styled(section_area.section.label(), style),
+                Span::styled(
+                    truncate_to_width(section_area.section.label(), label_width as usize),
+                    style,
+                ),
             ])),
-            section_area.rect,
+            Rect::new(
+                section_area.rect.x,
+                section_area.rect.y,
+                label_width,
+                section_area.rect.height,
+            ),
         );
+        if new_rect != Rect::default() {
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    "[new]",
+                    Style::default()
+                        .fg(p.text)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                )),
+                new_rect,
+            );
+        }
     }
 
     for card in cards {
@@ -1112,7 +1194,7 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
     if app.mouse_capture && list_bottom > area.y {
         let new_rect = app.sidebar_new_button_rect();
         frame.render_widget(
-            Paragraph::new(Span::styled(" new", Style::default().fg(p.overlay0))),
+            Paragraph::new(Span::styled("[new]", Style::default().fg(p.overlay0))),
             new_rect,
         );
 
@@ -1123,10 +1205,13 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                     "● ",
                     Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("menu", Style::default().fg(p.overlay0)),
+                Span::styled("[menu]", Style::default().fg(p.overlay0)),
             ])
         } else {
-            Line::from(vec![Span::styled("menu", Style::default().fg(p.overlay0))])
+            Line::from(vec![Span::styled(
+                "[menu]",
+                Style::default().fg(p.overlay0),
+            )])
         };
         frame.render_widget(
             Paragraph::new(menu_line).alignment(Alignment::Right),
@@ -1172,6 +1257,7 @@ fn render_agent_detail(app: &AppState, frame: &mut Frame, area: Rect) {
     let scrollbar_rect = agent_panel_scrollbar_rect(app, area);
     let body = agent_panel_body_rect(area, should_show_scrollbar(metrics));
     if body == Rect::default() {
+        render_sidebar_width_toggle(app, frame, area);
         return;
     }
 
@@ -1255,6 +1341,37 @@ fn render_agent_detail(app: &AppState, frame: &mut Frame, area: Rect) {
 
     if let Some(track) = scrollbar_rect {
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
+    }
+    render_sidebar_width_toggle(app, frame, area);
+}
+
+fn render_sidebar_width_toggle(app: &AppState, frame: &mut Frame, area: Rect) {
+    let footer = sidebar_width_toggle_footer_rect(area);
+    if footer == Rect::default() {
+        return;
+    }
+    let p = &app.palette;
+    let rect = app.view.sidebar_width_toggle_rects.button;
+    if rect == Rect::default() {
+        return;
+    }
+    let preset = current_sidebar_width_preset(app);
+    let style = Style::default().fg(p.text).add_modifier(Modifier::BOLD);
+    frame.render_widget(
+        Paragraph::new(Span::styled(preset.button_label(), style)),
+        rect,
+    );
+}
+
+fn current_sidebar_width_preset(app: &AppState) -> SidebarWidthPreset {
+    let narrow = SidebarWidthPreset::Narrow.width(app);
+    let normal = SidebarWidthPreset::Normal.width(app);
+    if app.sidebar_width <= narrow {
+        SidebarWidthPreset::Narrow
+    } else if app.sidebar_width <= normal {
+        SidebarWidthPreset::Normal
+    } else {
+        SidebarWidthPreset::Wide
     }
 }
 
@@ -1397,11 +1514,44 @@ mod tests {
         let cards = compute_workspace_card_areas(&app, area);
         let sections = compute_workspace_section_header_areas(&app, area);
 
-        assert_eq!(sections.len(), 1);
+        let work_section = sections
+            .iter()
+            .find(|section| section.section == crate::workspace::WorkspaceSection::Work)
+            .expect("work section header");
+        assert!(!sections
+            .iter()
+            .any(|section| section.section == crate::workspace::WorkspaceSection::Personal));
         assert_eq!(cards.len(), 1);
-        assert_eq!(cards[0].rect.x, sections[0].rect.x);
-        assert_eq!(cards[0].rect.width, sections[0].rect.width);
-        assert_eq!(cards[0].rect.y, sections[0].rect.y + 2);
+        assert_eq!(cards[0].rect.x, work_section.rect.x);
+        assert_eq!(cards[0].rect.width, work_section.rect.width);
+        assert_eq!(cards[0].rect.y, work_section.rect.y + 2);
+    }
+
+    #[test]
+    fn favorite_section_renders_above_work_section() {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut work = Workspace::test_new("work");
+        work.section = crate::workspace::WorkspaceSection::Work;
+        let mut favorite = Workspace::test_new("favorite");
+        favorite.section = crate::workspace::WorkspaceSection::Favorite;
+        app.workspaces = vec![work, favorite];
+        app.ensure_test_terminals();
+
+        let sections = compute_workspace_section_header_areas(&app, Rect::new(0, 0, 32, 24));
+        let favorite_y = sections
+            .iter()
+            .find(|section| section.section == crate::workspace::WorkspaceSection::Favorite)
+            .expect("favorite header")
+            .rect
+            .y;
+        let work_y = sections
+            .iter()
+            .find(|section| section.section == crate::workspace::WorkspaceSection::Work)
+            .expect("work header")
+            .rect
+            .y;
+
+        assert!(favorite_y < work_y);
     }
 
     #[test]

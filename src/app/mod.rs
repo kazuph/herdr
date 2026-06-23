@@ -37,6 +37,12 @@ const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500)
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
 const SIDEBAR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
 
+#[cfg(test)]
+pub(crate) fn config_env_test_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute, terminal,
@@ -142,6 +148,10 @@ fn repeat_key_identity(
     key: &crate::input::TerminalKey,
 ) -> (crossterm::event::KeyCode, crossterm::event::KeyModifiers) {
     (key.code, key.modifiers)
+}
+
+fn accepts_repeat_key_events(mode: Mode) -> bool {
+    matches!(mode, Mode::Terminal | Mode::Copy)
 }
 
 fn auto_updates_enabled(no_session: bool) -> bool {
@@ -366,6 +376,7 @@ impl App {
             detach_exits: no_session,
             detach_requested: false,
             request_new_workspace: false,
+            requested_new_workspace_section: None,
             request_new_tab: false,
             request_reload_config: false,
             request_agent_restore: false,
@@ -418,6 +429,7 @@ impl App {
                 pane_action_cycle_layout_rect: Rect::default(),
                 pane_action_rotate_rect: Rect::default(),
                 pane_action_equalize_rect: Rect::default(),
+                sidebar_width_toggle_rects: state::SidebarWidthToggleRects::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_menu_hit_area: Rect::default(),
                 toast_hit_area: Rect::default(),
@@ -428,7 +440,6 @@ impl App {
             workspace_press: None,
             tab_press: None,
             last_pane_click: None,
-            last_sidebar_blank_click: None,
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
@@ -880,11 +891,12 @@ impl App {
             |section: &str| invalid_sections.iter().any(|invalid| invalid == section);
 
         if !invalid_section("keys") {
-            match config.live_keybinds() {
-                Ok(live) => {
+            match config.live_keybinds_with_diagnostics() {
+                Ok((live, keybind_diagnostics)) => {
                     self.state.prefix_code = live.prefix.0;
                     self.state.prefix_mods = live.prefix.1;
                     self.state.keybinds = live.keybinds;
+                    diagnostics.extend(keybind_diagnostics);
                 }
                 Err(keybind_diagnostics) => {
                     diagnostics.extend(
@@ -1046,22 +1058,31 @@ impl App {
                     let key_id = repeat_key_identity(&key);
                     match key.kind {
                         crossterm::event::KeyEventKind::Press => {
-                            if self.state.mode == Mode::Terminal {
+                            let mode_before = self.state.mode;
+                            if accepts_repeat_key_events(mode_before) {
                                 self.suppressed_repeat_keys.remove(&key_id);
-                                self.handle_terminal_key_headless(key).await;
                             } else {
                                 self.suppressed_repeat_keys.insert(key_id);
+                            }
+                            if mode_before == Mode::Terminal {
+                                self.handle_terminal_key_headless(key).await;
+                            } else {
                                 self.handle_non_terminal_key(key);
+                            }
+                            if mode_before == Mode::Copy && self.state.mode != Mode::Copy {
+                                self.suppressed_repeat_keys.insert(key_id);
                             }
                         }
                         crossterm::event::KeyEventKind::Repeat => {
-                            if self.state.mode == Mode::Terminal
+                            if accepts_repeat_key_events(self.state.mode)
                                 && !self.suppressed_repeat_keys.contains(&key_id)
                             {
-                                self.handle_terminal_key_headless(key).await;
+                                if self.state.mode == Mode::Terminal {
+                                    self.handle_terminal_key_headless(key).await;
+                                } else {
+                                    self.handle_non_terminal_key(key);
+                                }
                             }
-                            // Repeats in non-terminal modes are ignored
-                            // (same as monolithic behavior).
                         }
                         crossterm::event::KeyEventKind::Release => {
                             self.suppressed_repeat_keys.remove(&key_id);
@@ -1190,7 +1211,6 @@ mod tests {
     use crate::terminal::TerminalRuntime;
     use crate::workspace::Workspace;
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-    use std::sync::{Mutex, OnceLock};
 
     fn raw_key(
         code: KeyCode,
@@ -1211,6 +1231,35 @@ mod tests {
         }
     }
 
+    fn app_with_copy_mode_scrollback() -> (App, crate::layout::PaneId) {
+        let mut app = test_app();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0]
+            .layout
+            .panes(ratatui::layout::Rect::new(0, 0, 20, 5));
+        let info = pane_infos[0].clone();
+        let mut bytes = Vec::new();
+        for line in 0..40 {
+            bytes.extend_from_slice(format!("line-{line:02}\n").as_bytes());
+        }
+        ws.tabs[0].runtimes.insert(
+            pane_id,
+            TerminalRuntime::test_with_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                16 * 1024,
+                &bytes,
+            ),
+        );
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.view.pane_infos = pane_infos;
+        app.state.enter_copy_mode();
+        (app, pane_id)
+    }
+
     fn test_app() -> App {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         App::new(
@@ -1222,9 +1271,8 @@ mod tests {
         )
     }
 
-    fn config_env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    fn config_env_lock() -> &'static std::sync::Mutex<()> {
+        crate::app::config_env_test_lock()
     }
 
     fn temp_config_path(name: &str) -> std::path::PathBuf {
@@ -1617,7 +1665,7 @@ mod tests {
     }
 
     #[test]
-    fn reload_config_keeps_current_keybinds_on_invalid_binding_but_applies_other_sections() {
+    fn reload_config_disables_invalid_binding_but_applies_valid_keymap_and_other_sections() {
         let _guard = config_env_lock().lock().unwrap();
         let path = temp_config_path("reload-config-invalid-keybind");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1630,7 +1678,6 @@ mod tests {
 
         let mut app = test_app();
         let original_prefix = (app.state.prefix_code, app.state.prefix_mods);
-        let original_keybinds = app.state.keybinds.new_workspace.clone();
         let report = app.reload_config();
 
         assert_eq!(report.status, crate::config::ConfigReloadStatus::Partial);
@@ -1638,7 +1685,7 @@ mod tests {
             (app.state.prefix_code, app.state.prefix_mods),
             original_prefix
         );
-        assert_eq!(app.state.keybinds.new_workspace, original_keybinds);
+        assert!(app.state.keybinds.new_workspace.bindings.is_empty());
         assert_eq!(
             app.state.toast_config.delivery,
             crate::config::ToastDelivery::Terminal
@@ -1648,7 +1695,7 @@ mod tests {
             .config_diagnostic
             .as_deref()
             .is_some_and(|message| {
-                message.contains("keys.new_workspace") && message.contains("kept current keybinds")
+                message.contains("keys.new_workspace") && message.contains("disabling binding")
             }));
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
@@ -1935,6 +1982,89 @@ mod tests {
         assert!(!handled);
         assert_eq!(app.state.mode, Mode::ReleaseNotes);
         assert!(app.state.release_notes.is_some());
+    }
+
+    #[tokio::test]
+    async fn copy_mode_handles_repeat_ctrl_u() {
+        let (mut app, pane_id) = app_with_copy_mode_scrollback();
+
+        let before = app
+            .state
+            .runtime_for_pane_in_workspace(0, pane_id)
+            .and_then(TerminalRuntime::scroll_metrics)
+            .unwrap()
+            .offset_from_bottom;
+        let press_handled = app
+            .handle_raw_input_event(raw_key(
+                KeyCode::Char('u'),
+                KeyModifiers::CONTROL,
+                KeyEventKind::Press,
+            ))
+            .await;
+        let after_press = app
+            .state
+            .runtime_for_pane_in_workspace(0, pane_id)
+            .and_then(TerminalRuntime::scroll_metrics)
+            .unwrap()
+            .offset_from_bottom;
+        let repeat_handled = app
+            .handle_raw_input_event(raw_key(
+                KeyCode::Char('u'),
+                KeyModifiers::CONTROL,
+                KeyEventKind::Repeat,
+            ))
+            .await;
+        let after_repeat = app
+            .state
+            .runtime_for_pane_in_workspace(0, pane_id)
+            .and_then(TerminalRuntime::scroll_metrics)
+            .unwrap()
+            .offset_from_bottom;
+
+        assert!(press_handled);
+        assert!(repeat_handled);
+        assert!(after_press > before);
+        assert!(after_repeat > after_press);
+    }
+
+    #[tokio::test]
+    async fn copy_mode_exit_press_suppresses_following_repeat() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.view.pane_infos = vec![crate::layout::PaneInfo {
+            id: focused,
+            rect: ratatui::layout::Rect::new(0, 0, 80, 24),
+            inner_rect: ratatui::layout::Rect::new(0, 0, 80, 24),
+            scrollbar_rect: None,
+            is_focused: true,
+        }];
+        app.state.enter_copy_mode();
+
+        let press_handled = app
+            .handle_raw_input_event(raw_key(
+                KeyCode::Char('y'),
+                KeyModifiers::empty(),
+                KeyEventKind::Press,
+            ))
+            .await;
+        let repeat_handled = app
+            .handle_raw_input_event(raw_key(
+                KeyCode::Char('y'),
+                KeyModifiers::empty(),
+                KeyEventKind::Repeat,
+            ))
+            .await;
+
+        assert!(press_handled);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(!repeat_handled);
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -2253,6 +2383,35 @@ mod tests {
             bytes::Bytes::from_static(b"hello agent")
         );
         assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"\r"));
+    }
+
+    #[test]
+    fn pane_notify_request_sets_clickable_toast_without_terminal_input() {
+        let mut app = test_app();
+        let workspace = Workspace::test_new("api-pane-notify");
+        let pane = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let pane_id = app.pane_info(0, pane).unwrap().pane_id;
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_pane_notify".into(),
+            method: crate::api::schema::Method::PaneNotify(crate::api::schema::PaneNotifyParams {
+                pane_id,
+                title: "pane job exited: 0".into(),
+                context: "p_2 · job-1 · log: /tmp/job.log".into(),
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"]["type"], "ok");
+        let toast = app.state.toast.as_ref().expect("pane notify toast");
+        assert_eq!(toast.kind, crate::app::state::ToastKind::Finished);
+        assert_eq!(toast.title, "pane job exited: 0");
+        assert_eq!(toast.context, "p_2 · job-1 · log: /tmp/job.log");
+        assert!(toast.target.is_some());
     }
 
     #[test]

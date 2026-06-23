@@ -78,6 +78,8 @@ pub enum Method {
     PaneRead(PaneReadParams),
     #[serde(rename = "pane.report_agent")]
     PaneReportAgent(PaneReportAgentParams),
+    #[serde(rename = "pane.notify")]
+    PaneNotify(PaneNotifyParams),
     #[serde(rename = "pane.clear_agent_authority")]
     PaneClearAgentAuthority(PaneClearAgentAuthorityParams),
     #[serde(rename = "pane.release_agent")]
@@ -285,6 +287,13 @@ pub struct PaneReportAgentParams {
     /// `[agent_restore]` to relaunch the agent after a server restart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneNotifyParams {
+    pub pane_id: String,
+    pub title: String,
+    pub context: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

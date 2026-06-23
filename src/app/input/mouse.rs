@@ -303,6 +303,11 @@ impl AppState {
                     return None;
                 }
 
+                if self.on_sidebar_width_toggle(mouse.column, mouse.row) {
+                    self.cycle_sidebar_width_preset();
+                    return None;
+                }
+
                 if !in_sidebar {
                     if let Some(action) = self.pane_action_bar_action_at(mouse.column, mouse.row) {
                         self.apply_pane_action_bar_action(action);
@@ -408,6 +413,7 @@ impl AppState {
                         && mouse.column < new_button.x + new_button.width;
                     if on_new_button {
                         self.request_new_workspace = true;
+                        self.requested_new_workspace_section = None;
                         return None;
                     }
 
@@ -438,6 +444,14 @@ impl AppState {
                                 self.set_workspace_list_offset_from_bottom(offset_from_bottom);
                             }
                         }
+                        return None;
+                    }
+
+                    if let Some(section) =
+                        self.workspace_section_new_button_at(mouse.column, mouse.row)
+                    {
+                        self.requested_new_workspace_section = Some(section);
+                        self.request_new_workspace = true;
                         return None;
                     }
 
@@ -795,26 +809,6 @@ impl AppState {
                         } else {
                             self.copy_selection();
                         }
-
-                        if self.selection.is_none()
-                            && self.sidebar_blank_at(mouse.column, mouse.row)
-                        {
-                            let now = Instant::now();
-                            let is_double_click =
-                                self.last_sidebar_blank_click.is_some_and(|(col, row, at)| {
-                                    col == mouse.column
-                                        && row == mouse.row
-                                        && now.saturating_duration_since(at)
-                                            <= PANE_DOUBLE_CLICK_WINDOW
-                                });
-                            if is_double_click {
-                                self.last_sidebar_blank_click = None;
-                                self.open_sidebar_blank_context_menu(mouse.column, mouse.row);
-                            } else {
-                                self.last_sidebar_blank_click =
-                                    Some((mouse.column, mouse.row, now));
-                            }
-                        }
                     }
                 }
             }
@@ -905,8 +899,6 @@ impl AppState {
                         list: MenuListState::new(0),
                     });
                     self.mode = Mode::ContextMenu;
-                } else if self.sidebar_blank_at(mouse.column, mouse.row) {
-                    self.open_sidebar_blank_context_menu(mouse.column, mouse.row);
                 }
             }
 

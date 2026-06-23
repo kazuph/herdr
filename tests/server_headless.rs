@@ -151,6 +151,32 @@ fn ping_socket(socket_path: &Path) -> String {
     response.trim().to_string()
 }
 
+fn send_request(socket_path: &Path, json: &str) -> serde_json::Value {
+    let mut stream = UnixStream::connect(socket_path).expect("should connect to API socket");
+    writeln!(stream, "{json}").unwrap();
+
+    let mut reader = BufReader::new(stream);
+    let mut response = String::new();
+    reader.read_line(&mut response).unwrap();
+    serde_json::from_str(&response).expect("response should be valid JSON")
+}
+
+fn run_cli(
+    config_home: &Path,
+    runtime_dir: &Path,
+    socket_path: &Path,
+    args: &[&str],
+) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_herdr"))
+        .args(args)
+        .env("XDG_CONFIG_HOME", config_home)
+        .env("XDG_RUNTIME_DIR", runtime_dir)
+        .env("HERDR_SOCKET_PATH", socket_path)
+        .env_remove("HERDR_ENV")
+        .output()
+        .expect("cli should run")
+}
+
 /// Sends a Hello message over the client socket and reads the Welcome response.
 /// Uses bincode v2 wire format: [u32LE length][bincode payload]
 /// bincode v2 standard config uses VarintEncoding:
@@ -723,6 +749,61 @@ fn no_hello_client_closed_within_five_seconds() {
         response.contains("pong"),
         "server should still respond to ping: {response}"
     );
+
+    cleanup_spawned_herdr(spawned, base);
+}
+
+#[test]
+fn wait_agent_status_returns_when_status_already_matches() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("herdr.sock");
+    let client_socket = runtime_dir.join("herdr-client.sock");
+
+    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+
+    let created = send_request(
+        &api_socket,
+        &format!(
+            r#"{{"id":"req_wait_current_1","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+
+    let reported = send_request(
+        &api_socket,
+        r#"{"id":"req_wait_current_2","method":"pane.report_agent","params":{"pane_id":"1-1","source":"test","agent":"test-agent","state":"blocked","message":"needs input"}}"#,
+    );
+    assert_eq!(reported["result"]["type"], "ok");
+
+    let waited = run_cli(
+        &config_home,
+        &runtime_dir,
+        &api_socket,
+        &[
+            "wait",
+            "agent-status",
+            "1-1",
+            "--status",
+            "blocked",
+            "--timeout",
+            "100",
+        ],
+    );
+    assert!(
+        waited.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&waited.stderr)
+    );
+    let waited_json: serde_json::Value =
+        serde_json::from_slice(&waited.stdout).expect("wait output should be JSON");
+    assert_eq!(waited_json["event"], "pane.agent_status_changed");
+    assert_eq!(waited_json["data"]["agent_status"], "blocked");
+    assert_eq!(waited_json["data"]["agent"], "test-agent");
 
     cleanup_spawned_herdr(spawned, base);
 }

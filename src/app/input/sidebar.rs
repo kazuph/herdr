@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 
-use crate::app::state::{AppState, Mode, ViewLayout};
+use crate::app::state::{AppState, Mode, SidebarWidthPreset, ViewLayout};
 
 use super::ScrollbarClickTarget;
 
@@ -160,67 +160,11 @@ impl AppState {
         Rect::new(ws_area.x, y, ws_area.width, 1)
     }
 
-    pub(crate) fn sidebar_blank_at(&self, col: u16, row: u16) -> bool {
-        if self.sidebar_collapsed {
-            return false;
-        }
-
-        let ws_area = self.workspace_list_rect();
-        if ws_area == Rect::default() {
-            return false;
-        }
-
-        if col < ws_area.x
-            || col >= ws_area.x + ws_area.width
-            || row < ws_area.y
-            || row >= ws_area.y + ws_area.height
-        {
-            return false;
-        }
-
-        if self.workspace_list_scrollbar_target_at(col, row).is_some() {
-            return false;
-        }
-
-        if self.on_workspace_panel_density_toggle(col, row) {
-            return false;
-        }
-
-        if self.workspace_at_row(row).is_some() {
-            return false;
-        }
-
-        if self.workspace_section_at_row(row).is_some() {
-            return false;
-        }
-
-        let footer = self.sidebar_footer_rect();
-        if footer.width > 0
-            && col >= footer.x
-            && col < footer.x + footer.width
-            && row >= footer.y
-            && row < footer.y + footer.height
-        {
-            return false;
-        }
-
-        true
-    }
-
-    pub(crate) fn open_sidebar_blank_context_menu(&mut self, col: u16, row: u16) {
-        self.context_menu = Some(crate::app::state::ContextMenuState {
-            kind: crate::app::state::ContextMenuKind::SidebarBlank,
-            x: col,
-            y: row,
-            list: crate::app::state::MenuListState::new(0),
-        });
-        self.mode = crate::app::state::Mode::ContextMenu;
-    }
-
     pub(crate) fn sidebar_new_button_rect(&self) -> Rect {
         let footer = self.sidebar_footer_rect();
         let width = 5u16.min(footer.width.max(1));
-        Rect::new(footer.x, footer.y, width, footer.height)
+        let x = footer.x + footer.width.saturating_sub(width);
+        Rect::new(x, footer.y, width, footer.height)
     }
 
     pub(crate) fn global_launcher_rect(&self) -> Rect {
@@ -235,8 +179,7 @@ impl AppState {
             6
         }
         .min(footer.width.max(1));
-        let x = footer.x + footer.width.saturating_sub(width);
-        Rect::new(x, footer.y, width, footer.height)
+        Rect::new(footer.x, footer.y, width, footer.height)
     }
 
     pub(crate) fn global_menu_labels(&self) -> Vec<&'static str> {
@@ -303,6 +246,31 @@ impl AppState {
         self.mark_session_dirty();
     }
 
+    pub(super) fn on_sidebar_width_toggle(&self, col: u16, row: u16) -> bool {
+        let rect = self.view.sidebar_width_toggle_rects.button;
+        rect.width > 0
+            && col >= rect.x
+            && col < rect.x + rect.width
+            && row >= rect.y
+            && row < rect.y + rect.height
+    }
+
+    pub(super) fn cycle_sidebar_width_preset(&mut self) {
+        let current = self.sidebar_width;
+        let narrow = SidebarWidthPreset::Narrow.width(self);
+        let normal = SidebarWidthPreset::Normal.width(self);
+        let next = if current <= narrow {
+            SidebarWidthPreset::Normal
+        } else if current <= normal {
+            SidebarWidthPreset::Wide
+        } else {
+            SidebarWidthPreset::Narrow
+        };
+        let next_width = next.width(self);
+        self.set_sidebar_width_preset(next);
+        self.sidebar_width = next_width;
+    }
+
     pub(super) fn on_sidebar_section_divider(&self, col: u16, row: u16) -> bool {
         if self.sidebar_collapsed {
             return false;
@@ -359,6 +327,28 @@ impl AppState {
 
         sections.iter().find_map(|area| {
             (row >= area.rect.y && row < area.rect.y + area.rect.height).then_some(area.section)
+        })
+    }
+
+    pub(super) fn workspace_section_new_button_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<crate::workspace::WorkspaceSection> {
+        let sections = if self.view.workspace_section_header_areas.is_empty() {
+            crate::ui::compute_workspace_section_header_areas(self, self.view.sidebar_rect)
+        } else {
+            self.view.workspace_section_header_areas.clone()
+        };
+
+        sections.iter().find_map(|area| {
+            let rect = crate::ui::workspace_section_new_button_rect(area.rect);
+            (rect.width > 0
+                && col >= rect.x
+                && col < rect.x + rect.width
+                && row >= rect.y
+                && row < rect.y + rect.height)
+                .then_some(area.section)
         })
     }
 
@@ -638,15 +628,9 @@ mod tests {
     use crossterm::event::{MouseButton, MouseEventKind};
     use ratatui::layout::Rect;
 
-    use super::super::{
-        app_for_mouse_test, capture_snapshot,
-        modal::{apply_context_menu_action, confirm_danger_accept},
-        mouse, unique_temp_path,
-    };
+    use super::super::{app_for_mouse_test, capture_snapshot, mouse, unique_temp_path};
     use crate::{
-        app::state::{
-            AgentPanelScope, ContextMenuKind, ContextMenuState, DragTarget, MenuListState, Mode,
-        },
+        app::state::{AgentPanelScope, ContextMenuKind, DragTarget, Mode},
         detect::Agent,
         workspace::{Workspace, WorkspaceSection},
     };
@@ -663,6 +647,30 @@ mod tests {
         ));
 
         assert_eq!(app.state.mode, Mode::GlobalMenu);
+    }
+
+    #[test]
+    fn sidebar_footer_orders_menu_left_and_new_right() {
+        let app = app_for_mouse_test();
+        let menu = app.state.global_launcher_rect();
+        let new = app.state.sidebar_new_button_rect();
+
+        assert!(menu.x < new.x);
+    }
+
+    #[test]
+    fn sidebar_footer_new_button_creates_plain_space() {
+        let mut app = app_for_mouse_test();
+        let new = app.state.sidebar_new_button_rect();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            new.x + new.width.saturating_sub(1),
+            new.y,
+        ));
+
+        assert!(app.state.request_new_workspace);
+        assert_eq!(app.state.requested_new_workspace_section, None);
     }
 
     #[test]
@@ -695,7 +703,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             menu.x + 2,
-            menu.y + 2,
+            menu.y + 4,
         ));
 
         assert_eq!(app.state.mode, Mode::KeybindHelp);
@@ -715,7 +723,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             menu.x + 2,
-            menu.y + 1,
+            menu.y + 3,
         ));
 
         assert_eq!(app.state.mode, Mode::Settings);
@@ -735,7 +743,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             menu.x + 2,
-            menu.y + 3,
+            menu.y + 5,
         ));
 
         assert!(app.state.request_reload_config);
@@ -758,15 +766,17 @@ mod tests {
         assert_eq!(
             app.state.global_menu_labels(),
             vec![
+                "New workspace",
+                "New tab",
                 "settings",
                 "keybinds",
                 "reload config",
                 "vim mode off",
-                "sidebar narrow",
-                "sidebar normal",
-                "sidebar wide",
                 "update ready",
-                "detach"
+                "Restore agents...",
+                "detach",
+                "Stop server",
+                "Restart"
             ]
         );
         assert!(!app.state.should_quit);
@@ -787,14 +797,16 @@ mod tests {
         assert_eq!(
             app.state.global_menu_labels(),
             vec![
+                "New workspace",
+                "New tab",
                 "settings",
                 "keybinds",
                 "reload config",
                 "vim mode off",
-                "sidebar narrow",
-                "sidebar normal",
-                "sidebar wide",
-                "detach"
+                "Restore agents...",
+                "detach",
+                "Stop server",
+                "Restart"
             ]
         );
 
@@ -818,15 +830,17 @@ mod tests {
         assert_eq!(
             app.state.global_menu_labels(),
             vec![
+                "New workspace",
+                "New tab",
                 "settings",
                 "keybinds",
                 "reload config",
                 "vim mode off",
-                "sidebar narrow",
-                "sidebar normal",
-                "sidebar wide",
                 "what's new",
-                "detach"
+                "Restore agents...",
+                "detach",
+                "Stop server",
+                "Restart"
             ]
         );
     }
@@ -1756,7 +1770,124 @@ mod tests {
     }
 
     #[test]
-    fn right_click_sidebar_blank_opens_context_menu() {
+    fn clicking_sidebar_width_toggle_applies_three_presets() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.default_sidebar_width = 26;
+        app.state.sidebar_min_width = 18;
+        app.state.sidebar_max_width = 36;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+
+        let toggle = app.state.view.sidebar_width_toggle_rects.button;
+        assert_eq!(toggle.x, app.state.view.sidebar_rect.x);
+        assert_eq!(
+            crate::app::state::SidebarWidthPreset::Normal.button_label(),
+            "[normal]"
+        );
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ));
+        assert_eq!(app.state.sidebar_width, 27);
+        assert_eq!(
+            app.state.sidebar_width_source,
+            crate::app::state::SidebarWidthSource::Manual
+        );
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+        let toggle = app.state.view.sidebar_width_toggle_rects.button;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ));
+        assert_eq!(app.state.sidebar_width, 18);
+        assert_eq!(
+            app.state.sidebar_width_source,
+            crate::app::state::SidebarWidthSource::Manual
+        );
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+        let toggle = app.state.view.sidebar_width_toggle_rects.button;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ));
+        assert_eq!(app.state.sidebar_width, 26);
+        assert_eq!(
+            app.state.sidebar_width_source,
+            crate::app::state::SidebarWidthSource::ConfigDefault
+        );
+        let snapshot = capture_snapshot(&app.state);
+        assert_eq!(snapshot.sidebar_width, Some(26));
+    }
+
+    #[test]
+    fn clicking_existing_section_new_button_requests_workspace_in_that_section() {
+        let mut app = app_for_mouse_test();
+        let mut work = Workspace::test_new("work");
+        work.section = WorkspaceSection::Work;
+        app.state.workspaces = vec![Workspace::test_new("a"), work];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+
+        let work_header = app
+            .state
+            .view
+            .workspace_section_header_areas
+            .iter()
+            .find(|area| area.section == WorkspaceSection::Work)
+            .expect("work header should be visible when work section has spaces");
+        let button = crate::ui::workspace_section_new_button_rect(work_header.rect);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            button.x + 1,
+            button.y,
+        ));
+
+        assert!(app.state.request_new_workspace);
+        assert_eq!(
+            app.state.requested_new_workspace_section,
+            Some(WorkspaceSection::Work)
+        );
+    }
+
+    #[test]
+    fn empty_sections_do_not_render_header_only_for_new_button() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+
+        assert!(!app
+            .state
+            .view
+            .workspace_section_header_areas
+            .iter()
+            .any(|area| area.section == WorkspaceSection::Favorite));
+        assert!(!app
+            .state
+            .view
+            .workspace_section_header_areas
+            .iter()
+            .any(|area| area.section == WorkspaceSection::Work));
+        assert!(!app
+            .state
+            .view
+            .workspace_section_header_areas
+            .iter()
+            .any(|area| area.section == WorkspaceSection::Personal));
+    }
+
+    #[test]
+    fn right_click_sidebar_blank_does_not_open_context_menu() {
         let mut app = app_for_mouse_test();
         app.state.workspaces = vec![Workspace::test_new("a")];
         app.state.active = Some(0);
@@ -1772,205 +1903,8 @@ mod tests {
             blank_row,
         ));
 
-        assert_eq!(app.state.mode, Mode::ContextMenu);
-        assert!(matches!(
-            app.state.context_menu.as_ref().map(|menu| menu.kind),
-            Some(ContextMenuKind::SidebarBlank)
-        ));
-    }
-
-    #[test]
-    fn sidebar_blank_context_menu_has_expected_items() {
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(0),
-        };
-
-        assert_eq!(
-            menu.items(),
-            &[
-                "New workspace",
-                "New tab",
-                "--",
-                "Settings",
-                "Keybinds",
-                "Reload config",
-                "--",
-                "Restore agents...",
-                "--",
-                "Detach",
-                "--",
-                "Stop server",
-                "Restart",
-            ]
-        );
-        assert!(menu.is_separator(2));
-        assert!(menu.is_separator(6));
-        assert!(menu.is_separator(8));
-        assert!(menu.is_separator(10));
-    }
-
-    #[test]
-    fn right_click_sidebar_blank_menu_stop_server_confirms_before_quit() {
-        let mut app = app_for_mouse_test();
-
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(11),
-        };
-
-        apply_context_menu_action(&mut app.state, menu, 11);
-
-        assert_eq!(app.state.mode, Mode::ConfirmDanger);
-        assert!(!app.state.should_quit);
-        confirm_danger_accept(&mut app.state);
-        assert!(app.state.should_quit);
-        assert!(!app.state.request_restart);
-    }
-
-    #[test]
-    fn right_click_sidebar_blank_menu_restart_confirms_before_quit() {
-        let mut app = app_for_mouse_test();
-
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(12),
-        };
-
-        apply_context_menu_action(&mut app.state, menu, 12);
-
-        assert_eq!(app.state.mode, Mode::ConfirmDanger);
-        assert!(!app.state.should_quit);
-        confirm_danger_accept(&mut app.state);
-        assert!(app.state.should_quit);
-        assert!(app.state.request_restart);
-    }
-
-    #[test]
-    fn right_click_sidebar_blank_menu_restore_agents_confirms_before_request() {
-        let mut app = app_for_mouse_test();
-
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(7),
-        };
-
-        apply_context_menu_action(&mut app.state, menu, 7);
-
-        assert_eq!(app.state.mode, Mode::ConfirmDanger);
-        assert!(!app.state.request_agent_restore);
-        confirm_danger_accept(&mut app.state);
-        assert!(app.state.request_agent_restore);
-        assert!(!app.state.should_quit);
-    }
-
-    #[test]
-    fn right_click_sidebar_blank_menu_settings_opens_settings() {
-        let mut app = app_for_mouse_test();
-
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(3),
-        };
-
-        apply_context_menu_action(&mut app.state, menu, 3);
-
-        assert_eq!(app.state.mode, Mode::Settings);
-    }
-
-    #[test]
-    fn right_click_sidebar_blank_menu_keybinds_opens_help() {
-        let mut app = app_for_mouse_test();
-
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(4),
-        };
-
-        apply_context_menu_action(&mut app.state, menu, 4);
-
-        assert_eq!(app.state.mode, Mode::KeybindHelp);
-    }
-
-    #[test]
-    fn right_click_sidebar_blank_menu_detach_sets_flag() {
-        let mut app = app_for_mouse_test();
-        app.state.detach_exits = false;
-
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(9),
-        };
-
-        apply_context_menu_action(&mut app.state, menu, 9);
-
-        assert!(app.state.detach_requested);
-        assert!(!app.state.should_quit);
-    }
-
-    #[test]
-    fn right_click_sidebar_blank_menu_reload_config_sets_flag() {
-        let mut app = app_for_mouse_test();
-
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(5),
-        };
-
-        apply_context_menu_action(&mut app.state, menu, 5);
-
-        assert!(app.state.request_reload_config);
-    }
-
-    #[test]
-    fn right_click_sidebar_blank_menu_new_workspace_sets_flag() {
-        let mut app = app_for_mouse_test();
-
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(0),
-        };
-
-        apply_context_menu_action(&mut app.state, menu, 0);
-
-        assert!(app.state.request_new_workspace);
-    }
-
-    #[test]
-    fn right_click_sidebar_blank_menu_new_tab_opens_dialog() {
-        let mut app = app_for_mouse_test();
-        app.state.workspaces = vec![Workspace::test_new("a")];
-        app.state.active = Some(0);
-
-        let menu = ContextMenuState {
-            kind: ContextMenuKind::SidebarBlank,
-            x: 0,
-            y: 0,
-            list: MenuListState::new(1),
-        };
-
-        apply_context_menu_action(&mut app.state, menu, 1);
-
-        assert_eq!(app.state.mode, Mode::RenameTab);
-        assert!(app.state.creating_new_tab);
+        assert_ne!(app.state.mode, Mode::ContextMenu);
+        assert!(app.state.context_menu.is_none());
     }
 
     #[test]
@@ -1995,7 +1929,7 @@ mod tests {
     }
 
     #[test]
-    fn double_click_sidebar_blank_opens_context_menu() {
+    fn double_click_sidebar_blank_does_not_open_context_menu() {
         let mut app = app_for_mouse_test();
         app.state.workspaces = vec![Workspace::test_new("a")];
         app.state.active = Some(0);
@@ -2010,10 +1944,7 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, blank_row));
         app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 2, blank_row));
 
-        assert_eq!(app.state.mode, Mode::ContextMenu);
-        assert!(matches!(
-            app.state.context_menu.as_ref().map(|menu| menu.kind),
-            Some(ContextMenuKind::SidebarBlank)
-        ));
+        assert_ne!(app.state.mode, Mode::ContextMenu);
+        assert!(app.state.context_menu.is_none());
     }
 }

@@ -4,6 +4,8 @@
 
 ### Added
 - Added workspace sidebar sections for `⭐ favorites`, `💼 work`, and `🏠 personal`, with right-click workspace actions to assign sections and clickable section headers to collapse or expand each section.
+- Added `[new]` buttons to workspace sidebar section headers so new spaces can be created directly inside favorites, work, personal, or spaces.
+- Added a single three-step sidebar width toggle at the bottom of the agents panel for narrow, normal, and expanded widths.
 - Pane context menus can now be opened with a double-click in the main content area, matching the existing right-click menu without replacing text selection or scrolling.
 - Text selection copies now show a short sidebar confirmation such as `Copied 3 lines`.
 - Added `ui.show_tab_bar = false` to hide the main content tab bar when tabs are not part of your workflow.
@@ -12,22 +14,32 @@
 - The agents panel now follows expanded workspace sections, so agents in collapsed sections stay hidden while you focus on the visible spaces.
 - Added sidebar Git worktree actions for creating a new branch checkout, opening existing worktrees, and removing a selected linked checkout.
 - Added a touch-friendly workspace menu trigger: tapping the active workspace card opens the same context menu as right click.
-- Added global menu sidebar width presets for narrow, normal, and wide widths, giving touch-only clients a non-drag resize path.
+- Added a single bottom-left sidebar width toggle for narrow, normal, and wide widths, giving touch-only clients a non-drag resize path without duplicating controls in the menu.
 - Added a workspace context menu Duplicate action that opens a new workspace with the same tab, pane layout, and working directories.
 - Pane context menus can now move the selected pane to the left, right, upper, or lower root split and equalize pane sizes.
 - Pane context menus can now rotate pane positions forward or backward while keeping the current split layout and each pane's ID/terminal pairing intact.
-- Workspace and pane context menus can now start Claude Code, Codex, or Gemini directly as agent panes instead of creating a plain terminal first.
+- Workspace and pane context menus can now start Claude Code, Codex, or agy directly as agent panes instead of creating a plain terminal first.
 - Added a bottom pane action bar for cycling layouts, rotating panes, and equalizing pane sizes, plus clickable pane titles that toggle zoom and show a `ZOOM` prefix while active.
 - Added `ui.vim_mode = true` for Vim-style terminal control: Normal mode uses `j`/`k` for spaces, `h`/`l` for panes, `i`/`Enter` for Insert mode, and `Ctrl+[`/`Ctrl+]` for pane focus history or leaving Insert mode.
 - `herdr pane current` now falls back to resolving the calling process session when `HERDR_PANE_ID` is not set, instead of relying on focus inference.
-- Added `herdr pane run-notify` for long-running pane commands: output streams in the target pane, a job log is saved, and the parent pane receives an exit notification with a tail sample.
+- Added `herdr pane run-notify` for long-running pane commands: output streams in the target pane, a job log is saved, and Herdr shows an exit toast with a tail sample and job-log pointer.
 - Added `[agent_restore]` to relaunch agent CLIs in restored panes after a server restart: per-agent command templates with a `{session_id}` placeholder (built-in defaults for claude and codex), opt-in automatic relaunch after startup via `enabled = true` and `restore_delay_ms`, and a manual `herdr agent restore [--dry-run]` command. Session ids come from `pane.report_agent`'s new optional `session_id` field (CLI `--session-id`) when integrations report them, with filesystem discovery of the latest claude/codex session per pane cwd as the fallback.
 - Added keyboard copy mode for focused panes: `prefix+[` enters a Vim-style scrollback view, `v`/`V` selects text, and `y` or Enter copies it to the system clipboard.
 
 ### Fixed
+- Git worktree creation now checks out an existing local branch instead of failing when the branch already exists.
+- Git worktree actions now also work when the selected workspace points at a standalone bare repository.
+- Plain-text pane reads no longer duplicate wide CJK or emoji spacer cells.
+- Empty Ghostty mouse encodings are no longer forwarded to panes.
+- GitHub Copilot CLI accept prompts using `esc cancel` and `enter accept` are detected as blocked instead of working.
+- Config reload now applies a valid keymap while disabling only invalid action bindings when the prefix itself is valid.
+- Alternate F1-F4 escape sequences such as `ESC[11~` through `ESC[14~` now reach pane apps.
+- Numeric keypad keys sent through the Kitty keyboard protocol now enter their digits and operators instead of being dropped.
 - The default expanded sidebar maximum width is now 72 columns, making long branch names easier to read.
 - Panes no longer inherit outer `NO_COLOR`, so Claude Code, Codex, and other nested TUI status helpers keep color inside Herdr.
 - Pane default colors are restored after a child process exits when that process changed the terminal defaults.
+- Copy mode now keeps the help bar from covering the cursor when the focused terminal cursor starts on the bottom row.
+- Copy mode now handles repeated keys such as held `Ctrl-u` and `Ctrl-d` for continuous half-page scrolling.
 - Agent notifications now title background events as `number workspace-OSC title` and use the latest response excerpt as the body.
 - Agent notification bodies now skip Codex status chrome such as context and quota lines, so the toast shows the agent's latest message when available.
 - Agent notification bodies no longer show separator rows ("────…") or composer/status-line chrome; they now extract the agent's latest response from the `•`/`⏺` message marker for Codex and Claude Code, including the lines that follow it.
@@ -45,16 +57,21 @@
 - Workspace sidebar git details now align with workspace names and include working tree line stats like `+123 -11`.
 - Removed the extra leading space before the first workspace Git diff label.
 - Workspace sections now leave one blank row before nested workspace card content, while workspace card highlights still span the full sidebar width.
+- Empty workspace sections no longer render a header only to show `[new]`.
+- Sidebar footer actions now render as `[menu]` on the left and `[new]` on the right; footer `[new]` always creates a normal space.
+- The expanded sidebar width preset is now capped around two thirds of the configured maximum instead of jumping to the full maximum.
 - Workspace context menus now group section actions behind a separator.
 - Selection copy confirmations now expire correctly in persistent server sessions.
 - Git worktree dialogs now keep action buttons below the worktree list instead of overlapping list content.
 - Workspace names now use the main repository name for linked Git worktrees, and plain shell workspaces no longer append terminal OSC titles such as `user@host`.
 - Pane frames now always render with pane IDs and labels, including single-pane terminals and renamed panes.
 - The settings popup no longer shows the old agent border label toggle because pane titles are now always visible.
-- Added a spaces sidebar context menu on right click or double click in blank workspace-list areas, with workspace actions plus settings, keybinds, reload config, stop server, restart, and detach.
+- The global `[menu]` now owns workspace actions plus settings, keybinds, reload config, restore agents, stop server, restart, and detach; blank sidebar areas no longer open a separate context menu.
 - Mobile switcher workspace lists now use the same collapsible workspace sections as the desktop sidebar.
 - `herdr --remote` now offers to restart the remote server after installing or replacing a remote binary, or when the running server version differs, even if the client/server protocol is still compatible.
 - Restored sessions now preserve saved pane IDs and workspace-local pane numbers so agent-targeted commands continue to point at the same panes after restart.
+- `herdr pane run-notify` now reports completion through a Herdr toast instead of submitting notification text into the parent shell.
+- `herdr wait agent-status` now returns immediately when the pane already has the requested status instead of waiting for a future status-change event.
 
 ### Breaking Changes
 - The client/server protocol is now version 10. Stop and restart any running v0.6.0 server before attaching with this release.

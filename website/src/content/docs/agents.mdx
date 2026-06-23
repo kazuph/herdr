@@ -84,6 +84,10 @@ You can place that agent in a specific workspace or tab:
 herdr agent start docs --workspace 1 --tab 1-1 -- claude
 ```
 
+You can also start common agents from the UI. Right-click a workspace or pane
+and choose Claude Code, Codex, or agy; Herdr creates a new split pane and
+marks it as an agent target immediately.
+
 Use `herdr pane ...` commands for ordinary terminals, servers, tests, shells, and low-level terminal input. For example, use `pane split` and `pane run` for `cargo test`, not `agent start`, unless that terminal is intentionally being treated as an agent target.
 
 ## Attach directly to an agent

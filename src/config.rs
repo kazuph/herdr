@@ -59,13 +59,14 @@ impl Config {
             .collect()
     }
 
-    pub fn live_keybinds(&self) -> Result<LiveKeybindConfig, Vec<String>> {
+    pub(crate) fn live_keybinds_with_diagnostics(
+        &self,
+    ) -> Result<(LiveKeybindConfig, Vec<String>), Vec<String>> {
         let (prefix_diag, prefix, keybind_diags, keybinds) = self.validated_keybinds();
-        let diagnostics: Vec<String> = prefix_diag.into_iter().chain(keybind_diags).collect();
-        if diagnostics.is_empty() {
-            Ok(LiveKeybindConfig { prefix, keybinds })
+        if let Some(prefix_diag) = prefix_diag {
+            Err(std::iter::once(prefix_diag).chain(keybind_diags).collect())
         } else {
-            Err(diagnostics)
+            Ok((LiveKeybindConfig { prefix, keybinds }, keybind_diags))
         }
     }
 }

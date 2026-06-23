@@ -31,14 +31,26 @@ impl App {
 
     /// Create a workspace with a real PTY (needs event_tx).
     pub(crate) fn create_workspace(&mut self) {
+        let requested_section = self.state.requested_new_workspace_section.take();
         let initial_cwd = self
             .workspace_creation_source()
             .and_then(|ws_idx| self.seed_cwd_from_workspace(ws_idx))
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| std::path::PathBuf::from("/"));
-        if let Err(e) = self.create_workspace_with_options(initial_cwd, true) {
-            error!(err = %e, "failed to create workspace");
-            self.state.mode = Mode::Navigate;
+        match self.create_workspace_with_options(initial_cwd, true) {
+            Ok(ws_idx) => {
+                if let Some(section) = requested_section {
+                    if let Some(ws) = self.state.workspaces.get_mut(ws_idx) {
+                        ws.section = section;
+                    }
+                    self.state.collapsed_workspace_sections.remove(&section);
+                    self.schedule_session_save();
+                }
+            }
+            Err(e) => {
+                error!(err = %e, "failed to create workspace");
+                self.state.mode = Mode::Navigate;
+            }
         }
     }
 

@@ -337,12 +337,17 @@ fn detect_github_copilot(content: &str) -> AgentState {
     if lower.contains("confirm with") && lower.contains("enter") {
         return AgentState::Blocked;
     }
+    let has_cancel_hint = lower.contains("esc to cancel") || lower.contains("esc cancel");
+    let has_accept_hint = lower.contains("enter to select")
+        || lower.contains("enter to confirm")
+        || lower.contains("enter to submit")
+        || lower.contains("enter accept");
+    if has_cancel_hint && has_accept_hint {
+        return AgentState::Blocked;
+    }
 
     // Working
-    if lower.contains("esc to cancel")
-        || lower.contains("esc cancel")
-        || has_copilot_status_activity(content)
-    {
+    if has_cancel_hint || has_copilot_status_activity(content) {
         return AgentState::Working;
     }
 
@@ -1422,6 +1427,14 @@ mod tests {
     fn copilot_waiting_do_you_want() {
         assert_eq!(
             detect_github_copilot("│ do you want to apply?"),
+            AgentState::Blocked
+        );
+    }
+
+    #[test]
+    fn copilot_waiting_accept_prompt() {
+        assert_eq!(
+            detect_github_copilot("Proceed with change?\nesc cancel  enter accept"),
             AgentState::Blocked
         );
     }

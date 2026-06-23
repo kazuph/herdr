@@ -79,6 +79,7 @@ The default keymap is prefix-first and avoids direct shortcuts that can steal in
 detach = "prefix+q"
 workspace_picker = "prefix+w"
 new_workspace = "prefix+shift+n"
+new_worktree = "prefix+shift+g"
 rename_workspace = "prefix+shift+w"
 close_workspace = "prefix+shift+d"
 new_tab = "prefix+c"
@@ -94,10 +95,15 @@ focus_pane_right = "prefix+l"
 split_vertical = "prefix+v"
 split_horizontal = "prefix+minus"
 close_pane = "prefix+x"
+copy_mode = "prefix+["
 zoom = "prefix+z"
 resize_mode = "prefix+r"
 toggle_sidebar = "prefix+b"
 ```
+
+`copy_mode` opens a Vim-style scrollback view for the focused pane. Use
+`h`/`j`/`k`/`l` to move, `v` or `V` to select, and `y` or Enter to copy the
+selection to the system clipboard.
 
 Optional actions are unset by default. Bind them with `prefix+` for prefix-mode behavior, or with an explicit modified chord when you intentionally want a direct shortcut:
 
@@ -105,12 +111,28 @@ Optional actions are unset by default. Bind them with `prefix+` for prefix-mode 
 [keys]
 previous_workspace = "prefix+shift+left"
 next_workspace = "prefix+shift+right"
+open_worktree = "prefix+shift+o"
+remove_worktree = "prefix+shift+delete"
 next_tab = ["prefix+n", "ctrl+alt+]"]
 ```
 
 Key strings accept plain keys, modifier combinations such as `ctrl+a`, `shift+n`, `alt+1`, `cmd+k`, and special keys such as `enter`, `tab`, `esc`, `left`, `right`, `up`, and `down`. Named punctuation such as `minus`, `comma`, `ampersand`, `plus`, and `backtick` is also accepted. Plain direct printable keys such as `n` are unsafe because they intercept typing; use `prefix+n` unless you intentionally want a direct binding. Alt, Cmd/Super, and punctuation with modifiers depend on your terminal and tmux settings.
 
 If you have old custom keybindings and want the new defaults, run `herdr config reset-keys`. Herdr backs up `config.toml`, removes `[keys]` and `[[keys.command]]`, and uses built-in v2 defaults after restart or `herdr server reload-config`.
+
+## Git worktrees
+
+Workspace context menus can create a new Git worktree, open an existing checkout,
+or remove the selected linked checkout. New worktrees are created under:
+
+```toml
+[worktrees]
+directory = "~/.herdr/worktrees"
+```
+
+`new_worktree` defaults to `prefix+shift+g`. `open_worktree` and
+`remove_worktree` are unset by default so you can choose direct keyboard access
+only when you need it.
 
 ## Indexed jumps
 
@@ -181,20 +203,29 @@ Common options:
 [ui]
 sidebar_width = 32
 sidebar_min_width = 18
-sidebar_max_width = 36
+sidebar_max_width = 72
 mouse_capture = true
 confirm_close = true
 prompt_new_tab_name = true
+show_tab_bar = true
 show_agent_labels_on_pane_borders = false
+vim_mode = false
 agent_panel_scope = "all"
+workspace_panel_density = "full"
 accent = "cyan"
 ```
 
-`sidebar_min_width` and `sidebar_max_width` control the expanded sidebar's resize bounds in columns. The defaults are 18 and 36.
+`sidebar_min_width` and `sidebar_max_width` control the expanded sidebar's resize bounds in columns. The defaults are 18 and 72.
 
-`agent_panel_scope` can be `all` or `current`. Use `current` if you only want the agent panel to show agents in the active workspace.
+`agent_panel_scope` can be `all` or `sort`. Use `sort` to group agents that need confirmation first, then running agents, then confirmed idle agents.
 
-`confirm_close` controls whether closing a workspace asks for confirmation. `prompt_new_tab_name` controls whether new tabs ask for a label first.
+`workspace_panel_density` can be `full` or `slim`. Use `slim` to keep workspace cards on one line.
+
+The default pane split bindings include tmux-style `prefix+percent` for side-by-side splits and `prefix+double_quote` for stacked splits. The older `prefix+v` and `prefix+minus` bindings remain available too.
+
+`confirm_close` controls whether closing a workspace asks for confirmation. `prompt_new_tab_name` controls whether new tabs ask for a label first. Set `show_tab_bar = false` to hide the main content tab bar.
+
+Set `vim_mode = true` to start terminal input in Vim Normal mode. Normal mode uses `j`/`k` for spaces, `h`/`l` for panes, `i` or `Enter` for Insert mode, and `Ctrl+[`/`Ctrl+]` for pane focus history. In Insert mode, keys are forwarded to the pane except `Ctrl+[`/`Ctrl+]`, which return to Normal mode.
 
 Set `mouse_capture = false` if you want your terminal to handle normal clicks, such as command-clicking URLs.
 

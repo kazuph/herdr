@@ -191,6 +191,7 @@ press `ctrl+b` to enter prefix mode. default actions are prefix-first and tmux-l
 | `prefix+1..9` | switch tab |
 | `prefix+w` | workspace navigation |
 | `prefix+shift+n` | new workspace |
+| `prefix+shift+g` | new git worktree |
 | `prefix+shift+w` | rename workspace |
 | `prefix+shift+d` | close workspace |
 | `prefix+h/j/k/l` | focus pane |

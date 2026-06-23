@@ -281,26 +281,23 @@ impl App {
         create.creating = true;
         create.error = None;
 
-        let command = crate::worktree::build_worktree_add_new_branch_command(
-            &create.source_repo_root,
-            &create.checkout_path,
-            &create.branch,
-            "HEAD",
-        );
         let parent_dir = create
             .checkout_path
             .parent()
             .map(std::path::Path::to_path_buf);
         let path = create.checkout_path.clone();
+        let source_repo_root = create.source_repo_root.clone();
+        let branch = create.branch.clone();
         let event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
             let result = if let Some(parent_dir) = parent_dir {
-                std::fs::create_dir_all(&parent_dir)
-                    .map_err(|err| err.to_string())
-                    .and_then(|()| crate::worktree::run_worktree_command(&command))
+                std::fs::create_dir_all(&parent_dir).map_err(|err| err.to_string())
             } else {
-                crate::worktree::run_worktree_command(&command)
-            };
+                Ok(())
+            }
+            .and_then(|()| {
+                crate::worktree::run_worktree_add_command(&source_repo_root, &path, &branch, "HEAD")
+            });
             let _ = event_tx.blocking_send(AppEvent::WorktreeAddFinished(WorktreeAddResult {
                 path,
                 result,

@@ -10,10 +10,11 @@ use crate::api;
 use crate::api::schema::{
     AgentReadParams, AgentRenameParams, AgentSendParams, AgentStartParams, AgentStatus,
     AgentTarget, EmptyParams, Method, OutputMatch, PaneAgentState, PaneCurrentParams,
-    PaneListParams, PaneReadParams, PaneRenameParams, PaneReportAgentParams, PaneSendKeysParams,
-    PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams, PingParams,
-    ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams, TabListParams,
-    TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
+    PaneListParams, PaneNotifyParams, PaneReadParams, PaneRenameParams, PaneReportAgentParams,
+    PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams,
+    PingParams, ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams,
+    TabListParams, TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams,
+    WorkspaceTarget,
 };
 
 const CLI_SUBMIT_DELAY: Duration = Duration::from_millis(500);
@@ -1959,6 +1960,22 @@ fn wait_agent_status(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     };
 
+    let current = send_request(&Request {
+        id: "cli:wait:agent-status:current".into(),
+        method: Method::PaneGet(PaneTarget {
+            pane_id: pane_id.clone(),
+        }),
+    })?;
+    if current.get("error").is_some() {
+        eprintln!("{}", serde_json::to_string(&current).unwrap());
+        return Ok(1);
+    }
+    let desired_status_value = serde_json::to_value(agent_status).map_err(std::io::Error::other)?;
+    if current["result"]["pane"]["agent_status"] == desired_status_value {
+        print_current_agent_status_event(&current)?;
+        return Ok(0);
+    }
+
     wait_for_agent_change(
         Request {
             id: "cli:wait:agent-status".into(),
@@ -1972,6 +1989,29 @@ fn wait_agent_status(args: &[String]) -> std::io::Result<i32> {
         timeout_ms,
         "timed out waiting for agent status change",
     )
+}
+
+fn print_current_agent_status_event(response: &serde_json::Value) -> std::io::Result<()> {
+    let pane = &response["result"]["pane"];
+    let mut data = serde_json::Map::new();
+    data.insert("pane_id".into(), pane["pane_id"].clone());
+    data.insert("workspace_id".into(), pane["workspace_id"].clone());
+    data.insert("agent_status".into(), pane["agent_status"].clone());
+    if !pane["agent"].is_null() {
+        data.insert("agent".into(), pane["agent"].clone());
+    }
+    if !pane["custom_status"].is_null() {
+        data.insert("custom_status".into(), pane["custom_status"].clone());
+    }
+    let event = serde_json::json!({
+        "event": "pane.agent_status_changed",
+        "data": data,
+    });
+    println!(
+        "{}",
+        serde_json::to_string(&event).map_err(std::io::Error::other)?
+    );
+    Ok(())
 }
 
 fn wait_for_agent_change(
@@ -2210,10 +2250,11 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
     }
 
     let sample = tail.lock().unwrap().clone();
-    let message = pane_notify_message(&job_id, &target, &command, code, &log_path, &sample);
-    let _ = send_ok_request(Method::AgentSend(AgentSendParams {
-        target: parent,
-        text: message,
+    let (title, context) = pane_notify_toast(&job_id, &target, &command, code, &log_path, &sample);
+    let _ = send_ok_request(Method::PaneNotify(PaneNotifyParams {
+        pane_id: parent,
+        title,
+        context,
     }));
 
     Ok(code.unwrap_or(1))
@@ -2265,26 +2306,27 @@ fn append_tail_sample(tail: &Arc<Mutex<String>>, chunk: &str) {
     }
 }
 
-fn pane_notify_message(
+fn pane_notify_toast(
     job_id: &str,
     target: &str,
     command: &str,
     code: Option<i32>,
     log_path: &std::path::Path,
     sample: &str,
-) -> String {
-    let mut message = format!(
-        "[herdr] pane job exited\npane: {target}\njob: {job_id}\nexit: {}\ncommand: {}\n\ndetails: herdr pane job-log {job_id}\nlog: {}\n",
-        exit_code_label(code),
-        truncate_for_message(command, 160),
-        log_path.display()
+) -> (String, String) {
+    let title = format!("pane job exited: {}", exit_code_label(code));
+    let mut context = format!(
+        "{target} · {job_id} · {}",
+        truncate_for_message(command, 80)
     );
     let sample = sample.trim();
     if !sample.is_empty() {
-        message.push_str("\n--- tail sample ---\n");
-        message.push_str(sample);
+        context.push_str(" · tail: ");
+        context.push_str(&truncate_for_message(sample, 120));
     }
-    message
+    context.push_str(" · log: ");
+    context.push_str(&truncate_for_message(&log_path.display().to_string(), 120));
+    (title, context)
 }
 
 fn truncate_for_message(value: &str, max_chars: usize) -> String {
@@ -2587,7 +2629,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane job-log <job_id>");
     eprintln!("  pane current uses HERDR_PANE_ID first, then resolves the calling process session");
     eprintln!("  pane send-text writes literal text without Enter; pane run submits command text with Enter");
-    eprintln!("  pane run-notify streams output in the target pane and reports exit with a tail sample to the parent pane");
+    eprintln!("  pane run-notify streams output in the target pane and reports exit with a Herdr toast plus job log");
 }
 
 fn print_wait_help() {
@@ -2670,6 +2712,25 @@ mod tests {
 
         let sample = tail.lock().unwrap().clone();
         assert_eq!(sample.chars().count(), PANE_NOTIFY_SAMPLE_CHARS);
+    }
+
+    #[test]
+    fn pane_notify_toast_summarizes_exit_without_shell_payload() {
+        let (title, context) = pane_notify_toast(
+            "job-123",
+            "p_2",
+            "printf '%s' hello",
+            Some(0),
+            std::path::Path::new("/tmp/herdr-job.log"),
+            "hello\n",
+        );
+
+        assert_eq!(title, "pane job exited: 0");
+        assert!(context.contains("p_2"));
+        assert!(context.contains("job-123"));
+        assert!(context.contains("tail: hello"));
+        assert!(context.contains("log: /tmp/herdr-job.log"));
+        assert!(!context.contains("[herdr] pane job exited"));
     }
 
     #[test]

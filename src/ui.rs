@@ -68,9 +68,10 @@ pub(crate) use self::{
         agent_panel_scrollbar_rect, agent_panel_toggle_rect, collapsed_sidebar_sections,
         collapsed_sidebar_toggle_rect, compute_workspace_card_areas,
         compute_workspace_section_header_areas, expanded_sidebar_sections,
-        sidebar_section_divider_rect, workspace_drop_indicator_row, workspace_effective_section,
-        workspace_list_rect, workspace_list_scroll_metrics, workspace_list_scrollbar_rect,
-        workspace_panel_density_toggle_rect, workspace_section_is_expanded,
+        sidebar_section_divider_rect, sidebar_width_toggle_rects, workspace_drop_indicator_row,
+        workspace_effective_section, workspace_list_rect, workspace_list_scroll_metrics,
+        workspace_list_scrollbar_rect, workspace_panel_density_toggle_rect,
+        workspace_section_is_expanded, workspace_section_new_button_rect,
     },
 };
 pub(crate) use self::{
@@ -255,6 +256,13 @@ fn compute_view_internal(
         pane_action_cycle_layout_rect: pane_action_rects.cycle_layout,
         pane_action_rotate_rect: pane_action_rects.rotate,
         pane_action_equalize_rect: pane_action_rects.equalize,
+        sidebar_width_toggle_rects: if app.sidebar_collapsed {
+            crate::app::state::SidebarWidthToggleRects::default()
+        } else {
+            let (_, detail_area) =
+                expanded_sidebar_sections(sidebar_area, app.sidebar_section_split);
+            sidebar_width_toggle_rects(detail_area)
+        },
         mobile_header_rect: Rect::default(),
         mobile_menu_hit_area: Rect::default(),
         toast_hit_area,
@@ -317,6 +325,7 @@ fn compute_mobile_view(
         pane_action_cycle_layout_rect: Rect::default(),
         pane_action_rotate_rect: Rect::default(),
         pane_action_equalize_rect: Rect::default(),
+        sidebar_width_toggle_rects: crate::app::state::SidebarWidthToggleRects::default(),
         mobile_header_rect: header_rect,
         mobile_menu_hit_area: header_hits.menu,
         toast_hit_area,

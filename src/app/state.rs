@@ -565,6 +565,11 @@ pub struct WorkspaceSectionHeaderArea {
     pub rect: Rect,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SidebarWidthToggleRects {
+    pub button: Rect,
+}
+
 /// Computed view geometry — derived from AppState + terminal size.
 /// Updated before each render, consumed by render and mouse handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -588,6 +593,7 @@ pub struct ViewState {
     pub pane_action_cycle_layout_rect: Rect,
     pub pane_action_rotate_rect: Rect,
     pub pane_action_equalize_rect: Rect,
+    pub sidebar_width_toggle_rects: SidebarWidthToggleRects,
     pub mobile_header_rect: Rect,
     pub mobile_menu_hit_area: Rect,
     pub toast_hit_area: Rect,
@@ -879,14 +885,13 @@ pub enum ContextMenuKind {
         has_layout_actions: bool,
         is_zoomed: bool,
     },
-    SidebarBlank,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentPreset {
     Claude,
     Codex,
-    Gemini,
+    Agy,
 }
 
 impl AgentPreset {
@@ -894,7 +899,7 @@ impl AgentPreset {
         match self {
             Self::Claude => "New Claude Code agent",
             Self::Codex => "New Codex agent",
-            Self::Gemini => "New Gemini agent",
+            Self::Agy => "New agy agent",
         }
     }
 
@@ -902,7 +907,7 @@ impl AgentPreset {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
-            Self::Gemini => "gemini",
+            Self::Agy => "agy",
         }
     }
 
@@ -910,12 +915,12 @@ impl AgentPreset {
         match self {
             Self::Claude => &["claude"],
             Self::Codex => &["codex"],
-            Self::Gemini => &["gemini"],
+            Self::Agy => &["agy"],
         }
     }
 
     pub(crate) fn from_menu_label(label: &str) -> Option<Self> {
-        [Self::Claude, Self::Codex, Self::Gemini]
+        [Self::Claude, Self::Codex, Self::Agy]
             .into_iter()
             .find(|preset| preset.menu_label() == label)
     }
@@ -947,7 +952,7 @@ impl ContextMenuState {
             ContextMenuKind::Workspace { .. } => &[
                 "New Claude Code agent",
                 "New Codex agent",
-                "New Gemini agent",
+                "New agy agent",
                 "--",
                 "New worktree",
                 "Open worktree",
@@ -969,15 +974,15 @@ impl ContextMenuState {
                 is_zoomed: false,
                 ..
             } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
                 "Rename pane",
                 "Clear pane name",
                 "--",
                 "New Claude Code agent",
                 "New Codex agent",
-                "New Gemini agent",
-                "--",
-                "Split vertical",
-                "Split horizontal",
+                "New agy agent",
                 "--",
                 "Move to left split",
                 "Move to right split",
@@ -997,15 +1002,15 @@ impl ContextMenuState {
                 is_zoomed: true,
                 ..
             } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
                 "Rename pane",
                 "Clear pane name",
                 "--",
                 "New Claude Code agent",
                 "New Codex agent",
-                "New Gemini agent",
-                "--",
-                "Split vertical",
-                "Split horizontal",
+                "New agy agent",
                 "--",
                 "Move to left split",
                 "Move to right split",
@@ -1024,15 +1029,15 @@ impl ContextMenuState {
                 has_layout_actions: false,
                 ..
             } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
                 "Rename pane",
                 "Clear pane name",
                 "--",
                 "New Claude Code agent",
                 "New Codex agent",
-                "New Gemini agent",
-                "--",
-                "Split vertical",
-                "Split horizontal",
+                "New agy agent",
                 "--",
                 "Close pane",
             ],
@@ -1042,14 +1047,14 @@ impl ContextMenuState {
                 is_zoomed: false,
                 ..
             } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
                 "Rename pane",
                 "--",
                 "New Claude Code agent",
                 "New Codex agent",
-                "New Gemini agent",
-                "--",
-                "Split vertical",
-                "Split horizontal",
+                "New agy agent",
                 "--",
                 "Move to left split",
                 "Move to right split",
@@ -1069,14 +1074,14 @@ impl ContextMenuState {
                 is_zoomed: true,
                 ..
             } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
                 "Rename pane",
                 "--",
                 "New Claude Code agent",
                 "New Codex agent",
-                "New Gemini agent",
-                "--",
-                "Split vertical",
-                "Split horizontal",
+                "New agy agent",
                 "--",
                 "Move to left split",
                 "Move to right split",
@@ -1095,31 +1100,16 @@ impl ContextMenuState {
                 has_layout_actions: false,
                 ..
             } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
                 "Rename pane",
                 "--",
                 "New Claude Code agent",
                 "New Codex agent",
-                "New Gemini agent",
-                "--",
-                "Split vertical",
-                "Split horizontal",
+                "New agy agent",
                 "--",
                 "Close pane",
-            ],
-            ContextMenuKind::SidebarBlank => &[
-                "New workspace",
-                "New tab",
-                "--",
-                "Settings",
-                "Keybinds",
-                "Reload config",
-                "--",
-                "Restore agents...",
-                "--",
-                "Detach",
-                "--",
-                "Stop server",
-                "Restart",
             ],
         }
     }
@@ -1235,6 +1225,39 @@ pub enum SidebarWidthSource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidebarWidthPreset {
+    Narrow,
+    Normal,
+    Wide,
+}
+
+impl SidebarWidthPreset {
+    pub(crate) fn button_label(self) -> String {
+        match self {
+            Self::Narrow => "[narrow]".to_string(),
+            Self::Normal => "[normal]".to_string(),
+            Self::Wide => "[wide]".to_string(),
+        }
+    }
+
+    pub(crate) fn width(self, state: &AppState) -> u16 {
+        match self {
+            Self::Narrow => state.sidebar_min_width,
+            Self::Normal => state
+                .default_sidebar_width
+                .clamp(state.sidebar_min_width, state.sidebar_max_width),
+            Self::Wide => {
+                let normal = Self::Normal.width(state);
+                let scaled_max = (u32::from(state.sidebar_max_width) * 2).div_ceil(3) as u16;
+                scaled_max
+                    .max(normal.saturating_add(1))
+                    .clamp(state.sidebar_min_width, state.sidebar_max_width)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DangerousAction {
     StopServer,
     Restart,
@@ -1292,6 +1315,7 @@ pub struct AppState {
     /// The server's event loop checks this and handles client detach.
     pub detach_requested: bool,
     pub request_new_workspace: bool,
+    pub requested_new_workspace_section: Option<crate::workspace::WorkspaceSection>,
     pub request_new_tab: bool,
     pub request_reload_config: bool,
     /// Set when UI interaction requested agent restore to run from the App loop.
@@ -1332,7 +1356,6 @@ pub struct AppState {
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
     pub(crate) last_pane_click: Option<PaneClickState>,
-    pub(crate) last_sidebar_blank_click: Option<(u16, u16, std::time::Instant)>,
     pub selection: Option<Selection>,
     pub selection_autoscroll: Option<SelectionAutoscroll>,
     pub context_menu: Option<ContextMenuState>,
@@ -1407,6 +1430,16 @@ pub struct PaneFocusLocation {
 impl AppState {
     pub(crate) fn mark_session_dirty(&mut self) {
         self.session_dirty = true;
+    }
+
+    pub(crate) fn set_sidebar_width_preset(&mut self, preset: SidebarWidthPreset) {
+        self.sidebar_width = preset.width(self);
+        self.sidebar_width_source = match preset {
+            SidebarWidthPreset::Normal => SidebarWidthSource::ConfigDefault,
+            SidebarWidthPreset::Narrow | SidebarWidthPreset::Wide => SidebarWidthSource::Manual,
+        };
+        self.sidebar_width_auto = false;
+        self.mark_session_dirty();
     }
 
     pub fn sound_enabled(&self) -> bool {
@@ -1567,6 +1600,7 @@ impl AppState {
             detach_exits: false,
             detach_requested: false,
             request_new_workspace: false,
+            requested_new_workspace_section: None,
             request_new_tab: false,
             request_reload_config: false,
             request_agent_restore: false,
@@ -1610,6 +1644,7 @@ impl AppState {
                 pane_action_cycle_layout_rect: Rect::default(),
                 pane_action_rotate_rect: Rect::default(),
                 pane_action_equalize_rect: Rect::default(),
+                sidebar_width_toggle_rects: SidebarWidthToggleRects::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_menu_hit_area: Rect::default(),
                 toast_hit_area: Rect::default(),
@@ -1620,7 +1655,6 @@ impl AppState {
             workspace_press: None,
             tab_press: None,
             last_pane_click: None,
-            last_sidebar_blank_click: None,
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
