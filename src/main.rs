@@ -52,6 +52,110 @@ mod update;
 mod workspace;
 mod worktree;
 
+fn print_root_help() {
+    println!(
+        r#"---
+name: herdr
+description: Terminal workspace manager for AI coding agents. Use this CLI to control Herdr sessions, workspaces, tabs, panes, agents, waits, and local server state.
+---
+
+# herdr
+
+## When To Use
+- Launch or attach to a persistent Herdr workspace.
+- Control Herdr from scripts, hooks, and AI agents through the local socket API.
+- Split panes, run commands, start helper agents, read pane output, and wait for agent or command state.
+
+## Agent Rules
+- If HERDR_ENV=1 is set, prefer the herdr CLI over terminal keystroke automation.
+- Use `herdr pane current` to identify the calling pane. It first trusts HERDR_PANE_ID, then resolves the calling process session.
+- Do not infer the requester pane from the focused pane, active window, pane list order, or UI selection.
+- Treat `p_...`, workspace-local ids like `1-2`, global ids like `23`, and tmux-style ids like `%23` as Herdr pane targets when they are accepted by Herdr commands.
+- Use `herdr pane run-notify` for long-running commands when completion should be reported inside Herdr.
+- Use `herdr agent ...` only for AI agent terminals. Use `herdr pane ...` for shells, tests, servers, and ordinary commands.
+
+## Usage
+```sh
+herdr
+herdr help
+herdr --help
+herdr --session <name>
+herdr --remote <ssh-target> [--session <name>]
+herdr session attach <name>
+herdr server stop
+herdr server reload-config
+herdr config <subcommand> ...
+herdr workspace <subcommand> ...
+herdr tab <subcommand> ...
+herdr agent <subcommand> ...
+herdr pane <subcommand> ...
+herdr wait <subcommand> ...
+herdr session <subcommand> ...
+```
+
+## Commands
+| Command | Purpose |
+| --- | --- |
+| `herdr` | Launch or attach to the persistent session. |
+| `herdr status [server|client]` | Show local client and running server status. |
+| `herdr server stop` | Stop the running server via the API socket. |
+| `herdr server reload-config` | Reload config.toml in the running server. |
+| `herdr config reset-keys` | Back up config.toml and remove custom keybindings. |
+| `herdr workspace <subcommand>` | Create, list, rename, or focus workspaces. |
+| `herdr tab <subcommand>` | Create, list, rename, or focus tabs. |
+| `herdr agent <subcommand>` | List, start, read, send to, focus, attach to, rename, restore, or wait on AI agents. |
+| `herdr pane <subcommand>` | List, split, read, run, notify, focus, rename, or close panes. |
+| `herdr wait <subcommand>` | Block until pane output or agent status matches. |
+| `herdr session <subcommand>` | Manage named persistent sessions. |
+| `herdr server` | Run as the headless server. Advanced users normally do not need this directly. |
+
+## Essential Agent Recipes
+```sh
+herdr pane current
+herdr pane list
+herdr pane split <pane_id> right
+herdr pane run <pane_id> <command>
+herdr pane run-notify <pane_id> <command>
+herdr pane read <pane_id>
+herdr agent start --kind codex --cwd <path>
+herdr agent send <agent_target> <message>
+herdr wait agent-status <agent_target> --status done
+```
+
+## Options
+| Option | Meaning |
+| --- | --- |
+| `--no-session` | Run monolithically without server/client mode. Escape hatch. |
+| `--session <name>` | Use or create a named persistent session. |
+| `--remote <target>` | Attach through SSH to a remote Herdr server. |
+| `--default-config` | Print default configuration and exit. |
+| `--version`, `-V` | Print version and exit. |
+| `--help`, `-h` | Show this help. |
+
+## More Help
+Run subcommand help for exact arguments:
+
+```sh
+herdr server --help
+herdr status --help
+herdr config --help
+herdr workspace --help
+herdr tab --help
+herdr agent --help
+herdr pane --help
+herdr wait --help
+herdr session --help
+```
+
+Config: {config_path}
+Logs: {log_paths}
+Env: HERDR_CONFIG_PATH overrides config file path. HERDR_SESSION selects a session. HERDR_PANE_ID identifies the current pane when set.
+Home: https://herdr.dev"#,
+        config_path = config::config_path().display(),
+        log_paths = logging::help_log_paths_summary()
+    );
+}
+
 fn init_logging() {
     crate::logging::init_file_logging("herdr.log");
 }
@@ -348,82 +452,10 @@ fn main() -> io::Result<()> {
         }
     }
 
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("herdr — terminal workspace manager for AI coding agents");
-        println!();
-        println!("Usage: herdr [options]");
-        println!("       herdr --session <name> [options]");
-        println!("       herdr --remote <ssh-target> [--session <name>]");
-        println!("       herdr session attach <name>");
-        println!("       herdr server stop");
-        println!("       herdr server reload-config");
-        println!("       herdr config <subcommand> ...");
-        println!("       herdr workspace <subcommand> ...");
-        println!("       herdr tab <subcommand> ...");
-        println!("       herdr agent <subcommand> ...");
-        println!("       herdr pane <subcommand> ...");
-        println!("       herdr wait <subcommand> ...");
-        println!("       herdr session <subcommand> ...");
-        println!();
-        println!("Common commands:");
-        for (command, description) in [
-            ("herdr", "Launch or attach to the persistent session"),
-            (
-                "herdr status [server|client]",
-                "Show local client and running server status",
-            ),
-            (
-                "herdr server stop",
-                "Stop the running server via the API socket",
-            ),
-            (
-                "herdr server reload-config",
-                "Reload config.toml in the running server",
-            ),
-            (
-                "herdr config reset-keys",
-                "Back up config.toml and remove custom keybindings",
-            ),
-            (
-                "herdr workspace <subcommand>",
-                "Workspace helpers over the socket API",
-            ),
-            ("herdr tab <subcommand>", "Tab helpers over the socket API"),
-            (
-                "herdr agent <subcommand>",
-                "Agent/terminal helpers over the socket API",
-            ),
-            (
-                "herdr pane <subcommand>",
-                "Pane control helpers over the socket API",
-            ),
-            (
-                "herdr wait <subcommand>",
-                "Blocking wait helpers over the socket API",
-            ),
-            (
-                "herdr session <subcommand>",
-                "Manage named persistent sessions",
-            ),
-        ] {
-            println!("  {command:<32} {description}");
-        }
-        println!();
-        println!("Advanced commands:");
-        println!("  {:<32} Run as headless server", "herdr server");
-        println!();
-        println!("Options:");
-        println!("  --no-session        Run monolithically (no server/client, escape hatch)");
-        println!("  --session <name>    Use or create a named persistent session");
-        println!("  --remote <target>   Attach through SSH to a remote Herdr server");
-        println!("  --default-config    Print default configuration and exit");
-        println!("  --version, -V       Print version and exit");
-        println!("  --help, -h          Show this help");
-        println!();
-        println!("Config: {}", config::config_path().display());
-        println!("Logs:   {}", logging::help_log_paths_summary());
-        println!("Env:    HERDR_CONFIG_PATH overrides config file path");
-        println!("Home:   https://herdr.dev");
+    if args.get(1).map(|arg| arg.as_str()) == Some("help")
+        || args.iter().any(|a| a == "--help" || a == "-h")
+    {
+        print_root_help();
         return Ok(());
     }
 
@@ -460,6 +492,7 @@ fn main() -> io::Result<()> {
                 "client",
                 "remote-client-bridge",
                 "update",
+                "help",
                 "status",
                 "config",
                 "workspace",

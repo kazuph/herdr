@@ -2814,8 +2814,14 @@ mod tests {
         let mut app = test_app();
         let now = Instant::now();
         app.selection_autoscroll_deadline = Some(now + Duration::from_millis(5));
+        app.next_resize_poll = now + Duration::from_millis(50);
+        app.config_diagnostic_deadline = None;
+        app.toast_deadline = None;
+        app.selection_copy_status_deadline = None;
         app.next_animation_tick = Some(now + Duration::from_millis(100));
+        app.next_auto_update_check = Some(now + Duration::from_millis(150));
         app.session_save_deadline = Some(now + Duration::from_millis(200));
+        app.agent_restore_due = None;
         assert_eq!(
             app.next_loop_deadline(now, false),
             app.selection_autoscroll_deadline

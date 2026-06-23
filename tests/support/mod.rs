@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
+use std::os::unix::fs::FileTypeExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Once, OnceLock};
@@ -84,7 +85,15 @@ pub fn wait_for_socket(path: &Path, timeout: Duration) {
 pub fn wait_for_file(path: &Path, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if path.exists() {
+        if let Ok(metadata) = fs::metadata(path) {
+            if metadata.file_type().is_socket() {
+                if UnixStream::connect(path).is_ok() {
+                    return;
+                }
+            } else {
+                return;
+            }
+        } else if path.exists() {
             return;
         }
         thread::sleep(Duration::from_millis(25));

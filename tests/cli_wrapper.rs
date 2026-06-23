@@ -557,6 +557,7 @@ fn help_commands_exit_successfully() {
     let help_cases: &[&[&str]] = &[
         &["-h"],
         &["--help"],
+        &["help"],
         &["status", "-h"],
         &["server", "-h"],
         &["workspace", "-h"],
