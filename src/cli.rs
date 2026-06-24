@@ -1719,7 +1719,7 @@ fn pane_job_log(args: &[String]) -> std::io::Result<i32> {
 
 fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
-        eprintln!("usage: herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--session-id ID]");
+        eprintln!("usage: herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID]");
         return Ok(2);
     };
 
@@ -1730,6 +1730,7 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
     let mut message = None;
     let mut custom_status = None;
     let mut seq = None;
+    let mut title = None;
     let mut session_id = None;
 
     let mut index = 1;
@@ -1783,6 +1784,14 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
                 seq = Some(parse_u64_flag("--seq", value)?);
                 index += 2;
             }
+            "--title" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --title");
+                    return Ok(2);
+                };
+                title = Some(value.clone());
+                index += 2;
+            }
             "--session-id" => {
                 let Some(value) = args.get(index + 1) else {
                     eprintln!("missing value for --session-id");
@@ -1819,6 +1828,7 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
         message,
         custom_status,
         seq,
+        title,
         session_id,
     }))
 }
@@ -2623,7 +2633,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane close <pane_id>");
     eprintln!("  herdr pane send-text <pane_id> <text>");
     eprintln!("  herdr pane send-keys <pane_id> <key> [key ...]");
-    eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--session-id ID]");
+    eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID]");
     eprintln!("  herdr pane run <pane_id> <command>");
     eprintln!("  herdr pane run-notify <pane_id> <command>");
     eprintln!("  herdr pane job-log <job_id>");

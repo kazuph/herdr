@@ -198,6 +198,7 @@ fn restore_tab(
 
         let saved_label = snap.panes.get(&saved_id).and_then(|p| p.label.clone());
         let saved_agent_name = snap.panes.get(&saved_id).and_then(|p| p.agent_name.clone());
+        let saved_title = snap.panes.get(&saved_id).and_then(|p| p.title.clone());
         let saved_agent_restore = snap
             .panes
             .get(&saved_id)
@@ -223,6 +224,9 @@ fn restore_tab(
                 }
                 if let Some(agent_name) = saved_agent_name {
                     terminal.set_agent_name(agent_name);
+                }
+                if let Some(title) = saved_title {
+                    terminal.set_pane_title(Some(title));
                 }
                 if let Some(agent_restore) = saved_agent_restore {
                     terminal.pending_restore = Some(crate::terminal::PendingAgentRestore {

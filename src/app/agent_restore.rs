@@ -86,10 +86,7 @@ pub(crate) fn agent_restore_plan(
                     let session_id = pending
                         .session_id
                         .clone()
-                        .filter(|id| crate::agent_sessions::is_safe_session_id(id))
-                        .or_else(|| {
-                            crate::agent_sessions::discover_session_id(&agent, &terminal.cwd)
-                        });
+                        .filter(|id| crate::agent_sessions::is_safe_session_id(id));
                     match crate::agent_sessions::render_restore_command(
                         template,
                         session_id.as_deref(),
@@ -301,15 +298,14 @@ mod tests {
             session_id: None,
         });
 
-        // claude pane without a recorded session id and a cwd that cannot
-        // exist: discovery finds nothing, so the pane is reported, not typed.
+        // claude pane without a recorded session id is not guessed from cwd:
+        // multiple panes can share the same cwd but point at different sessions.
         let lost_tid = terminal_id_for(&state, 3);
         let lost = state.terminals.get_mut(&lost_tid).unwrap();
         lost.pending_restore = Some(PendingAgentRestore {
             agent: "claude".into(),
             session_id: None,
         });
-        lost.cwd = "/nonexistent/herdr-agent-restore-test".into();
 
         state
             .agent_restore_config
@@ -351,7 +347,6 @@ mod tests {
             agent: "claude".into(),
             session_id: Some("evil; rm -rf /".into()),
         });
-        terminal.cwd = "/nonexistent/herdr-agent-restore-test".into();
 
         let entries = agent_restore_plan(&state);
         assert_eq!(entries.len(), 1);
@@ -359,6 +354,44 @@ mod tests {
             entries[0].outcome,
             AgentRestoreOutcome::Skip("no resumable session found")
         ));
+    }
+
+    #[test]
+    fn plan_does_not_guess_shared_cwd_sessions() {
+        let mut state = crate::app::state::AppState::test_new();
+        state.workspaces = vec![
+            crate::workspace::Workspace::test_new("same-cwd-a"),
+            crate::workspace::Workspace::test_new("same-cwd-b"),
+            crate::workspace::Workspace::test_new("same-cwd-c"),
+        ];
+        state.ensure_test_terminals();
+        let shared_cwd = std::env::temp_dir().join(format!(
+            "herdr-agent-restore-shared-cwd-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&shared_cwd).unwrap();
+
+        for ws_idx in 0..3 {
+            let tid = terminal_id_for(&state, ws_idx);
+            let terminal = state.terminals.get_mut(&tid).unwrap();
+            terminal.cwd = shared_cwd.clone();
+            terminal.pending_restore = Some(PendingAgentRestore {
+                agent: "codex".into(),
+                session_id: None,
+            });
+        }
+
+        let entries = agent_restore_plan(&state);
+        assert_eq!(entries.len(), 3);
+        assert!(
+            entries.iter().all(|entry| matches!(
+                entry.outcome,
+                AgentRestoreOutcome::Skip("no resumable session found")
+            )),
+            "restore must not infer one latest cwd session for multiple panes"
+        );
+
+        let _ = std::fs::remove_dir_all(&shared_cwd);
     }
 
     #[test]

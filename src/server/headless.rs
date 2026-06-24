@@ -3742,6 +3742,7 @@ mod tests {
                     message: None,
                     custom_status: None,
                     seq: Some(19),
+                    title: None,
                     session_id: None,
                 }),
             },

@@ -31,6 +31,12 @@ pub enum AppEvent {
         agent: Option<Agent>,
         state: AgentState,
     },
+    /// A resumable agent session id was observed for this pane.
+    AgentSessionObserved {
+        pane_id: PaneId,
+        agent: Agent,
+        session_id: String,
+    },
     /// Hook-authoritative agent state was reported for a pane.
     HookStateReported {
         pane_id: PaneId,
@@ -40,6 +46,7 @@ pub enum AppEvent {
         message: Option<String>,
         custom_status: Option<String>,
         seq: Option<u64>,
+        title: Option<String>,
     },
     /// Hook authority was explicitly cleared for a pane.
     HookAuthorityCleared {

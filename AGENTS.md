@@ -45,6 +45,24 @@ Restarting a running Herdr server or client is never implied by commit, push, bu
 
 After the change is integrated, remove the task worktree and delete the task branch locally and remotely.
 
+## Herdr agent title reporting
+
+When an AI agent is running inside Herdr and `HERDR_PANE_ID` is set, report a short task title to Herdr at the start of each task and whenever the task meaningfully changes. This keeps pane and space names readable even when multiple panes share the same repository.
+
+Use the appropriate agent label:
+
+```bash
+herdr pane report-agent "$HERDR_PANE_ID" \
+  --source codex \
+  --agent codex \
+  --state working \
+  --title "<short task title>"
+```
+
+For Claude Code panes, use `--source claude --agent claude`.
+
+Keep titles concise and task-specific, for example `restore pane sessions`, `fix agent status`, or `implement title reporting`. Do not use vague titles like `working`, `task`, `update`, or only the repository name.
+
 ## Testing
 
 Use `just` recipes by default for tests and checks instead of invoking cargo or scripts directly.

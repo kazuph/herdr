@@ -283,6 +283,9 @@ pub struct PaneReportAgentParams {
     pub custom_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seq: Option<u64>,
+    /// Short task title shown in pane/workspace names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     /// Resumable CLI session id (e.g. Claude Code's session uuid), used by
     /// `[agent_restore]` to relaunch the agent after a server restart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -844,6 +847,7 @@ mod tests {
                 message: Some("thinking".into()),
                 custom_status: Some("indexing".into()),
                 seq: Some(42),
+                title: Some("implement search".into()),
                 session_id: Some("0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9".into()),
             }),
         };

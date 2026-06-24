@@ -1146,6 +1146,14 @@ impl AppState {
                 })
                 .into_iter()
                 .collect(),
+            AppEvent::AgentSessionObserved {
+                pane_id,
+                agent,
+                session_id,
+            } => {
+                self.record_agent_session(pane_id, agent, session_id);
+                Vec::new()
+            }
             AppEvent::HookStateReported {
                 pane_id,
                 source,
@@ -1154,19 +1162,24 @@ impl AppState {
                 message,
                 custom_status,
                 seq,
-            } => self
-                .update_terminal_state(pane_id, |terminal| {
-                    terminal.set_hook_authority_with_custom_status(
-                        source,
-                        agent_label,
-                        state,
-                        message,
-                        custom_status,
-                        seq,
-                    )
-                })
-                .into_iter()
-                .collect(),
+                title,
+            } => {
+                let updates: Vec<_> = self
+                    .update_terminal_state(pane_id, |terminal| {
+                        terminal.set_hook_authority_with_custom_status(
+                            source,
+                            agent_label,
+                            state,
+                            message,
+                            custom_status,
+                            seq,
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                self.update_pane_title(pane_id, title);
+                updates
+            }
             AppEvent::HookAuthorityCleared {
                 pane_id,
                 source,
@@ -1235,6 +1248,45 @@ impl AppState {
         Some(update)
     }
 
+    fn record_agent_session(
+        &mut self,
+        pane_id: PaneId,
+        agent: crate::detect::Agent,
+        session_id: String,
+    ) -> bool {
+        if !crate::agent_sessions::is_safe_session_id(&session_id) {
+            return false;
+        }
+        let Some(ws_idx) = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.pane_state(pane_id).is_some())
+        else {
+            return false;
+        };
+        let Some(terminal_id) = self.workspaces[ws_idx]
+            .pane_state(pane_id)
+            .map(|pane| pane.attached_terminal_id.clone())
+        else {
+            return false;
+        };
+        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+            return false;
+        };
+        if terminal
+            .effective_known_agent()
+            .is_some_and(|known| known != agent)
+        {
+            return false;
+        }
+        if terminal.agent_session_id.as_deref() == Some(session_id.as_str()) {
+            return false;
+        }
+        terminal.agent_session_id = Some(session_id);
+        self.mark_session_dirty();
+        true
+    }
+
     fn update_pane_title(&mut self, pane_id: PaneId, title: Option<String>) -> bool {
         let Some(ws_idx) = self
             .workspaces
@@ -1249,9 +1301,14 @@ impl AppState {
         else {
             return false;
         };
-        self.terminals
+        let changed = self
+            .terminals
             .get_mut(&terminal_id)
-            .is_some_and(|terminal| terminal.set_pane_title(title))
+            .is_some_and(|terminal| terminal.set_pane_title(title));
+        if changed {
+            self.mark_session_dirty();
+        }
+        changed
     }
 
     fn apply_pane_state_change(
@@ -1463,6 +1520,77 @@ mod tests {
         assert_eq!(state.workspaces[0].branch(), None);
         assert_eq!(state.workspaces[0].git_ahead_behind(), None);
         assert_eq!(state.workspaces[0].git_diff_stats(), None);
+    }
+
+    #[test]
+    fn agent_session_observed_records_pane_session_id() {
+        let mut state = app_with_workspaces(&["one"]);
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0]
+            .pane_state(pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+
+        state.handle_app_event(AppEvent::AgentSessionObserved {
+            pane_id,
+            agent: Agent::Codex,
+            session_id: "019ef3a2-749c-7b52-b324-2c20cb0b2379".into(),
+        });
+
+        assert_eq!(
+            state.terminals[&terminal_id].agent_session_id.as_deref(),
+            Some("019ef3a2-749c-7b52-b324-2c20cb0b2379")
+        );
+        assert!(state.session_dirty);
+    }
+
+    #[test]
+    fn hook_state_reported_records_pane_title() {
+        let mut state = app_with_workspaces(&["one"]);
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0]
+            .pane_state(pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+
+        state.handle_app_event(AppEvent::HookStateReported {
+            pane_id,
+            source: "codex".into(),
+            agent_label: "codex".into(),
+            state: AgentState::Working,
+            message: None,
+            custom_status: None,
+            seq: None,
+            title: Some("restore pane sessions".into()),
+        });
+
+        assert_eq!(
+            state.terminals[&terminal_id].pane_title.as_deref(),
+            Some("restore pane sessions")
+        );
+        assert!(state.session_dirty);
+    }
+
+    #[test]
+    fn agent_session_observed_rejects_unsafe_id() {
+        let mut state = app_with_workspaces(&["one"]);
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0]
+            .pane_state(pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+
+        state.handle_app_event(AppEvent::AgentSessionObserved {
+            pane_id,
+            agent: Agent::Codex,
+            session_id: "bad;id".into(),
+        });
+
+        assert_eq!(state.terminals[&terminal_id].agent_session_id, None);
+        assert!(!state.session_dirty);
     }
 
     #[test]
@@ -2211,6 +2339,7 @@ mod tests {
             message: None,
             custom_status: None,
             seq: None,
+            title: None,
         });
 
         let toast = state.toast.as_ref().unwrap();

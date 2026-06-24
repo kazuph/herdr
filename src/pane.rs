@@ -89,6 +89,28 @@ async fn publish_state_changed_event(
     }
 }
 
+async fn publish_agent_session_observed_event(
+    state_events: mpsc::Sender<AppEvent>,
+    pane_id: PaneId,
+    agent: Agent,
+    session_id: String,
+) {
+    if let Err(e) = state_events
+        .send(AppEvent::AgentSessionObserved {
+            pane_id,
+            agent,
+            session_id,
+        })
+        .await
+    {
+        warn!(
+            pane = pane_id.raw(),
+            err = %e,
+            "failed to deliver AgentSessionObserved event"
+        );
+    }
+}
+
 const AGENT_MISS_CONFIRMATION_ATTEMPTS: u8 = 6;
 
 #[derive(Debug, Clone, Copy)]
@@ -578,6 +600,7 @@ impl PaneRuntime {
                 let mut pending_foreground_shell_clear = false;
                 let mut last_claude_working_at = None;
                 let mut claude_activity_tracker = None;
+                let mut last_observed_agent_session: Option<(Agent, String)> = None;
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -628,7 +651,6 @@ impl PaneRuntime {
                             let mut process_group_id = None;
                             let mut foreground_is_pane_shell = false;
                             let mut new_agent = None;
-
                             if let Some(job) = detect::foreground_job(pid) {
                                 process_group_id = Some(job.process_group_id);
                                 last_foreground_pgid = Some(job.process_group_id);
@@ -639,6 +661,31 @@ impl PaneRuntime {
                                     .as_ref()
                                     .map(|(_, process_name)| process_name.clone());
                                 new_agent = identified.as_ref().map(|(agent, _)| *agent);
+                                if let Some((agent, _)) = identified {
+                                    let agent_label = crate::detect::agent_label(agent);
+                                    let observed_session =
+                                        job.processes.iter().find_map(|process| {
+                                            process.cmdline.as_deref().and_then(|cmdline| {
+                                                crate::agent_sessions::session_id_from_cmdline(
+                                                    agent_label,
+                                                    cmdline,
+                                                )
+                                            })
+                                        });
+                                    if let Some(session_id) = observed_session.clone() {
+                                        let observed = (agent, session_id.clone());
+                                        if last_observed_agent_session.as_ref() != Some(&observed) {
+                                            last_observed_agent_session = Some(observed);
+                                            publish_agent_session_observed_event(
+                                                state_events.clone(),
+                                                pane_id,
+                                                agent,
+                                                session_id,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
                             } else if foreground_pgid.is_some() {
                                 process_group_id = foreground_pgid;
                                 last_foreground_pgid = foreground_pgid;

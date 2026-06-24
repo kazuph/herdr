@@ -78,6 +78,8 @@ pub struct PaneSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_restore: Option<AgentRestoreSnapshot>,
 }
 
@@ -301,6 +303,11 @@ fn capture_tab(
             .get(id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id))
             .and_then(|terminal| terminal.agent_name.clone());
+        let title = tab
+            .panes
+            .get(id)
+            .and_then(|pane| terminals.get(&pane.attached_terminal_id))
+            .and_then(|terminal| terminal.pane_title.clone());
         let agent_restore = tab
             .panes
             .get(id)
@@ -321,6 +328,7 @@ fn capture_tab(
                 cwd,
                 label,
                 agent_name,
+                title,
                 agent_restore,
             },
         );
@@ -463,6 +471,7 @@ mod tests {
         let pane: PaneSnapshot = serde_json::from_str(r#"{"cwd":"/tmp"}"#).unwrap();
         assert!(pane.agent_restore.is_none());
         assert!(pane.label.is_none());
+        assert!(pane.title.is_none());
     }
 
     #[test]
@@ -516,6 +525,7 @@ mod tests {
                 cwd: PathBuf::from("/home/can/Projects/herdr"),
                 label: None,
                 agent_name: None,
+                title: None,
                 agent_restore: None,
             },
         );
@@ -525,6 +535,7 @@ mod tests {
                 cwd: PathBuf::from("/home/can/Projects/website"),
                 label: Some("website".into()),
                 agent_name: None,
+                title: None,
                 agent_restore: None,
             },
         );
@@ -842,6 +853,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test"),
                 label: None,
                 agent_name: None,
+                title: None,
                 agent_restore: None,
             },
         );
@@ -853,6 +865,7 @@ mod tests {
                     .unwrap_or_else(|_| PathBuf::from("/tmp")),
                 label: None,
                 agent_name: None,
+                title: None,
                 agent_restore: None,
             },
         );
