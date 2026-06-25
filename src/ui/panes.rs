@@ -95,14 +95,19 @@ fn pane_title(
     zoomed: bool,
 ) -> String {
     let label = terminal.map(terminal_pane_label).unwrap_or("terminal");
-    let osc_title = terminal.and_then(|terminal| terminal.pane_title.as_deref());
+    let title = terminal.and_then(|terminal| {
+        terminal
+            .agent_task_title
+            .as_deref()
+            .or(terminal.pane_title.as_deref())
+    });
     let branch = cwd.and_then(crate::workspace::git_branch);
     let mut parts = Vec::new();
     if zoomed {
         parts.push("ZOOM".to_string());
     }
     parts.extend([format!("%{}", pane_id.raw()), label.to_string()]);
-    if let Some(title) = osc_title {
+    if let Some(title) = title {
         parts.push(title.to_string());
     }
     if let Some(branch) = branch {
@@ -514,6 +519,22 @@ mod tests {
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
             "%81 codex thinking"
+        );
+    }
+
+    #[test]
+    fn pane_title_prefers_agent_task_title_over_osc_title() {
+        let pane_id = crate::layout::PaneId::from_raw(81);
+        let terminal_id = TerminalId::alloc();
+        let mut terminal = TerminalState::new(terminal_id, "/tmp".into())
+            .with_launch_argv(vec!["/usr/local/bin/codex".into()]);
+
+        terminal.set_pane_title(Some("herdr".into()));
+        terminal.set_agent_task_title(Some("restore pane sessions".into()));
+
+        assert_eq!(
+            pane_title(pane_id, Some(&terminal), None, false),
+            "%81 codex restore pane sessions"
         );
     }
 

@@ -307,7 +307,7 @@ fn capture_tab(
             .panes
             .get(id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id))
-            .and_then(|terminal| terminal.pane_title.clone());
+            .and_then(|terminal| terminal.agent_task_title.clone());
         let agent_restore = tab
             .panes
             .get(id)

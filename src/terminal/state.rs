@@ -39,6 +39,7 @@ pub struct TerminalState {
     pub hook_authority: Option<HookAuthority>,
     pub manual_label: Option<String>,
     pub agent_name: Option<String>,
+    pub agent_task_title: Option<String>,
     pub pane_title: Option<String>,
     hook_report_sequences: HashMap<String, u64>,
     pub state: AgentState,
@@ -69,6 +70,7 @@ impl TerminalState {
             hook_authority: None,
             manual_label: None,
             agent_name: None,
+            agent_task_title: None,
             pane_title: None,
             hook_report_sequences: HashMap::new(),
             state: AgentState::Unknown,
@@ -282,6 +284,18 @@ impl TerminalState {
         self.agent_name = None;
     }
 
+    pub fn set_agent_task_title(&mut self, title: Option<String>) -> bool {
+        let title = title.and_then(|title| {
+            let title = title.trim().to_string();
+            (!title.is_empty()).then_some(title)
+        });
+        if self.agent_task_title == title {
+            return false;
+        }
+        self.agent_task_title = title;
+        true
+    }
+
     pub fn set_pane_title(&mut self, title: Option<String>) -> bool {
         let title = title.and_then(|title| {
             let title = title.trim().to_string();
@@ -296,8 +310,8 @@ impl TerminalState {
 
     pub fn is_agent_terminal(&self) -> bool {
         self.agent_name.is_some()
+            || self.agent_task_title.is_some()
             || self.effective_agent_label().is_some()
-            || self.launch_argv.is_some()
     }
 
     fn recompute_effective_state(

@@ -226,7 +226,7 @@ fn restore_tab(
                     terminal.set_agent_name(agent_name);
                 }
                 if let Some(title) = saved_title {
-                    terminal.set_pane_title(Some(title));
+                    terminal.set_agent_task_title(Some(title));
                 }
                 if let Some(agent_restore) = saved_agent_restore {
                     terminal.pending_restore = Some(crate::terminal::PendingAgentRestore {

@@ -1356,7 +1356,9 @@ fn render_sidebar_width_toggle(app: &AppState, frame: &mut Frame, area: Rect) {
         return;
     }
     let preset = current_sidebar_width_preset(app);
-    let style = Style::default().fg(p.text).add_modifier(Modifier::BOLD);
+    let style = Style::default()
+        .fg(p.accent)
+        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
     frame.render_widget(
         Paragraph::new(Span::styled(preset.button_label(), style)),
         rect,

@@ -12,9 +12,9 @@ use crate::{
     detect::AgentState,
 };
 
-const PANE_ACTION_CYCLE_LAYOUT_LABEL: &str = " Cycle layout ";
-const PANE_ACTION_ROTATE_LABEL: &str = " Rotate panes ";
-const PANE_ACTION_EQUALIZE_LABEL: &str = " Equalize ";
+const PANE_ACTION_CYCLE_LAYOUT_LABEL: &str = " CYCLE LAYOUT ";
+const PANE_ACTION_ROTATE_LABEL: &str = " ROTATE PANES ";
+const PANE_ACTION_EQUALIZE_LABEL: &str = " EQUALIZE ";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PaneActionBarRects {
@@ -65,7 +65,7 @@ pub(super) fn render_pane_action_bar(
     let bar_style = Style::default().fg(p.overlay0).bg(Color::Reset);
     frame.render_widget(Paragraph::new("").style(bar_style), area);
 
-    let label = vim_mode_label.unwrap_or(" panes ");
+    let label = vim_mode_label.unwrap_or(" PANES ");
     let label_area = Rect::new(area.x, area.y, area.width.min(label.len() as u16), 1);
     frame.render_widget(
         Paragraph::new(Span::styled(

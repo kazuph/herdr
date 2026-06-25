@@ -1177,7 +1177,7 @@ impl AppState {
                     })
                     .into_iter()
                     .collect();
-                self.update_pane_title(pane_id, title);
+                self.update_agent_task_title(pane_id, title);
                 updates
             }
             AppEvent::HookAuthorityCleared {
@@ -1287,7 +1287,7 @@ impl AppState {
         true
     }
 
-    fn update_pane_title(&mut self, pane_id: PaneId, title: Option<String>) -> bool {
+    fn update_agent_task_title(&mut self, pane_id: PaneId, title: Option<String>) -> bool {
         let Some(ws_idx) = self
             .workspaces
             .iter()
@@ -1304,11 +1304,30 @@ impl AppState {
         let changed = self
             .terminals
             .get_mut(&terminal_id)
-            .is_some_and(|terminal| terminal.set_pane_title(title));
+            .is_some_and(|terminal| terminal.set_agent_task_title(title));
         if changed {
             self.mark_session_dirty();
         }
         changed
+    }
+
+    fn update_pane_title(&mut self, pane_id: PaneId, title: Option<String>) -> bool {
+        let Some(ws_idx) = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.pane_state(pane_id).is_some())
+        else {
+            return false;
+        };
+        let Some(terminal_id) = self.workspaces[ws_idx]
+            .pane_state(pane_id)
+            .map(|pane| pane.attached_terminal_id.clone())
+        else {
+            return false;
+        };
+        self.terminals
+            .get_mut(&terminal_id)
+            .is_some_and(|terminal| terminal.set_pane_title(title))
     }
 
     fn apply_pane_state_change(
@@ -1567,7 +1586,7 @@ mod tests {
         });
 
         assert_eq!(
-            state.terminals[&terminal_id].pane_title.as_deref(),
+            state.terminals[&terminal_id].agent_task_title.as_deref(),
             Some("restore pane sessions")
         );
         assert!(state.session_dirty);

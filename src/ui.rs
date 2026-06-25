@@ -353,9 +353,9 @@ pub fn render(app: &AppState, frame: &mut Frame) {
     render_panes(app, frame, terminal_area);
     let vim_mode_label = if app.vim_mode_enabled {
         Some(if app.vim_insert_mode {
-            " vim insert "
+            " VIM INSERT "
         } else {
-            " vim normal "
+            " VIM NORMAL "
         })
     } else {
         None
