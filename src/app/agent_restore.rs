@@ -327,8 +327,8 @@ mod tests {
             AgentRestoreOutcome::Launch(command) => panic!("codex launched: {command}"),
         }
         match &entries[2].outcome {
-            AgentRestoreOutcome::Launch(command) => assert_eq!(command, "pi"),
-            AgentRestoreOutcome::Skip(reason) => panic!("pi skipped: {reason}"),
+            AgentRestoreOutcome::Skip(reason) => assert_eq!(*reason, "no resumable session found"),
+            AgentRestoreOutcome::Launch(command) => panic!("pi launched: {command}"),
         }
         match &entries[3].outcome {
             AgentRestoreOutcome::Skip(reason) => assert_eq!(*reason, "no resumable session found"),

@@ -205,7 +205,12 @@ pub(super) fn render_confirm_danger_overlay(app: &AppState, frame: &mut Frame, a
     };
     super::dim_background(frame, area);
 
-    let Some(popup) = confirm_danger_popup_rect(area) else {
+    let missing_sessions = if action == crate::app::state::DangerousAction::Restart {
+        app.missing_agent_session_infos()
+    } else {
+        Vec::new()
+    };
+    let Some(popup) = confirm_danger_popup_rect(area, missing_sessions.len()) else {
         return;
     };
 
@@ -214,8 +219,19 @@ pub(super) fn render_confirm_danger_overlay(app: &AppState, frame: &mut Frame, a
         .add_modifier(Modifier::BOLD);
     let dim = Style::default().fg(app.palette.overlay0);
 
-    let title_line = Line::from(vec![Span::styled(format!(" {}", action.title()), warn)]);
-    let detail_line = Line::from(vec![Span::styled(format!(" {}", action.detail()), dim)]);
+    let title = if missing_sessions.is_empty() {
+        action.title()
+    } else {
+        "Restart with missing agent sessions?"
+    };
+    let detail = if missing_sessions.is_empty() {
+        action.detail().to_string()
+    } else {
+        "These AI panes do not have a recorded session id:".to_string()
+    };
+
+    let title_line = Line::from(vec![Span::styled(format!(" {title}"), warn)]);
+    let detail_line = Line::from(vec![Span::styled(format!(" {detail}"), dim)]);
 
     let Some(inner) = render_panel_shell(frame, popup, app.palette.red, app.palette.panel_bg)
     else {
@@ -223,15 +239,31 @@ pub(super) fn render_confirm_danger_overlay(app: &AppState, frame: &mut Frame, a
     };
 
     if inner.height >= 3 {
+        let list_height = missing_sessions
+            .len()
+            .min(inner.height.saturating_sub(3) as usize);
         let rows = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(1),
+            Constraint::Length(list_height as u16),
             Constraint::Length(1),
         ])
-        .areas::<3>(inner);
+        .areas::<4>(inner);
 
         frame.render_widget(Paragraph::new(title_line), rows[0]);
         frame.render_widget(Paragraph::new(detail_line), rows[1]);
+        for (idx, info) in missing_sessions.iter().take(list_height).enumerate() {
+            let row = Rect::new(rows[2].x, rows[2].y + idx as u16, rows[2].width, 1);
+            let text = format!(
+                " space {} {} pane {} {}",
+                info.workspace_number, info.workspace_label, info.pane_label, info.agent
+            );
+            frame.render_widget(
+                Paragraph::new(truncate_for_width(&text, row.width))
+                    .style(Style::default().fg(app.palette.text)),
+                row,
+            );
+        }
 
         let (confirm_rect, cancel_rect) = confirm_danger_button_rects(inner);
         render_action_button(
@@ -257,6 +289,17 @@ pub(super) fn render_confirm_danger_overlay(app: &AppState, frame: &mut Frame, a
     }
 }
 
+fn truncate_for_width(text: &str, width: u16) -> String {
+    let width = width as usize;
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    let keep = width.saturating_sub(1);
+    let mut out: String = text.chars().take(keep).collect();
+    out.push('…');
+    out
+}
+
 pub(crate) fn confirm_close_popup_rect(area: Rect) -> Option<Rect> {
     centered_popup_rect(area, 44, 5)
 }
@@ -280,8 +323,9 @@ pub(crate) fn confirm_close_button_rects(inner: Rect) -> (Rect, Rect) {
     (rects[0], rects[1])
 }
 
-pub(crate) fn confirm_danger_popup_rect(area: Rect) -> Option<Rect> {
-    centered_popup_rect(area, 64, 5)
+pub(crate) fn confirm_danger_popup_rect(area: Rect, missing_session_count: usize) -> Option<Rect> {
+    let height = 5u16.saturating_add(missing_session_count.min(10) as u16);
+    centered_popup_rect(area, 76, height)
 }
 
 pub(crate) fn confirm_danger_button_rects(inner: Rect) -> (Rect, Rect) {
@@ -298,7 +342,7 @@ pub(crate) fn confirm_danger_button_rects(inner: Rect) -> (Rect, Rect) {
             },
         ],
         2,
-        2,
+        inner.height.saturating_sub(1),
     );
     (rects[0], rects[1])
 }

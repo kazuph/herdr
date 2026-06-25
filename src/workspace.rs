@@ -619,12 +619,9 @@ impl Workspace {
         let tab = self.tabs.first()?;
         let terminal_id = tab.terminal_id(tab.root_pane)?;
         let terminal = terminals.get(terminal_id)?;
-        terminal.is_agent_terminal().then(|| {
-            terminal
-                .agent_task_title
-                .clone()
-                .or_else(|| terminal.pane_title.clone())
-        })?
+        terminal
+            .is_agent_terminal()
+            .then(|| terminal.agent_task_title.clone())?
     }
 
     pub fn branch(&self) -> Option<String> {
@@ -866,7 +863,7 @@ mod tests {
         let mut terminal =
             TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"));
         terminal.detected_agent = Some(crate::detect::Agent::Codex);
-        terminal.set_pane_title(Some("planner".into()));
+        terminal.set_agent_task_title(Some("planner".into()));
         let mut terminals = HashMap::new();
         terminals.insert(terminal_id, terminal);
         let terminal_runtimes = HashMap::new();
@@ -875,6 +872,23 @@ mod tests {
             ws.display_name_from(&terminals, &terminal_runtimes),
             "pion-planner"
         );
+    }
+
+    #[test]
+    fn workspace_identity_ignores_agent_osc_title_without_task_title() {
+        let mut ws = Workspace::test_new("ignored");
+        ws.custom_name = None;
+        let root_pane = ws.tabs[0].root_pane;
+        let terminal_id = ws.tabs[0].terminal_id(root_pane).unwrap().clone();
+        let mut terminal =
+            TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"));
+        terminal.detected_agent = Some(crate::detect::Agent::Codex);
+        terminal.set_pane_title(Some("kazuph@host:pion".into()));
+        let mut terminals = HashMap::new();
+        terminals.insert(terminal_id, terminal);
+        let terminal_runtimes = HashMap::new();
+
+        assert_eq!(ws.display_name_from(&terminals, &terminal_runtimes), "pion");
     }
 
     #[test]

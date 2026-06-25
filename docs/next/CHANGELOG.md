@@ -24,7 +24,7 @@
 - `herdr pane current` now falls back to resolving the calling process session when `HERDR_PANE_ID` is not set, instead of relying on focus inference.
 - `herdr --help` now prints an AI-readable SKILL.md-style command guide, and `herdr help` prints the same guide.
 - Added `herdr pane run-notify` for long-running pane commands: output streams in the target pane, a job log is saved, and Herdr shows an exit toast with a tail sample and job-log pointer.
-- Added `[agent_restore]` to relaunch agent CLIs in restored panes after a server restart: per-agent command templates with a `{session_id}` placeholder (built-in defaults for claude and codex), opt-in automatic relaunch after startup via `enabled = true` and `restore_delay_ms`, and a manual `herdr agent restore [--dry-run]` command. Session ids come from `pane.report_agent`'s new optional `session_id` field (CLI `--session-id`) when integrations report them, with filesystem discovery of the latest claude/codex session per pane cwd as the fallback.
+- Added `[agent_restore]` to relaunch agent CLIs in restored panes after a server restart: per-agent command templates with a required `{session_id}` placeholder (built-in defaults for claude and codex), opt-in automatic relaunch after startup via `enabled = true` and `restore_delay_ms`, and a manual `herdr agent restore [--dry-run]` command. Session ids come from `pane.report_agent`'s optional `session_id` field (CLI `--session-id`) or per-pane process observation; Herdr does not guess from cwd or use "last session" fallbacks.
 - Added keyboard copy mode for focused panes: `prefix+[` enters a Vim-style scrollback view, `v`/`V` selects text, and `y` or Enter copies it to the system clipboard.
 
 ### Fixed

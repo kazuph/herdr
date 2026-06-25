@@ -2102,8 +2102,7 @@ mod tests {
     }
 
     #[test]
-    fn notification_title_uses_workspace_number_name_and_agent_osc_title_without_space_before_dash()
-    {
+    fn notification_title_ignores_agent_osc_title_without_task_title() {
         let mut state = app_with_workspaces(&["active", "background"]);
         state.workspaces[1].custom_name = None;
         let pane_id = *state.workspaces[1].panes.keys().next().unwrap();
@@ -2123,6 +2122,24 @@ mod tests {
             .get_mut(&terminal_id)
             .unwrap()
             .set_pane_title(Some("planner".into()));
+
+        assert_eq!(notification_title_for_pane(&state, 1, pane_id), "2 herdr");
+    }
+
+    #[test]
+    fn notification_title_uses_agent_task_title_without_space_before_dash() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.workspaces[1].custom_name = None;
+        let pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+        let terminal_id = state.workspaces[1]
+            .panes
+            .get(&pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.detected_agent = Some(crate::detect::Agent::Codex);
+        terminal.set_agent_task_title(Some("planner".into()));
 
         assert_eq!(
             notification_title_for_pane(&state, 1, pane_id),

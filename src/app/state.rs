@@ -1290,6 +1290,14 @@ impl DangerousAction {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingAgentSessionInfo {
+    pub workspace_number: usize,
+    pub workspace_label: String,
+    pub pane_label: String,
+    pub agent: String,
+}
+
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 pub struct AppState {
@@ -1561,6 +1569,43 @@ impl AppState {
         }
         ws.active_tab().map(|tab| tab.layout.focused()) == Some(pane_id)
     }
+
+    pub fn missing_agent_session_infos(&self) -> Vec<MissingAgentSessionInfo> {
+        let mut infos = Vec::new();
+        for (ws_idx, ws) in self.workspaces.iter().enumerate() {
+            let workspace_label = ws.display_name_from(&self.terminals, &self.terminal_runtimes);
+            for tab in &ws.tabs {
+                for (pane_id, pane) in &tab.panes {
+                    let Some(terminal) = self.terminals.get(&pane.attached_terminal_id) else {
+                        continue;
+                    };
+                    let Some(agent) = terminal
+                        .effective_agent_label()
+                        .or(terminal.agent_name.as_deref())
+                    else {
+                        continue;
+                    };
+                    if terminal
+                        .agent_session_id
+                        .as_deref()
+                        .is_some_and(crate::agent_sessions::is_safe_session_id)
+                    {
+                        continue;
+                    }
+                    let pane_number = ws
+                        .public_pane_number(*pane_id)
+                        .unwrap_or(pane_id.raw() as usize);
+                    infos.push(MissingAgentSessionInfo {
+                        workspace_number: ws_idx + 1,
+                        workspace_label: workspace_label.clone(),
+                        pane_label: format!("{}-{pane_number}", ws_idx + 1),
+                        agent: agent.to_string(),
+                    });
+                }
+            }
+        }
+        infos
+    }
 }
 
 #[cfg(test)]
@@ -1769,6 +1814,43 @@ mod tests {
             ToastKind::NeedsAttention,
             t0 + std::time::Duration::from_secs(11)
         ));
+    }
+
+    #[test]
+    fn missing_agent_session_infos_lists_live_agents_without_session_ids() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![
+            crate::workspace::Workspace::test_new("missing"),
+            crate::workspace::Workspace::test_new("recorded"),
+        ];
+        state.ensure_test_terminals();
+
+        let missing_pane = state.workspaces[0].tabs[0].root_pane;
+        let missing_terminal_id = state.workspaces[0].tabs[0]
+            .terminal_id(missing_pane)
+            .unwrap()
+            .clone();
+        state
+            .terminals
+            .get_mut(&missing_terminal_id)
+            .unwrap()
+            .detected_agent = Some(crate::detect::Agent::Claude);
+
+        let recorded_pane = state.workspaces[1].tabs[0].root_pane;
+        let recorded_terminal_id = state.workspaces[1].tabs[0]
+            .terminal_id(recorded_pane)
+            .unwrap()
+            .clone();
+        let recorded = state.terminals.get_mut(&recorded_terminal_id).unwrap();
+        recorded.detected_agent = Some(crate::detect::Agent::Codex);
+        recorded.agent_session_id = Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into());
+
+        let infos = state.missing_agent_session_infos();
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].workspace_number, 1);
+        assert_eq!(infos[0].workspace_label, "missing");
+        assert_eq!(infos[0].pane_label, "1-1");
+        assert_eq!(infos[0].agent, "claude");
     }
 
     #[test]

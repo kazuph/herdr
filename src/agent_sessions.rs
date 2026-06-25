@@ -41,12 +41,12 @@ pub fn is_safe_session_id(session_id: &str) -> bool {
 
 /// Render `template` into the command typed into the pane.
 ///
-/// Templates containing `{session_id}` require a safe session id and return
-/// `None` without one; templates without the placeholder are plain relaunch
-/// commands and ignore the session id.
+/// Templates must contain `{session_id}` and require a safe session id. Herdr
+/// never falls back to "last session" style commands because they can restore
+/// the wrong conversation when panes share a cwd.
 pub fn render_restore_command(template: &str, session_id: Option<&str>) -> Option<String> {
     if !template.contains("{session_id}") {
-        return Some(template.to_string());
+        return None;
     }
     let session_id = session_id.filter(|id| is_safe_session_id(id))?;
     Some(template.replace("{session_id}", session_id))
@@ -133,7 +133,11 @@ mod tests {
             render_restore_command("claude --resume {session_id}", Some("evil; rm -rf /")),
             None
         );
-        assert_eq!(render_restore_command("pi", None), Some("pi".into()));
+        assert_eq!(render_restore_command("pi", None), None);
+        assert_eq!(
+            render_restore_command("claude --resume --last", Some("abc-123")),
+            None
+        );
     }
 
     #[test]

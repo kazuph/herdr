@@ -1048,7 +1048,14 @@ impl AppState {
     }
 
     pub(crate) fn confirm_danger_rect(&self) -> Rect {
-        crate::ui::confirm_danger_popup_rect(self.view.terminal_area).unwrap_or_default()
+        let missing_session_count =
+            if self.pending_danger_action == Some(crate::app::state::DangerousAction::Restart) {
+                self.missing_agent_session_infos().len()
+            } else {
+                0
+            };
+        crate::ui::confirm_danger_popup_rect(self.view.terminal_area, missing_session_count)
+            .unwrap_or_default()
     }
 
     fn context_menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
