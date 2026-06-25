@@ -599,7 +599,7 @@ impl PaneRuntime {
                 let mut last_foreground_pgid = None;
                 let mut pending_foreground_shell_clear = false;
                 let mut last_claude_working_at = None;
-                let mut claude_activity_tracker = None;
+                let mut agent_activity_tracker = None;
                 let mut last_observed_agent_session: Option<(Agent, String)> = None;
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -623,7 +623,7 @@ impl PaneRuntime {
                             last_foreground_pgid = None;
                             pending_foreground_shell_clear = false;
                             last_claude_working_at = None;
-                            claude_activity_tracker = None;
+                            agent_activity_tracker = None;
                         }
                     }
 
@@ -759,14 +759,21 @@ impl PaneRuntime {
 
                     let content = terminal.detection_text();
                     let raw_state = detect::detect_state(agent, &content);
+                    let activity_fingerprint = match agent {
+                        Some(detect::Agent::Claude) if raw_state == AgentState::Working => {
+                            detect::claude_activity_fingerprint(&content)
+                        }
+                        Some(detect::Agent::Codex) if raw_state == AgentState::Working => {
+                            detect::codex_activity_fingerprint(&content)
+                        }
+                        _ => None,
+                    };
                     let raw_state = crate::terminal::state::filter_stale_claude_working(
                         agent,
                         raw_state,
-                        (agent == Some(detect::Agent::Claude) && raw_state == AgentState::Working)
-                            .then(|| detect::claude_activity_fingerprint(&content))
-                            .flatten(),
+                        activity_fingerprint,
                         now,
-                        &mut claude_activity_tracker,
+                        &mut agent_activity_tracker,
                     );
                     let new_state = stabilize_agent_state(
                         agent,

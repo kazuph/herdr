@@ -715,6 +715,23 @@ fn has_codex_working_header(content: &str) -> bool {
     })
 }
 
+pub fn codex_activity_fingerprint(content: &str) -> Option<String> {
+    let lines: Vec<&str> = content
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            let lower = trimmed.to_lowercase();
+            (trimmed.starts_with('•') && trimmed.contains("Working ("))
+                || lower.contains("esc to interrupt")
+        })
+        .collect();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
 /// Cursor spinner: ⬡ or ⬢ followed by a word ending in "ing"
 fn has_cursor_spinner(content: &str) -> bool {
     for line in content.lines() {

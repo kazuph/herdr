@@ -347,7 +347,7 @@ impl TerminalState {
     }
 }
 
-/// How long a Claude activity fingerprint may stay frozen before the
+/// How long an agent activity fingerprint may stay frozen before the
 /// `working` evidence is treated as fossilized scrollback rather than a live
 /// spinner. A live spinner animates its frame glyph and elapsed-time counter
 /// every second, so a fingerprint that does not change for this long cannot
@@ -355,10 +355,10 @@ impl TerminalState {
 pub(crate) const CLAUDE_ACTIVITY_STALE_AFTER: std::time::Duration =
     std::time::Duration::from_secs(15);
 
-/// Downgrade `working` to `idle` when the only working evidence is a Claude
+/// Downgrade `working` to `idle` when the only working evidence is an agent
 /// activity fingerprint that has been frozen for `CLAUDE_ACTIVITY_STALE_AFTER`.
 ///
-/// Claude Code sometimes leaves old spinner lines (with their task lists) in
+/// Claude Code and Codex sometimes leave old spinner/status lines in
 /// the transcript right above the prompt box, which is indistinguishable
 /// from a live spinner by position or content alone. Tracking change over
 /// time is the discriminator: real spinners tick, fossils do not. The state
@@ -371,7 +371,7 @@ pub(crate) fn filter_stale_claude_working(
     now: std::time::Instant,
     tracker: &mut Option<(String, std::time::Instant)>,
 ) -> AgentState {
-    if agent != Some(Agent::Claude) || raw != AgentState::Working {
+    if !matches!(agent, Some(Agent::Claude | Agent::Codex)) || raw != AgentState::Working {
         *tracker = None;
         return raw;
     }
@@ -571,10 +571,10 @@ mod tests {
             AgentState::Idle,
         );
         assert!(tracker.is_none());
-        // Other agents pass through untouched.
+        // Agents without fossil filters pass through untouched.
         assert_eq!(
             filter_stale_claude_working(
-                Some(Agent::Codex),
+                Some(Agent::Gemini),
                 AgentState::Working,
                 Some(fossil),
                 now + std::time::Duration::from_secs(6),
@@ -583,6 +583,36 @@ mod tests {
             AgentState::Working,
         );
         assert!(tracker.is_none());
+    }
+
+    #[test]
+    fn frozen_codex_working_header_expires_to_idle() {
+        let now = std::time::Instant::now();
+        let mut tracker = None;
+        let fossil = "• Working (37s • esc to interrupt)".to_string();
+
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Codex),
+                AgentState::Working,
+                Some(fossil.clone()),
+                now,
+                &mut tracker,
+            ),
+            AgentState::Working,
+            "first Codex working observation is trusted"
+        );
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Codex),
+                AgentState::Working,
+                Some(fossil),
+                now + CLAUDE_ACTIVITY_STALE_AFTER,
+                &mut tracker,
+            ),
+            AgentState::Idle,
+            "a frozen Codex working header is fossilized scrollback"
+        );
     }
 
     #[test]
