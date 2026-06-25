@@ -63,6 +63,12 @@ For Claude Code panes, use `--source claude --agent claude`.
 
 Keep titles concise and task-specific, for example `restore pane sessions`, `fix agent status`, or `implement title reporting`. Do not use vague titles like `working`, `task`, `update`, or only the repository name.
 
+## No Fallback Masking
+
+Never hide missing evidence with a fallback. If a task depends on a concrete id, file, runtime state, URL, session id, or remote response, verify that exact value and fail closed when it is unavailable.
+
+For Herdr agent restore, `--last`, `resume --last`, cwd-latest discovery, recent-session guessing, and any other "restore whatever was last" fallback are absolutely forbidden. A pane may be restored only from the exact session id observed for that pane or explicitly reported by that pane. If the pane's current session id is unknown, list the pane as unsafe and ask before restart; do not silently substitute another conversation.
+
 ## Testing
 
 Use `just` recipes by default for tests and checks instead of invoking cargo or scripts directly.

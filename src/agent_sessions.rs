@@ -34,9 +34,16 @@ pub fn restore_template<'a>(
 pub fn is_safe_session_id(session_id: &str) -> bool {
     !session_id.is_empty()
         && session_id.len() <= 128
+        && !session_id.starts_with('-')
+        && session_id != "last"
+        && session_id != "--last"
         && session_id
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+fn is_safe_restore_template(template: &str) -> bool {
+    template.contains("{session_id}") && !template.split_whitespace().any(|token| token == "--last")
 }
 
 /// Render `template` into the command typed into the pane.
@@ -45,7 +52,7 @@ pub fn is_safe_session_id(session_id: &str) -> bool {
 /// never falls back to "last session" style commands because they can restore
 /// the wrong conversation when panes share a cwd.
 pub fn render_restore_command(template: &str, session_id: Option<&str>) -> Option<String> {
-    if !template.contains("{session_id}") {
+    if !is_safe_restore_template(template) {
         return None;
     }
     let session_id = session_id.filter(|id| is_safe_session_id(id))?;
@@ -131,6 +138,14 @@ mod tests {
         );
         assert_eq!(
             render_restore_command("claude --resume {session_id}", Some("evil; rm -rf /")),
+            None
+        );
+        assert_eq!(
+            render_restore_command("codex resume {session_id}", Some("--last")),
+            None
+        );
+        assert_eq!(
+            render_restore_command("codex resume {session_id} --last", Some("abc-123")),
             None
         );
         assert_eq!(render_restore_command("pi", None), None);
