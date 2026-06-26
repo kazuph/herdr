@@ -1325,10 +1325,10 @@ switch_workspace = "prefix+shift+1..9"
             .all(|binding| binding.trigger.is_prefix()));
         assert_eq!(
             binding_triggers(&kb.copy_mode),
-            vec![BindingTrigger::Prefix((
-                KeyCode::Char('['),
-                KeyModifiers::empty()
-            ))]
+            vec![
+                BindingTrigger::Prefix((KeyCode::Char('['), KeyModifiers::empty())),
+                BindingTrigger::Prefix((KeyCode::Char(']'), KeyModifiers::empty())),
+            ]
         );
     }
 

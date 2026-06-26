@@ -341,7 +341,7 @@ impl Default for KeysConfig {
                 "prefix+minus".into(),
             ]),
             close_pane: BindingConfig::one("prefix+x"),
-            copy_mode: BindingConfig::one("prefix+["),
+            copy_mode: BindingConfig::Many(vec!["prefix+[".into(), "prefix+]".into()]),
             zoom: BindingConfig::one("prefix+z"),
             resize_mode: BindingConfig::one("prefix+r"),
             toggle_sidebar: BindingConfig::one("prefix+b"),

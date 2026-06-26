@@ -1120,6 +1120,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prefix_right_bracket_enters_copy_mode() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 80, 24));
+
+        app.handle_key(TerminalKey::new(
+            app.state.prefix_code,
+            app.state.prefix_mods,
+        ))
+        .await;
+        app.handle_key(TerminalKey::new(KeyCode::Char(']'), KeyModifiers::empty()))
+            .await;
+
+        assert_eq!(app.state.mode, Mode::Copy);
+    }
+
+    #[tokio::test]
     async fn no_op_prefix_action_exits_prefix_mode() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
