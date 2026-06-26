@@ -1455,6 +1455,8 @@ impl App {
                     {
                         if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
                             terminal.agent_session_id = Some(session_id);
+                            terminal.agent_session_agent =
+                                crate::detect::parse_agent_label(&agent_label);
                             self.state.mark_session_dirty();
                         }
                     }

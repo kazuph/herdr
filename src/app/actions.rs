@@ -1279,10 +1279,13 @@ impl AppState {
         {
             return false;
         }
-        if terminal.agent_session_id.as_deref() == Some(session_id.as_str()) {
+        if terminal.agent_session_id.as_deref() == Some(session_id.as_str())
+            && terminal.agent_session_agent == Some(agent)
+        {
             return false;
         }
         terminal.agent_session_id = Some(session_id);
+        terminal.agent_session_agent = Some(agent);
         self.mark_session_dirty();
         true
     }
@@ -1415,6 +1418,30 @@ impl AppState {
         }
 
         let pane_terminal_id = self.terminal_id_for_pane(ws_idx, pane_id);
+        if let Some(terminal_id) = pane_terminal_id.as_ref() {
+            if self
+                .terminals
+                .get(terminal_id)
+                .is_some_and(terminal_has_restorable_agent_session)
+            {
+                if let Some(terminal) = self.terminals.get_mut(terminal_id) {
+                    terminal.detected_agent = None;
+                    terminal.fallback_state = AgentState::Unknown;
+                    terminal.hook_authority = None;
+                    terminal.state = AgentState::Unknown;
+                    terminal.revision = terminal.revision.saturating_add(1);
+                }
+                if let Some(runtime) = self.terminal_runtimes.remove(terminal_id) {
+                    runtime.shutdown();
+                }
+                self.mark_session_dirty();
+                info!(
+                    pane = pane_id.raw(),
+                    "preserving restorable agent pane after child exit"
+                );
+                return;
+            }
+        }
         let workspace_terminal_ids = self.terminal_ids_for_workspace(ws_idx);
         let should_close_workspace = {
             let ws = &mut self.workspaces[ws_idx];
@@ -1445,6 +1472,24 @@ impl AppState {
             self.remove_unattached_terminal_ids(pane_terminal_id);
         }
     }
+}
+
+fn terminal_has_restorable_agent_session(terminal: &crate::terminal::TerminalState) -> bool {
+    if terminal
+        .agent_session_id
+        .as_deref()
+        .is_some_and(crate::agent_sessions::is_safe_session_id)
+        && terminal.agent_session_agent.is_some()
+    {
+        return true;
+    }
+    terminal.pending_restore.as_ref().is_some_and(|restore| {
+        restore
+            .session_id
+            .as_deref()
+            .is_some_and(crate::agent_sessions::is_safe_session_id)
+            && crate::detect::parse_agent_label(&restore.agent).is_some()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1929,6 +1974,30 @@ mod tests {
 
         assert_eq!(state.workspaces.len(), 1);
         assert_eq!(state.workspaces[0].panes.len(), 1);
+    }
+
+    #[test]
+    fn pane_died_preserves_restorable_agent_pane() {
+        let mut state = app_with_workspaces(&["test"]);
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.agent_session_agent = Some(Agent::Codex);
+        terminal.agent_session_id = Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into());
+        terminal.detected_agent = Some(Agent::Codex);
+        terminal.state = AgentState::Working;
+
+        state.handle_pane_died(pane_id);
+
+        assert_eq!(state.workspaces.len(), 1);
+        assert!(state.workspaces[0].pane_state(pane_id).is_some());
+        let terminal = state.terminals.get(&terminal_id).unwrap();
+        assert_eq!(
+            terminal.agent_session_id.as_deref(),
+            Some("019ef3a2-749c-7b52-b324-2c20cb0b2379")
+        );
+        assert_eq!(terminal.agent_session_agent, Some(Agent::Codex));
+        assert_eq!(terminal.state, AgentState::Unknown);
     }
 
     #[test]

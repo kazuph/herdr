@@ -315,6 +315,7 @@ fn capture_tab(
             .and_then(|terminal| {
                 let agent = terminal
                     .effective_known_agent()
+                    .or(terminal.agent_session_agent)
                     .map(|agent| crate::detect::agent_label(agent).to_string())
                     .or_else(|| terminal.effective_agent_label().map(str::to_string))?;
                 Some(AgentRestoreSnapshot {
@@ -462,6 +463,32 @@ mod tests {
             Some(AgentRestoreSnapshot {
                 agent: "claude".into(),
                 session_id: Some("11111111-2222-3333-4444-555555555555".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn capture_records_observed_agent_session_after_detection_disappears() {
+        let mut state = state_with_workspaces(&["one"]);
+        let ws = &state.workspaces[0];
+        let pane_id = ws.tabs[0].root_pane;
+        let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.agent_session_agent = Some(crate::detect::Agent::Codex);
+        terminal.agent_session_id = Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into());
+
+        let snap = capture_from_state(&state);
+
+        let pane = snap.workspaces[0].tabs[0]
+            .panes
+            .values()
+            .next()
+            .expect("captured pane");
+        assert_eq!(
+            pane.agent_restore,
+            Some(AgentRestoreSnapshot {
+                agent: "codex".into(),
+                session_id: Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into()),
             })
         );
     }

@@ -229,6 +229,9 @@ fn restore_tab(
                     terminal.set_agent_task_title(Some(title));
                 }
                 if let Some(agent_restore) = saved_agent_restore {
+                    terminal.agent_session_agent =
+                        crate::detect::parse_agent_label(&agent_restore.agent);
+                    terminal.agent_session_id = agent_restore.session_id.clone();
                     terminal.pending_restore = Some(crate::terminal::PendingAgentRestore {
                         agent: agent_restore.agent,
                         session_id: agent_restore.session_id,
