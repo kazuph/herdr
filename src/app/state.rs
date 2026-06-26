@@ -1234,9 +1234,9 @@ pub(crate) enum SidebarWidthPreset {
 impl SidebarWidthPreset {
     pub(crate) fn button_label(self) -> String {
         match self {
-            Self::Narrow => "NARROW".to_string(),
-            Self::Normal => "NORMAL".to_string(),
-            Self::Wide => "WIDE".to_string(),
+            Self::Narrow => " NARROW ".to_string(),
+            Self::Normal => " NORMAL ".to_string(),
+            Self::Wide => " WIDE ".to_string(),
         }
     }
 

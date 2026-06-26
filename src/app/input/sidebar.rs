@@ -1784,7 +1784,7 @@ mod tests {
         assert_eq!(toggle.x, app.state.view.sidebar_rect.x);
         assert_eq!(
             crate::app::state::SidebarWidthPreset::Normal.button_label(),
-            "NORMAL"
+            " NORMAL "
         );
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
