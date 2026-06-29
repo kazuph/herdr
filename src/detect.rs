@@ -1757,7 +1757,7 @@ mod tests {
 
     #[test]
     fn antigravity_idle_at_start_prompt() {
-        let screen = "Antigravity CLI 1.0.1\nkazu.homma@gmail.com (Google AI Pro)\nGemini 3.5 Flash (Medium)\n~/src/github.com/kazuph/herdr\n────────────────────────────────────────────────────────────────────\n>\n────────────────────────────────────────────────────────────────────\n? for shortcuts                            Gemini 3.5 Flash (Medium)";
+        let screen = "Antigravity CLI 1.0.1\nuser@example.com (Google AI Pro)\nGemini 3.5 Flash (Medium)\n~/src/example/herdr\n────────────────────────────────────────────────────────────────────\n>\n────────────────────────────────────────────────────────────────────\n? for shortcuts                            Gemini 3.5 Flash (Medium)";
         assert_eq!(
             detect_state(Some(Agent::Antigravity), screen),
             AgentState::Idle
@@ -1766,7 +1766,7 @@ mod tests {
 
     #[test]
     fn antigravity_blocked_on_command_permission_prompt() {
-        let screen = "Command\n────────────────────────────────────────────────────────────────────\n\n  Requesting permission for: node /Users/kazuph/.gemini/antigravity-cli/brain/task/scratch/take-pics.mjs\n\nDo you want to proceed?\n> 1. Yes\n  2. No\n\n  ↑/↓ Navigate · tab Amend · e edit command\nesc to cancel         Gemini 3.5 Flash (Medium) · 1 task(s) · /tasks";
+        let screen = "Command\n────────────────────────────────────────────────────────────────────\n\n  Requesting permission for: node /home/user/.gemini/antigravity-cli/brain/task/scratch/take-pics.mjs\n\nDo you want to proceed?\n> 1. Yes\n  2. No\n\n  ↑/↓ Navigate · tab Amend · e edit command\nesc to cancel         Gemini 3.5 Flash (Medium) · 1 task(s) · /tasks";
         assert_eq!(
             detect_state(Some(Agent::Antigravity), screen),
             AgentState::Blocked

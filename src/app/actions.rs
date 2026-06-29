@@ -2410,7 +2410,7 @@ mod tests {
         assert_eq!(
             notification_body_excerpt_ignoring_chrome(
                 "  - 55_Podcast 全体: 約 430MB\n\
-                   - 元WAV退避先: /Users/kazuph/Downloads/Kindle-work/retired_55_Podcast_wav_20260603\n\
+                   - 元WAV退避先: /tmp/herdr-fixtures/retired_55_Podcast_wav_20260603\n\
                    - 退避WAV合計: 約 2.6GB\n\n\
                   変換後 .m4a は ffprobe で全16本の duration を確認済み、失敗 0 です。\n\n\
                  ─ Worked for 4m 12s • Local tools: 9 calls (138.2s) • WebSocket: 6 events send (17ms) • 273 events received (112.3s) ─\n\n\
@@ -2491,8 +2491,8 @@ mod tests {
                  \u{20}\u{20}追記した実測値は、共有 API の起動中モデルで取得しました。\n\n\
                  ─ Worked for 3m 01s • Local tools: 22 calls (22.0s) ─────────────\n\n\
                  › Run /review on my current changes\n\n\
-                 \u{20}\u{20}gpt-5.5 medium · qwen-3.5-chat · main · Context 71% left",
-                Some("6 qwen-3.5-chat")
+                 \u{20}\u{20}gpt-5.5 medium · sample-agent · main · Context 71% left",
+                Some("6 sample-agent")
             ),
             Some(
                 "完了です。ベンチ結果を README.md:305 に追記し、push 済みです。 追記した実測値は、共有 API の起動中モデルで取得しました。"

@@ -846,7 +846,7 @@ mod tests {
         let terminal_id = ws.tabs[0].terminal_id(root_pane).unwrap().clone();
         let mut terminal =
             TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"));
-        terminal.set_pane_title(Some("kazuph@host:pion".into()));
+        terminal.set_pane_title(Some("user@host:pion".into()));
         let mut terminals = HashMap::new();
         terminals.insert(terminal_id, terminal);
         let terminal_runtimes = HashMap::new();
@@ -883,7 +883,7 @@ mod tests {
         let mut terminal =
             TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"));
         terminal.detected_agent = Some(crate::detect::Agent::Codex);
-        terminal.set_pane_title(Some("kazuph@host:pion".into()));
+        terminal.set_pane_title(Some("user@host:pion".into()));
         let mut terminals = HashMap::new();
         terminals.insert(terminal_id, terminal);
         let terminal_runtimes = HashMap::new();
@@ -900,7 +900,7 @@ mod tests {
         let mut terminal =
             TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"))
                 .with_launch_argv(vec!["/bin/zsh".into()]);
-        terminal.set_pane_title(Some("kazuph@host:pion".into()));
+        terminal.set_pane_title(Some("user@host:pion".into()));
         let mut terminals = HashMap::new();
         terminals.insert(terminal_id, terminal);
         let terminal_runtimes = HashMap::new();
