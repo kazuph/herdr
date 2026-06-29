@@ -171,6 +171,7 @@ impl App {
             self.state.sidebar_width,
             self.state.sidebar_section_split,
             &self.state.collapsed_workspace_sections,
+            &self.state.agent_session_ledger,
         );
         let mut workspace_snapshot = snapshot.workspaces.remove(ws_idx);
         workspace_snapshot.id = None;
@@ -196,6 +197,7 @@ impl App {
             self.event_tx.clone(),
             self.render_notify.clone(),
             self.render_dirty.clone(),
+            &self.state.agent_session_ledger,
         );
         let Some(workspace) = workspaces.pop() else {
             return Err(std::io::Error::other("workspace could not be restored"));

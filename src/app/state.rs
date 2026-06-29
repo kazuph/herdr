@@ -1295,7 +1295,10 @@ pub struct MissingAgentSessionInfo {
     pub workspace_number: usize,
     pub workspace_label: String,
     pub pane_label: String,
+    pub cwd: std::path::PathBuf,
     pub agent: String,
+    pub title: Option<String>,
+    pub reason: String,
 }
 
 /// All application state — pure data, no channels or async runtime.
@@ -1411,6 +1414,8 @@ pub struct AppState {
     pub local_sound_playback: bool,
     pub toast_config: ToastConfig,
     pub agent_restore_config: crate::config::AgentRestoreConfig,
+    pub agent_session_ledger: crate::persist::agent_ledger::AgentSessionLedger,
+    pub agent_session_ledger_path: Option<std::path::PathBuf>,
     pub keybinds: Keybinds,
     /// Frame counter for spinner animations (wraps around).
     pub spinner_tick: u32,
@@ -1574,7 +1579,8 @@ impl AppState {
         let mut infos = Vec::new();
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
             let workspace_label = ws.display_name_from(&self.terminals, &self.terminal_runtimes);
-            for tab in &ws.tabs {
+            for (tab_idx, tab) in ws.tabs.iter().enumerate() {
+                let tab_id = format!("{}:{}", ws.id, tab_idx + 1);
                 for (pane_id, pane) in &tab.panes {
                     let Some(terminal) = self.terminals.get(&pane.attached_terminal_id) else {
                         continue;
@@ -1582,6 +1588,12 @@ impl AppState {
                     let Some(agent) = terminal
                         .effective_agent_label()
                         .or(terminal.agent_name.as_deref())
+                        .or_else(|| {
+                            terminal
+                                .pending_restore
+                                .as_ref()
+                                .map(|restore| restore.agent.as_str())
+                        })
                     else {
                         continue;
                     };
@@ -1592,6 +1604,27 @@ impl AppState {
                     {
                         continue;
                     }
+                    let ledger_entry = self
+                        .agent_session_ledger
+                        .get(&ws.id, &tab_id, pane_id.raw())
+                        .filter(|entry| entry.agent == agent);
+                    if ledger_entry.is_some_and(|entry| {
+                        crate::agent_sessions::is_safe_session_id(&entry.session_id)
+                    }) {
+                        continue;
+                    }
+                    let reason = if terminal.agent_session_id.as_deref().is_some() {
+                        "invalid terminal session id"
+                    } else if self
+                        .agent_session_ledger
+                        .get(&ws.id, &tab_id, pane_id.raw())
+                        .filter(|entry| entry.agent == agent)
+                        .is_some()
+                    {
+                        "invalid ledger session id"
+                    } else {
+                        "missing session id"
+                    };
                     let pane_number = ws
                         .public_pane_number(*pane_id)
                         .unwrap_or(pane_id.raw() as usize);
@@ -1599,7 +1632,14 @@ impl AppState {
                         workspace_number: ws_idx + 1,
                         workspace_label: workspace_label.clone(),
                         pane_label: format!("{}-{pane_number}", ws_idx + 1),
+                        cwd: terminal.cwd.clone(),
                         agent: agent.to_string(),
+                        title: terminal
+                            .agent_task_title
+                            .clone()
+                            .or_else(|| terminal.pane_title.clone())
+                            .or_else(|| terminal.manual_label.clone()),
+                        reason: reason.to_string(),
                     });
                 }
             }
@@ -1741,6 +1781,8 @@ impl AppState {
             local_sound_playback: false,
             toast_config: ToastConfig::default(),
             agent_restore_config: crate::config::AgentRestoreConfig::default(),
+            agent_session_ledger: crate::persist::agent_ledger::AgentSessionLedger::default(),
+            agent_session_ledger_path: None,
             keybinds: Keybinds::default(),
             spinner_tick: 0,
             palette: Palette::catppuccin(),
@@ -1851,6 +1893,40 @@ mod tests {
         assert_eq!(infos[0].workspace_label, "missing");
         assert_eq!(infos[0].pane_label, "1-1");
         assert_eq!(infos[0].agent, "claude");
+        assert_eq!(infos[0].reason, "missing session id");
+        assert_eq!(infos[0].cwd, state.terminals[&missing_terminal_id].cwd);
+    }
+
+    #[test]
+    fn missing_agent_session_infos_accepts_safe_pane_ledger_entry() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("ledger")];
+        state.ensure_test_terminals();
+
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].tabs[0]
+            .terminal_id(pane_id)
+            .unwrap()
+            .clone();
+        let workspace_id = state.workspaces[0].id.clone();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.detected_agent = Some(crate::detect::Agent::Claude);
+        state
+            .agent_session_ledger
+            .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                pane_id: pane_id.raw(),
+                terminal_id: terminal_id.to_string(),
+                workspace_id: workspace_id.clone(),
+                tab_id: format!("{workspace_id}:1"),
+                cwd: terminal.cwd.clone(),
+                agent: "claude".into(),
+                session_id: "11111111-2222-3333-4444-555555555555".into(),
+                observed_at: 1,
+                source: "test".into(),
+                title: None,
+            });
+
+        assert!(state.missing_agent_session_infos().is_empty());
     }
 
     #[test]

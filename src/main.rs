@@ -328,8 +328,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Delay before typing restore commands, letting pane shells finish init.
 # restore_delay_ms = 3000
 
-# Command templates per agent. {session_id} is replaced with the agent's last
-# session; commands without the placeholder relaunch the agent fresh.
+# Command templates per agent. {session_id} is replaced with the exact session
+# id recorded for that pane. Templates without {session_id} are rejected.
 # Entries overlay the built-in defaults:
 #   claude = "claude --resume {session_id}"
 #   codex  = "codex resume {session_id}"

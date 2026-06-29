@@ -67,9 +67,9 @@ pub struct TerminalConfig {
 ///
 /// `commands` maps an agent name (as shown in the sidebar, e.g. `claude`,
 /// `codex`) to the command typed into the restored pane. `{session_id}` is
-/// replaced with the agent's last session id; commands without the
-/// placeholder are typed as-is (plain relaunch). User entries overlay the
-/// built-in defaults instead of replacing them.
+/// replaced with that pane's recorded session id. Templates without the
+/// placeholder are rejected; automatic restore must never guess a latest
+/// session or relaunch an id-less agent.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AgentRestoreConfig {

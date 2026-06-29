@@ -767,6 +767,60 @@ impl AppState {
         }
     }
 
+    pub(crate) fn remove_agent_ledger_workspace(&mut self, workspace_id: &str) {
+        self.agent_session_ledger.remove_workspace(workspace_id);
+        self.save_agent_session_ledger();
+    }
+
+    pub(crate) fn remove_agent_ledger_tab(&mut self, ws_idx: usize, tab_idx: usize) {
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let workspace_id = ws.id.clone();
+        let tab_id = format!("{}:{}", workspace_id, tab_idx + 1);
+        self.agent_session_ledger.remove_tab(&workspace_id, &tab_id);
+        self.save_agent_session_ledger();
+    }
+
+    pub(crate) fn remove_agent_ledger_pane(&mut self, ws_idx: usize, pane_id: PaneId) {
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) else {
+            return;
+        };
+        let workspace_id = ws.id.clone();
+        let tab_id = format!("{}:{}", workspace_id, tab_idx + 1);
+        self.agent_session_ledger
+            .remove_pane(&workspace_id, &tab_id, pane_id.raw());
+        self.save_agent_session_ledger();
+    }
+
+    fn agent_ledger_entry_for_pane(
+        &self,
+        ws_idx: usize,
+        pane_id: PaneId,
+    ) -> Option<crate::persist::agent_ledger::AgentSessionLedgerEntry> {
+        let ws = self.workspaces.get(ws_idx)?;
+        let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
+        let workspace_id = ws.id.clone();
+        let tab_id = format!("{}:{}", workspace_id, tab_idx + 1);
+        self.agent_session_ledger
+            .get(&workspace_id, &tab_id, pane_id.raw())
+            .filter(|entry| crate::agent_sessions::is_safe_session_id(&entry.session_id))
+            .cloned()
+    }
+
+    fn save_agent_session_ledger(&self) {
+        if let Some(path) = &self.agent_session_ledger_path {
+            if let Err(err) =
+                crate::persist::agent_ledger::save_to_path(path, &self.agent_session_ledger)
+            {
+                warn!(err = %err, "failed to save agent session ledger");
+            }
+        }
+    }
+
     pub fn close_selected_workspace(&mut self) {
         if self.workspaces.is_empty() {
             return;
@@ -776,6 +830,7 @@ impl AppState {
         self.mark_session_dirty();
         let terminal_ids = self.terminal_ids_for_workspace(self.selected);
         let workspace_id = self.workspaces[self.selected].id.clone();
+        self.remove_agent_ledger_workspace(&workspace_id);
         crate::logging::workspace_closed(&workspace_id);
         self.workspaces.remove(self.selected);
         self.remove_unattached_terminal_ids(terminal_ids);
@@ -963,15 +1018,29 @@ impl AppState {
         self.selection_autoscroll = None;
         self.mark_session_dirty();
         let active = self.active;
+        let focused = active.and_then(|i| {
+            self.workspaces
+                .get(i)
+                .and_then(|ws| ws.focused_pane_id().map(|pane_id| (i, pane_id)))
+        });
         let terminal_ids = active
-            .and_then(|i| {
-                self.workspaces
-                    .get(i)
-                    .and_then(|ws| ws.focused_pane_id().map(|pane_id| (i, pane_id)))
-            })
+            .and(focused)
             .and_then(|(i, pane_id)| self.terminal_id_for_pane(i, pane_id))
             .into_iter()
             .collect::<Vec<_>>();
+        let should_close_workspace = focused
+            .and_then(|(ws_idx, pane_id)| {
+                self.workspaces
+                    .get(ws_idx)
+                    .and_then(|ws| ws.find_tab_index_for_pane(pane_id))
+                    .map(|tab_idx| self.workspaces[ws_idx].tabs[tab_idx].layout.pane_count() <= 1)
+            })
+            .unwrap_or(false);
+        if !should_close_workspace {
+            if let Some((ws_idx, pane_id)) = focused {
+                self.remove_agent_ledger_pane(ws_idx, pane_id);
+            }
+        }
         let should_close_workspace = active
             .and_then(|i| self.workspaces.get_mut(i))
             .is_some_and(|ws| ws.close_focused());
@@ -1010,7 +1079,12 @@ impl AppState {
                 return;
             };
             let workspace_id = ws.id.clone();
-            let closing_tab_id = format!("{}:{}", workspace_id, ws.active_tab + 1);
+            let active_tab = ws.active_tab;
+            let closing_tab_id = format!("{}:{}", workspace_id, active_tab + 1);
+            self.remove_agent_ledger_tab(ws_idx, active_tab);
+            let Some(ws) = self.workspaces.get_mut(ws_idx) else {
+                return;
+            };
             ws.close_active_tab();
             self.remove_unattached_terminal_ids(terminal_ids);
             crate::logging::tab_closed(&workspace_id, &closing_tab_id);
@@ -1257,15 +1331,19 @@ impl AppState {
         if !crate::agent_sessions::is_safe_session_id(&session_id) {
             return false;
         }
-        let Some(ws_idx) = self
-            .workspaces
-            .iter()
-            .position(|ws| ws.pane_state(pane_id).is_some())
+        let Some((ws_idx, tab_idx)) =
+            self.workspaces.iter().enumerate().find_map(|(ws_idx, ws)| {
+                ws.tabs
+                    .iter()
+                    .position(|tab| tab.panes.contains_key(&pane_id))
+                    .map(|tab_idx| (ws_idx, tab_idx))
+            })
         else {
             return false;
         };
-        let Some(terminal_id) = self.workspaces[ws_idx]
-            .pane_state(pane_id)
+        let Some(terminal_id) = self.workspaces[ws_idx].tabs[tab_idx]
+            .panes
+            .get(&pane_id)
             .map(|pane| pane.attached_terminal_id.clone())
         else {
             return false;
@@ -1279,13 +1357,29 @@ impl AppState {
         {
             return false;
         }
-        if terminal.agent_session_id.as_deref() == Some(session_id.as_str())
-            && terminal.agent_session_agent == Some(agent)
-        {
-            return false;
-        }
-        terminal.agent_session_id = Some(session_id);
+        terminal.agent_session_id = Some(session_id.clone());
         terminal.agent_session_agent = Some(agent);
+        let title = terminal
+            .agent_task_title
+            .clone()
+            .or_else(|| terminal.pane_title.clone())
+            .or_else(|| terminal.manual_label.clone());
+        let cwd = terminal.cwd.clone();
+        let workspace_id = self.workspaces[ws_idx].id.clone();
+        self.agent_session_ledger
+            .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                pane_id: pane_id.raw(),
+                terminal_id: terminal_id.to_string(),
+                workspace_id: workspace_id.clone(),
+                tab_id: format!("{}:{}", workspace_id, tab_idx + 1),
+                cwd,
+                agent: crate::detect::agent_label(agent).to_string(),
+                session_id,
+                observed_at: crate::persist::agent_ledger::now_millis(),
+                source: "observed".to_string(),
+                title,
+            });
+        self.save_agent_session_ledger();
         self.mark_session_dirty();
         true
     }
@@ -1418,13 +1512,26 @@ impl AppState {
         }
 
         let pane_terminal_id = self.terminal_id_for_pane(ws_idx, pane_id);
+        let ledger_entry = self.agent_ledger_entry_for_pane(ws_idx, pane_id);
         if let Some(terminal_id) = pane_terminal_id.as_ref() {
-            if self
-                .terminals
-                .get(terminal_id)
-                .is_some_and(terminal_has_restorable_agent_session)
+            if ledger_entry.is_some()
+                || self
+                    .terminals
+                    .get(terminal_id)
+                    .is_some_and(terminal_has_restorable_agent_session)
             {
                 if let Some(terminal) = self.terminals.get_mut(terminal_id) {
+                    if terminal
+                        .agent_session_id
+                        .as_deref()
+                        .is_none_or(|id| !crate::agent_sessions::is_safe_session_id(id))
+                    {
+                        if let Some(entry) = ledger_entry.as_ref() {
+                            terminal.agent_session_id = Some(entry.session_id.clone());
+                            terminal.agent_session_agent =
+                                crate::detect::parse_agent_label(&entry.agent);
+                        }
+                    }
                     terminal.detected_agent = None;
                     terminal.fallback_state = AgentState::Unknown;
                     terminal.hook_authority = None;
@@ -1606,6 +1713,14 @@ mod tests {
             state.terminals[&terminal_id].agent_session_id.as_deref(),
             Some("019ef3a2-749c-7b52-b324-2c20cb0b2379")
         );
+        let workspace_id = state.workspaces[0].id.clone();
+        let entry = state
+            .agent_session_ledger
+            .get(&workspace_id, &format!("{workspace_id}:1"), pane_id.raw())
+            .expect("session ledger entry");
+        assert_eq!(entry.agent, "codex");
+        assert_eq!(entry.terminal_id, terminal_id.to_string());
+        assert_eq!(entry.session_id, "019ef3a2-749c-7b52-b324-2c20cb0b2379");
         assert!(state.session_dirty);
     }
 
@@ -1986,6 +2101,43 @@ mod tests {
         terminal.agent_session_id = Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into());
         terminal.detected_agent = Some(Agent::Codex);
         terminal.state = AgentState::Working;
+
+        state.handle_pane_died(pane_id);
+
+        assert_eq!(state.workspaces.len(), 1);
+        assert!(state.workspaces[0].pane_state(pane_id).is_some());
+        let terminal = state.terminals.get(&terminal_id).unwrap();
+        assert_eq!(
+            terminal.agent_session_id.as_deref(),
+            Some("019ef3a2-749c-7b52-b324-2c20cb0b2379")
+        );
+        assert_eq!(terminal.agent_session_agent, Some(Agent::Codex));
+        assert_eq!(terminal.state, AgentState::Unknown);
+    }
+
+    #[test]
+    fn pane_died_preserves_agent_pane_from_ledger_when_terminal_session_is_missing() {
+        let mut state = app_with_workspaces(&["test"]);
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+        let workspace_id = state.workspaces[0].id.clone();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.detected_agent = Some(Agent::Codex);
+        terminal.state = AgentState::Working;
+        state
+            .agent_session_ledger
+            .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                pane_id: pane_id.raw(),
+                terminal_id: terminal_id.to_string(),
+                workspace_id: workspace_id.clone(),
+                tab_id: format!("{workspace_id}:1"),
+                cwd: terminal.cwd.clone(),
+                agent: "codex".into(),
+                session_id: "019ef3a2-749c-7b52-b324-2c20cb0b2379".into(),
+                observed_at: 1,
+                source: "test".into(),
+                title: Some("restore pane".into()),
+            });
 
         state.handle_pane_died(pane_id);
 
@@ -2678,6 +2830,37 @@ mod tests {
     }
 
     #[test]
+    fn close_pane_removes_pane_agent_ledger_entry() {
+        let mut state = app_with_workspaces(&["test"]);
+        let pane_id = state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].tabs[0].layout.focus_pane(pane_id);
+        state.ensure_test_terminals();
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+        let workspace_id = state.workspaces[0].id.clone();
+        state
+            .agent_session_ledger
+            .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                pane_id: pane_id.raw(),
+                terminal_id: terminal_id.to_string(),
+                workspace_id: workspace_id.clone(),
+                tab_id: format!("{workspace_id}:1"),
+                cwd: state.terminals[&terminal_id].cwd.clone(),
+                agent: "codex".into(),
+                session_id: "019ef3a2-749c-7b52-b324-2c20cb0b2379".into(),
+                observed_at: 1,
+                source: "test".into(),
+                title: None,
+            });
+
+        state.close_pane();
+
+        assert!(state
+            .agent_session_ledger
+            .get(&workspace_id, &format!("{workspace_id}:1"), pane_id.raw())
+            .is_none());
+    }
+
+    #[test]
     fn close_tab_removes_unattached_terminal_states() {
         let mut state = app_with_workspaces(&["test"]);
         let tab_idx = state.workspaces[0].test_add_tab(Some("logs"));
@@ -2701,6 +2884,36 @@ mod tests {
         state.close_selected_workspace();
 
         assert!(!state.terminals.contains_key(&terminal_id));
+    }
+
+    #[test]
+    fn close_workspace_removes_workspace_agent_ledger_entries() {
+        let mut state = app_with_workspaces(&["one", "two"]);
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+        let workspace_id = state.workspaces[0].id.clone();
+        state
+            .agent_session_ledger
+            .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                pane_id: pane_id.raw(),
+                terminal_id: terminal_id.to_string(),
+                workspace_id: workspace_id.clone(),
+                tab_id: format!("{workspace_id}:1"),
+                cwd: state.terminals[&terminal_id].cwd.clone(),
+                agent: "claude".into(),
+                session_id: "11111111-2222-3333-4444-555555555555".into(),
+                observed_at: 1,
+                source: "test".into(),
+                title: None,
+            });
+
+        state.close_selected_workspace();
+
+        assert!(state
+            .agent_session_ledger
+            .entries
+            .values()
+            .all(|entry| entry.workspace_id != workspace_id));
     }
 
     #[test]

@@ -35,6 +35,7 @@ impl App {
                 self.state.sidebar_width,
                 self.state.sidebar_section_split,
                 &self.state.collapsed_workspace_sections,
+                &self.state.agent_session_ledger,
             );
             crate::persist::save(&snap);
         }

@@ -254,9 +254,16 @@ pub(super) fn render_confirm_danger_overlay(app: &AppState, frame: &mut Frame, a
         frame.render_widget(Paragraph::new(detail_line), rows[1]);
         for (idx, info) in missing_sessions.iter().take(list_height).enumerate() {
             let row = Rect::new(rows[2].x, rows[2].y + idx as u16, rows[2].width, 1);
+            let title = info.title.as_deref().unwrap_or("-");
             let text = format!(
-                " space {} {} pane {} {}",
-                info.workspace_number, info.workspace_label, info.pane_label, info.agent
+                " space {} {} pane {} {} title={} cwd={} reason={}",
+                info.workspace_number,
+                info.workspace_label,
+                info.pane_label,
+                info.agent,
+                title,
+                info.cwd.display(),
+                info.reason
             );
             frame.render_widget(
                 Paragraph::new(truncate_for_width(&text, row.width))

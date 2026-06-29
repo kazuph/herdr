@@ -10,10 +10,25 @@ use tracing::{error, warn};
 use crate::events::AppEvent;
 use crate::layout::{Node, PaneId, TileLayout};
 use crate::pane::PaneState;
+use crate::persist::agent_ledger::AgentSessionLedger;
+use crate::persist::snapshot::AgentRestoreSnapshot;
 use crate::terminal::{TerminalId, TerminalRuntime, TerminalState};
 use crate::workspace::Workspace;
 
 use super::{DirectionSnapshot, LayoutSnapshot, SessionSnapshot, TabSnapshot, WorkspaceSnapshot};
+
+struct RestoreContext<'a> {
+    rows: u16,
+    cols: u16,
+    scrollback_limit_bytes: usize,
+    host_terminal_theme: crate::terminal_theme::TerminalTheme,
+    preserve_pane_ids: bool,
+    default_shell: &'a str,
+    events: mpsc::Sender<AppEvent>,
+    render_notify: Arc<Notify>,
+    render_dirty: Arc<AtomicBool>,
+    agent_session_ledger: &'a AgentSessionLedger,
+}
 
 /// Restore workspaces from a snapshot. Each pane gets a fresh shell in its saved cwd.
 pub fn restore(
@@ -27,27 +42,31 @@ pub fn restore(
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<AtomicBool>,
+    agent_session_ledger: &AgentSessionLedger,
 ) -> (
     Vec<Workspace>,
     HashMap<TerminalId, TerminalState>,
     HashMap<TerminalId, TerminalRuntime>,
 ) {
+    let context = RestoreContext {
+        rows,
+        cols,
+        scrollback_limit_bytes,
+        host_terminal_theme,
+        preserve_pane_ids,
+        default_shell,
+        events,
+        render_notify,
+        render_dirty,
+        agent_session_ledger,
+    };
     let mut workspaces = Vec::new();
     let mut terminals = HashMap::new();
     let mut terminal_runtimes = HashMap::new();
     for ws_snap in &snapshot.workspaces {
-        if let Some((workspace, restored_terminals, restored_runtimes)) = restore_workspace(
-            ws_snap,
-            rows,
-            cols,
-            scrollback_limit_bytes,
-            host_terminal_theme,
-            preserve_pane_ids,
-            default_shell,
-            events.clone(),
-            render_notify.clone(),
-            render_dirty.clone(),
-        ) {
+        if let Some((workspace, restored_terminals, restored_runtimes)) =
+            restore_workspace(ws_snap, &context)
+        {
             for terminal in restored_terminals {
                 terminals.insert(terminal.id.clone(), terminal);
             }
@@ -60,15 +79,7 @@ pub fn restore(
 
 fn restore_workspace(
     snap: &WorkspaceSnapshot,
-    rows: u16,
-    cols: u16,
-    scrollback_limit_bytes: usize,
-    host_terminal_theme: crate::terminal_theme::TerminalTheme,
-    preserve_pane_ids: bool,
-    default_shell: &str,
-    events: mpsc::Sender<AppEvent>,
-    render_notify: Arc<Notify>,
-    render_dirty: Arc<AtomicBool>,
+    context: &RestoreContext<'_>,
 ) -> Option<(
     Workspace,
     Vec<TerminalState>,
@@ -79,23 +90,16 @@ fn restore_workspace(
     let mut terminal_runtimes = HashMap::new();
     let mut public_pane_numbers = HashMap::new();
     let mut next_public_pane_number = 1;
+    let workspace_id = snap
+        .id
+        .clone()
+        .unwrap_or_else(crate::workspace::generate_workspace_id);
 
     for (idx, tab_snap) in snap.tabs.iter().enumerate() {
-        let (tab, restored_terminals, restored_runtimes) = restore_tab(
-            tab_snap,
-            idx + 1,
-            rows,
-            cols,
-            scrollback_limit_bytes,
-            host_terminal_theme,
-            preserve_pane_ids,
-            default_shell,
-            events.clone(),
-            render_notify.clone(),
-            render_dirty.clone(),
-        )?;
+        let (tab, restored_terminals, restored_runtimes) =
+            restore_tab(tab_snap, &workspace_id, idx + 1, context)?;
         for pane_id in tab.layout.pane_ids() {
-            let pane_number = if preserve_pane_ids {
+            let pane_number = if context.preserve_pane_ids {
                 pane_id.raw() as usize
             } else {
                 next_public_pane_number
@@ -114,10 +118,7 @@ fn restore_workspace(
 
     Some((
         Workspace {
-            id: snap
-                .id
-                .clone()
-                .unwrap_or_else(crate::workspace::generate_workspace_id),
+            id: workspace_id,
             custom_name: snap.custom_name.clone(),
             section: snap.section,
             identity_cwd: snap.identity_cwd.clone(),
@@ -138,22 +139,15 @@ fn restore_workspace(
 
 fn restore_tab(
     snap: &TabSnapshot,
+    workspace_id: &str,
     number: usize,
-    rows: u16,
-    cols: u16,
-    scrollback_limit_bytes: usize,
-    host_terminal_theme: crate::terminal_theme::TerminalTheme,
-    preserve_pane_ids: bool,
-    default_shell: &str,
-    events: mpsc::Sender<AppEvent>,
-    render_notify: Arc<Notify>,
-    render_dirty: Arc<AtomicBool>,
+    context: &RestoreContext<'_>,
 ) -> Option<(
     crate::workspace::Tab,
     Vec<TerminalState>,
     HashMap<TerminalId, TerminalRuntime>,
 )> {
-    let (node, saved_id_for_pane) = if preserve_pane_ids {
+    let (node, saved_id_for_pane) = if context.preserve_pane_ids {
         (restore_node_preserving_ids(&snap.layout), HashMap::new())
     } else {
         let (node, id_map) = restore_node_remapped(&snap.layout);
@@ -168,6 +162,7 @@ fn restore_tab(
     let mut panes = HashMap::new();
     let mut terminals = Vec::new();
     let mut terminal_runtimes = HashMap::new();
+    let tab_id = format!("{workspace_id}:{number}");
     for id in &pane_ids {
         let saved_id = saved_id_for_pane
             .get(id)
@@ -199,22 +194,27 @@ fn restore_tab(
         let saved_label = snap.panes.get(&saved_id).and_then(|p| p.label.clone());
         let saved_agent_name = snap.panes.get(&saved_id).and_then(|p| p.agent_name.clone());
         let saved_title = snap.panes.get(&saved_id).and_then(|p| p.title.clone());
-        let saved_agent_restore = snap
-            .panes
-            .get(&saved_id)
-            .and_then(|p| p.agent_restore.clone());
+        let saved_agent_restore = agent_restore_from_snapshot_and_ledger(
+            snap.panes
+                .get(&saved_id)
+                .and_then(|p| p.agent_restore.clone()),
+            context.agent_session_ledger,
+            workspace_id,
+            &tab_id,
+            saved_id,
+        );
 
         match TerminalRuntime::spawn(
             *id,
-            rows,
-            cols,
+            context.rows,
+            context.cols,
             cwd.clone(),
-            scrollback_limit_bytes,
-            host_terminal_theme,
-            default_shell,
-            events.clone(),
-            render_notify.clone(),
-            render_dirty.clone(),
+            context.scrollback_limit_bytes,
+            context.host_terminal_theme,
+            context.default_shell,
+            context.events.clone(),
+            context.render_notify.clone(),
+            context.render_dirty.clone(),
         ) {
             Ok(runtime) => {
                 let terminal_id = TerminalId::alloc();
@@ -283,9 +283,9 @@ fn restore_tab(
             #[cfg(test)]
             runtimes: HashMap::new(),
             zoomed: snap.zoomed,
-            events,
-            render_notify,
-            render_dirty,
+            events: context.events.clone(),
+            render_notify: context.render_notify.clone(),
+            render_dirty: context.render_dirty.clone(),
         },
         terminals,
         terminal_runtimes,
@@ -315,6 +315,42 @@ pub(super) fn prune_restored_node(node: Node, surviving: &HashSet<PaneId>) -> Op
             }
         }
     }
+}
+
+fn agent_restore_from_snapshot_and_ledger(
+    mut saved_agent_restore: Option<AgentRestoreSnapshot>,
+    agent_session_ledger: &AgentSessionLedger,
+    workspace_id: &str,
+    tab_id: &str,
+    pane_id: u32,
+) -> Option<AgentRestoreSnapshot> {
+    let Some(ledger_entry) = agent_session_ledger
+        .get(workspace_id, tab_id, pane_id)
+        .filter(|entry| crate::agent_sessions::is_safe_session_id(&entry.session_id))
+    else {
+        return saved_agent_restore;
+    };
+    match &mut saved_agent_restore {
+        Some(agent_restore)
+            if agent_restore.agent == ledger_entry.agent
+                && agent_restore
+                    .session_id
+                    .as_deref()
+                    .is_none_or(|session_id| {
+                        !crate::agent_sessions::is_safe_session_id(session_id)
+                    }) =>
+        {
+            agent_restore.session_id = Some(ledger_entry.session_id.clone());
+        }
+        None => {
+            saved_agent_restore = Some(AgentRestoreSnapshot {
+                agent: ledger_entry.agent.clone(),
+                session_id: Some(ledger_entry.session_id.clone()),
+            });
+        }
+        _ => {}
+    }
+    saved_agent_restore
 }
 
 pub(super) fn resolve_restored_pane(
@@ -473,5 +509,72 @@ mod tests {
             resolve_restored_pane(Some(22), &surviving, &pane_ids),
             Some(first)
         );
+    }
+
+    #[test]
+    fn restore_metadata_uses_ledger_when_snapshot_session_id_is_missing() {
+        let mut ledger = AgentSessionLedger::default();
+        ledger.upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+            pane_id: 7,
+            terminal_id: "term-test".into(),
+            workspace_id: "ws-a".into(),
+            tab_id: "ws-a:1".into(),
+            cwd: std::path::PathBuf::from("/tmp"),
+            agent: "codex".into(),
+            session_id: "019ef3a2-749c-7b52-b324-2c20cb0b2379".into(),
+            observed_at: 1,
+            source: "test".into(),
+            title: Some("restore pane".into()),
+        });
+
+        let restore = agent_restore_from_snapshot_and_ledger(
+            Some(AgentRestoreSnapshot {
+                agent: "codex".into(),
+                session_id: None,
+            }),
+            &ledger,
+            "ws-a",
+            "ws-a:1",
+            7,
+        )
+        .expect("restore metadata");
+
+        assert_eq!(restore.agent, "codex");
+        assert_eq!(
+            restore.session_id.as_deref(),
+            Some("019ef3a2-749c-7b52-b324-2c20cb0b2379")
+        );
+    }
+
+    #[test]
+    fn restore_metadata_does_not_cross_agent_from_ledger() {
+        let mut ledger = AgentSessionLedger::default();
+        ledger.upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+            pane_id: 7,
+            terminal_id: "term-test".into(),
+            workspace_id: "ws-a".into(),
+            tab_id: "ws-a:1".into(),
+            cwd: std::path::PathBuf::from("/tmp"),
+            agent: "claude".into(),
+            session_id: "11111111-2222-3333-4444-555555555555".into(),
+            observed_at: 1,
+            source: "test".into(),
+            title: None,
+        });
+
+        let restore = agent_restore_from_snapshot_and_ledger(
+            Some(AgentRestoreSnapshot {
+                agent: "codex".into(),
+                session_id: None,
+            }),
+            &ledger,
+            "ws-a",
+            "ws-a:1",
+            7,
+        )
+        .expect("restore metadata");
+
+        assert_eq!(restore.agent, "codex");
+        assert_eq!(restore.session_id, None);
     }
 }

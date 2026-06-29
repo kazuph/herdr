@@ -235,6 +235,12 @@ impl App {
         // Try to restore previous session
         let mut restored_terminals = std::collections::HashMap::new();
         let mut restored_terminal_runtimes = std::collections::HashMap::new();
+        let agent_session_ledger = if no_session {
+            crate::persist::agent_ledger::AgentSessionLedger::default()
+        } else {
+            crate::persist::agent_ledger::load()
+        };
+
         let (
             workspaces,
             active,
@@ -267,6 +273,7 @@ impl App {
                 event_tx.clone(),
                 render_notify.clone(),
                 render_dirty.clone(),
+                &agent_session_ledger,
             );
             restored_terminals = terminals;
             restored_terminal_runtimes = terminal_runtimes;
@@ -478,6 +485,8 @@ impl App {
             local_sound_playback: true,
             toast_config: config.ui.toast.clone(),
             agent_restore_config: config.agent_restore.clone(),
+            agent_session_ledger,
+            agent_session_ledger_path: (!no_session).then(crate::persist::agent_ledger::path),
             keybinds: config.keybinds(),
             spinner_tick: 0,
             palette: resolve_palette(config),

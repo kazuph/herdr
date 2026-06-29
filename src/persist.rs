@@ -2,6 +2,7 @@
 //!
 //! Stored at `~/.config/herdr/session.json`.
 
+pub mod agent_ledger;
 mod io;
 mod restore;
 mod snapshot;

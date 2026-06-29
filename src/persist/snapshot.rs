@@ -5,6 +5,7 @@ use ratatui::layout::Direction;
 use serde::{Deserialize, Serialize};
 
 use crate::layout::Node;
+use crate::persist::agent_ledger::AgentSessionLedger;
 use crate::workspace::Workspace;
 
 /// Current snapshot format version.
@@ -234,12 +235,20 @@ pub fn capture(
     sidebar_width: u16,
     sidebar_section_split: f32,
     collapsed_workspace_sections: &std::collections::BTreeSet<crate::workspace::WorkspaceSection>,
+    agent_session_ledger: &AgentSessionLedger,
 ) -> SessionSnapshot {
     SessionSnapshot {
         version: SNAPSHOT_VERSION,
         workspaces: workspaces
             .iter()
-            .map(|workspace| capture_workspace(workspace, terminals, terminal_runtimes))
+            .map(|workspace| {
+                capture_workspace(
+                    workspace,
+                    terminals,
+                    terminal_runtimes,
+                    agent_session_ledger,
+                )
+            })
             .collect(),
         active,
         selected,
@@ -260,6 +269,7 @@ fn capture_workspace(
         crate::terminal::TerminalId,
         crate::terminal::TerminalRuntime,
     >,
+    agent_session_ledger: &AgentSessionLedger,
 ) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
         id: Some(ws.id.clone()),
@@ -271,7 +281,17 @@ fn capture_workspace(
         tabs: ws
             .tabs
             .iter()
-            .map(|tab| capture_tab(tab, terminals, terminal_runtimes))
+            .enumerate()
+            .map(|(idx, tab)| {
+                capture_tab(
+                    tab,
+                    &ws.id,
+                    idx + 1,
+                    terminals,
+                    terminal_runtimes,
+                    agent_session_ledger,
+                )
+            })
             .collect(),
         active_tab: ws.active_tab,
     }
@@ -279,6 +299,8 @@ fn capture_workspace(
 
 fn capture_tab(
     tab: &crate::workspace::Tab,
+    workspace_id: &str,
+    tab_number: usize,
     terminals: &std::collections::HashMap<
         crate::terminal::TerminalId,
         crate::terminal::TerminalState,
@@ -287,8 +309,10 @@ fn capture_tab(
         crate::terminal::TerminalId,
         crate::terminal::TerminalRuntime,
     >,
+    agent_session_ledger: &AgentSessionLedger,
 ) -> TabSnapshot {
     let mut panes = HashMap::new();
+    let tab_id = format!("{workspace_id}:{tab_number}");
     for id in tab.panes.keys() {
         let cwd = tab
             .cwd_for_pane(*id, terminals, terminal_runtimes)
@@ -318,10 +342,29 @@ fn capture_tab(
                     .or(terminal.agent_session_agent)
                     .map(|agent| crate::detect::agent_label(agent).to_string())
                     .or_else(|| terminal.effective_agent_label().map(str::to_string))?;
-                Some(AgentRestoreSnapshot {
-                    agent,
-                    session_id: terminal.agent_session_id.clone(),
-                })
+                let session_id = terminal
+                    .agent_session_id
+                    .clone()
+                    .filter(|session_id| crate::agent_sessions::is_safe_session_id(session_id))
+                    .or_else(|| {
+                        agent_session_ledger
+                            .get(workspace_id, &tab_id, id.raw())
+                            .filter(|entry| entry.agent == agent)
+                            .and_then(|entry| {
+                                crate::agent_sessions::is_safe_session_id(&entry.session_id)
+                                    .then(|| entry.session_id.clone())
+                            })
+                    });
+                if session_id.is_none() {
+                    tracing::warn!(
+                        pane_id = id.raw(),
+                        workspace_id,
+                        tab_id = %tab_id,
+                        agent = %agent,
+                        "agent pane captured without a safe session id"
+                    );
+                }
+                Some(AgentRestoreSnapshot { agent, session_id })
             });
         panes.insert(
             id.raw(),
@@ -431,6 +474,7 @@ mod tests {
             state.sidebar_width,
             state.sidebar_section_split,
             &state.collapsed_workspace_sections,
+            &state.agent_session_ledger,
         )
     }
 
@@ -491,6 +535,92 @@ mod tests {
                 session_id: Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into()),
             })
         );
+    }
+
+    #[test]
+    fn capture_uses_pane_ledger_when_terminal_session_id_is_missing() {
+        let mut state = state_with_workspaces(&["one"]);
+        let ws = &state.workspaces[0];
+        let pane_id = ws.tabs[0].root_pane;
+        let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
+        let workspace_id = ws.id.clone();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.agent_session_agent = Some(crate::detect::Agent::Codex);
+        state
+            .agent_session_ledger
+            .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                pane_id: pane_id.raw(),
+                terminal_id: terminal_id.to_string(),
+                workspace_id: workspace_id.clone(),
+                tab_id: format!("{workspace_id}:1"),
+                cwd: terminal.cwd.clone(),
+                agent: "codex".into(),
+                session_id: "019ef3a2-749c-7b52-b324-2c20cb0b2379".into(),
+                observed_at: 1,
+                source: "test".into(),
+                title: Some("restore exact pane".into()),
+            });
+
+        let snap = capture_from_state(&state);
+
+        let pane = snap.workspaces[0].tabs[0]
+            .panes
+            .values()
+            .next()
+            .expect("captured pane");
+        assert_eq!(
+            pane.agent_restore,
+            Some(AgentRestoreSnapshot {
+                agent: "codex".into(),
+                session_id: Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn capture_keeps_distinct_session_ids_for_same_cwd_panes() {
+        let mut state = state_with_workspaces(&["one"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let second = state.workspaces[0].test_split(Direction::Horizontal);
+        state.ensure_test_terminals();
+        let shared_cwd =
+            std::env::temp_dir().join(format!("herdr-snapshot-same-cwd-{}", std::process::id()));
+        std::fs::create_dir_all(&shared_cwd).unwrap();
+
+        let root_terminal_id = state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        let second_terminal_id = state.workspaces[0].tabs[0].panes[&second]
+            .attached_terminal_id
+            .clone();
+        let root_terminal = state.terminals.get_mut(&root_terminal_id).unwrap();
+        root_terminal.cwd = shared_cwd.clone();
+        root_terminal.agent_session_agent = Some(crate::detect::Agent::Codex);
+        root_terminal.agent_session_id = Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into());
+        let second_terminal = state.terminals.get_mut(&second_terminal_id).unwrap();
+        second_terminal.cwd = shared_cwd.clone();
+        second_terminal.agent_session_agent = Some(crate::detect::Agent::Codex);
+        second_terminal.agent_session_id = Some("019ef3a2-749c-7b52-b324-2c20cb0b2380".into());
+
+        let snap = capture_from_state(&state);
+        let panes = &snap.workspaces[0].tabs[0].panes;
+
+        assert_eq!(
+            panes[&root.raw()]
+                .agent_restore
+                .as_ref()
+                .and_then(|restore| restore.session_id.as_deref()),
+            Some("019ef3a2-749c-7b52-b324-2c20cb0b2379")
+        );
+        assert_eq!(
+            panes[&second.raw()]
+                .agent_restore
+                .as_ref()
+                .and_then(|restore| restore.session_id.as_deref()),
+            Some("019ef3a2-749c-7b52-b324-2c20cb0b2380")
+        );
+
+        let _ = std::fs::remove_dir_all(&shared_cwd);
     }
 
     #[test]

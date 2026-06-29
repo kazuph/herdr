@@ -936,6 +936,7 @@ impl App {
                     })
                     .unwrap();
                 }
+                self.state.remove_agent_ledger_tab(ws_idx, tab_idx);
                 self.state.remove_unattached_terminal_ids(terminal_ids);
                 self.schedule_session_save();
                 self.emit_event(crate::api::schema::EventEnvelope {
@@ -1446,17 +1447,55 @@ impl App {
                     .clone()
                     .filter(|id| crate::agent_sessions::is_safe_session_id(id))
                 {
-                    if let Some(terminal_id) = self
-                        .state
-                        .workspaces
-                        .get(ws_idx)
-                        .and_then(|ws| ws.pane_state(pane_id))
-                        .map(|pane| pane.attached_terminal_id.clone())
+                    if let Some((tab_idx, terminal_id)) =
+                        self.state.workspaces.get(ws_idx).and_then(|ws| {
+                            ws.tabs
+                                .iter()
+                                .position(|tab| tab.panes.contains_key(&pane_id))
+                                .and_then(|tab_idx| {
+                                    ws.tabs[tab_idx]
+                                        .panes
+                                        .get(&pane_id)
+                                        .map(|pane| (tab_idx, pane.attached_terminal_id.clone()))
+                                })
+                        })
                     {
                         if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
-                            terminal.agent_session_id = Some(session_id);
-                            terminal.agent_session_agent =
-                                crate::detect::parse_agent_label(&agent_label);
+                            terminal.agent_session_id = Some(session_id.clone());
+                            let parsed_agent = crate::detect::parse_agent_label(&agent_label);
+                            terminal.agent_session_agent = parsed_agent;
+                            let title = terminal
+                                .agent_task_title
+                                .clone()
+                                .or_else(|| terminal.pane_title.clone())
+                                .or_else(|| terminal.manual_label.clone());
+                            let cwd = terminal.cwd.clone();
+                            let workspace_id = self.state.workspaces[ws_idx].id.clone();
+                            self.state.agent_session_ledger.upsert(
+                                crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                                    pane_id: pane_id.raw(),
+                                    terminal_id: terminal_id.to_string(),
+                                    workspace_id: workspace_id.clone(),
+                                    tab_id: format!("{}:{}", workspace_id, tab_idx + 1),
+                                    cwd,
+                                    agent: agent_label.clone(),
+                                    session_id,
+                                    observed_at: crate::persist::agent_ledger::now_millis(),
+                                    source: params.source.clone(),
+                                    title,
+                                },
+                            );
+                            if let Some(path) = &self.state.agent_session_ledger_path {
+                                if let Err(err) = crate::persist::agent_ledger::save_to_path(
+                                    path,
+                                    &self.state.agent_session_ledger,
+                                ) {
+                                    tracing::warn!(
+                                        err = %err,
+                                        "failed to save agent session ledger"
+                                    );
+                                }
+                            }
                             self.state.mark_session_dirty();
                         }
                     }
@@ -1681,6 +1720,7 @@ impl App {
                 };
                 let workspace_id = self.state.workspaces[ws_idx].id.clone();
                 let terminal_id = self.state.terminal_id_for_pane(ws_idx, pane_id);
+                self.state.remove_agent_ledger_pane(ws_idx, pane_id);
                 let should_close_workspace = {
                     let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
                         return serde_json::to_string(&ErrorResponse {
