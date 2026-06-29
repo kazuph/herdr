@@ -20,6 +20,9 @@ mod tab;
 mod workspace;
 mod worktree;
 
+const TERMINAL_SESSION_OBSERVE_USAGE: &str =
+    "usage: herdr terminal session observe <target> [--cols N] [--rows N]";
+
 pub(crate) fn parse_env_assignment(raw: &str) -> Result<(String, String), String> {
     let Some((key, value)) = raw.split_once('=') else {
         return Err("env must use KEY=VALUE".into());
@@ -322,6 +325,7 @@ fn run_terminal_command(args: &[String]) -> std::io::Result<i32> {
 
     match subcommand {
         "attach" => terminal_attach(&args[1..]),
+        "session" => terminal_session(&args[1..]),
         "title" => terminal_title(&args[1..]),
         "help" | "--help" | "-h" => {
             print_terminal_help();
@@ -474,6 +478,86 @@ fn terminal_attach(args: &[String]) -> std::io::Result<i32> {
     };
     crate::client::run_terminal_attach(terminal_id, takeover)?;
     Ok(0)
+}
+
+fn terminal_session(args: &[String]) -> std::io::Result<i32> {
+    match args.first().map(|arg| arg.as_str()) {
+        Some("observe") => terminal_session_observe(&args[1..]),
+        Some("help" | "--help" | "-h") => {
+            eprintln!("{TERMINAL_SESSION_OBSERVE_USAGE}");
+            Ok(0)
+        }
+        _ => {
+            eprintln!("{TERMINAL_SESSION_OBSERVE_USAGE}");
+            Ok(2)
+        }
+    }
+}
+
+fn terminal_session_observe(args: &[String]) -> std::io::Result<i32> {
+    if matches!(
+        args.first().map(|arg| arg.as_str()),
+        Some("help" | "--help" | "-h")
+    ) {
+        eprintln!("{TERMINAL_SESSION_OBSERVE_USAGE}");
+        return Ok(0);
+    }
+    let Some(target) = args.first() else {
+        eprintln!("{TERMINAL_SESSION_OBSERVE_USAGE}");
+        return Ok(2);
+    };
+
+    let mut cols = 120;
+    let mut rows = 40;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--cols" => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("{TERMINAL_SESSION_OBSERVE_USAGE}");
+                    return Ok(2);
+                };
+                cols = parse_terminal_dimension(value, "--cols")?;
+                i += 2;
+            }
+            "--rows" => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("{TERMINAL_SESSION_OBSERVE_USAGE}");
+                    return Ok(2);
+                };
+                rows = parse_terminal_dimension(value, "--rows")?;
+                i += 2;
+            }
+            "help" | "--help" | "-h" => {
+                eprintln!("{TERMINAL_SESSION_OBSERVE_USAGE}");
+                return Ok(0);
+            }
+            other => {
+                eprintln!("unknown terminal session observe option: {other}");
+                eprintln!("{TERMINAL_SESSION_OBSERVE_USAGE}");
+                return Ok(2);
+            }
+        }
+    }
+
+    crate::client::run_terminal_session_observe(target.clone(), cols, rows)?;
+    Ok(0)
+}
+
+fn parse_terminal_dimension(raw: &str, flag: &str) -> std::io::Result<u16> {
+    let parsed = raw.parse::<u16>().map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{flag} must be an integer between 1 and {}", u16::MAX),
+        )
+    })?;
+    if parsed == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{flag} must be greater than 0"),
+        ));
+    }
+    Ok(parsed)
 }
 
 fn terminal_title(args: &[String]) -> std::io::Result<i32> {
@@ -916,6 +1000,7 @@ fn print_config_help() {
 fn print_terminal_help() {
     eprintln!("herdr terminal commands:");
     eprintln!("  herdr terminal attach <terminal_id> [--takeover]");
+    eprintln!("  herdr terminal session observe <target> [--cols N] [--rows N]");
     eprintln!("  herdr terminal title set <title>");
     eprintln!("  herdr terminal title clear");
     eprintln!("  detach from direct attach with ctrl+b q; send literal ctrl+b with ctrl+b ctrl+b");

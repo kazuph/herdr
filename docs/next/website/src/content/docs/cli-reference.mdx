@@ -234,11 +234,17 @@ Use `pane send-text`, `pane send-keys`, `pane run`, and `terminal attach` for or
 
 ```bash
 herdr terminal attach <terminal_id> [--takeover]
+herdr terminal session observe <target> [--cols N] [--rows N]
 herdr terminal title set <title>
 herdr terminal title clear
 ```
 
 Detach from direct attach with `ctrl+b q`. Send literal `ctrl+b` with `ctrl+b ctrl+b`.
+`terminal session observe` opens a read-only live terminal stream for a pane,
+terminal, or agent target. It prints newline-delimited JSON `terminal.frame`
+records with base64-encoded ANSI bytes, then a `terminal.closed` record when
+the server closes the stream. Multiple observers can watch the same terminal
+without taking input, resize, scroll, or takeover authority.
 `terminal title clear` restores Herdr's default outer terminal window title.
 
 ## Waits

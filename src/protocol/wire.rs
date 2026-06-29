@@ -381,6 +381,12 @@ pub enum ClientMessage {
 
     /// Structured input events from platform clients that do not expose Unix-style raw bytes.
     InputEvents { events: Vec<ClientInputEvent> },
+
+    /// Switch this connection into read-only terminal observe mode.
+    ObserveTerminal {
+        /// Pane, terminal, or agent target to observe.
+        target: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -993,6 +999,12 @@ mod tests {
             6
         );
         assert_eq!(tag(&ClientMessage::InputEvents { events: Vec::new() }), 7);
+        assert_eq!(
+            tag(&ClientMessage::ObserveTerminal {
+                target: "w1:p1".to_owned(),
+            }),
+            8
+        );
     }
 
     #[test]
@@ -1113,6 +1125,17 @@ mod tests {
         let msg = ClientMessage::AttachTerminal {
             terminal_id: "term_123".to_owned(),
             takeover: true,
+        };
+        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        let (decoded, _): (ClientMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn client_observe_terminal_roundtrip() {
+        let msg = ClientMessage::ObserveTerminal {
+            target: "w1:p1".to_owned(),
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ClientMessage, _) =

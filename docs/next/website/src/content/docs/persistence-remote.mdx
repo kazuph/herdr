@@ -121,6 +121,18 @@ Only one writable direct attach client owns input and resize for a terminal. Use
 herdr terminal attach term_abc123 --takeover
 ```
 
+For third-party bridges that only need rendered terminal bytes, use a read-only
+terminal session observer:
+
+```bash
+herdr terminal session observe w1:p1 --cols 120 --rows 40
+```
+
+It prints newline-delimited JSON `terminal.frame` records with base64 ANSI
+bytes, then a `terminal.closed` record when the server closes the stream.
+Multiple observers can watch the same terminal without taking input, resize,
+scroll, or takeover ownership.
+
 ## Single-process escape hatch
 
 Use `--no-session` to run Herdr without the background server/client split:

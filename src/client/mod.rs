@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use base64::Engine;
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
     EnableFocusChange, EnableMouseCapture,
@@ -812,6 +813,83 @@ pub fn run_terminal_attach(_terminal_id: String, _takeover: bool) -> io::Result<
         io::ErrorKind::Unsupported,
         "direct terminal attach is not supported on Windows yet",
     ))
+}
+
+/// Runs a read-only terminal session observer and prints one JSON envelope per frame.
+pub fn run_terminal_session_observe(target: String, cols: u16, rows: u16) -> io::Result<()> {
+    init_logging();
+
+    let socket_path = client_socket_path();
+    crate::logging::startup("client");
+    info!(path = %socket_path.display(), target = %target, cols, rows, "observing terminal session");
+
+    let mut stream = match crate::ipc::connect_local_stream(&socket_path) {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("herdr: {}", ClientError::ConnectionFailed(err));
+            std::process::exit(1);
+        }
+    };
+
+    match do_handshake(
+        &mut stream,
+        cols,
+        rows,
+        0,
+        0,
+        RenderEncoding::TerminalAnsi,
+        true,
+    ) {
+        Ok(RenderEncoding::TerminalAnsi) => {}
+        Ok(encoding) => {
+            eprintln!(
+                "herdr: terminal session observe negotiated unsupported encoding {encoding:?}"
+            );
+            std::process::exit(1);
+        }
+        Err(err) => {
+            eprintln!("herdr: {err}");
+            std::process::exit(1);
+        }
+    }
+
+    write_to_server(&mut stream, &ClientMessage::ObserveTerminal { target })?;
+    stream.set_nonblocking(false)?;
+
+    let mut stdout = io::stdout().lock();
+    loop {
+        match protocol::read_message(&mut stream, MAX_GRAPHICS_FRAME_SIZE) {
+            Ok(ServerMessage::Terminal(frame)) => {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&frame.bytes);
+                let line = serde_json::json!({
+                    "type": "terminal.frame",
+                    "seq": frame.seq,
+                    "encoding": "ansi",
+                    "width": frame.width,
+                    "height": frame.height,
+                    "full": frame.full,
+                    "bytes": encoded,
+                });
+                serde_json::to_writer(&mut stdout, &line)?;
+                stdout.write_all(b"\n")?;
+                stdout.flush()?;
+            }
+            Ok(ServerMessage::ServerShutdown { reason }) => {
+                let line = serde_json::json!({
+                    "type": "terminal.closed",
+                    "reason": reason,
+                });
+                serde_json::to_writer(&mut stdout, &line)?;
+                stdout.write_all(b"\n")?;
+                stdout.flush()?;
+                return Ok(());
+            }
+            Ok(ServerMessage::Graphics { .. }) => {}
+            Ok(_) => {}
+            Err(protocol::FramingError::UnexpectedEof) => return Ok(()),
+            Err(err) => return Err(io::Error::other(err.to_string())),
+        }
+    }
 }
 
 fn run_client_with_mode(
