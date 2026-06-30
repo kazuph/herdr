@@ -2619,9 +2619,14 @@ mod tests {
 
         assert_eq!(response["result"]["type"], "pane_info");
         assert_eq!(response["result"]["pane"]["tab_id"], target_tab_id);
+        let response_cwd = std::path::PathBuf::from(
+            response["result"]["pane"]["cwd"]
+                .as_str()
+                .expect("pane cwd string"),
+        );
         assert_eq!(
-            response["result"]["pane"]["cwd"],
-            split_cwd.display().to_string()
+            response_cwd.canonicalize().unwrap_or(response_cwd),
+            split_cwd.canonicalize().unwrap_or(split_cwd)
         );
         assert_eq!(response["result"]["pane"]["focused"], false);
         assert_eq!(app.state.active, Some(0));

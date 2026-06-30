@@ -1514,12 +1514,10 @@ impl AppState {
         let pane_terminal_id = self.terminal_id_for_pane(ws_idx, pane_id);
         let ledger_entry = self.agent_ledger_entry_for_pane(ws_idx, pane_id);
         if let Some(terminal_id) = pane_terminal_id.as_ref() {
-            if ledger_entry.is_some()
-                || self
-                    .terminals
-                    .get(terminal_id)
-                    .is_some_and(terminal_has_restorable_agent_session)
-            {
+            if self.terminals.get(terminal_id).is_some_and(|terminal| {
+                terminal.effective_agent_label().is_some()
+                    && (ledger_entry.is_some() || terminal_has_restorable_agent_session(terminal))
+            }) {
                 if let Some(terminal) = self.terminals.get_mut(terminal_id) {
                     if terminal
                         .agent_session_id
@@ -2150,6 +2148,42 @@ mod tests {
         );
         assert_eq!(terminal.agent_session_agent, Some(Agent::Codex));
         assert_eq!(terminal.state, AgentState::Unknown);
+    }
+
+    #[test]
+    fn pane_died_closes_shell_even_when_previous_agent_session_is_recorded() {
+        let mut state = app_with_workspaces(&["test", "other"]);
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+        let workspace_id = state.workspaces[0].id.clone();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.agent_session_agent = Some(Agent::Codex);
+        terminal.agent_session_id = Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into());
+        terminal.detected_agent = None;
+        terminal.state = AgentState::Unknown;
+        state
+            .agent_session_ledger
+            .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                pane_id: pane_id.raw(),
+                terminal_id: terminal_id.to_string(),
+                workspace_id: workspace_id.clone(),
+                tab_id: format!("{workspace_id}:1"),
+                cwd: terminal.cwd.clone(),
+                agent: "codex".into(),
+                session_id: "019ef3a2-749c-7b52-b324-2c20cb0b2379".into(),
+                observed_at: 1,
+                source: "test".into(),
+                title: None,
+            });
+
+        state.handle_pane_died(pane_id);
+
+        assert_eq!(state.workspaces.len(), 1);
+        assert_eq!(state.workspaces[0].custom_name.as_deref(), Some("other"));
+        assert!(state
+            .agent_session_ledger
+            .get(&workspace_id, &format!("{workspace_id}:1"), pane_id.raw())
+            .is_some());
     }
 
     #[test]
