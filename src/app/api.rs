@@ -1460,6 +1460,11 @@ impl App {
                                 })
                         })
                     {
+                        let runtime_cwd = self.state.workspaces[ws_idx].tabs[tab_idx].cwd_for_pane(
+                            pane_id,
+                            &self.state.terminals,
+                            &self.state.terminal_runtimes,
+                        );
                         if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
                             terminal.agent_session_id = Some(session_id.clone());
                             let parsed_agent = crate::detect::parse_agent_label(&agent_label);
@@ -1469,7 +1474,7 @@ impl App {
                                 .clone()
                                 .or_else(|| terminal.pane_title.clone())
                                 .or_else(|| terminal.manual_label.clone());
-                            let cwd = terminal.cwd.clone();
+                            let cwd = runtime_cwd.unwrap_or_else(|| terminal.cwd.clone());
                             let workspace_id = self.state.workspaces[ws_idx].id.clone();
                             self.state.agent_session_ledger.upsert(
                                 crate::persist::agent_ledger::AgentSessionLedgerEntry {

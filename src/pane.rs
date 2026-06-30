@@ -671,6 +671,25 @@ impl PaneRuntime {
                                                     cmdline,
                                                 )
                                             })
+                                        }).or_else(|| {
+                                            matches!(agent, Agent::Claude | Agent::Codex).then(|| {
+                                                job.processes.iter().find_map(|process| {
+                                                    let cwd = crate::platform::process_cwd(process.pid)?;
+                                                    let started_at =
+                                                        crate::platform::process_started_at(process.pid)?;
+                                                    match agent {
+                                                        Agent::Claude => crate::agent_sessions::claude_session_id_from_session_files(
+                                                            &cwd,
+                                                            started_at,
+                                                        ),
+                                                        Agent::Codex => crate::agent_sessions::codex_session_id_from_session_files(
+                                                            &cwd,
+                                                            started_at,
+                                                        ),
+                                                        _ => None,
+                                                    }
+                                                })
+                                            }).flatten()
                                         });
                                     if let Some(session_id) = observed_session.clone() {
                                         let observed = (agent, session_id.clone());

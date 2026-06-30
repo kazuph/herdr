@@ -1628,11 +1628,14 @@ impl AppState {
                     let pane_number = ws
                         .public_pane_number(*pane_id)
                         .unwrap_or(pane_id.raw() as usize);
+                    let cwd = tab
+                        .cwd_for_pane(*pane_id, &self.terminals, &self.terminal_runtimes)
+                        .unwrap_or_else(|| terminal.cwd.clone());
                     infos.push(MissingAgentSessionInfo {
                         workspace_number: ws_idx + 1,
                         workspace_label: workspace_label.clone(),
                         pane_label: format!("{}-{pane_number}", ws_idx + 1),
-                        cwd: terminal.cwd.clone(),
+                        cwd,
                         agent: agent.to_string(),
                         title: terminal
                             .agent_task_title
