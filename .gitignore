@@ -10,6 +10,7 @@ __pycache__/
 /docs/*
 !/docs/next/
 !/docs/next/**
+!/docs/fork-strategy.md
 /.prd/
 
 /.pi/todos
