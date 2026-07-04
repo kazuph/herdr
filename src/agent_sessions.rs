@@ -229,8 +229,12 @@ fn matching_codex_session_file(
         return None;
     }
     let started_at = parse_rfc3339_z(payload.get("timestamp")?.as_str()?)?;
-    let delta = duration_abs(started_at, process_started_at)?;
-    (delta <= Duration::from_secs(120)).then(|| session_id.to_string())
+    if time_matches_process_start(started_at, process_started_at) {
+        return Some(session_id.to_string());
+    }
+
+    let modified_at = std::fs::metadata(path).ok()?.modified().ok()?;
+    time_matches_process_start(modified_at, process_started_at).then(|| session_id.to_string())
 }
 
 fn matching_claude_session_file(
@@ -282,6 +286,11 @@ fn duration_abs(a: SystemTime, b: SystemTime) -> Option<Duration> {
         Ok(duration) => Some(duration),
         Err(err) => Some(err.duration()),
     }
+}
+
+fn time_matches_process_start(observed_at: SystemTime, process_started_at: SystemTime) -> bool {
+    duration_abs(observed_at, process_started_at)
+        .is_some_and(|delta| delta <= Duration::from_secs(120))
 }
 
 fn parse_rfc3339_z(value: &str) -> Option<SystemTime> {
@@ -423,6 +432,30 @@ mod tests {
         )
         .unwrap();
         let started_at = parse_rfc3339_z("2026-06-30T00:43:41Z").unwrap();
+        assert_eq!(
+            codex_session_id_from_session_files_in(&root, cwd, started_at),
+            Some(id.into())
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_session_file_match_accepts_recently_updated_resumed_session() {
+        let root = test_temp_dir("codex-session-resume-last-match");
+        let day = root.join("2026").join("06").join("30");
+        std::fs::create_dir_all(&day).unwrap();
+        let cwd = Path::new("/tmp/project");
+        let id = "019f15fb-61cf-72e1-bd27-d6625b2d7d21";
+        std::fs::write(
+            day.join("rollout-2026-06-30T00-43-43-019f15fb-61cf-72e1-bd27-d6625b2d7d21.jsonl"),
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"timestamp\":\"2026-06-30T00:43:43.979Z\",\"cwd\":\"{}\"}}}}\n",
+                cwd.display()
+            ),
+        )
+        .unwrap();
+
+        let started_at = SystemTime::now();
         assert_eq!(
             codex_session_id_from_session_files_in(&root, cwd, started_at),
             Some(id.into())
