@@ -246,7 +246,10 @@ impl App {
             })
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("/"));
-        let argv = agent_preset_argv(request.preset);
+        let argv = agent_preset_argv(request.preset, &self.state.agent_start_config);
+        if argv.is_empty() {
+            return Err(AgentStartError::EmptyArgv);
+        }
         let name = self.unique_agent_name(request.preset.base_name());
         let (ws_idx, tab_idx, pane_id) =
             self.spawn_agent_split(ws_idx, target_pane, SplitDirection::Right, cwd, &argv, true)?;
@@ -561,8 +564,12 @@ impl App {
     }
 }
 
-fn agent_preset_argv(preset: AgentPreset) -> Vec<String> {
-    preset.argv().iter().map(|arg| (*arg).to_string()).collect()
+fn agent_preset_argv(preset: AgentPreset, config: &crate::config::AgentStartConfig) -> Vec<String> {
+    config
+        .commands
+        .get(preset.base_name())
+        .cloned()
+        .unwrap_or_else(|| preset.argv().iter().map(|arg| (*arg).to_string()).collect())
 }
 
 pub(super) enum AgentStartError {
@@ -585,4 +592,37 @@ pub(super) enum AgentRenameError {
         name: String,
         candidates: Vec<crate::api::schema::AgentInfo>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_preset_argv_uses_configured_agent_start_command() {
+        let mut config = crate::config::AgentStartConfig::default();
+        config.commands.insert(
+            "codex".into(),
+            vec![
+                "codex".into(),
+                "--sandbox".into(),
+                "workspace-write".into(),
+                "--dangerously-bypass-approvals-and-sandbox".into(),
+            ],
+        );
+
+        assert_eq!(
+            agent_preset_argv(AgentPreset::Codex, &config),
+            vec![
+                "codex",
+                "--sandbox",
+                "workspace-write",
+                "--dangerously-bypass-approvals-and-sandbox",
+            ]
+        );
+        assert_eq!(
+            agent_preset_argv(AgentPreset::Claude, &config),
+            vec!["claude"]
+        );
+    }
 }

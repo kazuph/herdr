@@ -205,6 +205,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut invalid_sections,
         |section| config.agent_restore = section,
     );
+    load_live_section(
+        table,
+        "agent_start",
+        "agent start config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.agent_start = section,
+    );
 
     Ok(LoadedConfig {
         config,

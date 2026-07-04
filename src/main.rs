@@ -347,6 +347,14 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # [agent_restore.commands]
 # claude = "claude --permission-mode acceptEdits --resume {session_id}"
 # pi = "pi"
+
+[agent_start]
+# Commands used by the workspace/pane context menu "New ... agent" entries.
+# Values are argv arrays; no shell or alias expansion is applied.
+
+# [agent_start.commands]
+# claude = ["claude", "--permission-mode", "acceptEdits"]
+# codex = ["codex", "--sandbox", "workspace-write"]
 "##;
 
 fn should_block_nested(config: &config::Config) -> bool {

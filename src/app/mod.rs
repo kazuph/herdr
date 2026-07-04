@@ -484,6 +484,7 @@ impl App {
             sound: config.ui.sound.clone(),
             local_sound_playback: true,
             toast_config: config.ui.toast.clone(),
+            agent_start_config: config.agent_start.clone(),
             agent_restore_config: config.agent_restore.clone(),
             agent_session_ledger,
             agent_session_ledger_path: (!no_session).then(crate::persist::agent_ledger::path),
@@ -990,6 +991,10 @@ impl App {
 
         if !invalid_section("agent_restore") {
             self.state.agent_restore_config = config.agent_restore.clone();
+        }
+
+        if !invalid_section("agent_start") {
+            self.state.agent_start_config = config.agent_start.clone();
         }
 
         if !invalid_section("theme") {

@@ -93,6 +93,15 @@ impl Default for AgentRestoreConfig {
     }
 }
 
+/// `[agent_start]` — commands used by the workspace/pane "New ... agent"
+/// context menu entries.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct AgentStartConfig {
+    /// Agent name -> argv used when starting that agent from the UI.
+    pub commands: std::collections::BTreeMap<String, Vec<String>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigReloadStatus {
@@ -132,6 +141,7 @@ pub struct Config {
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
     pub agent_restore: AgentRestoreConfig,
+    pub agent_start: AgentStartConfig,
 }
 
 #[derive(Debug)]
@@ -645,6 +655,36 @@ pi = "pi"
         assert_eq!(
             config.agent_restore.commands.get("pi").map(String::as_str),
             Some("pi")
+        );
+    }
+
+    #[test]
+    fn agent_start_config_parses_commands_table() {
+        let toml = r#"
+[agent_start.commands]
+claude = ["claude", "--thinking-display", "summarized"]
+codex = ["codex", "--sandbox", "workspace-write"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.agent_start.commands.get("claude").map(Vec::as_slice),
+            Some(
+                &[
+                    "claude".to_string(),
+                    "--thinking-display".into(),
+                    "summarized".into()
+                ][..]
+            )
+        );
+        assert_eq!(
+            config.agent_start.commands.get("codex").map(Vec::as_slice),
+            Some(
+                &[
+                    "codex".to_string(),
+                    "--sandbox".into(),
+                    "workspace-write".into()
+                ][..]
+            )
         );
     }
 

@@ -18,8 +18,8 @@ pub use self::{
         IndexedKeybind, Keybinds, LiveKeybindConfig,
     },
     model::{
-        validated_sidebar_bounds, AgentPanelScopeConfig, AgentRestoreConfig, Config,
-        ConfigReloadReport, ConfigReloadStatus, ToastConfig, ToastDelivery,
+        validated_sidebar_bounds, AgentPanelScopeConfig, AgentRestoreConfig, AgentStartConfig,
+        Config, ConfigReloadReport, ConfigReloadStatus, ToastConfig, ToastDelivery,
         WorkspacePanelDensityConfig,
     },
     sound::SoundConfig,
