@@ -188,6 +188,7 @@
   - mobile switcher も desktop sidebar と同じ section headerを表示し、header tapで折りたたみ/展開する。collapsed sectionのworkspaceはmobile switcherにも表示しない。
   - workspace名は custom name が無い場合、cwd由来名を使う。root pane がOSC title `0` / `1` / `2` でtitleを報告し、それがcwd由来名と異なる場合は `<cwd由来名>-<pane title>` と表示する。
   - full densityのworkspace rowはgit branchが無くても2行を使い、2行目には `nogit` を表示する。
+  - workspace density toggle の `[full]` / `[slim]` は desktop sidebar の section header と同じ行に表示する。未分類だけの状態では `spaces` header と同じ高さに揃える。
 - **受け入れ条件**:
   - `⭐ favorites` のheaderは `💼 work` より上に表示され、`💼 work` は `🏠 personal` より上、未分類は `spaces` として最後に表示される。
   - `⭐ favorites` を折りたたむと、そのsectionのworkspace cardは消え、headerだけ残る。
@@ -198,6 +199,7 @@
   - section下端へドラッグした時の挿入インジケータは、そのsectionの最後のcard直下に `─` として描画される。
   - mobile switcherでwork headerをtapするとwork sectionが折りたたまれ、もう一度tapすると展開される。
   - root paneがOSC title `planner` を出し、cwd由来名が `pion` の時、workspace表示名が `pion-planner` になる。
+  - 未分類workspaceだけがある desktop sidebar では、`spaces` header と `[slim]` / `[full]` toggle が同じ行に描画される。
 - **実装方針**: 本家に `WorkspaceSection` 相当が無いため CORE-UI として移植する。既存workspace modelとsnapshotにsectionを保存し、sidebar/mobile switcher/agent panelの表示対象計算を section aware にする。本家の `pane.report_metadata` は将来的にpane title由来のworkspace名更新を縮小できる可能性があるが、section分類・折りたたみ・D&Dは本家APIだけでは足りない。
 - **デグレ判定**:
   - section headerが出ない、または表示順が `⭐ favorites`、`💼 work`、`🏠 personal`、`spaces` から変わる。

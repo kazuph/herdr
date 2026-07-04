@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, IsTerminal};
 
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
@@ -158,6 +158,17 @@ Home: https://herdr.dev"#,
 
 fn init_logging() {
     crate::logging::init_file_logging("herdr.log");
+}
+
+pub(crate) fn ensure_interactive_terminal() -> io::Result<()> {
+    if io::stdin().is_terminal() && io::stdout().is_terminal() {
+        return Ok(());
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "herdr requires an interactive terminal",
+    ))
 }
 
 const DEFAULT_CONFIG: &str = r##"# herdr configuration
@@ -581,6 +592,7 @@ fn main() -> io::Result<()> {
         .expect("failed to create tokio runtime");
 
     let result = rt.block_on(async {
+        ensure_interactive_terminal()?;
         let mut terminal = ratatui::init();
         if config.ui.mouse_capture {
             execute!(io::stdout(), EnableMouseCapture)?;

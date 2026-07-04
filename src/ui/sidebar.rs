@@ -1648,6 +1648,46 @@ mod tests {
     }
 
     #[test]
+    fn workspace_density_toggle_aligns_with_workspace_panel_title() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.ensure_test_terminals();
+        app.workspace_panel_density = WorkspacePanelDensity::Slim;
+        app.mouse_capture = false;
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 80, 12));
+
+        let ws_area = workspace_list_rect(app.view.sidebar_rect, app.sidebar_section_split);
+        let toggle = workspace_panel_density_toggle_rect(ws_area, app.workspace_panel_density);
+        let spaces_header = app
+            .view
+            .workspace_section_header_areas
+            .iter()
+            .find(|section| section.section == crate::workspace::WorkspaceSection::None)
+            .expect("spaces section header")
+            .rect;
+        assert_eq!(toggle.y, ws_area.y);
+        assert_ne!(toggle.y, spaces_header.y);
+
+        let backend = ratatui::backend::TestBackend::new(80, 12);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, frame, app.view.sidebar_rect))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let title_row = (ws_area.x..ws_area.x + ws_area.width)
+            .map(|x| buffer[(x, ws_area.y)].symbol())
+            .collect::<String>();
+        let section_row = (ws_area.x..ws_area.x + ws_area.width)
+            .map(|x| buffer[(x, spaces_header.y)].symbol())
+            .collect::<String>();
+
+        assert!(title_row.contains("spaces"), "row: {title_row:?}");
+        assert!(title_row.contains("[slim]"), "row: {title_row:?}");
+        assert!(!section_row.contains("[slim]"), "row: {section_row:?}");
+    }
+
+    #[test]
     fn full_workspace_panel_renders_nogit_label_for_non_git_workspace() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("one")];

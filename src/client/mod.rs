@@ -216,6 +216,7 @@ fn setup_terminal_with_capabilities(
     enable_client_protocols: bool,
     mouse_capture: bool,
 ) -> io::Result<TerminalGuard> {
+    crate::ensure_interactive_terminal()?;
     ratatui::init();
 
     if enable_client_protocols {
