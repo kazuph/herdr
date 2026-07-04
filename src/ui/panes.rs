@@ -88,6 +88,40 @@ fn terminal_pane_label(terminal: &TerminalState) -> &str {
         .unwrap_or("terminal")
 }
 
+fn restore_status_prefix(terminal: Option<&TerminalState>) -> Option<&'static str> {
+    let terminal = terminal?;
+    let has_recorded_session = terminal
+        .agent_session_id
+        .as_deref()
+        .is_some_and(crate::agent_sessions::is_safe_session_id)
+        && terminal.agent_session_agent.is_some();
+    let has_pending_restore = terminal.pending_restore.as_ref().is_some_and(|restore| {
+        restore
+            .session_id
+            .as_deref()
+            .is_some_and(crate::agent_sessions::is_safe_session_id)
+            && crate::detect::parse_agent_label(&restore.agent).is_some()
+    });
+
+    let launched_agent = terminal
+        .launch_argv
+        .as_deref()
+        .and_then(command_label)
+        .and_then(crate::detect::parse_agent_label)
+        .is_some();
+
+    if has_recorded_session || has_pending_restore {
+        Some("R")
+    } else if terminal.is_agent_terminal()
+        || launched_agent
+        || terminal.agent_session_agent.is_some()
+    {
+        Some("!R")
+    } else {
+        None
+    }
+}
+
 fn pane_title(
     pane_id: crate::layout::PaneId,
     terminal: Option<&TerminalState>,
@@ -105,6 +139,9 @@ fn pane_title(
     let mut parts = Vec::new();
     if zoomed {
         parts.push("ZOOM".to_string());
+    }
+    if let Some(prefix) = restore_status_prefix(terminal) {
+        parts.push(prefix.to_string());
     }
     parts.extend([format!("%{}", pane_id.raw()), label.to_string()]);
     if let Some(title) = title {
@@ -476,25 +513,25 @@ mod tests {
 
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "%5 codex"
+            "!R %5 codex"
         );
 
         terminal.set_detected_state(Some(Agent::Claude), AgentState::Idle);
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "%5 claude"
+            "!R %5 claude"
         );
 
         terminal.set_agent_name("agent-one".into());
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "%5 agent-one"
+            "!R %5 agent-one"
         );
 
         terminal.set_manual_label(" reviewer ".into());
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "%5 reviewer"
+            "!R %5 reviewer"
         );
 
         assert_eq!(pane_title(pane_id, None, None, false), "%5 terminal");
@@ -518,7 +555,7 @@ mod tests {
 
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "%81 codex thinking"
+            "!R %81 codex thinking"
         );
     }
 
@@ -534,7 +571,28 @@ mod tests {
 
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "%81 codex restore pane sessions"
+            "!R %81 codex restore pane sessions"
+        );
+    }
+
+    #[test]
+    fn pane_title_marks_agent_session_restore_status_before_pane_id() {
+        let pane_id = crate::layout::PaneId::from_raw(64);
+        let terminal_id = TerminalId::alloc();
+        let mut terminal = TerminalState::new(terminal_id, "/tmp".into())
+            .with_launch_argv(vec!["/usr/local/bin/codex".into()]);
+        terminal.set_detected_state(Some(Agent::Codex), AgentState::Idle);
+
+        assert_eq!(
+            pane_title(pane_id, Some(&terminal), None, false),
+            "!R %64 codex"
+        );
+
+        terminal.agent_session_id = Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into());
+        terminal.agent_session_agent = Some(Agent::Codex);
+        assert_eq!(
+            pane_title(pane_id, Some(&terminal), None, false),
+            "R %64 codex"
         );
     }
 
@@ -557,7 +615,7 @@ mod tests {
 
         assert_eq!(
             pane_title(pane_id, Some(&terminal), Some(&repo), false),
-            "%81 codex thinking feature"
+            "!R %81 codex thinking feature"
         );
 
         let _ = std::fs::remove_dir_all(repo);
