@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::Rect,
+    layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -88,7 +88,7 @@ fn terminal_pane_label(terminal: &TerminalState) -> &str {
         .unwrap_or("terminal")
 }
 
-fn restore_status_prefix(terminal: Option<&TerminalState>) -> Option<&'static str> {
+fn restore_status_label(terminal: Option<&TerminalState>) -> Option<&'static str> {
     let terminal = terminal?;
     let has_recorded_session = terminal
         .agent_session_id
@@ -111,12 +111,12 @@ fn restore_status_prefix(terminal: Option<&TerminalState>) -> Option<&'static st
         .is_some();
 
     if has_recorded_session || has_pending_restore {
-        Some("R")
+        Some("saved session")
     } else if terminal.is_agent_terminal()
         || launched_agent
         || terminal.agent_session_agent.is_some()
     {
-        Some("!R")
+        Some("no saved session")
     } else {
         None
     }
@@ -140,9 +140,6 @@ fn pane_title(
     if zoomed {
         parts.push("ZOOM".to_string());
     }
-    if let Some(prefix) = restore_status_prefix(terminal) {
-        parts.push(prefix.to_string());
-    }
     parts.extend([format!("%{}", pane_id.raw()), label.to_string()]);
     if let Some(title) = title {
         parts.push(title.to_string());
@@ -151,6 +148,31 @@ fn pane_title(
         parts.push(branch);
     }
     parts.join(" ")
+}
+
+fn render_restore_status_label(
+    frame: &mut Frame,
+    area: Rect,
+    terminal: Option<&TerminalState>,
+    style: Style,
+) {
+    let Some(label) = restore_status_label(terminal) else {
+        return;
+    };
+    if area.width < 34 || area.height == 0 {
+        return;
+    }
+    let rect = Rect::new(
+        area.x.saturating_add(1),
+        area.y,
+        area.width.saturating_sub(2),
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(format!(" {label} "), style)))
+            .alignment(Alignment::Right),
+        rect,
+    );
 }
 
 fn runtime_for_tab_pane<'a>(
@@ -367,6 +389,7 @@ pub(super) fn render_panes(app: &AppState, frame: &mut Frame, area: Rect) {
                     block = block.title(Line::from(Span::styled(title, border_style)));
                 }
                 frame.render_widget(block, info.rect);
+                render_restore_status_label(frame, info.rect, terminal, border_style);
             }
 
             let show_cursor = info.is_focused && terminal_active && !pane_is_scrolled_back(rt);
@@ -513,25 +536,25 @@ mod tests {
 
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "!R %5 codex"
+            "%5 codex"
         );
 
         terminal.set_detected_state(Some(Agent::Claude), AgentState::Idle);
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "!R %5 claude"
+            "%5 claude"
         );
 
         terminal.set_agent_name("agent-one".into());
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "!R %5 agent-one"
+            "%5 agent-one"
         );
 
         terminal.set_manual_label(" reviewer ".into());
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "!R %5 reviewer"
+            "%5 reviewer"
         );
 
         assert_eq!(pane_title(pane_id, None, None, false), "%5 terminal");
@@ -555,7 +578,7 @@ mod tests {
 
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "!R %81 codex thinking"
+            "%81 codex thinking"
         );
     }
 
@@ -571,29 +594,51 @@ mod tests {
 
         assert_eq!(
             pane_title(pane_id, Some(&terminal), None, false),
-            "!R %81 codex restore pane sessions"
+            "%81 codex restore pane sessions"
         );
     }
 
     #[test]
-    fn pane_title_marks_agent_session_restore_status_before_pane_id() {
-        let pane_id = crate::layout::PaneId::from_raw(64);
+    fn restore_status_label_marks_agent_session_state() {
         let terminal_id = TerminalId::alloc();
         let mut terminal = TerminalState::new(terminal_id, "/tmp".into())
             .with_launch_argv(vec!["/usr/local/bin/codex".into()]);
         terminal.set_detected_state(Some(Agent::Codex), AgentState::Idle);
 
         assert_eq!(
-            pane_title(pane_id, Some(&terminal), None, false),
-            "!R %64 codex"
+            restore_status_label(Some(&terminal)),
+            Some("no saved session")
         );
 
         terminal.agent_session_id = Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into());
         terminal.agent_session_agent = Some(Agent::Codex);
-        assert_eq!(
-            pane_title(pane_id, Some(&terminal), None, false),
-            "R %64 codex"
-        );
+        assert_eq!(restore_status_label(Some(&terminal)), Some("saved session"));
+
+        assert_eq!(restore_status_label(None), None);
+    }
+
+    #[test]
+    fn render_restore_status_label_draws_on_right_edge() {
+        let terminal_id = TerminalId::alloc();
+        let mut terminal = TerminalState::new(terminal_id, "/tmp".into())
+            .with_launch_argv(vec!["/usr/local/bin/codex".into()]);
+        terminal.agent_session_id = Some("019ef3a2-749c-7b52-b324-2c20cb0b2379".into());
+        terminal.agent_session_agent = Some(Agent::Codex);
+
+        let backend = ratatui::backend::TestBackend::new(50, 3);
+        let mut terminal_ui = ratatui::Terminal::new(backend).unwrap();
+        terminal_ui
+            .draw(|frame| {
+                let area = Rect::new(0, 0, 50, 3);
+                frame.render_widget(Block::default().borders(Borders::ALL), area);
+                render_restore_status_label(frame, area, Some(&terminal), Style::default());
+            })
+            .unwrap();
+
+        let top_row = (0..50)
+            .map(|x| terminal_ui.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(top_row.ends_with(" saved session ┐"), "row: {top_row:?}");
     }
 
     #[test]
@@ -615,7 +660,7 @@ mod tests {
 
         assert_eq!(
             pane_title(pane_id, Some(&terminal), Some(&repo), false),
-            "!R %81 codex thinking feature"
+            "%81 codex thinking feature"
         );
 
         let _ = std::fs::remove_dir_all(repo);
