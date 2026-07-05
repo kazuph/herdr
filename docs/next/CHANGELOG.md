@@ -20,7 +20,6 @@
 - Pane context menus can now rotate pane positions forward or backward while keeping the current split layout and each pane's ID/terminal pairing intact.
 - Workspace and pane context menus can now start Claude Code, Codex, or agy directly as agent panes instead of creating a plain terminal first.
 - Added a bottom pane action bar for cycling layouts, rotating panes, and equalizing pane sizes, plus clickable pane titles that toggle zoom and show a `ZOOM` prefix while active.
-- Added `ui.vim_mode = true` for Vim-style terminal control: Normal mode uses `j`/`k` for spaces, `h`/`l` for panes, `i`/`Enter` for Insert mode, and `Ctrl+[`/`Ctrl+]` for pane focus history or leaving Insert mode.
 - `herdr pane current` now falls back to resolving the calling process session when `HERDR_PANE_ID` is not set, instead of relying on focus inference.
 - `herdr --help` now prints an AI-readable SKILL.md-style command guide, and `herdr help` prints the same guide.
 - Added `herdr pane run-notify` for long-running pane commands: output streams in the target pane, a job log is saved, and Herdr shows an exit toast with a tail sample and job-log pointer.

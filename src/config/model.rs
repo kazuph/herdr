@@ -288,8 +288,6 @@ pub struct UiConfig {
     pub toast: ToastConfig,
     /// Play sounds when agents change state in background workspaces.
     pub sound: SoundConfig,
-    /// Start with Vim-style normal/insert terminal input. Default: false.
-    pub vim_mode: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -385,7 +383,6 @@ impl Default for UiConfig {
             accent: "cyan".into(),
             toast: ToastConfig::default(),
             sound: SoundConfig::default(),
-            vim_mode: false,
         }
     }
 }
@@ -518,19 +515,6 @@ show_tab_bar = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.ui.show_tab_bar);
-    }
-
-    #[test]
-    fn vim_mode_defaults_off_and_parses() {
-        let default_config = Config::default();
-        assert!(!default_config.ui.vim_mode);
-
-        let toml = r#"
-[ui]
-vim_mode = true
-"#;
-        let config: Config = toml::from_str(toml).unwrap();
-        assert!(config.ui.vim_mode);
     }
 
     #[test]

@@ -382,6 +382,74 @@ impl Workspace {
         true
     }
 
+    pub fn move_pane_to_new_tab(
+        &mut self,
+        pane_id: PaneId,
+        label: Option<String>,
+    ) -> Option<usize> {
+        let source_tab_idx = self.find_tab_index_for_pane(pane_id)?;
+        if self.tabs.get(source_tab_idx)?.layout.pane_count() <= 1 {
+            return None;
+        }
+        let (pane_id, terminal_id) = self.tabs[source_tab_idx].detach_existing_pane(pane_id)?;
+        let number = self.tabs.len() + 1;
+        let events = self.tabs[source_tab_idx].events.clone();
+        let render_notify = self.tabs[source_tab_idx].render_notify.clone();
+        let render_dirty = self.tabs[source_tab_idx].render_dirty.clone();
+        let mut tab = Tab::from_detached_pane(
+            number,
+            pane_id,
+            terminal_id,
+            events,
+            render_notify,
+            render_dirty,
+        );
+        if let Some(label) = label {
+            tab.set_custom_name(label);
+        }
+        self.tabs.push(tab);
+        Some(self.tabs.len() - 1)
+    }
+
+    pub fn move_pane_to_tab(
+        &mut self,
+        pane_id: PaneId,
+        target_tab_idx: usize,
+        direction: Direction,
+    ) -> Option<usize> {
+        let source_tab_idx = self.find_tab_index_for_pane(pane_id)?;
+        if source_tab_idx == target_tab_idx || target_tab_idx >= self.tabs.len() {
+            return None;
+        }
+
+        let source_was_active = self.active_tab == source_tab_idx;
+        let detached = if self.tabs[source_tab_idx].layout.pane_count() <= 1 {
+            if self.tabs.len() <= 1 {
+                return None;
+            }
+            let tab = self.tabs.remove(source_tab_idx);
+            self.renumber_tabs();
+            let pane = tab.panes.get(&pane_id)?;
+            (pane_id, pane.attached_terminal_id.clone())
+        } else {
+            self.tabs[source_tab_idx].detach_existing_pane(pane_id)?
+        };
+
+        let adjusted_target = if source_tab_idx < target_tab_idx {
+            target_tab_idx.saturating_sub(1)
+        } else {
+            target_tab_idx
+        };
+        let target_tab = self.tabs.get_mut(adjusted_target)?;
+        target_tab.attach_detached_pane(detached.0, detached.1, direction);
+        if source_was_active || self.active_tab >= self.tabs.len() {
+            self.active_tab = adjusted_target;
+        } else if source_tab_idx < self.active_tab {
+            self.active_tab -= 1;
+        }
+        Some(adjusted_target)
+    }
+
     pub fn close_active_tab(&mut self) -> bool {
         self.close_tab(self.active_tab)
     }

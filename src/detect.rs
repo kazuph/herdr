@@ -231,8 +231,11 @@ fn detect_codex(content: &str) -> AgentState {
         return AgentState::Blocked;
     }
 
+    let live = codex_live_region(content);
+    let live_lower = live.to_lowercase();
+
     // Working
-    if has_interrupt_pattern(&lower) || has_codex_working_header(content) {
+    if has_interrupt_pattern(&live_lower) || has_codex_working_header(live) {
         return AgentState::Working;
     }
 
@@ -716,6 +719,7 @@ fn has_codex_working_header(content: &str) -> bool {
 }
 
 pub fn codex_activity_fingerprint(content: &str) -> Option<String> {
+    let content = codex_live_region(content);
     let lines: Vec<&str> = content
         .lines()
         .filter(|line| {
@@ -730,6 +734,21 @@ pub fn codex_activity_fingerprint(content: &str) -> Option<String> {
     } else {
         Some(lines.join("\n"))
     }
+}
+
+fn codex_live_region(content: &str) -> &str {
+    let lines: Vec<&str> = content.lines().collect();
+    let Some(prompt_index) = lines
+        .iter()
+        .rposition(|line| line.trim_start().starts_with('›'))
+    else {
+        return content;
+    };
+    let byte_offset: usize = lines[..prompt_index]
+        .iter()
+        .map(|line| line.len() + 1)
+        .sum();
+    &content[byte_offset.min(content.len())..]
 }
 
 /// Cursor spinner: ⬡ or ⬢ followed by a word ending in "ing"
@@ -1277,6 +1296,17 @@ mod tests {
     #[test]
     fn codex_working_truncated_status_header() {
         assert_eq!(detect_codex("• Working (0s • esc…"), AgentState::Working);
+    }
+
+    #[test]
+    fn codex_ignores_fossilized_working_text_before_latest_prompt() {
+        let screen = "older answer about • Working (0s • esc to interrupt)\n\n\
+             › hi\n\n\
+             • hi!\n\n\
+             › Summarize recent commits\n\n\
+             gpt-5.5 medium · herdr · master · 019f3042-4ecb";
+        assert_eq!(detect_codex(screen), AgentState::Idle);
+        assert_eq!(codex_activity_fingerprint(screen), None);
     }
 
     #[test]

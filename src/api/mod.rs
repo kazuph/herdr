@@ -413,6 +413,7 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::AgentRestore(_) => "agent.restore",
         Method::PaneFocus(_) => "pane.focus",
         Method::PaneSplit(_) => "pane.split",
+        Method::PaneMove(_) => "pane.move",
         Method::PaneList(_) => "pane.list",
         Method::PaneCurrent(_) => "pane.current",
         Method::PaneGet(_) => "pane.get",

@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use super::widgets::panel_contrast_fg;
-use crate::app::AppState;
+use crate::{app::AppState, detect::AgentState};
 
 const MIN_TAB_WIDTH: u16 = 8;
 const NEW_TAB_WIDTH: u16 = 3;
@@ -22,7 +22,29 @@ pub(crate) struct TabBarView {
 }
 
 fn tab_width(tab: &crate::workspace::Tab) -> u16 {
-    (tab.display_name().chars().count() as u16 + 4).max(MIN_TAB_WIDTH)
+    (tab.display_name().chars().count() as u16 + 6).max(MIN_TAB_WIDTH)
+}
+
+fn tab_status_marker(app: &AppState, tab: &crate::workspace::Tab) -> Option<char> {
+    tab.panes
+        .values()
+        .filter_map(|pane| {
+            let terminal = app.terminals.get(&pane.attached_terminal_id)?;
+            Some((terminal.state, pane.seen))
+        })
+        .max_by_key(|(state, seen)| match (state, seen) {
+            (AgentState::Blocked, _) => 4,
+            (AgentState::Working, _) => 3,
+            (AgentState::Idle, false) => 2,
+            (AgentState::Unknown, _) => 1,
+            _ => 0,
+        })
+        .and_then(|(state, seen)| match (state, seen) {
+            (AgentState::Blocked, _) => Some('!'),
+            (AgentState::Working, _) => Some('>'),
+            (AgentState::Idle, false) => Some('+'),
+            _ => None,
+        })
 }
 
 fn layout_tab_hit_areas(ws: &crate::workspace::Workspace, area: Rect, scroll: usize) -> Vec<Rect> {
@@ -325,7 +347,11 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         };
         let width = rect.width as usize;
         let name = tab.display_name();
-        let text = format!(" {:width$}", name, width = width.saturating_sub(1));
+        let text = if let Some(marker) = tab_status_marker(app, tab) {
+            format!("{marker} {:width$}", name, width = width.saturating_sub(2))
+        } else {
+            format!("  {:width$}", name, width = width.saturating_sub(2))
+        };
         frame.render_widget(Paragraph::new(text).style(style), rect);
     }
 

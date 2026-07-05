@@ -46,6 +46,32 @@ pub struct Tab {
 }
 
 impl Tab {
+    pub fn from_detached_pane(
+        number: usize,
+        pane_id: PaneId,
+        terminal_id: TerminalId,
+        events: mpsc::Sender<AppEvent>,
+        render_notify: Arc<Notify>,
+        render_dirty: Arc<AtomicBool>,
+    ) -> Self {
+        let layout = TileLayout::new_with_pane(pane_id);
+        let mut panes = HashMap::new();
+        panes.insert(pane_id, PaneState::new(terminal_id));
+        Self {
+            custom_name: None,
+            number,
+            root_pane: pane_id,
+            layout,
+            panes,
+            #[cfg(test)]
+            runtimes: HashMap::new(),
+            zoomed: false,
+            events,
+            render_notify,
+            render_dirty,
+        }
+    }
+
     pub fn new(
         number: usize,
         initial_cwd: PathBuf,
@@ -349,6 +375,21 @@ impl Tab {
 
     pub fn remove_pane(&mut self, pane_id: PaneId) -> Option<DetachedPane> {
         self.detach_pane(pane_id)
+    }
+
+    pub fn detach_existing_pane(&mut self, pane_id: PaneId) -> Option<DetachedPane> {
+        self.detach_pane(pane_id)
+    }
+
+    pub fn attach_detached_pane(
+        &mut self,
+        pane_id: PaneId,
+        terminal_id: TerminalId,
+        direction: Direction,
+    ) {
+        self.layout.split_focused_with_pane(direction, pane_id);
+        self.panes.insert(pane_id, PaneState::new(terminal_id));
+        self.zoomed = false;
     }
 
     fn detach_pane(&mut self, pane_id: PaneId) -> Option<DetachedPane> {

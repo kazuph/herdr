@@ -771,7 +771,6 @@ mod tests {
                 "settings",
                 "keybinds",
                 "reload config",
-                "vim mode off",
                 "update ready",
                 "Restore agents...",
                 "detach",
@@ -802,7 +801,6 @@ mod tests {
                 "settings",
                 "keybinds",
                 "reload config",
-                "vim mode off",
                 "Restore agents...",
                 "detach",
                 "Stop server",
@@ -814,7 +812,7 @@ mod tests {
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             menu.x + 2,
-            menu.y + 8,
+            menu.y + 7,
         ));
 
         assert!(app.state.detach_requested);
@@ -835,7 +833,6 @@ mod tests {
                 "settings",
                 "keybinds",
                 "reload config",
-                "vim mode off",
                 "what's new",
                 "Restore agents...",
                 "detach",

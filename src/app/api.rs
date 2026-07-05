@@ -1238,6 +1238,89 @@ impl App {
                     result: ResponseResult::PaneInfo { pane },
                 }
             }
+            Method::PaneMove(params) => {
+                let Some((source_ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error: ErrorBody {
+                            code: "pane_not_found".into(),
+                            message: format!("pane {} not found", params.pane_id),
+                        },
+                    })
+                    .unwrap();
+                };
+                let direction_from_api = |split| match split {
+                    crate::api::schema::SplitDirection::Right => {
+                        ratatui::layout::Direction::Horizontal
+                    }
+                    crate::api::schema::SplitDirection::Down => {
+                        ratatui::layout::Direction::Vertical
+                    }
+                };
+                let moved_tab_idx = match params.destination {
+                    crate::api::schema::PaneMoveDestination::NewTab { label } => self
+                        .state
+                        .workspaces
+                        .get_mut(source_ws_idx)
+                        .and_then(|ws| ws.move_pane_to_new_tab(pane_id, label)),
+                    crate::api::schema::PaneMoveDestination::Tab { tab_id, split } => {
+                        let Some((target_ws_idx, target_tab_idx)) = self.parse_tab_id(&tab_id)
+                        else {
+                            return serde_json::to_string(&ErrorResponse {
+                                id: request.id,
+                                error: ErrorBody {
+                                    code: "tab_not_found".into(),
+                                    message: format!("tab {tab_id} not found"),
+                                },
+                            })
+                            .unwrap();
+                        };
+                        if target_ws_idx != source_ws_idx {
+                            return serde_json::to_string(&ErrorResponse {
+                                id: request.id,
+                                error: ErrorBody {
+                                    code: "cross_workspace_move_unsupported".into(),
+                                    message: "moving panes across workspaces is not supported yet"
+                                        .into(),
+                                },
+                            })
+                            .unwrap();
+                        }
+                        self.state.workspaces.get_mut(source_ws_idx).and_then(|ws| {
+                            ws.move_pane_to_tab(pane_id, target_tab_idx, direction_from_api(split))
+                        })
+                    }
+                };
+                let Some(tab_idx) = moved_tab_idx else {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error: ErrorBody {
+                            code: "pane_move_failed".into(),
+                            message: "pane could not be moved to the requested tab".into(),
+                        },
+                    })
+                    .unwrap();
+                };
+                if params.focus {
+                    self.state.switch_workspace(source_ws_idx);
+                    self.state.switch_tab(tab_idx);
+                    if let Some(tab) = self
+                        .state
+                        .workspaces
+                        .get_mut(source_ws_idx)
+                        .and_then(|ws| ws.tabs.get_mut(tab_idx))
+                    {
+                        tab.layout.focus_pane(pane_id);
+                    }
+                    self.state.mode = Mode::Terminal;
+                }
+                self.schedule_session_save();
+                let pane = self.pane_info(source_ws_idx, pane_id).unwrap();
+                SuccessResponse {
+                    id: request.id,
+                    result: ResponseResult::PaneInfo { pane },
+                }
+            }
             Method::PaneList(PaneListParams { workspace_id }) => {
                 match self.collect_panes_for_workspace(workspace_id.as_deref()) {
                     Ok(panes) => SuccessResponse {

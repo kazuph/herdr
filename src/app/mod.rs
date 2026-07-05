@@ -374,8 +374,6 @@ impl App {
             active,
             selected,
             mode,
-            vim_mode_enabled: config.ui.vim_mode,
-            vim_insert_mode: false,
             copy_mode: None,
             pane_focus_back: Vec::new(),
             pane_focus_forward: Vec::new(),
@@ -954,10 +952,6 @@ impl App {
                 self.state.show_tab_bar = config.ui.show_tab_bar;
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
-                if !config.ui.vim_mode {
-                    self.state.vim_insert_mode = false;
-                }
-                self.state.vim_mode_enabled = config.ui.vim_mode;
                 self.state.workspace_panel_density =
                     workspace_panel_density_from_config(config.ui.workspace_panel_density);
                 self.state.agent_panel_scope =
@@ -1492,7 +1486,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "[terminal]\ndefault_shell = \"nu\"\n[keys]\nnew_workspace = \"prefix+g\"\nprefix = \"ctrl+a\"\n[ui]\nworkspace_panel_density = \"slim\"\nagent_panel_scope = \"sort\"\nshow_tab_bar = false\nvim_mode = true\n[ui.toast]\ndelivery = \"herdr\"\n",
+            "[terminal]\ndefault_shell = \"nu\"\n[keys]\nnew_workspace = \"prefix+g\"\nprefix = \"ctrl+a\"\n[ui]\nworkspace_panel_density = \"slim\"\nagent_panel_scope = \"sort\"\nshow_tab_bar = false\n[ui.toast]\ndelivery = \"herdr\"\n",
         )
         .unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -1521,7 +1515,6 @@ mod tests {
             state::WorkspacePanelDensity::Slim
         );
         assert!(!app.state.show_tab_bar);
-        assert!(app.state.vim_mode_enabled);
         assert_eq!(app.state.default_shell, "nu");
         assert!(app.state.config_diagnostic.is_none());
         let toast = app.state.toast.as_ref().unwrap();
@@ -2662,6 +2655,74 @@ mod tests {
             Some(value) => std::env::set_var("SHELL", value),
             None => std::env::remove_var("SHELL"),
         }
+    }
+
+    #[test]
+    fn pane_move_can_promote_split_pane_to_new_tab() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("api-pane-move-new-tab");
+        let root = workspace.tabs[0].root_pane;
+        let split = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        let pane_id = app.pane_info(0, split).unwrap().pane_id;
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_pane_move_new_tab".into(),
+            method: crate::api::schema::Method::PaneMove(crate::api::schema::PaneMoveParams {
+                pane_id,
+                destination: crate::api::schema::PaneMoveDestination::NewTab {
+                    label: Some("agent".into()),
+                },
+                focus: true,
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"]["type"], "pane_info");
+        assert_eq!(app.state.workspaces[0].tabs.len(), 2);
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
+        assert_eq!(app.state.workspaces[0].tabs[0].root_pane, root);
+        assert_eq!(app.state.workspaces[0].tabs[1].root_pane, split);
+        assert_eq!(app.state.workspaces[0].tabs[1].display_name(), "agent");
+        assert_eq!(app.state.workspaces[0].active_tab, 1);
+    }
+
+    #[test]
+    fn pane_move_can_merge_single_pane_tab_back_into_existing_tab() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("api-pane-move-existing-tab");
+        let root = workspace.tabs[0].root_pane;
+        let source_tab = workspace.test_add_tab(Some("agent"));
+        let moving = workspace.tabs[source_tab].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        let pane_id = app.pane_info(0, moving).unwrap().pane_id;
+        let target_tab_id = app.public_tab_id(0, 0).unwrap();
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_pane_move_existing_tab".into(),
+            method: crate::api::schema::Method::PaneMove(crate::api::schema::PaneMoveParams {
+                pane_id,
+                destination: crate::api::schema::PaneMoveDestination::Tab {
+                    tab_id: target_tab_id,
+                    split: crate::api::schema::SplitDirection::Right,
+                },
+                focus: true,
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"]["type"], "pane_info");
+        assert_eq!(app.state.workspaces[0].tabs.len(), 1);
+        assert_eq!(app.state.workspaces[0].tabs[0].root_pane, root);
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 2);
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.focused(), moving);
+        assert_eq!(app.state.workspaces[0].active_tab, 0);
     }
 
     #[tokio::test]

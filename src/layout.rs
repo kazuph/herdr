@@ -98,13 +98,15 @@ impl TileLayout {
     /// Returns (layout, root_pane_id) so the caller can create the pane.
     pub fn new() -> (Self, PaneId) {
         let root_id = PaneId::alloc();
-        (
-            Self {
-                root: Node::Pane(root_id),
-                focus: root_id,
-            },
-            root_id,
-        )
+        (Self::new_with_pane(root_id), root_id)
+    }
+
+    pub fn new_with_pane(root_id: PaneId) -> Self {
+        PaneId::reserve_next_after(root_id);
+        Self {
+            root: Node::Pane(root_id),
+            focus: root_id,
+        }
     }
 
     pub fn focused(&self) -> PaneId {
@@ -132,11 +134,16 @@ impl TileLayout {
     /// Split the focused pane. Returns the new pane's id.
     pub fn split_focused(&mut self, direction: Direction) -> PaneId {
         let new_id = PaneId::alloc();
+        self.split_focused_with_pane(direction, new_id);
+        new_id
+    }
+
+    pub fn split_focused_with_pane(&mut self, direction: Direction, new_id: PaneId) {
+        PaneId::reserve_next_after(new_id);
         let placeholder = PaneId::from_raw(0);
         let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
         self.root = split_at(old, self.focus, direction, new_id);
         self.focus = new_id;
-        new_id
     }
 
     /// Close the focused pane. Returns false if it's the last pane.

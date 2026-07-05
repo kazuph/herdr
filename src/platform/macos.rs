@@ -580,6 +580,27 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
     Some(PathBuf::from(OsStr::from_bytes(&vip_path[..nul])))
 }
 
+pub fn process_open_files(pid: u32) -> Vec<PathBuf> {
+    if pid == 0 {
+        return Vec::new();
+    }
+    let Ok(output) = Command::new("lsof")
+        .args(["-nP", "-F", "n", "-p", &pid.to_string()])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix('n'))
+        .filter(|path| path.starts_with('/'))
+        .map(PathBuf::from)
+        .collect()
+}
+
 pub fn session_processes(child_pid: u32) -> Vec<u32> {
     if child_pid == 0 {
         return Vec::new();

@@ -10,11 +10,11 @@ use crate::api;
 use crate::api::schema::{
     AgentReadParams, AgentRenameParams, AgentSendParams, AgentStartParams, AgentStatus,
     AgentTarget, EmptyParams, Method, OutputMatch, PaneAgentState, PaneCurrentParams,
-    PaneListParams, PaneNotifyParams, PaneReadParams, PaneRenameParams, PaneReportAgentParams,
-    PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams,
-    PingParams, ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams,
-    TabListParams, TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams,
-    WorkspaceTarget,
+    PaneListParams, PaneMoveDestination, PaneMoveParams, PaneNotifyParams, PaneReadParams,
+    PaneRenameParams, PaneReportAgentParams, PaneSendKeysParams, PaneSendTextParams,
+    PaneSplitParams, PaneTarget, PaneWaitForOutputParams, PingParams, ReadFormat, ReadSource,
+    Request, SplitDirection, Subscription, TabCreateParams, TabListParams, TabRenameParams,
+    TabTarget, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
 };
 
 const CLI_SUBMIT_DELAY: Duration = Duration::from_millis(500);
@@ -448,6 +448,7 @@ fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
         "read" => pane_read(&args[1..]),
         "rename" => pane_rename(&args[1..]),
         "split" => pane_split(&args[1..]),
+        "move" => pane_move(&args[1..]),
         "close" => pane_close(&args[1..]),
         "send-text" => pane_send_text(&args[1..]),
         "send-keys" => pane_send_keys(&args[1..]),
@@ -1613,6 +1614,86 @@ fn pane_split(args: &[String]) -> std::io::Result<i32> {
     })?)
 }
 
+fn pane_move(args: &[String]) -> std::io::Result<i32> {
+    let Some(raw_pane_id) = args.first() else {
+        eprintln!("usage: herdr pane move <pane_id> (--new-tab [--label TEXT] | --tab <tab_id> --split right|down) [--focus|--no-focus]");
+        return Ok(2);
+    };
+
+    let pane_id = normalize_pane_id(raw_pane_id);
+    let mut new_tab = false;
+    let mut tab_id = None;
+    let mut split = None;
+    let mut label = None;
+    let mut focus = false;
+
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--new-tab" => {
+                new_tab = true;
+                index += 1;
+            }
+            "--tab" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --tab");
+                    return Ok(2);
+                };
+                tab_id = Some(normalize_tab_id(value));
+                index += 2;
+            }
+            "--split" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --split");
+                    return Ok(2);
+                };
+                split = Some(parse_split_direction(value)?);
+                index += 2;
+            }
+            "--label" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --label");
+                    return Ok(2);
+                };
+                label = Some(value.clone());
+                index += 2;
+            }
+            "--focus" => {
+                focus = true;
+                index += 1;
+            }
+            "--no-focus" => {
+                focus = false;
+                index += 1;
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                return Ok(2);
+            }
+        }
+    }
+
+    let destination = match (new_tab, tab_id, split) {
+        (true, None, None) => PaneMoveDestination::NewTab { label },
+        (false, Some(tab_id), Some(split)) if label.is_none() => {
+            PaneMoveDestination::Tab { tab_id, split }
+        }
+        _ => {
+            eprintln!("usage: herdr pane move <pane_id> (--new-tab [--label TEXT] | --tab <tab_id> --split right|down) [--focus|--no-focus]");
+            return Ok(2);
+        }
+    };
+
+    print_response(&send_request(&Request {
+        id: "cli:pane:move".into(),
+        method: Method::PaneMove(PaneMoveParams {
+            pane_id,
+            destination,
+            focus,
+        }),
+    })?)
+}
+
 fn pane_close(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
         eprintln!("usage: herdr pane close <pane_id>");
@@ -2630,6 +2711,7 @@ fn print_pane_help() {
     eprintln!(
         "  herdr pane split <pane_id> --direction right|down [--cwd PATH] [--focus] [--no-focus]"
     );
+    eprintln!("  herdr pane move <pane_id> (--new-tab [--label TEXT] | --tab <tab_id> --split right|down) [--focus] [--no-focus]");
     eprintln!("  herdr pane close <pane_id>");
     eprintln!("  herdr pane send-text <pane_id> <text>");
     eprintln!("  herdr pane send-keys <pane_id> <key> [key ...]");

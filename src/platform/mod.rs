@@ -80,24 +80,6 @@ pub(crate) fn read_limited_reader(
     }
 }
 
-pub fn process_started_at(pid: u32) -> Option<std::time::SystemTime> {
-    if pid == 0 {
-        return None;
-    }
-    let output = std::process::Command::new("ps")
-        .args(["-o", "etimes=", "-p", &pid.to_string()])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let elapsed_secs: u64 = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .ok()?;
-    std::time::SystemTime::now().checked_sub(std::time::Duration::from_secs(elapsed_secs))
-}
-
 pub fn process_has_ancestor_named(mut pid: u32, name: &str) -> bool {
     for _ in 0..64 {
         let Some(parent_pid) = parent_process_id(pid) else {

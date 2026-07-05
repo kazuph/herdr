@@ -52,12 +52,7 @@ pub(crate) fn pane_action_bar_rects(area: Rect) -> PaneActionBarRects {
     }
 }
 
-pub(super) fn render_pane_action_bar(
-    frame: &mut Frame,
-    area: Rect,
-    p: &Palette,
-    vim_mode_label: Option<&'static str>,
-) {
+pub(super) fn render_pane_action_bar(frame: &mut Frame, area: Rect, p: &Palette) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -65,7 +60,7 @@ pub(super) fn render_pane_action_bar(
     let bar_style = Style::default().fg(p.overlay0).bg(Color::Reset);
     frame.render_widget(Paragraph::new("").style(bar_style), area);
 
-    let label = vim_mode_label.unwrap_or(" PANES ");
+    let label = " PANES ";
     let label_area = Rect::new(area.x, area.y, area.width.min(label.len() as u16), 1);
     frame.render_widget(
         Paragraph::new(Span::styled(
