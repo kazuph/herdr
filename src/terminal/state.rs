@@ -107,10 +107,27 @@ impl TerminalState {
                     crate::detect::parse_agent_label(&authority.agent_label)
                         == previous_detected_agent
                 }))
+            || self.same_agent_idle_screen_clears_stale_working_hook(agent, fallback_state)
         {
             self.hook_authority = None;
         }
         self.recompute_effective_state(previous_agent_label, previous_known_agent, previous_state)
+    }
+
+    fn same_agent_idle_screen_clears_stale_working_hook(
+        &self,
+        detected_agent: Option<Agent>,
+        fallback_state: AgentState,
+    ) -> bool {
+        if !matches!(detected_agent, Some(Agent::Claude | Agent::Codex))
+            || fallback_state != AgentState::Idle
+        {
+            return false;
+        }
+        self.hook_authority.as_ref().is_some_and(|authority| {
+            authority.state == AgentState::Working
+                && crate::detect::parse_agent_label(&authority.agent_label) == detected_agent
+        })
     }
 
     #[cfg(test)]
@@ -688,6 +705,29 @@ mod tests {
         assert_eq!(terminal.fallback_state, AgentState::Idle);
         assert_eq!(terminal.effective_agent_label(), Some("pi"));
         assert_eq!(terminal.state, AgentState::Working);
+    }
+
+    #[test]
+    fn claude_idle_screen_clears_stale_working_hook_authority() {
+        let mut terminal = test_terminal();
+        terminal.set_detected_state(Some(Agent::Claude), AgentState::Working);
+        terminal.set_hook_authority(
+            "claude-hook".into(),
+            "claude".into(),
+            AgentState::Working,
+            None,
+            None,
+        );
+
+        let change = terminal
+            .set_detected_state(Some(Agent::Claude), AgentState::Idle)
+            .expect("idle screen clears stale hook");
+
+        assert!(terminal.hook_authority.is_none());
+        assert_eq!(terminal.effective_agent_label(), Some("claude"));
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert_eq!(change.previous_state, AgentState::Working);
+        assert_eq!(change.state, AgentState::Idle);
     }
 
     #[test]

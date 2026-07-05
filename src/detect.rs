@@ -1870,6 +1870,22 @@ mod tests {
         assert_eq!(claude_activity_fingerprint(screen), None);
     }
 
+    #[test]
+    fn claude_prompt_after_task_list_is_idle() {
+        let screen = "✻ Cogitated for 1s\n\n\
+              4 tasks (2 done, 1 in progress, 1 open)\n\
+              ✔ グラフ刷新提案: worktree作成と設計スペック執筆\n\
+              ✔ Codexへ実装委任（監視はOpus subagentに委任済み）\n\
+              ◼ 成果物レビューとStorybook起動・Chrome確認\n\
+              ◻ 提案レポート作成とユーザーへの提示\n\n\
+              ────────────────────────────────────────────────\n\
+              ❯\n\
+              ────────────────────────────────────────────────\n\
+              \u{20}\u{20}Fable 5 | new task? /clear to save";
+        assert_eq!(detect_state(Some(Agent::Claude), screen), AgentState::Idle);
+        assert_eq!(claude_activity_fingerprint(screen), None);
+    }
+
     /// Real-world regression: an agent whose *answer text* quotes a spinner
     /// line or mentions the interrupt hint (docs, code reviews, bug reports
     /// about this very feature) trips the working heuristics after the turn
