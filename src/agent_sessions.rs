@@ -247,6 +247,7 @@ fn matching_claude_session_file(
 
     let file = std::fs::File::open(path).ok()?;
     let lines = std::io::BufReader::new(file).lines().take(64);
+    let mut matching_session_id = None;
     for line in lines.flatten() {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
@@ -263,6 +264,7 @@ fn matching_claude_session_file(
         if Path::new(session_cwd) != cwd {
             continue;
         }
+        matching_session_id = Some(session_id.to_string());
         let Some(timestamp) = value
             .get("timestamp")
             .and_then(|timestamp| timestamp.as_str())
@@ -279,7 +281,9 @@ fn matching_claude_session_file(
             return Some(session_id.to_string());
         }
     }
-    None
+    let session_id = matching_session_id?;
+    let modified_at = std::fs::metadata(path).ok()?.modified().ok()?;
+    time_is_after_process_start_window(modified_at, process_started_at).then_some(session_id)
 }
 
 fn duration_abs(a: SystemTime, b: SystemTime) -> Option<Duration> {
@@ -543,6 +547,37 @@ mod tests {
         )
         .unwrap();
         let started_at = parse_rfc3339_z("2026-06-30T00:43:41Z").unwrap();
+        assert_eq!(
+            claude_session_id_from_session_files_in(&root, cwd, started_at),
+            Some(id.into())
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn claude_session_file_match_accepts_session_updated_after_process_start() {
+        let root = test_temp_dir("claude-session-late-match");
+        let project = root.join("-tmp-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let cwd = Path::new("/tmp/project");
+        let id = "41a7c4e9-1f20-4a92-9f12-1f8b98d3a9b4";
+        let session_path = project.join(format!("{id}.jsonl"));
+        std::fs::write(
+            &session_path,
+            format!(
+                "{{\"type\":\"mode\",\"sessionId\":\"{id}\"}}\n{{\"type\":\"user\",\"cwd\":\"{}\",\"sessionId\":\"{id}\",\"timestamp\":\"2026-06-30T00:02:07.000Z\"}}\n",
+                cwd.display()
+            ),
+        )
+        .unwrap();
+
+        let started_at = SystemTime::now()
+            .checked_sub(Duration::from_secs(300))
+            .unwrap();
+        assert_eq!(
+            matching_claude_session_file(&session_path, cwd, started_at),
+            Some(id.into())
+        );
         assert_eq!(
             claude_session_id_from_session_files_in(&root, cwd, started_at),
             Some(id.into())
