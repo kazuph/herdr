@@ -292,6 +292,31 @@ impl AppState {
         })
     }
 
+    fn pane_focus_location_exists(&self, location: PaneFocusLocation) -> bool {
+        self.workspaces
+            .get(location.ws_idx)
+            .and_then(|ws| ws.tabs.get(location.tab_idx))
+            .is_some_and(|tab| tab.panes.contains_key(&location.pane_id))
+    }
+
+    fn focus_pane_location_without_history(&mut self, location: PaneFocusLocation) -> bool {
+        if !self.pane_focus_location_exists(location) {
+            return false;
+        }
+        self.switch_workspace(location.ws_idx);
+        self.switch_tab(location.tab_idx);
+        let Some(tab) = self
+            .workspaces
+            .get_mut(location.ws_idx)
+            .and_then(|ws| ws.tabs.get_mut(location.tab_idx))
+        else {
+            return false;
+        };
+        tab.layout.focus_pane(location.pane_id);
+        self.mark_session_dirty();
+        true
+    }
+
     fn record_pane_focus_change(&mut self, before: Option<PaneFocusLocation>) {
         let Some(before) = before else {
             return;
@@ -303,6 +328,38 @@ impl AppState {
             self.pane_focus_back.push(before);
         }
         self.pane_focus_forward.clear();
+    }
+
+    pub(crate) fn pane_focus_history_back(&mut self) -> bool {
+        let Some(current) = self.current_pane_focus_location() else {
+            return false;
+        };
+        while let Some(previous) = self.pane_focus_back.pop() {
+            if previous == current || !self.pane_focus_location_exists(previous) {
+                continue;
+            }
+            if self.focus_pane_location_without_history(previous) {
+                self.pane_focus_forward.push(current);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(crate) fn pane_focus_history_forward(&mut self) -> bool {
+        let Some(current) = self.current_pane_focus_location() else {
+            return false;
+        };
+        while let Some(next) = self.pane_focus_forward.pop() {
+            if next == current || !self.pane_focus_location_exists(next) {
+                continue;
+            }
+            if self.focus_pane_location_without_history(next) {
+                self.pane_focus_back.push(current);
+                return true;
+            }
+        }
+        false
     }
 
     pub(crate) fn pane_is_in_active_tab(&self, ws_idx: usize, pane_id: PaneId) -> bool {

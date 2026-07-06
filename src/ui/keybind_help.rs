@@ -116,6 +116,11 @@ pub(super) fn keybind_help_groups(
             keybind_label(&kb.cycle_pane_previous),
             "cycle pane previous",
         ),
+        (keybind_label(&kb.focus_history_back), "focus history back"),
+        (
+            keybind_label(&kb.focus_history_forward),
+            "focus history forward",
+        ),
     ];
     groups.push(("panes", panes));
 

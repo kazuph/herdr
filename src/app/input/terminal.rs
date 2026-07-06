@@ -549,6 +549,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn terminal_direct_focus_history_shortcuts_walk_back_and_forward() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        let first_pane = app.state.workspaces[0].layout.focused();
+        app.state.keybinds.cycle_pane_next = crate::config::ActionKeybinds::direct("alt+tab");
+        app.state.keybinds.focus_history_back = crate::config::ActionKeybinds::direct("cmd+[");
+        app.state.keybinds.focus_history_forward = crate::config::ActionKeybinds::direct("cmd+]");
+
+        app.handle_terminal_key(TerminalKey::new(KeyCode::Tab, KeyModifiers::ALT))
+            .await;
+        let second_pane = app.state.workspaces[0].layout.focused();
+        assert_ne!(second_pane, first_pane);
+
+        app.handle_terminal_key(TerminalKey::new(KeyCode::Char('['), KeyModifiers::SUPER))
+            .await;
+        assert_eq!(app.state.workspaces[0].layout.focused(), first_pane);
+
+        app.handle_terminal_key(TerminalKey::new(KeyCode::Char(']'), KeyModifiers::SUPER))
+            .await;
+        assert_eq!(app.state.workspaces[0].layout.focused(), second_pane);
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[tokio::test]
     async fn terminal_direct_edit_scrollback_opens_editor_pane() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(

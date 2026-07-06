@@ -275,6 +275,8 @@ pub struct Keybinds {
     pub focus_pane_right: ActionKeybinds,
     pub cycle_pane_next: ActionKeybinds,
     pub cycle_pane_previous: ActionKeybinds,
+    pub focus_history_back: ActionKeybinds,
+    pub focus_history_forward: ActionKeybinds,
     pub split_vertical: ActionKeybinds,
     pub split_horizontal: ActionKeybinds,
     pub close_pane: ActionKeybinds,
@@ -413,6 +415,11 @@ impl Config {
             cycle_pane_previous: action!(
                 "keys.cycle_pane_previous",
                 &self.keys.cycle_pane_previous
+            ),
+            focus_history_back: action!("keys.focus_history_back", &self.keys.focus_history_back),
+            focus_history_forward: action!(
+                "keys.focus_history_forward",
+                &self.keys.focus_history_forward
             ),
             split_vertical: action!("keys.split_vertical", &self.keys.split_vertical),
             split_horizontal: action!("keys.split_horizontal", &self.keys.split_horizontal),

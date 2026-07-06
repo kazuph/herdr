@@ -496,6 +496,8 @@ pub(crate) enum NavigateAction {
     ToggleSidebar,
     CyclePaneNext,
     CyclePanePrevious,
+    FocusHistoryBack,
+    FocusHistoryForward,
     Help,
     Settings,
     ReloadConfig,
@@ -587,6 +589,11 @@ fn action_for_key(
         (&kb.focus_pane_right, NavigateAction::FocusPaneRight),
         (&kb.cycle_pane_next, NavigateAction::CyclePaneNext),
         (&kb.cycle_pane_previous, NavigateAction::CyclePanePrevious),
+        (&kb.focus_history_back, NavigateAction::FocusHistoryBack),
+        (
+            &kb.focus_history_forward,
+            NavigateAction::FocusHistoryForward,
+        ),
         (&kb.split_vertical, NavigateAction::SplitVertical),
         (&kb.split_horizontal, NavigateAction::SplitHorizontal),
         (&kb.close_pane, NavigateAction::ClosePane),
@@ -763,6 +770,14 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::CyclePanePrevious => {
             state.cycle_pane(true);
+            leave_navigate_mode(state);
+        }
+        NavigateAction::FocusHistoryBack => {
+            state.pane_focus_history_back();
+            leave_navigate_mode(state);
+        }
+        NavigateAction::FocusHistoryForward => {
+            state.pane_focus_history_forward();
             leave_navigate_mode(state);
         }
         NavigateAction::Help => super::modal::open_keybind_help(state),
