@@ -706,6 +706,21 @@ mod tests {
     }
 
     #[test]
+    fn parses_xterm_modified_super_brackets() {
+        for (bytes, expected) in [
+            (b"\x1b[1;9[".as_slice(), '['),
+            (b"\x1b[1;9]".as_slice(), ']'),
+        ] {
+            let (RawInputEvent::Key(key), consumed) = extract_one_event(bytes).unwrap() else {
+                panic!("expected key");
+            };
+            assert_eq!(consumed, bytes.len());
+            assert_eq!(key.code, KeyCode::Char(expected));
+            assert_eq!(key.modifiers, KeyModifiers::SUPER);
+        }
+    }
+
+    #[test]
     fn parses_enhanced_pageup_press() {
         let (RawInputEvent::Key(key), consumed) = extract_one_event(b"\x1b[5;1:1~").unwrap() else {
             panic!("expected key");

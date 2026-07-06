@@ -17,6 +17,7 @@ const PANE_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaneActionBarAction {
+    CopyToggle,
     CycleLayout,
     Rotate,
     Equalize,
@@ -1257,6 +1258,10 @@ impl AppState {
     fn pane_action_bar_action_at(&self, col: u16, row: u16) -> Option<PaneActionBarAction> {
         [
             (
+                self.view.pane_action_copy_rect,
+                PaneActionBarAction::CopyToggle,
+            ),
+            (
                 self.view.pane_action_cycle_layout_rect,
                 PaneActionBarAction::CycleLayout,
             ),
@@ -1275,6 +1280,7 @@ impl AppState {
 
     fn apply_pane_action_bar_action(&mut self, action: PaneActionBarAction) {
         match action {
+            PaneActionBarAction::CopyToggle => self.toggle_pane_action_copy_mode(),
             PaneActionBarAction::CycleLayout => self.cycle_pane_layout(),
             PaneActionBarAction::Rotate => self.rotate_panes(false),
             PaneActionBarAction::Equalize => self.equalize_pane_sizes(),
@@ -1736,6 +1742,58 @@ mod tests {
             equalize.y,
         ));
         assert!(app.state.session_dirty);
+    }
+
+    #[test]
+    fn clicking_pane_action_copy_button_cycles_copy_views() {
+        let mut app = app_for_mouse_test();
+        let mut workspace = Workspace::test_new("active");
+        workspace.test_split(Direction::Horizontal);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 28));
+
+        let copy = app.state.view.pane_action_copy_rect;
+        assert!(copy.width > 0);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            copy.x + 1,
+            copy.y,
+        ));
+        assert_eq!(app.state.mode, Mode::Copy);
+        assert!(app.state.copy_mode.is_some());
+        assert!(app.state.copy_mode_fullscreen_pane.is_none());
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            copy.x + 1,
+            copy.y,
+        ));
+        let fullscreen_pane = app.state.copy_mode.expect("copy mode").pane_id;
+        assert_eq!(app.state.copy_mode_fullscreen_pane, Some(fullscreen_pane));
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 28));
+        assert_eq!(app.state.view.pane_infos.len(), 1);
+        assert_eq!(app.state.view.pane_infos[0].id, fullscreen_pane);
+        assert_eq!(
+            app.state.view.pane_infos[0].rect,
+            app.state.view.terminal_area
+        );
+        assert_eq!(
+            app.state.view.pane_infos[0].inner_rect,
+            app.state.view.terminal_area
+        );
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            copy.x + 1,
+            copy.y,
+        ));
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.copy_mode.is_none());
+        assert!(app.state.copy_mode_fullscreen_pane.is_none());
     }
 
     #[test]

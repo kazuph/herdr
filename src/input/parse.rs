@@ -178,6 +178,16 @@ fn parse_xterm_modified_special_sequence(data: &str) -> Option<TerminalKey> {
                     .with_kind(parse_kitty_event_type(event_type)?),
             );
         }
+
+        if is_modified_printable_csi_final(suffix_char) {
+            let modifier_and_event = body.strip_suffix(suffix_char)?;
+            let (modifier_text, event_type) = split_modifier_and_event(modifier_and_event);
+            let mod_value = modifier_text.parse::<u8>().ok()?.checked_sub(1)?;
+            return Some(
+                TerminalKey::new(KeyCode::Char(suffix_char), key_modifiers_from_u8(mod_value))
+                    .with_kind(parse_kitty_event_type(event_type)?),
+            );
+        }
     }
 
     let tilde_body = body.strip_suffix('~')?;
@@ -202,6 +212,13 @@ fn parse_xterm_modified_special_sequence(data: &str) -> Option<TerminalKey> {
     Some(
         TerminalKey::new(code, key_modifiers_from_u8(mod_value))
             .with_kind(parse_kitty_event_type(event_type)?),
+    )
+}
+
+fn is_modified_printable_csi_final(ch: char) -> bool {
+    matches!(
+        ch,
+        '@' | '[' | '\\' | ']' | '^' | '_' | '`' | '{' | '|' | '}'
     )
 }
 
@@ -477,6 +494,26 @@ mod tests {
         assert_eq!(key.modifiers, KeyModifiers::ALT);
         assert_eq!(key.kind, crossterm::event::KeyEventKind::Press);
         assert_eq!(key.shifted_codepoint, None);
+    }
+
+    #[test]
+    fn parse_kitty_super_bracket_sequences() {
+        for (sequence, expected) in [("\x1b[91;9u", '['), ("\x1b[93;9u", ']')] {
+            let key = parse_terminal_key_sequence(sequence).unwrap();
+            assert_eq!(key.code, KeyCode::Char(expected));
+            assert_eq!(key.modifiers, KeyModifiers::SUPER);
+            assert_eq!(key.kind, crossterm::event::KeyEventKind::Press);
+        }
+    }
+
+    #[test]
+    fn parse_xterm_modified_super_bracket_sequences() {
+        for (sequence, expected) in [("\x1b[1;9[", '['), ("\x1b[1;9]", ']')] {
+            let key = parse_terminal_key_sequence(sequence).unwrap();
+            assert_eq!(key.code, KeyCode::Char(expected));
+            assert_eq!(key.modifiers, KeyModifiers::SUPER);
+            assert_eq!(key.kind, crossterm::event::KeyEventKind::Press);
+        }
     }
 
     #[test]

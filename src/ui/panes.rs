@@ -266,6 +266,35 @@ pub(super) fn compute_pane_infos(
 
     let terminal_active = app.mode == Mode::Terminal;
 
+    if let Some(fullscreen_pane) = app.copy_mode_fullscreen_pane {
+        if ws
+            .active_tab()
+            .is_some_and(|tab| tab.panes.contains_key(&fullscreen_pane))
+        {
+            if let Some(rt) = app.runtime_for_pane_in_workspace(ws_idx, fullscreen_pane) {
+                if resize_panes
+                    && ws.terminal_id(fullscreen_pane).is_some_and(|terminal_id| {
+                        !app.direct_attach_resize_locks.contains(terminal_id)
+                    })
+                {
+                    rt.resize(
+                        area.height,
+                        area.width,
+                        cell_size.width_px,
+                        cell_size.height_px,
+                    );
+                }
+            }
+            return vec![PaneInfo {
+                id: fullscreen_pane,
+                rect: area,
+                inner_rect: area,
+                scrollbar_rect: None,
+                is_focused: true,
+            }];
+        }
+    }
+
     if ws.zoomed {
         let focused_id = ws.layout.focused();
         let pane_inner = pane_inner_rect(area);
@@ -349,10 +378,11 @@ pub(super) fn render_panes(app: &AppState, frame: &mut Frame, area: Rect) {
 
     let multi_pane = ws.layout.pane_count() > 1;
     let terminal_active = app.mode == Mode::Terminal;
+    let fullscreen_copy_pane = app.copy_mode_fullscreen_pane;
 
     for info in &app.view.pane_infos {
         if let Some(rt) = app.runtime_for_pane_in_workspace(ws_idx, info.id) {
-            if pane_should_frame(info.rect) {
+            if fullscreen_copy_pane != Some(info.id) && pane_should_frame(info.rect) {
                 let (border_style, border_set) = if info.is_focused && terminal_active {
                     (
                         Style::default().fg(app.palette.accent),

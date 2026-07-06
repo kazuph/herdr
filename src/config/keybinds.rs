@@ -1046,6 +1046,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_cmd_bracket_key_combos() {
+        assert_eq!(
+            parse_key_combo("cmd+["),
+            Some((KeyCode::Char('['), KeyModifiers::SUPER))
+        );
+        assert_eq!(
+            parse_key_combo("cmd+]"),
+            Some((KeyCode::Char(']'), KeyModifiers::SUPER))
+        );
+    }
+
+    #[test]
     fn default_split_bindings_include_tmux_style_keys() {
         let keybinds = Config::default().keybinds();
 

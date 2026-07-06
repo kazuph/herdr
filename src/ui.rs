@@ -50,8 +50,8 @@ pub(crate) use self::scrollbar::{
 use self::settings::render_settings_overlay;
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};
 use self::status::{
-    pane_action_bar_rects, render_config_diagnostic, render_pane_action_bar,
-    render_toast_notification, toast_notification_rect,
+    pane_action_bar_rects, pane_action_copy_label_width, render_config_diagnostic,
+    render_pane_action_bar, render_toast_notification, toast_notification_rect,
 };
 use self::tabs::render_tab_bar;
 pub(crate) use self::{
@@ -185,7 +185,8 @@ fn compute_view_internal(
     } else {
         (main_body_area, Rect::default())
     };
-    let pane_action_rects = pane_action_bar_rects(pane_action_bar_rect);
+    let pane_action_rects =
+        pane_action_bar_rects(pane_action_bar_rect, pane_action_copy_label_width(app));
 
     app.workspace_scroll = app
         .workspace_scroll
@@ -224,11 +225,14 @@ fn compute_view_internal(
         .unwrap_or_default();
     app.tab_scroll = tab_bar_view.scroll;
 
-    let split_borders = app
-        .active
-        .and_then(|i| app.workspaces.get(i))
-        .map(|ws| ws.layout.splits(terminal_area))
-        .unwrap_or_default();
+    let split_borders = if app.copy_mode_fullscreen_pane.is_some() {
+        Vec::new()
+    } else {
+        app.active
+            .and_then(|i| app.workspaces.get(i))
+            .map(|ws| ws.layout.splits(terminal_area))
+            .unwrap_or_default()
+    };
 
     let pane_infos = compute_pane_infos(app, terminal_area, resize_panes, cell_size);
     if resize_panes {
@@ -253,6 +257,7 @@ fn compute_view_internal(
         new_tab_hit_area: tab_bar_view.new_tab_hit_area,
         terminal_area,
         pane_action_bar_rect,
+        pane_action_copy_rect: pane_action_rects.copy,
         pane_action_cycle_layout_rect: pane_action_rects.cycle_layout,
         pane_action_rotate_rect: pane_action_rects.rotate,
         pane_action_equalize_rect: pane_action_rects.equalize,
@@ -322,6 +327,7 @@ fn compute_mobile_view(
         new_tab_hit_area: Rect::default(),
         terminal_area,
         pane_action_bar_rect: Rect::default(),
+        pane_action_copy_rect: Rect::default(),
         pane_action_cycle_layout_rect: Rect::default(),
         pane_action_rotate_rect: Rect::default(),
         pane_action_equalize_rect: Rect::default(),
@@ -351,7 +357,7 @@ pub fn render(app: &AppState, frame: &mut Frame) {
         render_tab_bar(app, frame, tab_bar_area);
     }
     render_panes(app, frame, terminal_area);
-    render_pane_action_bar(frame, app.view.pane_action_bar_rect, &app.palette);
+    render_pane_action_bar(frame, app.view.pane_action_bar_rect, app);
 
     match app.mode {
         Mode::Onboarding => render_onboarding_overlay(app, frame, frame.area()),

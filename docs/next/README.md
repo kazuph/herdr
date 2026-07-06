@@ -195,6 +195,7 @@ press `ctrl+b` to enter prefix mode. default actions are prefix-first and tmux-l
 | `prefix+shift+w` | rename workspace |
 | `prefix+shift+d` | close workspace |
 | `prefix+h/j/k/l` | focus pane |
+| `COPY` button | copy mode / phone copy view / normal view |
 | configurable | pane focus history back / forward |
 | `prefix+v` / `prefix+minus` | split pane |
 | `prefix+x` | close pane |

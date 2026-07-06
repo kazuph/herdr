@@ -8,26 +8,34 @@ use ratatui::{
 
 use super::widgets::panel_contrast_fg;
 use crate::{
-    app::state::{Palette, ToastKind, ToastNotification},
+    app::{
+        state::{Palette, ToastKind, ToastNotification},
+        AppState, Mode,
+    },
     detect::AgentState,
 };
 
+const PANE_ACTION_COPY_LABEL: &str = " COPY ";
+const PANE_ACTION_PHONE_COPY_LABEL: &str = " PHONE COPY ";
+const PANE_ACTION_EXIT_COPY_LABEL: &str = " EXIT COPY ";
 const PANE_ACTION_CYCLE_LAYOUT_LABEL: &str = " CYCLE LAYOUT ";
 const PANE_ACTION_ROTATE_LABEL: &str = " ROTATE PANES ";
 const PANE_ACTION_EQUALIZE_LABEL: &str = " EQUALIZE ";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PaneActionBarRects {
+    pub copy: Rect,
     pub cycle_layout: Rect,
     pub rotate: Rect,
     pub equalize: Rect,
 }
 
-pub(crate) fn pane_action_bar_rects(area: Rect) -> PaneActionBarRects {
+pub(crate) fn pane_action_bar_rects(area: Rect, copy_label_width: u16) -> PaneActionBarRects {
     if area.width == 0 || area.height == 0 {
         return PaneActionBarRects::default();
     }
 
+    let copy = Rect::new(area.x, area.y, area.width.min(copy_label_width), 1);
     let cycle_width = PANE_ACTION_CYCLE_LAYOUT_LABEL.len() as u16;
     let rotate_width = PANE_ACTION_ROTATE_LABEL.len() as u16;
     let equalize_width = PANE_ACTION_EQUALIZE_LABEL.len() as u16;
@@ -46,31 +54,38 @@ pub(crate) fn pane_action_bar_rects(area: Rect) -> PaneActionBarRects {
     let equalize = button_rect(area, &mut x, equalize_width, right, 0);
 
     PaneActionBarRects {
+        copy,
         cycle_layout,
         rotate,
         equalize,
     }
 }
 
-pub(super) fn render_pane_action_bar(frame: &mut Frame, area: Rect, p: &Palette) {
+fn copy_button_label(app: &AppState) -> &'static str {
+    if app.copy_mode_fullscreen_pane.is_some() {
+        PANE_ACTION_EXIT_COPY_LABEL
+    } else if app.mode == Mode::Copy {
+        PANE_ACTION_PHONE_COPY_LABEL
+    } else {
+        PANE_ACTION_COPY_LABEL
+    }
+}
+
+pub(crate) fn pane_action_copy_label_width(app: &AppState) -> u16 {
+    copy_button_label(app).len() as u16
+}
+
+pub(super) fn render_pane_action_bar(frame: &mut Frame, area: Rect, app: &AppState) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
+    let p = &app.palette;
     let bar_style = Style::default().fg(p.overlay0).bg(Color::Reset);
     frame.render_widget(Paragraph::new("").style(bar_style), area);
 
-    let label = " PANES ";
-    let label_area = Rect::new(area.x, area.y, area.width.min(label.len() as u16), 1);
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            label,
-            Style::default().fg(p.overlay0).bg(Color::Reset),
-        )),
-        label_area,
-    );
-
-    let rects = pane_action_bar_rects(area);
+    let rects = pane_action_bar_rects(area, pane_action_copy_label_width(app));
+    render_action_button(frame, rects.copy, copy_button_label(app), p);
     render_action_button(frame, rects.cycle_layout, PANE_ACTION_CYCLE_LAYOUT_LABEL, p);
     render_action_button(frame, rects.rotate, PANE_ACTION_ROTATE_LABEL, p);
     render_action_button(frame, rects.equalize, PANE_ACTION_EQUALIZE_LABEL, p);
