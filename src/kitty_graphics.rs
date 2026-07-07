@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
+#[cfg(not(test))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -122,15 +123,33 @@ pub(crate) struct HostGraphicsCache {
     view: Option<HostViewKey>,
 }
 
+#[cfg(not(test))]
 static KITTY_GRAPHICS_ENABLED: AtomicBool = AtomicBool::new(false);
 static LOCAL_HOST_GRAPHICS: OnceLock<Mutex<HostGraphicsCache>> = OnceLock::new();
 
+#[cfg(test)]
+thread_local! {
+    static KITTY_GRAPHICS_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(not(test))]
 pub(crate) fn set_enabled(enabled: bool) {
     KITTY_GRAPHICS_ENABLED.store(enabled, Ordering::Release);
 }
 
+#[cfg(test)]
+pub(crate) fn set_enabled(enabled: bool) {
+    KITTY_GRAPHICS_ENABLED.with(|value| value.set(enabled));
+}
+
+#[cfg(not(test))]
 pub(crate) fn is_enabled() -> bool {
     KITTY_GRAPHICS_ENABLED.load(Ordering::Acquire)
+}
+
+#[cfg(test)]
+pub(crate) fn is_enabled() -> bool {
+    KITTY_GRAPHICS_ENABLED.with(std::cell::Cell::get)
 }
 
 pub(crate) fn paint_local_pane_graphics(app: &AppState, cell_size: HostCellSize) -> io::Result<()> {

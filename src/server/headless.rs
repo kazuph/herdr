@@ -2389,6 +2389,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::AtomicU64;
 
+    static TEST_SOCKET_COUNTER: AtomicU64 = AtomicU64::new(0);
     static MSG_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn test_headless_server() -> HeadlessServer {
@@ -2399,12 +2400,13 @@ mod tests {
         app.local_terminal_notifications = false;
 
         let dir = std::env::temp_dir().join(format!(
-            "hh-{}-{}",
+            "hh-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
-                .unwrap_or(0)
+                .unwrap_or(0),
+            TEST_SOCKET_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         let _ = fs::create_dir_all(&dir);
         let socket_path = dir.join("client.sock");
