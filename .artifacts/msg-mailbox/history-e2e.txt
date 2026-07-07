@@ -1,0 +1,2 @@
+#1 [e2e] 2026-07-07T09:26:01.262Z alpha -> beta: hello beta from alpha
+#2 [e2e] 2026-07-07T09:26:16.518Z beta -> alpha: reply from beta

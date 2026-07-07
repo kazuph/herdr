@@ -1,0 +1,1 @@
+{"id":"cli:agent:read","result":{"read":{"format":"text","pane_id":"w65601f92edf5e1-1","revision":0,"source":"recent","tab_id":"w65601f92edf5e1:1","text":"📬 herdr msg: 未読1件 (room=e2e, from=beta)。`herdr\n msg inbox` を実行して確認して\nalpha:📬 herdr msg: 未読1件 (room=e2e, from=beta)。\n`herdr msg inbox` を実行して確認して\n","truncated":false,"workspace_id":"w65601f92edf5e1"},"type":"pane_read"}}
