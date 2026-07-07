@@ -169,6 +169,17 @@ fn run_named_cli_json(config_home: &Path, runtime_dir: &Path, args: &[&str]) -> 
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+fn copy_test_binary_as(base: &Path, name: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = base.join(name);
+    fs::copy(env!("CARGO_BIN_EXE_herdr"), &path).unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
+}
+
 fn spawn_herdr_with_path(
     config_home: &Path,
     runtime_dir: &Path,
@@ -832,6 +843,90 @@ fn named_sessions_use_separate_servers_and_workspace_state() {
     let _ = run_named_cli(&config_home, &runtime_dir, &["session", "stop", "beta"]);
     drop(alpha);
     drop(beta);
+    cleanup_test_base(&base);
+}
+
+#[test]
+fn alternate_binary_uses_own_namespace_and_ignores_inherited_socket_env() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    fs::create_dir_all(&config_home).unwrap();
+    fs::create_dir_all(&runtime_dir).unwrap();
+    let herdr_next = copy_test_binary_as(&base, "herdr-next");
+    let inherited_socket = config_home.join(app_dir_name()).join("herdr.sock");
+
+    let output = Command::new(&herdr_next)
+        .args(["status", "server"])
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .env("HERDR_ENV", "1")
+        .env("HERDR_SOCKET_PATH", &inherited_socket)
+        .env_remove("HERDR_SOCKET_PATH_EXPLICIT")
+        .env_remove("HERDR_CLIENT_SOCKET_PATH")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {} stdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("status: not running"), "stdout: {stdout}");
+    assert!(
+        stdout.contains(
+            config_home
+                .join("herdr-next")
+                .join("herdr.sock")
+                .to_string_lossy()
+                .as_ref()
+        ),
+        "stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains(inherited_socket.to_string_lossy().as_ref()),
+        "stdout: {stdout}"
+    );
+
+    cleanup_test_base(&base);
+}
+
+#[test]
+fn alternate_binary_honors_socket_env_when_marked_explicit() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    fs::create_dir_all(&config_home).unwrap();
+    fs::create_dir_all(&runtime_dir).unwrap();
+    let herdr_next = copy_test_binary_as(&base, "herdr-next");
+    let explicit_socket = config_home.join(app_dir_name()).join("herdr.sock");
+
+    let output = Command::new(&herdr_next)
+        .args(["status", "server"])
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .env("HERDR_SOCKET_PATH", &explicit_socket)
+        .env("HERDR_SOCKET_PATH_EXPLICIT", "1")
+        .env_remove("HERDR_CLIENT_SOCKET_PATH")
+        .env_remove("HERDR_ENV")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {} stdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("status: not running"), "stdout: {stdout}");
+    assert!(
+        stdout.contains(explicit_socket.to_string_lossy().as_ref()),
+        "stdout: {stdout}"
+    );
+
     cleanup_test_base(&base);
 }
 

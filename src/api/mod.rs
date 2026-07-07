@@ -20,6 +20,7 @@ use crate::api::schema::{
 };
 
 pub const SOCKET_PATH_ENV_VAR: &str = "HERDR_SOCKET_PATH";
+pub const SOCKET_PATH_EXPLICIT_ENV_VAR: &str = "HERDR_SOCKET_PATH_EXPLICIT";
 
 const SOCKET_PERMISSION_MODE: u32 = 0o600;
 const CONNECTION_POLL_INTERVAL: Duration = Duration::from_millis(100);

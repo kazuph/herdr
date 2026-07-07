@@ -371,6 +371,7 @@ fn should_block_nested(config: &config::Config) -> bool {
         config,
         std::env::var(HERDR_ENV_VAR).ok().as_deref(),
         crate::platform::process_has_ancestor_named(std::process::id(), "herdr"),
+        inherited_herdr_context_matches_current(),
     )
 }
 
@@ -378,8 +379,19 @@ fn should_block_nested_for_context(
     config: &config::Config,
     herdr_env: Option<&str>,
     has_herdr_ancestor: bool,
+    same_herdr_context: bool,
 ) -> bool {
-    !config.experimental.allow_nested && herdr_env == Some(HERDR_ENV_VALUE) && has_herdr_ancestor
+    !config.experimental.allow_nested
+        && herdr_env == Some(HERDR_ENV_VALUE)
+        && has_herdr_ancestor
+        && same_herdr_context
+}
+
+fn inherited_herdr_context_matches_current() -> bool {
+    let Ok(inherited_socket_path) = std::env::var(api::SOCKET_PATH_ENV_VAR) else {
+        return true;
+    };
+    std::path::Path::new(&inherited_socket_path) == session::active_api_socket_path()
 }
 
 fn random_nested_message() -> &'static str {
@@ -688,6 +700,7 @@ mod tests {
         assert!(should_block_nested_for_context(
             &config,
             Some(HERDR_ENV_VALUE),
+            true,
             true
         ));
     }
@@ -699,6 +712,7 @@ mod tests {
         assert!(!should_block_nested_for_context(
             &config,
             Some(HERDR_ENV_VALUE),
+            true,
             true
         ));
     }
@@ -706,7 +720,7 @@ mod tests {
     #[test]
     fn nested_herdr_does_not_block_without_env() {
         let config = config::Config::default();
-        assert!(!should_block_nested_for_context(&config, None, true));
+        assert!(!should_block_nested_for_context(&config, None, true, true));
     }
 
     #[test]
@@ -715,6 +729,18 @@ mod tests {
         assert!(!should_block_nested_for_context(
             &config,
             Some(HERDR_ENV_VALUE),
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn nested_herdr_next_context_does_not_block_parent_herdr_env() {
+        let config = config::Config::default();
+        assert!(!should_block_nested_for_context(
+            &config,
+            Some(HERDR_ENV_VALUE),
+            true,
             false
         ));
     }

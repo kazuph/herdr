@@ -27,6 +27,7 @@ pub struct SessionInfo {
 pub fn configure_from_args(args: &[String]) -> Result<Vec<String>, String> {
     let mut cleaned = Vec::with_capacity(args.len());
     if let Some(program) = args.first() {
+        crate::config::configure_app_namespace_from_program(program);
         cleaned.push(program.clone());
     }
 
@@ -73,7 +74,7 @@ pub fn configure_from_args(args: &[String]) -> Result<Vec<String>, String> {
 
     if let Some(session) = requested_session {
         apply_explicit_name(&session)?;
-    } else if std::env::var_os(crate::api::SOCKET_PATH_ENV_VAR).is_some() {
+    } else if active_api_socket_override().is_some() {
         EXPLICIT_SESSION_REQUESTED.store(false, Ordering::Relaxed);
     } else if let Ok(session) = std::env::var(SESSION_ENV_VAR) {
         if normalize_name(&session)?.is_none() {
@@ -150,10 +151,42 @@ pub fn active_api_socket_path() -> PathBuf {
     if explicit_session_requested() {
         return api_socket_path_for(active_name().as_deref());
     }
-    if let Ok(path) = std::env::var(crate::api::SOCKET_PATH_ENV_VAR) {
-        return PathBuf::from(path);
+    if let Some(path) = active_api_socket_override() {
+        return path;
     }
     api_socket_path_for(active_name().as_deref())
+}
+
+pub fn active_api_socket_override() -> Option<PathBuf> {
+    let path = std::env::var(crate::api::SOCKET_PATH_ENV_VAR).ok()?;
+    let path = PathBuf::from(path);
+    if should_honor_socket_override(&path) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn should_honor_socket_override(path: &Path) -> bool {
+    if socket_override_is_explicit() {
+        return true;
+    }
+    let current_config_dir = crate::config::config_dir();
+    if path.starts_with(&current_config_dir) {
+        return true;
+    }
+    crate::config::app_dir_name()
+        == if cfg!(debug_assertions) {
+            "herdr-dev"
+        } else {
+            "herdr"
+        }
+}
+
+fn socket_override_is_explicit() -> bool {
+    std::env::var(crate::api::SOCKET_PATH_EXPLICIT_ENV_VAR)
+        .ok()
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes"))
 }
 
 pub fn client_socket_path_for(name: Option<&str>) -> PathBuf {
@@ -569,6 +602,74 @@ mod tests {
         std::env::remove_var(SESSION_ENV_VAR);
         clear_explicit_session_for_test();
         std::env::remove_var(crate::api::SOCKET_PATH_ENV_VAR);
+    }
+
+    #[test]
+    fn alternate_binary_ignores_inherited_socket_override_outside_its_namespace() {
+        let _guard = env_lock().lock().unwrap();
+        let config_home =
+            std::env::temp_dir().join(format!("herdr-next-inherited-{}", std::process::id()));
+        let inherited_socket = config_home.join("herdr").join("herdr.sock");
+        std::env::set_var("XDG_CONFIG_HOME", &config_home);
+        std::env::remove_var(SESSION_ENV_VAR);
+        std::env::set_var(crate::api::SOCKET_PATH_ENV_VAR, &inherited_socket);
+        std::env::remove_var(crate::api::SOCKET_PATH_EXPLICIT_ENV_VAR);
+        clear_explicit_session_for_test();
+
+        let cleaned = configure_from_args(&[
+            "/Users/kazuph/.local/bin/herdr-next".to_string(),
+            "pane".to_string(),
+            "list".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cleaned,
+            vec!["/Users/kazuph/.local/bin/herdr-next", "pane", "list"]
+        );
+        assert_eq!(
+            active_api_socket_path(),
+            config_home.join("herdr-next").join("herdr.sock")
+        );
+        assert_eq!(
+            crate::config::config_path(),
+            config_home.join("herdr-next").join("config.toml")
+        );
+        assert!(!explicit_session_requested());
+
+        crate::config::configure_app_namespace_from_program("herdr");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var(crate::api::SOCKET_PATH_ENV_VAR);
+        clear_explicit_session_for_test();
+    }
+
+    #[test]
+    fn alternate_binary_honors_socket_override_when_marked_explicit() {
+        let _guard = env_lock().lock().unwrap();
+        let config_home =
+            std::env::temp_dir().join(format!("herdr-next-explicit-{}", std::process::id()));
+        let explicit_socket = config_home.join("herdr").join("herdr.sock");
+        std::env::set_var("XDG_CONFIG_HOME", &config_home);
+        std::env::remove_var(SESSION_ENV_VAR);
+        std::env::set_var(crate::api::SOCKET_PATH_ENV_VAR, &explicit_socket);
+        std::env::set_var(crate::api::SOCKET_PATH_EXPLICIT_ENV_VAR, "1");
+        clear_explicit_session_for_test();
+
+        configure_from_args(&[
+            "/Users/kazuph/.local/bin/herdr-next".to_string(),
+            "pane".to_string(),
+            "list".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(active_api_socket_path(), explicit_socket);
+        assert!(!explicit_session_requested());
+
+        crate::config::configure_app_namespace_from_program("herdr");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var(crate::api::SOCKET_PATH_ENV_VAR);
+        std::env::remove_var(crate::api::SOCKET_PATH_EXPLICIT_ENV_VAR);
+        clear_explicit_session_for_test();
     }
 
     #[test]

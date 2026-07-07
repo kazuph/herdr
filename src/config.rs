@@ -8,9 +8,9 @@ mod theme;
 
 pub use self::{
     io::{
-        config_diagnostic_summary, config_dir, config_path, load_live_config,
-        remove_keybinding_config_sections, remove_section_key, state_dir, upsert_section_bool,
-        upsert_section_value,
+        app_dir_name, config_diagnostic_summary, config_dir, config_path,
+        configure_app_namespace_from_program, load_live_config, remove_keybinding_config_sections,
+        remove_section_key, state_dir, upsert_section_bool, upsert_section_value,
     },
     keybinds::{
         format_key_combo, normalize_key_combo, terminal_key_matches_combo, ActionKeybinds,
@@ -30,11 +30,6 @@ pub(crate) use self::io::upsert_top_level_bool;
 
 pub const CONFIG_PATH_ENV_VAR: &str = "HERDR_CONFIG_PATH";
 pub const DEFAULT_SCROLLBACK_LIMIT_BYTES: usize = 10_000_000;
-
-#[cfg(test)]
-pub(crate) fn app_dir_name() -> &'static str {
-    io::app_dir_name()
-}
 
 impl Config {
     pub fn should_show_onboarding(&self) -> bool {
