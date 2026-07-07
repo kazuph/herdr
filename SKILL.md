@@ -45,13 +45,34 @@ important: ids can compact when tabs, panes, or workspaces are closed. do not tr
 
 ## discover yourself
 
-see what panes exist and which one is focused:
+first ask herdr to identify the pane that owns your process:
+
+```bash
+herdr pane current
+```
+
+`pane current` uses `HERDR_PANE_ID` first, then the calling process session,
+then the calling process's parent process tree. if it prints a pane id, use
+that id as yourself and verify it when needed:
+
+```bash
+SELF_PANE="$(herdr pane current)"
+herdr pane get "$SELF_PANE"
+```
+
+if `pane current` fails, do not use the focused pane as a fallback. inspect
+the live panes and prove exactly one candidate from stable evidence such as
+cwd, agent label, recent pane text, and root process id:
 
 ```bash
 herdr pane list
+herdr pane get <candidate_pane_id>
+herdr pane read <candidate_pane_id> --source recent --lines 40
 ```
 
-the focused pane is yours. other panes are your neighbors.
+continue only when one candidate is proven. if multiple panes match or none
+match, report that your pane is unsafe to identify and ask for an explicit
+pane id.
 
 list workspaces:
 

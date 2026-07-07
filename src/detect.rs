@@ -744,10 +744,31 @@ fn codex_live_region(content: &str) -> &str {
     else {
         return content;
     };
-    let byte_offset: usize = lines[..prompt_index]
-        .iter()
-        .map(|line| line.len() + 1)
-        .sum();
+    let mut start_index = prompt_index;
+    let mut cursor = prompt_index;
+    let mut saw_live_status = false;
+    while cursor > 0 {
+        let previous = lines[cursor - 1];
+        let trimmed = previous.trim_start();
+        let lower = trimmed.to_lowercase();
+        if trimmed.is_empty() {
+            cursor -= 1;
+            continue;
+        }
+        if (trimmed.starts_with('•') && trimmed.contains("Working ("))
+            || lower.contains("esc to interrupt")
+        {
+            saw_live_status = true;
+            cursor -= 1;
+            continue;
+        }
+        break;
+    }
+    if saw_live_status {
+        start_index = cursor;
+    }
+
+    let byte_offset: usize = lines[..start_index].iter().map(|line| line.len() + 1).sum();
     &content[byte_offset.min(content.len())..]
 }
 
@@ -1296,6 +1317,18 @@ mod tests {
     #[test]
     fn codex_working_truncated_status_header() {
         assert_eq!(detect_codex("• Working (0s • esc…"), AgentState::Working);
+    }
+
+    #[test]
+    fn codex_working_status_immediately_before_latest_prompt_is_live() {
+        let screen = "older output\n\n\
+             • Working (9m 12s • esc to interrupt) · 1 background terminal running\n\n\
+             › Use /skills to list available skills\n\n\
+             gpt-5.5 medium · herdr";
+
+        assert_eq!(detect_codex(screen), AgentState::Working);
+        assert!(codex_activity_fingerprint(screen)
+            .is_some_and(|fingerprint| fingerprint.contains("Working (9m 12s")));
     }
 
     #[test]

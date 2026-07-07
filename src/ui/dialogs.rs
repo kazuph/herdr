@@ -5,6 +5,7 @@ use ratatui::{
     widgets::{Clear, Paragraph},
     Frame,
 };
+use unicode_width::UnicodeWidthStr;
 
 use super::widgets::{
     action_button_row_rects, centered_popup_rect, panel_contrast_fg, render_action_button,
@@ -44,6 +45,18 @@ pub(crate) fn rename_button_rects(inner: Rect) -> (Rect, Rect, Rect) {
     (rects[0], rects[1], rects[2])
 }
 
+fn name_input_cursor_x(area: Rect, input: &str, cursor: usize) -> u16 {
+    if area.width == 0 {
+        return area.x;
+    }
+    let prefix: String = input.chars().take(cursor).collect();
+    let prefix_width = UnicodeWidthStr::width(prefix.as_str()).min(u16::MAX as usize) as u16;
+    area.x
+        .saturating_add(1)
+        .saturating_add(prefix_width)
+        .min(area.x.saturating_add(area.width.saturating_sub(1)))
+}
+
 pub(super) fn render_rename_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
     super::dim_background(frame, area);
 
@@ -76,13 +89,17 @@ pub(super) fn render_rename_overlay(app: &AppState, frame: &mut Frame, area: Rec
     let input_rect = Rect::new(rows[2].x, rows[2].y, rows[2].width, 1);
     frame.render_widget(Clear, input_rect);
     frame.render_widget(
-        Paragraph::new(format!(" {}█", app.name_input)).style(
+        Paragraph::new(format!(" {}", app.name_input)).style(
             Style::default()
                 .fg(app.palette.text)
                 .bg(app.palette.surface0),
         ),
         input_rect,
     );
+    frame.set_cursor_position((
+        name_input_cursor_x(input_rect, &app.name_input, app.name_input_cursor),
+        input_rect.y,
+    ));
 
     let (save_rect, clear_rect, cancel_rect) = rename_button_rects(inner);
 

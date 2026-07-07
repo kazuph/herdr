@@ -68,10 +68,11 @@ pub(crate) use self::{
         agent_panel_scrollbar_rect, agent_panel_toggle_rect, collapsed_sidebar_sections,
         collapsed_sidebar_toggle_rect, compute_workspace_card_areas,
         compute_workspace_section_header_areas, expanded_sidebar_sections,
-        sidebar_section_divider_rect, sidebar_width_toggle_rects, workspace_drop_indicator_row,
-        workspace_effective_section, workspace_list_rect, workspace_list_scroll_metrics,
-        workspace_list_scrollbar_rect, workspace_panel_density_toggle_rect,
-        workspace_section_is_expanded, workspace_section_new_button_rect,
+        sectioned_workspace_indices, sidebar_section_divider_rect, sidebar_width_toggle_rects,
+        workspace_drop_indicator_row, workspace_effective_section, workspace_list_rect,
+        workspace_list_scroll_metrics, workspace_list_scrollbar_rect,
+        workspace_panel_density_toggle_rect, workspace_section_is_expanded,
+        workspace_section_new_button_rect,
     },
 };
 pub(crate) use self::{

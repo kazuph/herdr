@@ -325,6 +325,12 @@ impl App {
         let ws = self.state.workspaces.get(ws_idx)?;
         let pane = ws.pane_state(pane_id)?;
         let terminal = self.state.terminals.get(&pane.attached_terminal_id)?;
+        let root_process_id = self
+            .state
+            .terminal_runtimes
+            .get(&pane.attached_terminal_id)
+            .map(|runtime| runtime.child_pid())
+            .filter(|pid| *pid != 0);
         let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
         let pane_number = ws.public_pane_number(pane_id)?;
         let workspace_number = ws_idx + 1;
@@ -344,6 +350,7 @@ impl App {
             workspace_id: self.public_workspace_id(ws_idx),
             tab_id: self.public_tab_id(ws_idx, tab_idx)?,
             focused,
+            root_process_id,
             cwd: ws.tabs[tab_idx]
                 .cwd_for_pane(
                     pane_id,

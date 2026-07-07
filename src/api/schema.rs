@@ -678,6 +678,8 @@ pub struct PaneInfo {
     pub tab_id: String,
     pub focused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_process_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -1165,6 +1167,7 @@ mod tests {
                     workspace_id: "w_1".into(),
                     tab_id: "w_1:2".into(),
                     focused: false,
+                    root_process_id: Some(12345),
                     cwd: Some("/tmp/review".into()),
                     label: None,
                     agent: None,

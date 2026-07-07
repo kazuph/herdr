@@ -1347,6 +1347,12 @@ fn pane_current(args: &[String]) -> std::io::Result<i32> {
         }
         Err(err) => {
             eprintln!("{err}");
+            eprintln!(
+                "unable to identify the calling pane automatically; do not use the focused pane as a fallback"
+            );
+            eprintln!(
+                "next: inspect `herdr pane list`, then verify a candidate with `herdr pane get <pane_id>` and `herdr pane read <pane_id> --source recent --lines 40`"
+            );
             Ok(1)
         }
     }
@@ -2719,7 +2725,8 @@ fn print_pane_help() {
     eprintln!("  herdr pane run <pane_id> <command>");
     eprintln!("  herdr pane run-notify <pane_id> <command>");
     eprintln!("  herdr pane job-log <job_id>");
-    eprintln!("  pane current uses HERDR_PANE_ID first, then resolves the calling process session");
+    eprintln!("  pane current uses HERDR_PANE_ID first, then the calling process session, then its parent process tree");
+    eprintln!("  if pane current cannot identify you, inspect pane list/get/read and fail closed when the candidate is ambiguous");
     eprintln!("  pane send-text writes literal text without Enter; pane run submits command text with Enter");
     eprintln!("  pane run-notify streams output in the target pane and reports exit with a Herdr toast plus job log");
 }

@@ -675,6 +675,18 @@ impl PaneRuntime {
                                                 })
                                             })
                                             .or_else(|| {
+                                                (agent == Agent::Claude).then(|| {
+                                                    job.processes.iter().find_map(|process| {
+                                                        let cwd =
+                                                            crate::platform::process_cwd(process.pid)?;
+                                                        crate::agent_sessions::session_id_from_claude_process_record(
+                                                            process.pid,
+                                                            &cwd,
+                                                        )
+                                                    })
+                                                })?
+                                            })
+                                            .or_else(|| {
                                                 matches!(agent, Agent::Claude | Agent::Codex)
                                                     .then(|| {
                                                         job.processes.iter().find_map(|process| {

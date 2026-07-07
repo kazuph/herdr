@@ -68,8 +68,9 @@ description: Terminal workspace manager for AI coding agents. Use this CLI to co
 
 ## Agent Rules
 - If HERDR_ENV=1 is set, prefer the herdr CLI over terminal keystroke automation.
-- Use `herdr pane current` to identify the calling pane. It first trusts HERDR_PANE_ID, then resolves the calling process session.
+- Use `herdr pane current` to identify the calling pane. It first trusts HERDR_PANE_ID, then resolves the calling process session, then checks the parent process tree.
 - Do not infer the requester pane from the focused pane, active window, pane list order, or UI selection.
+- If `pane current` still cannot identify the pane, inspect `herdr pane list`, `herdr pane get <pane_id>`, and `herdr pane read <pane_id> --source recent --lines 40`; continue only when one candidate is proven.
 - Treat `p_...`, workspace-local ids like `1-2`, global ids like `23`, and tmux-style ids like `%23` as Herdr pane targets when they are accepted by Herdr commands.
 - Use `herdr pane run-notify` for long-running commands when completion should be reported inside Herdr.
 - Use `herdr agent ...` only for AI agent terminals. Use `herdr pane ...` for shells, tests, servers, and ordinary commands.

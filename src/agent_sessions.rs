@@ -111,6 +111,32 @@ pub fn session_id_from_open_session_file(agent: &str, path: &Path, cwd: &Path) -
     }
 }
 
+pub fn session_id_from_claude_process_record(pid: u32, cwd: &Path) -> Option<String> {
+    let home = std::env::var_os("HOME")?;
+    let path = Path::new(&home)
+        .join(".claude")
+        .join("sessions")
+        .join(format!("{pid}.json"));
+    session_id_from_claude_process_record_file(pid, cwd, &path)
+}
+
+fn session_id_from_claude_process_record_file(pid: u32, cwd: &Path, path: &Path) -> Option<String> {
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    if value.get("pid")?.as_u64()? != u64::from(pid) {
+        return None;
+    }
+    let session_id = value.get("sessionId")?.as_str()?;
+    if !is_safe_session_id(session_id) {
+        return None;
+    }
+    let session_cwd = Path::new(value.get("cwd")?.as_str()?);
+    if session_cwd != cwd {
+        return None;
+    }
+    Some(session_id.to_string())
+}
+
 fn session_id_from_codex_file(path: &Path, cwd: &Path) -> Option<String> {
     use std::io::BufRead;
 
@@ -329,6 +355,37 @@ mod tests {
 
         assert_eq!(
             session_id_from_open_session_file("claude", &session_path, Path::new("/tmp/project")),
+            None
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn claude_process_record_reads_exact_pid_cwd_session_id() {
+        let root = test_temp_dir("claude-process-record");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("47341.json");
+        let cwd = Path::new("/Users/kazuph");
+        let id = "5c9b2148-f225-4422-a524-cd0565cbc625";
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"pid":47341,"sessionId":"{id}","cwd":"{}","status":"idle"}}"#,
+                cwd.display()
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            session_id_from_claude_process_record_file(47341, cwd, &path),
+            Some(id.into())
+        );
+        assert_eq!(
+            session_id_from_claude_process_record_file(47342, cwd, &path),
+            None
+        );
+        assert_eq!(
+            session_id_from_claude_process_record_file(47341, Path::new("/tmp/project"), &path),
             None
         );
         let _ = std::fs::remove_dir_all(root);

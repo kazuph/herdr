@@ -330,3 +330,50 @@ fn focused_terminal_cursor(app_state: &AppState) -> Option<CursorState> {
         shape: cursor.shape,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::layout::Rect;
+
+    use super::*;
+    use crate::{app::Mode, workspace::Workspace};
+
+    fn cell_symbol(buffer: &ratatui::buffer::Buffer, x: u16, y: u16) -> &str {
+        buffer
+            .cell((x, y))
+            .expect("cell should be inside buffer")
+            .symbol()
+    }
+
+    #[test]
+    fn rename_modal_frame_cursor_anchors_ime_to_input() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![Workspace::test_new("test")];
+        state.active = Some(0);
+        state.selected = 0;
+        state.mode = Mode::RenameWorkspace;
+        state.name_input = "heろ".into();
+        state.name_input_cursor = state.name_input.chars().count();
+
+        let (buffer, cursor) = render_virtual(&mut state, Rect::new(0, 0, 80, 24), false);
+        let cursor = cursor.expect("rename modal should set a frame cursor");
+
+        assert!(cursor.visible);
+        assert_eq!(
+            cell_symbol(&buffer, cursor.x.saturating_sub(5), cursor.y),
+            " "
+        );
+        assert_eq!(
+            cell_symbol(&buffer, cursor.x.saturating_sub(4), cursor.y),
+            "h"
+        );
+        assert_eq!(
+            cell_symbol(&buffer, cursor.x.saturating_sub(3), cursor.y),
+            "e"
+        );
+        assert_eq!(
+            cell_symbol(&buffer, cursor.x.saturating_sub(2), cursor.y),
+            "ろ"
+        );
+    }
+}

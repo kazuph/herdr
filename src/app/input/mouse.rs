@@ -1288,10 +1288,12 @@ impl AppState {
     }
 
     pub(super) fn focus_pane(&mut self, pane_id: crate::layout::PaneId) {
+        let before = self.current_pane_focus_location();
         if let Some(ws) = self.active.and_then(|i| self.workspaces.get_mut(i)) {
             if ws.layout.focused() != pane_id {
                 ws.layout.focus_pane(pane_id);
                 self.mark_session_dirty();
+                self.record_pane_focus_change(before);
             }
         }
     }
@@ -1742,6 +1744,43 @@ mod tests {
             equalize.y,
         ));
         assert!(app.state.session_dirty);
+    }
+
+    #[test]
+    fn clicking_pane_records_global_focus_history() {
+        let mut app = app_for_mouse_test();
+        let mut workspace = Workspace::test_new("active");
+        let second = workspace.test_split(Direction::Horizontal);
+        let first = workspace.tabs[0].root_pane;
+        workspace.layout.focus_pane(first);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 28));
+
+        let target = app
+            .state
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == second)
+            .expect("second pane");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.inner_rect.x,
+            target.inner_rect.y,
+        ));
+
+        assert_eq!(
+            app.state.current_pane_focus_location().unwrap().pane_id,
+            second
+        );
+        assert!(app.state.pane_focus_history_back());
+        assert_eq!(
+            app.state.current_pane_focus_location().unwrap().pane_id,
+            first
+        );
     }
 
     #[test]

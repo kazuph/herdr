@@ -50,6 +50,7 @@ impl App {
 
         self.state.selected = ws_idx;
         self.state.name_input = branch.clone();
+        self.state.name_input_cursor = self.state.name_input.chars().count();
         self.state.name_input_replace_on_type = true;
         self.state.worktree_create = Some(WorktreeCreateState {
             source_workspace_id,
@@ -164,18 +165,22 @@ impl App {
             KeyCode::Backspace => {
                 if self.state.name_input_replace_on_type {
                     self.state.name_input.clear();
+                    self.state.name_input_cursor = 0;
                     self.state.name_input_replace_on_type = false;
                 } else {
                     self.state.name_input.pop();
+                    self.state.name_input_cursor = self.state.name_input.chars().count();
                 }
                 self.sync_worktree_branch_from_input();
             }
             KeyCode::Char(c) => {
                 if self.state.name_input_replace_on_type {
                     self.state.name_input.clear();
+                    self.state.name_input_cursor = 0;
                     self.state.name_input_replace_on_type = false;
                 }
                 self.state.name_input.push(c);
+                self.state.name_input_cursor = self.state.name_input.chars().count();
                 self.sync_worktree_branch_from_input();
             }
             _ => {}
@@ -236,6 +241,7 @@ impl App {
     pub(crate) fn close_worktree_create_dialog(&mut self) {
         self.state.worktree_create = None;
         self.state.name_input.clear();
+        self.state.name_input_cursor = 0;
         self.state.name_input_replace_on_type = false;
         self.state.mode = if self.state.active.is_some() {
             Mode::Terminal
@@ -273,6 +279,7 @@ impl App {
 
         create.branch = branch.clone();
         self.state.name_input = branch.clone();
+        self.state.name_input_cursor = self.state.name_input.chars().count();
         create.checkout_path = crate::worktree::default_checkout_path(
             &self.state.worktree_directory,
             &create.repo_name,
@@ -402,6 +409,7 @@ impl App {
                 let source_workspace_id = create.source_workspace_id.clone();
                 self.state.worktree_create = None;
                 self.state.name_input.clear();
+                self.state.name_input_cursor = 0;
                 self.state.name_input_replace_on_type = false;
                 match self.create_workspace_with_options(path, true) {
                     Ok(_) => {

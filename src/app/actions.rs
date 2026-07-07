@@ -303,8 +303,8 @@ impl AppState {
         if !self.pane_focus_location_exists(location) {
             return false;
         }
-        self.switch_workspace(location.ws_idx);
-        self.switch_tab(location.tab_idx);
+        self.switch_workspace_without_focus_history(location.ws_idx);
+        self.switch_tab_without_focus_history(location.tab_idx);
         let Some(tab) = self
             .workspaces
             .get_mut(location.ws_idx)
@@ -317,7 +317,7 @@ impl AppState {
         true
     }
 
-    fn record_pane_focus_change(&mut self, before: Option<PaneFocusLocation>) {
+    pub(crate) fn record_pane_focus_change(&mut self, before: Option<PaneFocusLocation>) {
         let Some(before) = before else {
             return;
         };
@@ -374,7 +374,7 @@ impl AppState {
             .is_some_and(|tab_idx| tab_idx == self.workspaces[ws_idx].active_tab)
     }
 
-    pub fn switch_workspace(&mut self, idx: usize) {
+    fn switch_workspace_without_focus_history(&mut self, idx: usize) {
         if idx < self.workspaces.len() {
             self.selection = None;
             self.selection_autoscroll = None;
@@ -401,6 +401,12 @@ impl AppState {
             self.tab_scroll_follow_active = true;
             self.refresh_tab_bar_view();
         }
+    }
+
+    pub fn switch_workspace(&mut self, idx: usize) {
+        let before = self.current_pane_focus_location();
+        self.switch_workspace_without_focus_history(idx);
+        self.record_pane_focus_change(before);
     }
 
     pub(crate) fn ensure_workspace_visible(&mut self, idx: usize) {
@@ -465,7 +471,7 @@ impl AppState {
             .min(crate::ui::mobile_switcher_max_scroll(self));
     }
 
-    pub fn switch_tab(&mut self, idx: usize) {
+    fn switch_tab_without_focus_history(&mut self, idx: usize) {
         if let Some(ws_idx) = self.active {
             self.selection = None;
             self.selection_autoscroll = None;
@@ -480,6 +486,12 @@ impl AppState {
             self.tab_scroll_follow_active = true;
             self.refresh_tab_bar_view();
         }
+    }
+
+    pub fn switch_tab(&mut self, idx: usize) {
+        let before = self.current_pane_focus_location();
+        self.switch_tab_without_focus_history(idx);
+        self.record_pane_focus_change(before);
     }
 
     pub(crate) fn mark_active_tab_seen(&mut self) -> bool {
@@ -505,22 +517,53 @@ impl AppState {
     }
 
     pub fn next_workspace(&mut self) {
-        if !self.workspaces.is_empty() {
-            let current = self.active.unwrap_or(self.selected);
-            let next = (current + 1) % self.workspaces.len();
+        if let Some(next) = self.workspace_navigation_target(1) {
             self.switch_workspace(next);
         }
     }
 
     pub fn previous_workspace(&mut self) {
-        if !self.workspaces.is_empty() {
-            let current = self.active.unwrap_or(self.selected);
-            let prev = if current == 0 {
-                self.workspaces.len() - 1
-            } else {
-                current - 1
-            };
+        if let Some(prev) = self.workspace_navigation_target(-1) {
             self.switch_workspace(prev);
+        }
+    }
+
+    fn workspace_navigation_target(&self, delta: isize) -> Option<usize> {
+        let order = self.workspace_navigation_order();
+        if order.is_empty() {
+            return None;
+        }
+
+        let current = self.active.unwrap_or(self.selected);
+        let position = order
+            .iter()
+            .position(|idx| *idx == current)
+            .unwrap_or_else(|| {
+                order
+                    .iter()
+                    .position(|idx| *idx == self.selected)
+                    .unwrap_or(0)
+            });
+        let next = (position as isize + delta).rem_euclid(order.len() as isize) as usize;
+        order.get(next).copied()
+    }
+
+    fn workspace_navigation_order(&self) -> Vec<usize> {
+        if self.sidebar_collapsed {
+            return (0..self.workspaces.len()).collect();
+        }
+
+        let mut order = Vec::new();
+        for (section, indices) in crate::ui::sectioned_workspace_indices(self) {
+            if crate::ui::workspace_section_is_expanded(self, section) {
+                order.extend(indices);
+            }
+        }
+
+        if order.is_empty() {
+            (0..self.workspaces.len()).collect()
+        } else {
+            order
         }
     }
 
@@ -614,8 +657,9 @@ impl AppState {
         let tab_idx = target.tab_idx;
         let pane_id = target.pane_id;
 
-        self.switch_workspace(ws_idx);
-        self.switch_tab(tab_idx);
+        let before = self.current_pane_focus_location();
+        self.switch_workspace_without_focus_history(ws_idx);
+        self.switch_tab_without_focus_history(tab_idx);
         if let Some(tab) = self
             .workspaces
             .get_mut(ws_idx)
@@ -625,6 +669,7 @@ impl AppState {
                 tab.layout.focus_pane(pane_id);
                 self.mark_session_dirty();
                 self.ensure_agent_panel_entry_visible(idx);
+                self.record_pane_focus_change(before);
                 return true;
             }
         }
@@ -641,8 +686,8 @@ impl AppState {
             return false;
         };
 
-        self.switch_workspace(ws_idx);
-        self.switch_tab(tab_idx);
+        self.switch_workspace_without_focus_history(ws_idx);
+        self.switch_tab_without_focus_history(tab_idx);
         let Some(tab) = self
             .workspaces
             .get_mut(ws_idx)
@@ -1946,6 +1991,116 @@ mod tests {
         state.switch_workspace(2);
         assert_eq!(state.active, Some(2));
         assert_eq!(state.selected, 2);
+    }
+
+    #[test]
+    fn workspace_navigation_follows_sidebar_section_order() {
+        let mut state = app_with_workspaces(&["spaces", "work", "personal", "favorite"]);
+        state.workspaces[0].section = crate::workspace::WorkspaceSection::None;
+        state.workspaces[1].section = crate::workspace::WorkspaceSection::Work;
+        state.workspaces[2].section = crate::workspace::WorkspaceSection::Personal;
+        state.workspaces[3].section = crate::workspace::WorkspaceSection::Favorite;
+        state.active = Some(3);
+        state.selected = 3;
+
+        state.next_workspace();
+
+        assert_eq!(
+            state.active,
+            Some(1),
+            "next should move down visually from favorites to work, not numeric index order"
+        );
+
+        state.previous_workspace();
+
+        assert_eq!(
+            state.active,
+            Some(3),
+            "previous should move up visually from work to favorites"
+        );
+    }
+
+    #[test]
+    fn workspace_navigation_skips_collapsed_sections() {
+        let mut state = app_with_workspaces(&["spaces", "work", "personal", "favorite"]);
+        state.workspaces[0].section = crate::workspace::WorkspaceSection::None;
+        state.workspaces[1].section = crate::workspace::WorkspaceSection::Work;
+        state.workspaces[2].section = crate::workspace::WorkspaceSection::Personal;
+        state.workspaces[3].section = crate::workspace::WorkspaceSection::Favorite;
+        state
+            .collapsed_workspace_sections
+            .insert(crate::workspace::WorkspaceSection::Work);
+        state.active = Some(3);
+        state.selected = 3;
+
+        state.next_workspace();
+
+        assert_eq!(
+            state.active,
+            Some(2),
+            "next should skip work when that sidebar section is collapsed"
+        );
+    }
+
+    #[test]
+    fn collapsed_sidebar_workspace_navigation_keeps_numeric_order() {
+        let mut state = app_with_workspaces(&["spaces", "work", "personal", "favorite"]);
+        state.workspaces[0].section = crate::workspace::WorkspaceSection::None;
+        state.workspaces[1].section = crate::workspace::WorkspaceSection::Work;
+        state.workspaces[2].section = crate::workspace::WorkspaceSection::Personal;
+        state.workspaces[3].section = crate::workspace::WorkspaceSection::Favorite;
+        state.sidebar_collapsed = true;
+        state.active = Some(3);
+        state.selected = 3;
+
+        state.next_workspace();
+
+        assert_eq!(
+            state.active,
+            Some(0),
+            "collapsed sidebar visually lists raw workspace rows"
+        );
+    }
+
+    #[test]
+    fn switch_workspace_records_global_pane_focus_history() {
+        let mut state = app_with_workspaces(&["a", "b"]);
+        let first = state.workspaces[0].tabs[0].root_pane;
+        let second = state.workspaces[1].tabs[0].root_pane;
+        state.active = Some(0);
+        state.selected = 0;
+
+        state.switch_workspace(1);
+        assert_eq!(state.current_pane_focus_location().unwrap().pane_id, second);
+
+        assert!(state.pane_focus_history_back());
+        assert_eq!(state.active, Some(0));
+        assert_eq!(state.current_pane_focus_location().unwrap().pane_id, first);
+
+        assert!(state.pane_focus_history_forward());
+        assert_eq!(state.active, Some(1));
+        assert_eq!(state.current_pane_focus_location().unwrap().pane_id, second);
+    }
+
+    #[test]
+    fn switch_tab_records_global_pane_focus_history() {
+        let mut state = app_with_workspaces(&["a"]);
+        let first = state.workspaces[0].tabs[0].root_pane;
+        let second_tab = state.workspaces[0].test_add_tab(Some("second"));
+        let second = state.workspaces[0].tabs[second_tab].root_pane;
+        state.active = Some(0);
+        state.selected = 0;
+
+        state.switch_tab(second_tab);
+        assert_eq!(state.current_pane_focus_location().unwrap().pane_id, second);
+
+        assert!(state.pane_focus_history_back());
+        assert_eq!(state.workspaces[0].active_tab, 0);
+        assert_eq!(state.current_pane_focus_location().unwrap().pane_id, first);
+
+        assert!(state.pane_focus_history_forward());
+        assert_eq!(state.workspaces[0].active_tab, second_tab);
+        assert_eq!(state.current_pane_focus_location().unwrap().pane_id, second);
     }
 
     #[test]

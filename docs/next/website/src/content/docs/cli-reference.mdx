@@ -89,8 +89,11 @@ herdr pane close <pane_id>
 
 `pane current` prints the calling pane after validating it with the running
 server. It uses `HERDR_PANE_ID` first; when that variable is absent, it asks
-the server to resolve the calling process session. It does not fall back to
-the focused pane, active tab, or pane list.
+the server to resolve the calling process session, then the calling process's
+parent process tree. It does not fall back to the focused pane, active tab, or
+pane list. If automatic identification still fails, inspect `pane list`, verify
+one candidate with `pane get`, and read recent output with `pane read`; continue
+only when exactly one pane is proven.
 
 Read output:
 

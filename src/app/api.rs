@@ -13,6 +13,21 @@ use super::{
 };
 use crate::events::AppEvent;
 
+fn process_ancestor_pids(mut pid: u32) -> Vec<u32> {
+    let mut ancestors = Vec::new();
+    for _ in 0..64 {
+        let Some(parent_pid) = crate::platform::parent_process_id(pid) else {
+            break;
+        };
+        if parent_pid <= 1 || parent_pid == pid {
+            break;
+        }
+        ancestors.push(parent_pid);
+        pid = parent_pid;
+    }
+    ancestors
+}
+
 impl App {
     fn pane_for_process_id(
         &self,
@@ -23,12 +38,32 @@ impl App {
         }
 
         let session_pids = crate::platform::session_processes(process_id);
+        let mut errors = Vec::new();
+        if !session_pids.is_empty() {
+            match self.pane_for_session_processes(&session_pids) {
+                Ok(target) => return Ok(target),
+                Err(err) => errors.push(err),
+            }
+        }
+
+        let ancestor_pids = process_ancestor_pids(process_id);
+        if !ancestor_pids.is_empty() {
+            match self.pane_for_process_ancestors(&ancestor_pids) {
+                Ok(target) => return Ok(target),
+                Err(err) => errors.push(err),
+            }
+        }
+
         if session_pids.is_empty() {
-            return Err(format!(
+            errors.push(format!(
                 "could not inspect process session for pid {process_id}"
             ));
         }
-        self.pane_for_session_processes(&session_pids)
+
+        if errors.is_empty() {
+            errors.push("no Herdr pane owns that process session or parent process tree".into());
+        }
+        Err(errors.join("; "))
     }
 
     fn pane_for_session_processes(
@@ -59,6 +94,37 @@ impl App {
             [one] => Ok(*one),
             [] => Err("no Herdr pane owns that process session".into()),
             _ => Err("process session matches multiple Herdr panes".into()),
+        }
+    }
+
+    fn pane_for_process_ancestors(
+        &self,
+        ancestor_pids: &[u32],
+    ) -> Result<(usize, crate::layout::PaneId), String> {
+        let ancestor_pids = ancestor_pids.iter().copied().collect::<HashSet<_>>();
+        let mut matches = Vec::new();
+
+        for (ws_idx, workspace) in self.state.workspaces.iter().enumerate() {
+            for tab in &workspace.tabs {
+                for pane_id in tab.layout.pane_ids() {
+                    let Some(terminal_id) = tab.terminal_id(pane_id) else {
+                        continue;
+                    };
+                    let Some(runtime) = self.state.terminal_runtimes.get(terminal_id) else {
+                        continue;
+                    };
+                    let child_pid = runtime.child_pid();
+                    if child_pid != 0 && ancestor_pids.contains(&child_pid) {
+                        matches.push((ws_idx, pane_id));
+                    }
+                }
+            }
+        }
+
+        match matches.as_slice() {
+            [one] => Ok(*one),
+            [] => Err("no Herdr pane owns that parent process tree".into()),
+            _ => Err("parent process tree matches multiple Herdr panes".into()),
         }
     }
 
@@ -1974,5 +2040,30 @@ mod tests {
         assert_eq!(app.pane_for_session_processes(&[9, 222]), Ok((0, second)));
         assert!(app.pane_for_session_processes(&[9]).is_err());
         assert!(app.pane_for_session_processes(&[111, 222]).is_err());
+    }
+
+    #[tokio::test]
+    async fn current_pane_can_resolve_from_parent_process_tree() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("current");
+        let root = workspace.tabs[0].root_pane;
+        let second = workspace.test_split(Direction::Horizontal);
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+
+        let root_terminal = app.state.workspaces[0].terminal_id(root).unwrap().clone();
+        let second_terminal = app.state.workspaces[0].terminal_id(second).unwrap().clone();
+        app.state.terminal_runtimes.insert(
+            root_terminal,
+            crate::terminal::TerminalRuntime::test_with_child_pid(80, 24, 111),
+        );
+        app.state.terminal_runtimes.insert(
+            second_terminal,
+            crate::terminal::TerminalRuntime::test_with_child_pid(80, 24, 222),
+        );
+
+        assert_eq!(app.pane_for_process_ancestors(&[999, 222]), Ok((0, second)));
+        assert!(app.pane_for_process_ancestors(&[999]).is_err());
+        assert!(app.pane_for_process_ancestors(&[111, 222]).is_err());
     }
 }
