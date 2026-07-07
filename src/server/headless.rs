@@ -2386,6 +2386,10 @@ mod tests {
     use super::*;
 
     use crate::server::protocol::CursorState;
+    use std::collections::HashMap;
+    use std::sync::atomic::AtomicU64;
+
+    static MSG_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn test_headless_server() -> HeadlessServer {
         let config = crate::config::Config::default();
@@ -2440,6 +2444,109 @@ mod tests {
         }
     }
 
+    struct MsgHeadlessAgent {
+        pane_id: PaneId,
+        rx: mpsc::Receiver<Bytes>,
+    }
+
+    fn with_headless_msg_db<T>(test: impl FnOnce(PathBuf) -> T) -> T {
+        let _guard = crate::msg::msg_db_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _config_guard = crate::app::config_env_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let id = MSG_DB_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-headless-msg-test-{}-{id}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let db_path = dir.join("msg.db");
+        std::env::set_var(crate::msg::MSG_DB_PATH_ENV_VAR, &db_path);
+        let result = test(db_path);
+        std::env::remove_var(crate::msg::MSG_DB_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(dir);
+        result
+    }
+
+    fn configure_msg_agents(
+        server: &mut HeadlessServer,
+        names: &[&str],
+    ) -> HashMap<String, MsgHeadlessAgent> {
+        let mut ws = crate::workspace::Workspace::test_new("headless-msg");
+        let mut panes = vec![ws.tabs[0].root_pane];
+        for _ in 1..names.len() {
+            panes.push(ws.test_split(ratatui::layout::Direction::Horizontal));
+        }
+        server.app.state.workspaces = vec![ws];
+        server.app.state.ensure_test_terminals();
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+
+        let mut agents = HashMap::new();
+        for (pane_id, name) in panes.into_iter().zip(names.iter().copied()) {
+            let terminal_id = server.app.state.workspaces[0]
+                .pane_state(pane_id)
+                .unwrap()
+                .attached_terminal_id
+                .clone();
+            let terminal = server.app.state.terminals.get_mut(&terminal_id).unwrap();
+            terminal.set_agent_name(name.to_string());
+            terminal.set_manual_label(name.to_string());
+            terminal.state = crate::detect::AgentState::Working;
+            let (runtime, rx) =
+                crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, 16);
+            server.app.state.insert_test_runtime(pane_id, runtime);
+            agents.insert(name.to_string(), MsgHeadlessAgent { pane_id, rx });
+        }
+        agents
+    }
+
+    fn set_headless_agent_state(
+        server: &mut HeadlessServer,
+        agents: &HashMap<String, MsgHeadlessAgent>,
+        name: &str,
+        state: crate::detect::AgentState,
+    ) {
+        let pane_id = agents.get(name).unwrap().pane_id;
+        let terminal_id = server.app.state.workspaces[0]
+            .pane_state(pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        server
+            .app
+            .state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .state = state;
+        for tab in &mut server.app.state.workspaces[0].tabs {
+            if let Some(pane) = tab.panes.get_mut(&pane_id) {
+                pane.seen = true;
+            }
+        }
+    }
+
+    fn headless_msg_send(server: &mut HeadlessServer, to: &str, room: &str, body: &str) {
+        let response = server.app.handle_api_request(api::schema::Request {
+            id: format!("headless-msg-send-{room}-{body}"),
+            method: api::schema::Method::MsgSend(api::schema::MsgSendParams {
+                room: room.into(),
+                project: "/repo".into(),
+                from_agent: "alpha".into(),
+                to: to.into(),
+                body: body.into(),
+            }),
+        });
+        let parsed: api::schema::SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert!(matches!(
+            parsed.result,
+            api::schema::ResponseResult::MsgSend { .. }
+        ));
+    }
+
     #[test]
     fn headless_scheduled_tasks_clear_selection_copy_status_after_deadline() {
         let mut server = test_headless_server();
@@ -2452,6 +2559,65 @@ mod tests {
 
         assert!(server.app.state.selection_copy_status.is_none());
         assert!(server.app.selection_copy_status_deadline.is_none());
+    }
+
+    #[test]
+    fn headless_startup_msg_flush_walk_delivers_pending_messages_after_restart() {
+        with_headless_msg_db(|db_path| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let _runtime_guard = runtime.enter();
+
+            let mut first_server = test_headless_server();
+            let first_agents = configure_msg_agents(&mut first_server, &["alpha", "beta"]);
+            set_headless_agent_state(
+                &mut first_server,
+                &first_agents,
+                "beta",
+                crate::detect::AgentState::Working,
+            );
+            headless_msg_send(&mut first_server, "beta", "headless-restart", "one");
+            headless_msg_send(&mut first_server, "beta", "headless-restart", "two");
+
+            let store = crate::msg::MsgStore::open_at(db_path.clone()).unwrap();
+            let queued = store
+                .history("headless-restart", Some("/repo"), 100)
+                .unwrap();
+            assert_eq!(queued.len(), 2);
+            assert!(queued.iter().all(|message| message.delivered_at.is_none()));
+
+            let mut restarted_server = test_headless_server();
+            let mut restarted_agents =
+                configure_msg_agents(&mut restarted_server, &["alpha", "beta"]);
+            set_headless_agent_state(
+                &mut restarted_server,
+                &restarted_agents,
+                "beta",
+                crate::detect::AgentState::Idle,
+            );
+
+            restarted_server.app.flush_msg_nudges_for_all_idle_agents();
+
+            let rx = &mut restarted_agents.get_mut("beta").unwrap().rx;
+            let text = rx.try_recv().unwrap();
+            let enter = rx.try_recv().unwrap();
+            assert!(rx.try_recv().is_err());
+            let text = String::from_utf8_lossy(&text);
+            assert!(text.contains("未読2件"));
+            assert!(text.contains("room=headless-restart"));
+            assert_eq!(enter, Bytes::from_static(b"\r"));
+
+            let store = crate::msg::MsgStore::open_at(db_path).unwrap();
+            let delivered = store
+                .history("headless-restart", Some("/repo"), 100)
+                .unwrap();
+            assert_eq!(delivered.len(), 2);
+            assert!(delivered
+                .iter()
+                .all(|message| message.delivered_at.is_some()));
+        });
     }
 
     fn read_server_shutdown_reason(bytes: Vec<u8>) -> Option<String> {

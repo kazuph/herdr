@@ -9,12 +9,12 @@ use serde::Serialize;
 use crate::api;
 use crate::api::schema::{
     AgentReadParams, AgentRenameParams, AgentSendParams, AgentStartParams, AgentStatus,
-    AgentTarget, EmptyParams, Method, OutputMatch, PaneAgentState, PaneCurrentParams,
-    PaneListParams, PaneMoveDestination, PaneMoveParams, PaneNotifyParams, PaneReadParams,
-    PaneRenameParams, PaneReportAgentParams, PaneSendKeysParams, PaneSendTextParams,
-    PaneSplitParams, PaneTarget, PaneWaitForOutputParams, PingParams, ReadFormat, ReadSource,
-    Request, SplitDirection, Subscription, TabCreateParams, TabListParams, TabRenameParams,
-    TabTarget, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
+    AgentTarget, EmptyParams, Method, MsgHistoryParams, MsgInboxParams, MsgSendParams, OutputMatch,
+    PaneAgentState, PaneCurrentParams, PaneListParams, PaneMoveDestination, PaneMoveParams,
+    PaneNotifyParams, PaneReadParams, PaneRenameParams, PaneReportAgentParams, PaneSendKeysParams,
+    PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams, PingParams,
+    ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams, TabListParams,
+    TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
 };
 
 const CLI_SUBMIT_DELAY: Duration = Duration::from_millis(500);
@@ -44,6 +44,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "agent" => run_agent_command(&args[2..])?,
         "terminal" => run_terminal_command(&args[2..])?,
         "pane" => run_pane_command(&args[2..])?,
+        "msg" => run_msg_command(&args[2..])?,
         "wait" => run_wait_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
         "__pane-notify-run" => pane_notify_runner(&args[2..])?,
@@ -382,6 +383,29 @@ fn run_tab_command(args: &[String]) -> std::io::Result<i32> {
         }
         _ => {
             print_tab_help();
+            Ok(2)
+        }
+    }
+}
+
+fn run_msg_command(args: &[String]) -> std::io::Result<i32> {
+    let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
+        print_msg_help();
+        return Ok(2);
+    };
+
+    match subcommand {
+        "send" => msg_send(&args[1..]),
+        "inbox" => msg_inbox(&args[1..]),
+        "history" => msg_history(&args[1..]),
+        "tail" => msg_tail(&args[1..]),
+        "rooms" => msg_rooms(&args[1..]),
+        "help" | "--help" | "-h" => {
+            print_msg_help();
+            Ok(0)
+        }
+        _ => {
+            print_msg_help();
             Ok(2)
         }
     }
@@ -1203,6 +1227,355 @@ fn parse_attach_target(args: &[String], usage: &str) -> Result<(String, bool), i
         }
     }
     Ok((target.clone(), takeover))
+}
+
+fn msg_send(args: &[String]) -> std::io::Result<i32> {
+    if args.len() < 2 {
+        eprintln!("usage: herdr msg send <to> <text> [--room R] [--from NAME]");
+        return Ok(2);
+    }
+
+    let to = args[0].clone();
+    let mut room = crate::msg::DEFAULT_ROOM.to_string();
+    let mut from = None;
+    let mut text = Vec::new();
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--room" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --room");
+                    return Ok(2);
+                };
+                room = value.clone();
+                index += 2;
+            }
+            "--from" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --from");
+                    return Ok(2);
+                };
+                from = Some(value.clone());
+                index += 2;
+            }
+            "help" | "--help" | "-h" => {
+                print_msg_help();
+                return Ok(0);
+            }
+            value => {
+                text.push(value.to_string());
+                index += 1;
+            }
+        }
+    }
+    if text.is_empty() {
+        eprintln!("usage: herdr msg send <to> <text> [--room R] [--from NAME]");
+        return Ok(2);
+    }
+
+    let identity = current_msg_identity(from)?;
+    let response = send_request(&Request {
+        id: "cli:msg:send".into(),
+        method: Method::MsgSend(MsgSendParams {
+            room,
+            project: identity.project,
+            from_agent: identity.agent,
+            to,
+            body: text.join(" "),
+        }),
+    })?;
+    print_msg_send_response(&response)
+}
+
+fn msg_inbox(args: &[String]) -> std::io::Result<i32> {
+    let mut room = crate::msg::DEFAULT_ROOM.to_string();
+    let mut to_agent = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--room" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --room");
+                    return Ok(2);
+                };
+                room = value.clone();
+                index += 2;
+            }
+            "--to" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --to");
+                    return Ok(2);
+                };
+                to_agent = Some(value.clone());
+                index += 2;
+            }
+            "help" | "--help" | "-h" => {
+                print_msg_help();
+                return Ok(0);
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                return Ok(2);
+            }
+        }
+    }
+
+    let identity = current_msg_identity(to_agent)?;
+    let response = send_request(&Request {
+        id: "cli:msg:inbox".into(),
+        method: Method::MsgInbox(MsgInboxParams {
+            room,
+            to_agent: identity.agent,
+        }),
+    })?;
+    print_msg_messages_response(&response, "inbox")
+}
+
+fn msg_history(args: &[String]) -> std::io::Result<i32> {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "help" | "--help" | "-h"))
+    {
+        print_msg_help();
+        return Ok(0);
+    }
+    let (room, project, limit) = parse_msg_history_args(args)?;
+    let response = send_request(&Request {
+        id: "cli:msg:history".into(),
+        method: Method::MsgHistory(MsgHistoryParams {
+            room,
+            project,
+            limit,
+        }),
+    })?;
+    print_msg_messages_response(&response, "history")
+}
+
+fn msg_tail(args: &[String]) -> std::io::Result<i32> {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "help" | "--help" | "-h"))
+    {
+        print_msg_help();
+        return Ok(0);
+    }
+    let (room, project, limit) = parse_msg_history_args(args)?;
+    let mut seen_max = 0_i64;
+    loop {
+        let response = send_request(&Request {
+            id: "cli:msg:tail".into(),
+            method: Method::MsgHistory(MsgHistoryParams {
+                room: room.clone(),
+                project: project.clone(),
+                limit,
+            }),
+        })?;
+        if let Some(error) = response.get("error") {
+            eprintln!("{error}");
+            return Ok(1);
+        }
+        let messages = response["result"]["messages"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for message in messages {
+            let id = message["id"].as_i64().unwrap_or(0);
+            if id <= seen_max {
+                continue;
+            }
+            seen_max = seen_max.max(id);
+            print_msg_message(&message);
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+fn msg_rooms(args: &[String]) -> std::io::Result<i32> {
+    if !args.is_empty() {
+        eprintln!("usage: herdr msg rooms");
+        return Ok(2);
+    }
+    let response = send_request(&Request {
+        id: "cli:msg:rooms".into(),
+        method: Method::MsgRooms(EmptyParams::default()),
+    })?;
+    if let Some(error) = response.get("error") {
+        eprintln!("{error}");
+        return Ok(1);
+    }
+    for room in response["result"]["rooms"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str())
+    {
+        println!("{room}");
+    }
+    Ok(0)
+}
+
+struct MsgIdentity {
+    agent: String,
+    project: String,
+}
+
+fn current_msg_identity(explicit_agent: Option<String>) -> std::io::Result<MsgIdentity> {
+    let pane_id = match resolve_current_pane_id() {
+        Ok(pane_id) => Some(pane_id),
+        Err(err) => {
+            if explicit_agent.is_none() {
+                return Err(err);
+            }
+            None
+        }
+    };
+
+    let project = pane_id
+        .as_deref()
+        .and_then(|pane_id| pane_info_for_msg(pane_id).ok())
+        .and_then(|pane| pane["result"]["pane"]["cwd"].as_str().map(str::to_string))
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|path| path.display().to_string())
+        })
+        .unwrap_or_default();
+
+    if let Some(agent) = explicit_agent {
+        let agent = agent.trim().to_string();
+        if agent.is_empty() {
+            return Err(std::io::Error::other("--from/--to must not be empty"));
+        }
+        return Ok(MsgIdentity { agent, project });
+    }
+
+    let Some(pane_id) = pane_id else {
+        return Err(std::io::Error::other("current pane could not be resolved"));
+    };
+    let agent = resolve_agent_target(&pane_id, "cli:msg:identity")?;
+    let name = agent["result"]["agent"]["name"]
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| {
+            agent["result"]["agent"]["agent"]
+                .as_str()
+                .map(|_| pane_id.clone())
+        })
+        .ok_or_else(|| {
+            std::io::Error::other(
+                "current pane has no reported agent identity; pass --from/--to explicitly",
+            )
+        })?;
+    Ok(MsgIdentity {
+        agent: name,
+        project,
+    })
+}
+
+fn pane_info_for_msg(pane_id: &str) -> std::io::Result<serde_json::Value> {
+    send_request(&Request {
+        id: "cli:msg:pane".into(),
+        method: Method::PaneGet(PaneTarget {
+            pane_id: pane_id.to_string(),
+        }),
+    })
+}
+
+fn parse_msg_history_args(args: &[String]) -> std::io::Result<(String, Option<String>, u32)> {
+    let mut room = crate::msg::DEFAULT_ROOM.to_string();
+    let mut project = None;
+    let mut limit = 50_u32;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--room" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --room");
+                    return Err(std::io::Error::other("missing value for --room"));
+                };
+                room = value.clone();
+                index += 2;
+            }
+            "--project" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --project");
+                    return Err(std::io::Error::other("missing value for --project"));
+                };
+                project = Some(value.clone());
+                index += 2;
+            }
+            "--limit" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --limit");
+                    return Err(std::io::Error::other("missing value for --limit"));
+                };
+                limit = parse_u32_flag("--limit", value)?;
+                index += 2;
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                return Err(std::io::Error::other(format!("unknown option: {other}")));
+            }
+        }
+    }
+    Ok((room, project, limit))
+}
+
+fn print_msg_send_response(response: &serde_json::Value) -> std::io::Result<i32> {
+    if let Some(error) = response.get("error") {
+        eprintln!("{error}");
+        return Ok(1);
+    }
+    let messages = response["result"]["messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    println!("sent {} message(s)", messages.len());
+    for message in messages {
+        print_msg_message(&message);
+    }
+    let nudged = response["result"]["nudged"]
+        .as_array()
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !nudged.is_empty() {
+        println!("nudged: {}", nudged.join(", "));
+    }
+    Ok(0)
+}
+
+fn print_msg_messages_response(response: &serde_json::Value, label: &str) -> std::io::Result<i32> {
+    if let Some(error) = response.get("error") {
+        eprintln!("{error}");
+        return Ok(1);
+    }
+    let messages = response["result"]["messages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if messages.is_empty() {
+        println!("{label}: no messages");
+        return Ok(0);
+    }
+    for message in messages {
+        print_msg_message(&message);
+    }
+    Ok(0)
+}
+
+fn print_msg_message(message: &serde_json::Value) {
+    let id = message["id"].as_i64().unwrap_or(0);
+    let room = message["room"].as_str().unwrap_or("");
+    let created_at = message["created_at"].as_str().unwrap_or("");
+    let from = message["from_agent"].as_str().unwrap_or("");
+    let to = message["to_agent"].as_str().unwrap_or("");
+    let body = message["body"].as_str().unwrap_or("");
+    println!("#{id} [{room}] {created_at} {from} -> {to}: {body}");
 }
 
 fn agent_rename(args: &[String]) -> std::io::Result<i32> {
@@ -2698,6 +3071,16 @@ fn print_agent_help() {
     eprintln!("  herdr agent restore [--dry-run]   relaunch agents recorded in the restored session ([agent_restore] config)");
     eprintln!("  targets accept terminal ids, unique agent names, detected/reported agent labels, and legacy pane ids");
     eprintln!("  agent send writes text and submits it with Enter");
+}
+
+fn print_msg_help() {
+    eprintln!("herdr msg commands:");
+    eprintln!("  herdr msg send <to> <text> [--room R] [--from NAME]");
+    eprintln!("  herdr msg inbox [--room R] [--to NAME]");
+    eprintln!("  herdr msg history [--room R] [--project P] [--limit N]");
+    eprintln!("  herdr msg tail [--room R] [--project P] [--limit N]");
+    eprintln!("  herdr msg rooms");
+    eprintln!("  send targets accept agent names, pane targets, or '*' for room broadcast");
 }
 
 fn print_terminal_help() {

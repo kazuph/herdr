@@ -13,6 +13,7 @@ mod config_io;
 mod creation;
 mod ids;
 mod input;
+mod msg;
 mod runtime;
 mod session;
 pub mod state;
@@ -542,7 +543,7 @@ impl App {
             None
         };
 
-        Self {
+        let mut app = Self {
             config_diagnostic_deadline: None,
             toast_deadline: None,
             selection_copy_status_deadline: None,
@@ -571,7 +572,9 @@ impl App {
             full_redraw_pending: false,
             overlay_panes: HashMap::new(),
             local_terminal_notifications: true,
-        }
+        };
+        app.flush_msg_nudges_for_all_idle_agents();
+        app
     }
 
     fn request_full_redraw(&mut self) {

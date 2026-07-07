@@ -521,7 +521,7 @@ impl App {
         Ok((ws_idx, result.0, result.1.pane_id))
     }
 
-    fn agent_info(
+    pub(super) fn agent_info(
         &self,
         ws_idx: usize,
         pane_id: crate::layout::PaneId,

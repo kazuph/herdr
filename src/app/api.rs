@@ -201,6 +201,11 @@ impl App {
         for update in &pane_updates {
             self.emit_pane_state_update(update);
         }
+        for update in &pane_updates {
+            if let Some((ws_idx, _)) = self.find_pane(update.pane_id) {
+                self.flush_msg_nudges_for_idle_pane(ws_idx, update.pane_id);
+            }
+        }
         if let Some((pane_id, agent)) = released_agent {
             if pane_updates.iter().any(|update| update.pane_id == pane_id) {
                 if let Some((ws_idx, _)) = self.find_pane(pane_id) {
@@ -1704,6 +1709,58 @@ impl App {
                     result: ResponseResult::AgentRestore { actions },
                 }
             }
+            Method::MsgSend(params) => match self.handle_msg_send(params) {
+                Ok(result) => SuccessResponse {
+                    id: request.id,
+                    result,
+                },
+                Err(error) => {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error,
+                    })
+                    .unwrap();
+                }
+            },
+            Method::MsgInbox(params) => match self.handle_msg_inbox(params) {
+                Ok(result) => SuccessResponse {
+                    id: request.id,
+                    result,
+                },
+                Err(error) => {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error,
+                    })
+                    .unwrap();
+                }
+            },
+            Method::MsgHistory(params) => match self.handle_msg_history(params) {
+                Ok(result) => SuccessResponse {
+                    id: request.id,
+                    result,
+                },
+                Err(error) => {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error,
+                    })
+                    .unwrap();
+                }
+            },
+            Method::MsgRooms(_) => match self.handle_msg_rooms() {
+                Ok(result) => SuccessResponse {
+                    id: request.id,
+                    result,
+                },
+                Err(error) => {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error,
+                    })
+                    .unwrap();
+                }
+            },
             Method::PaneClearAgentAuthority(params) => {
                 let Some((_ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
                     return serde_json::to_string(&ErrorResponse {

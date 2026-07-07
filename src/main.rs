@@ -33,6 +33,7 @@ mod ipc;
 mod kitty_graphics;
 mod layout;
 mod logging;
+mod msg;
 mod pane;
 mod persist;
 mod platform;
@@ -89,6 +90,7 @@ herdr config <subcommand> ...
 herdr workspace <subcommand> ...
 herdr tab <subcommand> ...
 herdr agent <subcommand> ...
+herdr msg <subcommand> ...
 herdr pane <subcommand> ...
 herdr wait <subcommand> ...
 herdr session <subcommand> ...
@@ -105,6 +107,7 @@ herdr session <subcommand> ...
 | `herdr workspace <subcommand>` | Create, list, rename, or focus workspaces. |
 | `herdr tab <subcommand>` | Create, list, rename, or focus tabs. |
 | `herdr agent <subcommand>` | List, start, read, send to, focus, attach to, rename, restore, or wait on AI agents. |
+| `herdr msg <subcommand>` | Send, read, tail, and list SQLite mailbox messages between Herdr agents. |
 | `herdr pane <subcommand>` | List, split, read, run, notify, focus, rename, or close panes. |
 | `herdr wait <subcommand>` | Block until pane output or agent status matches. |
 | `herdr session <subcommand>` | Manage named persistent sessions. |
@@ -120,6 +123,7 @@ herdr pane run-notify <pane_id> <command>
 herdr pane read <pane_id>
 herdr agent start --kind codex --cwd <path>
 herdr agent send <agent_target> <message>
+herdr msg send <agent_target> <message>
 herdr wait agent-status <agent_target> --status done
 ```
 
