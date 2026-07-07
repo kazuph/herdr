@@ -1,7 +1,5 @@
 //! Virtual rendering helpers for headless client frame streaming.
 
-use std::collections::HashSet;
-
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
 use ratatui::layout::{Position, Rect, Size};
 
@@ -9,8 +7,7 @@ use crate::app::state::AppState;
 use crate::app::Mode;
 use crate::protocol::render_ansi::{BlitEncoder, EncodedBlit};
 use crate::protocol::{CursorState, FrameData, RenderEncoding, ServerMessage, TerminalFrame};
-use crate::selection::Selection;
-use crate::terminal::{TerminalRuntime, TerminalRuntimeRegistry};
+use crate::terminal::TerminalRuntimeRegistry;
 
 /// Per-client render baseline for the negotiated render encoding.
 pub(crate) enum ClientRenderState {
@@ -363,7 +360,6 @@ pub(crate) fn render_terminal_virtual(
 pub(crate) fn visible_hyperlinks(
     app_state: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
-    final_buffer: Option<&ratatui::buffer::Buffer>,
 ) -> Vec<((u16, u16), String, String)> {
     let Some(ws_idx) = app_state.active else {
         return Vec::new();
@@ -373,141 +369,14 @@ pub(crate) fn visible_hyperlinks(
     }
 
     let mut links = Vec::new();
-    let mut occupied = HashSet::new();
     for info in &app_state.view.pane_infos {
         if let Some(runtime) =
             app_state.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id)
         {
-            for link in runtime.visible_hyperlinks(info.inner_rect) {
-                occupied.insert(link.0);
-                links.push(link);
-            }
-            let metrics = app_state.pane_scroll_metrics(terminal_runtimes, info.id);
-            for link in plain_url_hyperlinks_for_pane(
-                runtime,
-                info.id,
-                info.inner_rect,
-                metrics,
-                final_buffer,
-            ) {
-                if occupied.insert(link.0) {
-                    links.push(link);
-                }
-            }
+            links.extend(runtime.visible_hyperlinks(info.inner_rect));
         }
     }
     links
-}
-
-fn plain_url_hyperlinks_for_pane(
-    runtime: &TerminalRuntime,
-    pane_id: crate::layout::PaneId,
-    area: Rect,
-    metrics: Option<crate::pane::ScrollMetrics>,
-    final_buffer: Option<&ratatui::buffer::Buffer>,
-) -> Vec<((u16, u16), String, String)> {
-    if area.width == 0 || area.height == 0 {
-        return Vec::new();
-    }
-
-    let selection = Selection::line_range(
-        pane_id,
-        Selection::absolute_row_for_viewport(0, metrics),
-        Selection::absolute_row_for_viewport(area.height.saturating_sub(1), metrics),
-        area.width.saturating_sub(1),
-    );
-    let Some(text) = runtime.extract_selection(&selection) else {
-        return Vec::new();
-    };
-    let mut links = Vec::new();
-    let cells = crate::app::actions::visible_text_cells(&text, area.width);
-    let mut line_start = 0;
-    for (byte_idx, ch) in text.char_indices() {
-        if ch == '\n' {
-            push_plain_url_line_links(
-                &mut links,
-                &text[line_start..byte_idx],
-                line_start,
-                &cells,
-                area,
-            );
-            line_start = byte_idx + ch.len_utf8();
-        }
-    }
-    push_plain_url_line_links(&mut links, &text[line_start..], line_start, &cells, area);
-    if links.is_empty() {
-        return links;
-    }
-    let pane_buffer = final_buffer.and_then(|_| render_runtime_buffer(runtime, area));
-    links
-        .into_iter()
-        .filter(|((x, y), _, _)| {
-            pane_cell_is_visible(
-                x.saturating_sub(area.x),
-                y.saturating_sub(area.y),
-                *x,
-                *y,
-                pane_buffer.as_ref(),
-                final_buffer,
-            )
-        })
-        .collect()
-}
-
-fn render_runtime_buffer(runtime: &TerminalRuntime, area: Rect) -> Option<ratatui::buffer::Buffer> {
-    let backend = TestBackend::new(area.width, area.height);
-    let mut terminal = ratatui::Terminal::new(backend).ok()?;
-    terminal
-        .draw(|frame| {
-            runtime.render(frame, Rect::new(0, 0, area.width, area.height), false);
-        })
-        .ok()?;
-    Some(terminal.backend().buffer().clone())
-}
-
-fn push_plain_url_line_links(
-    links: &mut Vec<((u16, u16), String, String)>,
-    line: &str,
-    line_start: usize,
-    cells: &[crate::app::actions::VisibleTextCell],
-    area: Rect,
-) {
-    for (start_col, end_col, url) in crate::app::actions::visible_url_spans(line) {
-        for cell in cells.iter().filter(|cell| {
-            cell.byte_index >= line_start
-                && cell.byte_index < line_start + line.len()
-                && cell.logical_col >= start_col
-                && cell.logical_col <= end_col
-                && cell.screen_row < area.height
-        }) {
-            let x = area.x.saturating_add(cell.screen_col);
-            let y = area.y.saturating_add(cell.screen_row);
-            links.push(((x, y), cell.ch.to_string(), url.to_owned()));
-        }
-    }
-}
-
-fn pane_cell_is_visible(
-    pane_x: u16,
-    pane_y: u16,
-    frame_x: u16,
-    frame_y: u16,
-    pane_buffer: Option<&ratatui::buffer::Buffer>,
-    final_buffer: Option<&ratatui::buffer::Buffer>,
-) -> bool {
-    let (Some(pane_buffer), Some(final_buffer)) = (pane_buffer, final_buffer) else {
-        return true;
-    };
-    let Some(pane_cell) = pane_buffer.cell((pane_x, pane_y)) else {
-        return false;
-    };
-    let Some(final_cell) = final_buffer.cell((frame_x, frame_y)) else {
-        return false;
-    };
-    pane_cell.symbol() == final_cell.symbol()
-        && pane_cell.fg == final_cell.fg
-        && pane_cell.bg == final_cell.bg
-        && pane_cell.modifier == final_cell.modifier
 }
 
 pub(crate) fn focused_terminal_cursor(

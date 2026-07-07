@@ -2122,20 +2122,6 @@ pub(crate) fn url_at_column(row: &str, col: u16) -> Option<&str> {
     safe_web_url(row.get(start_byte..end_byte)?)
 }
 
-pub(crate) fn visible_url_spans(row: &str) -> Vec<(u16, u16, &str)> {
-    let cells = text_cells(row);
-    url_spans(&cells)
-        .into_iter()
-        .filter_map(|span| {
-            let start_byte = byte_index_for_cell(row, span.start);
-            let end_byte = byte_index_after_cell(row, span.end);
-            let url = row.get(start_byte..end_byte).and_then(safe_web_url)?;
-            let (start_col, end_col) = span.columns(&cells);
-            Some((start_col, end_col, url))
-        })
-        .collect()
-}
-
 fn url_spans(cells: &[TextCell]) -> Vec<CellSpan> {
     let mut spans = Vec::new();
     let mut start = 0;

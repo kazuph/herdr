@@ -616,92 +616,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn render_stream_synthesizes_soft_wrapped_url_hyperlinks() {
+    async fn render_stream_does_not_synthesize_soft_wrapped_url_hyperlinks() {
         let (_app, info) = app_with_screen_bytes(b"");
         let prefix = "https://example.com/";
         let padding = "b".repeat(info.inner_rect.width as usize - prefix.len());
         let url = format!("{prefix}{padding}tail");
-        let (app, info) = app_with_screen_bytes(url.as_bytes());
+        let (app, _info) = app_with_screen_bytes(url.as_bytes());
 
-        let links = crate::server::render_stream::visible_hyperlinks(
-            &app.state,
-            &app.terminal_runtimes,
-            None,
-        );
+        let links =
+            crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
 
-        assert!(links.iter().any(|((x, y), symbol, uri)| {
-            *x == info.inner_rect.x + 1
-                && *y == info.inner_rect.y + 1
-                && symbol == "a"
-                && uri == &url
-        }));
+        assert!(links.is_empty());
     }
 
     #[tokio::test]
-    async fn render_stream_does_not_shift_url_hyperlinks_after_zero_width_mark() {
+    async fn render_stream_does_not_synthesize_url_hyperlinks_after_zero_width_mark() {
         let url = "https://example.com/mark";
         let screen = format!("e\u{301} {url}");
-        let (app, info) = app_with_screen_bytes(screen.as_bytes());
+        let (app, _info) = app_with_screen_bytes(screen.as_bytes());
 
-        let links = crate::server::render_stream::visible_hyperlinks(
-            &app.state,
-            &app.terminal_runtimes,
-            None,
-        );
+        let links =
+            crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
 
-        assert!(links.iter().any(|((x, y), symbol, uri)| {
-            *x == info.inner_rect.x + 2 && *y == info.inner_rect.y && symbol == "h" && uri == url
-        }));
+        assert!(links.is_empty());
     }
 
     #[tokio::test]
-    async fn render_stream_handles_hard_newline_after_full_row() {
+    async fn render_stream_does_not_synthesize_hard_newline_plain_url_hyperlinks() {
         let (_app, info) = app_with_screen_bytes(b"");
         let full_row = "x".repeat(info.inner_rect.width as usize);
         let url = "https://example.com/next";
         let screen = format!("{full_row}\n{url}");
-        let (app, info) = app_with_screen_bytes(screen.as_bytes());
-        let links = crate::server::render_stream::visible_hyperlinks(
-            &app.state,
-            &app.terminal_runtimes,
-            None,
-        );
+        let (app, _info) = app_with_screen_bytes(screen.as_bytes());
+        let links =
+            crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
 
-        assert!(links.iter().any(|((x, y), symbol, uri)| {
-            *x == info.inner_rect.x + 1
-                && *y == info.inner_rect.y + 2
-                && symbol == "t"
-                && uri == url
-        }));
+        assert!(links.is_empty());
     }
 
     #[tokio::test]
-    async fn render_stream_filters_plain_url_when_final_cell_differs() {
-        let line = "see https://example.com/hidden";
-        let (mut app, _info) = app_with_screen_bytes(line.as_bytes());
-        let (mut buffer, _cursor) =
-            crate::server::render_stream::render_virtual_with_runtime_registry(
-                &mut app.state,
-                &app.terminal_runtimes,
-                ratatui::layout::Rect::new(0, 0, 106, 20),
-                false,
-                crate::kitty_graphics::HostCellSize::default(),
-            );
-        let info = app.state.view.pane_infos[0].clone();
-        let target_x = info.inner_rect.x + line.find("https").expect("url start") as u16;
-        let target_y = info.inner_rect.y;
-        buffer[(target_x, target_y)]
-            .set_style(ratatui::style::Style::default().fg(ratatui::style::Color::Red));
-
-        let links = crate::server::render_stream::visible_hyperlinks(
-            &app.state,
+    async fn render_stream_exports_osc8_hyperlink_metadata() {
+        let uri = "https://example.com/target";
+        let (mut app, _info) =
+            app_with_screen_bytes(format!("\x1b]8;;{uri}\x1b\\label\x1b]8;;\x1b\\").as_bytes());
+        let (buffer, cursor) = crate::server::render_stream::render_virtual_with_runtime_registry(
+            &mut app.state,
             &app.terminal_runtimes,
-            Some(&buffer),
+            ratatui::layout::Rect::new(0, 0, 106, 20),
+            false,
+            crate::kitty_graphics::HostCellSize::default(),
         );
-
-        assert!(!links
+        let links =
+            crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
+        let frame = crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(
+            &buffer, cursor, &links,
+        );
+        let ((x, y), symbol, _) = links
             .iter()
-            .any(|((x, y), _, uri)| *x == target_x && *y == target_y && uri == &line[4..]));
+            .find(|(_, symbol, link_uri)| symbol == "l" && link_uri == uri)
+            .expect("OSC 8 link cell");
+        let linked_cell_index = usize::from(*y) * usize::from(frame.width) + usize::from(*x);
+
+        assert_eq!(frame.hyperlinks, vec![uri.to_owned()]);
+        assert_eq!(symbol, "l");
+        assert_eq!(frame.cells[linked_cell_index].hyperlink, Some(0));
     }
 
     #[tokio::test]
