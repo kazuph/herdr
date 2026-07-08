@@ -11,10 +11,11 @@ use crate::api::schema::{
     AgentReadParams, AgentRenameParams, AgentSendParams, AgentStartParams, AgentStatus,
     AgentTarget, EmptyParams, Method, MsgHistoryParams, MsgInboxParams, MsgSendParams, OutputMatch,
     PaneAgentState, PaneCurrentParams, PaneListParams, PaneMoveDestination, PaneMoveParams,
-    PaneNotifyParams, PaneReadParams, PaneRenameParams, PaneReportAgentParams, PaneSendKeysParams,
-    PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams, PingParams,
-    ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams, TabListParams,
-    TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
+    PaneNotifyParams, PaneReadParams, PaneRenameParams, PaneReportAgentParams, PaneSendInputParams,
+    PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneTarget, PaneWaitForOutputParams,
+    PingParams, ReadFormat, ReadSource, Request, SplitDirection, Subscription, TabCreateParams,
+    TabListParams, TabRenameParams, TabTarget, WorkspaceCreateParams, WorkspaceRenameParams,
+    WorkspaceTarget,
 };
 
 const CLI_SUBMIT_DELAY: Duration = Duration::from_millis(500);
@@ -44,6 +45,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "agent" => run_agent_command(&args[2..])?,
         "terminal" => run_terminal_command(&args[2..])?,
         "pane" => run_pane_command(&args[2..])?,
+        "run" => herdr_run(&args[2..])?,
         "msg" => run_msg_command(&args[2..])?,
         "wait" => run_wait_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
@@ -489,6 +491,206 @@ fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
             Ok(2)
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+struct RunSpawnOutput {
+    pane: String,
+    job: String,
+    label: String,
+}
+
+fn herdr_run(args: &[String]) -> std::io::Result<i32> {
+    let mut label = None;
+    let mut cwd = None;
+    let mut split = SplitDirection::Down;
+    let mut caller = None;
+    let mut close_on_success = false;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--label" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --label");
+                    return Ok(2);
+                };
+                if value.trim().is_empty() {
+                    eprintln!("--label must not be empty");
+                    return Ok(2);
+                }
+                label = Some(value.clone());
+                index += 2;
+            }
+            "--cwd" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --cwd");
+                    return Ok(2);
+                };
+                cwd = Some(value.clone());
+                index += 2;
+            }
+            "--split" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --split");
+                    return Ok(2);
+                };
+                split = parse_split_direction(value)?;
+                index += 2;
+            }
+            "--caller" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --caller");
+                    return Ok(2);
+                };
+                caller = Some(normalize_pane_id(value));
+                index += 2;
+            }
+            "--close-on-success" => {
+                close_on_success = true;
+                index += 1;
+            }
+            "--help" | "-h" | "help" => {
+                print_run_help();
+                return Ok(0);
+            }
+            "--" => {
+                index += 1;
+                break;
+            }
+            other => {
+                eprintln!("unknown option before --: {other}");
+                print_run_help();
+                return Ok(2);
+            }
+        }
+    }
+
+    if index >= args.len() {
+        print_run_help();
+        return Ok(2);
+    }
+
+    let command_args = &args[index..];
+    let command = shell_command_from_args(command_args);
+    let label = label.unwrap_or_else(|| default_run_label(command_args));
+    let caller = match resolve_run_caller(caller.as_deref()) {
+        Ok(caller) => caller,
+        Err(err) => {
+            eprintln!("unable to resolve caller pane: {err}");
+            eprintln!("pass --caller <pane> explicitly; do not infer from focused pane");
+            return Ok(1);
+        }
+    };
+
+    let split_response = send_request(&Request {
+        id: "cli:run:split".into(),
+        method: Method::PaneSplit(PaneSplitParams {
+            workspace_id: None,
+            target_pane_id: caller.clone(),
+            direction: split,
+            cwd,
+            focus: false,
+        }),
+    })?;
+    if split_response.get("error").is_some() {
+        eprintln!("{}", serde_json::to_string(&split_response).unwrap());
+        return Ok(1);
+    }
+
+    let pane = split_response["result"]["pane"]["global_id"]
+        .as_str()
+        .or_else(|| split_response["result"]["pane"]["pane_id"].as_str())
+        .ok_or_else(|| std::io::Error::other("pane.split response did not include pane id"))?
+        .to_string();
+
+    let rename_response = send_request(&Request {
+        id: "cli:run:rename".into(),
+        method: Method::PaneRename(PaneRenameParams {
+            pane_id: pane.clone(),
+            label: Some(label.clone()),
+        }),
+    })?;
+    if rename_response.get("error").is_some() {
+        eprintln!("{}", serde_json::to_string(&rename_response).unwrap());
+        return Ok(1);
+    }
+
+    let job = new_pane_job_id();
+    let exe = std::env::current_exe()?;
+    let mut runner_parts = vec![
+        shell_quote(&exe.display().to_string()),
+        "__pane-notify-run".to_string(),
+        "--parent".to_string(),
+        shell_quote(&caller),
+        "--target".to_string(),
+        shell_quote(&pane),
+        "--job-id".to_string(),
+        shell_quote(&job),
+        "--run-label".to_string(),
+        shell_quote(&label),
+    ];
+    if close_on_success {
+        runner_parts.push("--close-on-success".to_string());
+    }
+    runner_parts.push("--".to_string());
+    runner_parts.push(shell_quote(&command));
+    let runner = runner_parts.join(" ");
+
+    let submit_response = send_pane_input_text_enter(&pane, runner)?;
+    if submit_response.get("error").is_some() {
+        eprintln!("{}", serde_json::to_string(&submit_response).unwrap());
+        return Ok(1);
+    }
+
+    println!(
+        "{}",
+        serde_json::to_string(&RunSpawnOutput { pane, job, label })?
+    );
+    Ok(0)
+}
+
+fn resolve_run_caller(explicit: Option<&str>) -> std::io::Result<String> {
+    if let Some(pane_id) = explicit {
+        let pane_id = normalize_pane_id(pane_id);
+        let response = send_request(&Request {
+            id: "cli:run:caller".into(),
+            method: Method::PaneGet(PaneTarget {
+                pane_id: pane_id.clone(),
+            }),
+        })?;
+        if let Some(error) = response.get("error") {
+            return Err(std::io::Error::other(
+                serde_json::to_string(error).unwrap_or_else(|_| error.to_string()),
+            ));
+        }
+        return Ok(response["result"]["pane"]["global_id"]
+            .as_str()
+            .unwrap_or(&pane_id)
+            .to_string());
+    }
+
+    resolve_current_pane_id()
+}
+
+fn default_run_label(command_args: &[String]) -> String {
+    command_args
+        .first()
+        .and_then(|command| {
+            std::path::Path::new(command)
+                .file_name()
+                .and_then(|name| name.to_str())
+        })
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("run")
+        .to_string()
+}
+
+fn shell_command_from_args(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn run_wait_command(args: &[String]) -> std::io::Result<i32> {
@@ -2600,6 +2802,17 @@ fn send_pane_text_then_enter(pane_id: String, text: String) -> std::io::Result<i
     Ok(0)
 }
 
+fn send_pane_input_text_enter(pane_id: &str, text: String) -> std::io::Result<serde_json::Value> {
+    send_request(&Request {
+        id: "cli:pane:send-input".into(),
+        method: Method::PaneSendInput(PaneSendInputParams {
+            pane_id: pane_id.to_string(),
+            text,
+            keys: vec!["Enter".into()],
+        }),
+    })
+}
+
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -2608,6 +2821,8 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
     let mut parent = None;
     let mut target = None;
     let mut job_id = None;
+    let mut run_label = None;
+    let mut close_on_success = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -2622,6 +2837,14 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
             "--job-id" => {
                 job_id = args.get(index + 1).cloned();
                 index += 2;
+            }
+            "--run-label" => {
+                run_label = args.get(index + 1).cloned();
+                index += 2;
+            }
+            "--close-on-success" => {
+                close_on_success = true;
+                index += 1;
             }
             "--" => {
                 index += 1;
@@ -2722,12 +2945,38 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
     let sample = tail.lock().unwrap().clone();
     let (title, context) = pane_notify_toast(&job_id, &target, &command, code, &log_path, &sample);
     let _ = send_ok_request(Method::PaneNotify(PaneNotifyParams {
-        pane_id: parent,
+        pane_id: parent.clone(),
         title,
         context,
     }));
+    if let Some(label) = run_label {
+        let notification = pane_run_notification_line(&label, &target, &job_id, code);
+        let _ = send_pane_input_text_enter(&parent, notification);
+    }
+    if close_on_success && code == Some(0) {
+        let _ = send_ok_request(Method::PaneClose(PaneTarget { pane_id: target }));
+    }
 
     Ok(code.unwrap_or(1))
+}
+
+fn pane_run_notification_line(
+    label: &str,
+    pane_id: &str,
+    job_id: &str,
+    code: Option<i32>,
+) -> String {
+    format!(
+        "[herdr run] exit={} label={} pane={} 詳細: herdr pane job-log {}",
+        exit_code_label(code),
+        one_line_field(label),
+        pane_id,
+        job_id
+    )
+}
+
+fn one_line_field(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join("_")
 }
 
 fn stream_job_output<R, W>(
@@ -3114,6 +3363,13 @@ fn print_pane_help() {
     eprintln!("  pane run-notify streams output in the target pane and reports exit with a Herdr toast plus job log");
 }
 
+fn print_run_help() {
+    eprintln!("usage: herdr run [--label TEXT] [--cwd PATH] [--split right|down] [--caller <pane>] [--close-on-success] -- <command...>");
+    eprintln!("  spawns a same-space pane beside the caller, starts the command, then returns immediately");
+    eprintln!("  on exit, injects one line into the caller: exit, label, pane, and `herdr pane job-log <job>`");
+    eprintln!("  caller resolution fails closed; pass --caller <pane> when the calling pane cannot be identified");
+}
+
 fn print_wait_help() {
     eprintln!("herdr wait commands:");
     eprintln!("  herdr wait output <pane_id> --match <text> [--source visible|recent|recent-unwrapped] [--lines N] [--timeout MS] [--regex] [--raw]");
@@ -3213,6 +3469,36 @@ mod tests {
         assert!(context.contains("tail: hello"));
         assert!(context.contains("log: /tmp/herdr-job.log"));
         assert!(!context.contains("[herdr] pane job exited"));
+    }
+
+    #[test]
+    fn run_notification_line_is_single_line_and_points_to_job_log() {
+        let line = pane_run_notification_line("cargo test", "p_2", "job-123", Some(0));
+
+        assert_eq!(
+            line,
+            "[herdr run] exit=0 label=cargo_test pane=p_2 詳細: herdr pane job-log job-123"
+        );
+        assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn run_shell_command_quotes_each_argument() {
+        let command = shell_command_from_args(&[
+            "sh".to_string(),
+            "-c".to_string(),
+            "sleep 3; echo 'done'".to_string(),
+        ]);
+
+        assert_eq!(command, "'sh' '-c' 'sleep 3; echo '\\''done'\\'''");
+    }
+
+    #[test]
+    fn run_default_label_uses_command_basename() {
+        assert_eq!(
+            default_run_label(&["/usr/bin/cargo".to_string(), "test".to_string()]),
+            "cargo"
+        );
     }
 
     #[test]

@@ -1550,6 +1550,195 @@ fn pane_run_read_and_wait_commands_work() {
 }
 
 #[test]
+fn herdr_run_fails_closed_when_caller_is_unresolved() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_run_fail_closed_1","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+
+    let output = run_cli(&socket_path, &["run", "--", "echo", "should-not-run"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unable to resolve caller pane"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("--caller <pane>"), "stderr: {stderr}");
+
+    let panes = run_cli_json(&socket_path, &["pane", "list", "--workspace", "1"]);
+    assert_eq!(panes["result"]["panes"].as_array().unwrap().len(), 1);
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
+fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_run_spawn_1","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+    let caller = run_cli_json(&socket_path, &["pane", "get", "1-1"]);
+    let caller_tab = caller["result"]["pane"]["tab_id"].as_str().unwrap();
+
+    let run = run_cli(
+        &socket_path,
+        &[
+            "run",
+            "--caller",
+            "1-1",
+            "--label",
+            "demo",
+            "--split",
+            "down",
+            "--",
+            "sh",
+            "-c",
+            "printf 'run-spawn-done\\n'",
+        ],
+    );
+    assert!(
+        run.status.success(),
+        "stderr: {} stdout: {}",
+        String::from_utf8_lossy(&run.stderr),
+        String::from_utf8_lossy(&run.stdout)
+    );
+    let run_json: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let pane = run_json["pane"].as_str().unwrap();
+    let job = run_json["job"].as_str().unwrap();
+    assert_eq!(run_json["label"], "demo");
+
+    let spawned = run_cli_json(&socket_path, &["pane", "get", pane]);
+    assert_eq!(
+        spawned["result"]["pane"]["tab_id"].as_str().unwrap(),
+        caller_tab
+    );
+    assert_eq!(spawned["result"]["pane"]["label"], "demo");
+
+    let waited_job = run_cli(
+        &socket_path,
+        &[
+            "wait",
+            "output",
+            pane,
+            "--match",
+            "run-spawn-done",
+            "--source",
+            "recent",
+            "--lines",
+            "80",
+            "--timeout",
+            "5000",
+        ],
+    );
+    assert!(
+        waited_job.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&waited_job.stderr)
+    );
+
+    let waited_notice = run_cli(
+        &socket_path,
+        &[
+            "wait",
+            "output",
+            "1-1",
+            "--match",
+            "[herdr run] exit=0 label=demo",
+            "--source",
+            "recent",
+            "--lines",
+            "80",
+            "--timeout",
+            "5000",
+        ],
+    );
+    assert!(
+        waited_notice.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&waited_notice.stderr)
+    );
+
+    let caller_read = run_cli(
+        &socket_path,
+        &["pane", "read", "1-1", "--source", "recent", "--lines", "80"],
+    );
+    assert!(caller_read.status.success());
+    let caller_text = String::from_utf8(caller_read.stdout).unwrap();
+    assert!(
+        caller_text.contains(&format!("pane={pane}")),
+        "{caller_text}"
+    );
+    assert!(
+        caller_text.contains(&format!("詳細: herdr pane job-log {job}")),
+        "{caller_text}"
+    );
+
+    let log = run_cli(&socket_path, &["pane", "job-log", job]);
+    assert!(log.status.success());
+    let log_text = String::from_utf8(log.stdout).unwrap();
+    assert!(log_text.contains("run-spawn-done"), "{log_text}");
+
+    let close_run = run_cli(
+        &socket_path,
+        &[
+            "run",
+            "--caller",
+            "1-1",
+            "--label",
+            "close-demo",
+            "--close-on-success",
+            "--",
+            "true",
+        ],
+    );
+    assert!(
+        close_run.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&close_run.stderr)
+    );
+    let close_json: serde_json::Value = serde_json::from_slice(&close_run.stdout).unwrap();
+    let close_pane = close_json["pane"].as_str().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut closed = false;
+    while Instant::now() < deadline {
+        let fetched = run_cli(&socket_path, &["pane", "get", close_pane]);
+        if !fetched.status.success() {
+            closed = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(closed, "{close_pane} was not closed after successful run");
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
 fn wait_output_matches_recent_unwrapped_text() {
     let base = unique_test_dir();
     let config_home = base.join("config");

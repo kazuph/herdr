@@ -28,6 +28,7 @@ fn root_help_is_skill_style_and_matches_help_command() {
         "calling process session",
         "Do not infer the requester pane from the focused pane",
         "herdr pane run-notify",
+        "herdr run --label tests -- cargo test",
     ] {
         assert!(
             stdout.contains(expected),
