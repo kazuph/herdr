@@ -1696,44 +1696,52 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
         caller_text.contains(&format!("詳細: herdr pane job-log {job}")),
         "{caller_text}"
     );
+    assert!(caller_text.contains("tail=run-spawn-done"), "{caller_text}");
 
     let log = run_cli(&socket_path, &["pane", "job-log", job]);
     assert!(log.status.success());
     let log_text = String::from_utf8(log.stdout).unwrap();
     assert!(log_text.contains("run-spawn-done"), "{log_text}");
 
-    let close_run = run_cli(
+    let fetched = run_cli(&socket_path, &["pane", "get", &pane]);
+    assert!(
+        !fetched.status.success(),
+        "{pane} was not closed after successful run"
+    );
+
+    let error_run = run_cli(
         &socket_path,
         &[
             "run",
             "--caller",
             "1-1",
             "--label",
-            "close-demo",
-            "--close-on-success",
+            "close-error-demo",
             "--",
-            "true",
+            "sh",
+            "-c",
+            "echo run-spawn-error; exit 7",
         ],
     );
     assert!(
-        close_run.status.success(),
+        error_run.status.success(),
         "stderr: {}",
-        String::from_utf8_lossy(&close_run.stderr)
+        String::from_utf8_lossy(&error_run.stderr)
     );
-    let close_json: serde_json::Value = serde_json::from_slice(&close_run.stdout).unwrap();
-    let close_pane = close_json["pane"].as_str().unwrap();
+    let error_json: serde_json::Value = serde_json::from_slice(&error_run.stdout).unwrap();
+    let error_pane = error_json["pane"].as_str().unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut closed = false;
     while Instant::now() < deadline {
-        let fetched = run_cli(&socket_path, &["pane", "get", close_pane]);
+        let fetched = run_cli(&socket_path, &["pane", "get", error_pane]);
         if !fetched.status.success() {
             closed = true;
             break;
         }
         thread::sleep(Duration::from_millis(25));
     }
-    assert!(closed, "{close_pane} was not closed after successful run");
+    assert!(closed, "{error_pane} was not closed after failed run");
 
     cleanup_spawned_herdr(herdr, base);
 }

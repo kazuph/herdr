@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
@@ -19,7 +20,9 @@ use crate::api::schema::{
 };
 
 const CLI_SUBMIT_DELAY: Duration = Duration::from_millis(500);
-const PANE_NOTIFY_SAMPLE_CHARS: usize = 1200;
+const PANE_NOTIFY_SAMPLE_CHARS: usize = 20_000;
+const PANE_NOTIFY_SAMPLE_LINES: usize = 100;
+const PANE_RUN_NOTIFICATION_CHARS: usize = 12_000;
 
 pub enum CommandOutcome {
     Handled(i32),
@@ -505,7 +508,6 @@ fn herdr_run(args: &[String]) -> std::io::Result<i32> {
     let mut cwd = None;
     let mut split = SplitDirection::Down;
     let mut caller = None;
-    let mut close_on_success = false;
     let mut index = 0;
 
     while index < args.len() {
@@ -547,7 +549,6 @@ fn herdr_run(args: &[String]) -> std::io::Result<i32> {
                 index += 2;
             }
             "--close-on-success" => {
-                close_on_success = true;
                 index += 1;
             }
             "--help" | "-h" | "help" => {
@@ -629,10 +630,8 @@ fn herdr_run(args: &[String]) -> std::io::Result<i32> {
         shell_quote(&job),
         "--run-label".to_string(),
         shell_quote(&label),
+        "--close-on-exit".to_string(),
     ];
-    if close_on_success {
-        runner_parts.push("--close-on-success".to_string());
-    }
     runner_parts.push("--".to_string());
     runner_parts.push(shell_quote(&command));
     let runner = runner_parts.join(" ");
@@ -2822,7 +2821,7 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
     let mut target = None;
     let mut job_id = None;
     let mut run_label = None;
-    let mut close_on_success = false;
+    let mut close_on_exit = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -2843,7 +2842,11 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
                 index += 2;
             }
             "--close-on-success" => {
-                close_on_success = true;
+                close_on_exit = true;
+                index += 1;
+            }
+            "--close-on-exit" => {
+                close_on_exit = true;
                 index += 1;
             }
             "--" => {
@@ -2950,10 +2953,10 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
         context,
     }));
     if let Some(label) = run_label {
-        let notification = pane_run_notification_line(&label, &target, &job_id, code);
+        let notification = pane_run_notification_line(&label, &target, &job_id, code, &sample);
         let _ = send_pane_input_text_enter(&parent, notification);
     }
-    if close_on_success && code == Some(0) {
+    if close_on_exit {
         let _ = send_ok_request(Method::PaneClose(PaneTarget { pane_id: target }));
     }
 
@@ -2965,14 +2968,20 @@ fn pane_run_notification_line(
     pane_id: &str,
     job_id: &str,
     code: Option<i32>,
+    sample: &str,
 ) -> String {
-    format!(
+    let mut line = format!(
         "[herdr run] exit={} label={} pane={} 詳細: herdr pane job-log {}",
         exit_code_label(code),
         one_line_field(label),
         pane_id,
         job_id
-    )
+    );
+    if let Some(sample) = notification_tail_sample(sample) {
+        line.push_str(" tail=");
+        line.push_str(&sample);
+    }
+    line
 }
 
 fn one_line_field(value: &str) -> String {
@@ -3023,6 +3032,40 @@ fn append_tail_sample(tail: &Arc<Mutex<String>>, chunk: &str) {
             .skip(count - PANE_NOTIFY_SAMPLE_CHARS)
             .collect();
     }
+}
+
+fn notification_tail_sample(sample: &str) -> Option<String> {
+    let mut lines = VecDeque::with_capacity(PANE_NOTIFY_SAMPLE_LINES);
+    for line in sample
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+    {
+        if lines.len() == PANE_NOTIFY_SAMPLE_LINES {
+            lines.pop_front();
+        }
+        lines.push_back(line.to_string());
+    }
+    if lines.is_empty() {
+        return None;
+    }
+
+    let mut escaped = lines
+        .into_iter()
+        .map(|line| line.replace('\\', "\\\\").replace('\t', "\\t"))
+        .collect::<Vec<_>>()
+        .join("\\n");
+    let count = escaped.chars().count();
+    if count > PANE_RUN_NOTIFICATION_CHARS {
+        escaped = format!(
+            "{}…",
+            escaped
+                .chars()
+                .skip(count - PANE_RUN_NOTIFICATION_CHARS.saturating_sub(1))
+                .collect::<String>()
+        );
+    }
+    Some(escaped)
 }
 
 fn pane_notify_toast(
@@ -3364,9 +3407,9 @@ fn print_pane_help() {
 }
 
 fn print_run_help() {
-    eprintln!("usage: herdr run [--label TEXT] [--cwd PATH] [--split right|down] [--caller <pane>] [--close-on-success] -- <command...>");
+    eprintln!("usage: herdr run [--label TEXT] [--cwd PATH] [--split right|down] [--caller <pane>] -- <command...>");
     eprintln!("  spawns a same-space pane beside the caller, starts the command, then returns immediately");
-    eprintln!("  on exit, injects one line into the caller: exit, label, pane, and `herdr pane job-log <job>`");
+    eprintln!("  on exit, closes the spawned pane and injects one line into the caller with exit, label, pane, tail log, and `herdr pane job-log <job>`");
     eprintln!("  caller resolution fails closed; pass --caller <pane> when the calling pane cannot be identified");
 }
 
@@ -3444,9 +3487,9 @@ mod tests {
     }
 
     #[test]
-    fn pane_notify_tail_sample_keeps_last_1200_chars() {
+    fn pane_notify_tail_sample_keeps_bounded_chars() {
         let tail = Arc::new(Mutex::new(String::new()));
-        append_tail_sample(&tail, &"a".repeat(1300));
+        append_tail_sample(&tail, &"a".repeat(PANE_NOTIFY_SAMPLE_CHARS + 100));
 
         let sample = tail.lock().unwrap().clone();
         assert_eq!(sample.chars().count(), PANE_NOTIFY_SAMPLE_CHARS);
@@ -3473,13 +3516,28 @@ mod tests {
 
     #[test]
     fn run_notification_line_is_single_line_and_points_to_job_log() {
-        let line = pane_run_notification_line("cargo test", "p_2", "job-123", Some(0));
+        let line =
+            pane_run_notification_line("cargo test", "p_2", "job-123", Some(0), "hello\nworld\n");
 
         assert_eq!(
             line,
-            "[herdr run] exit=0 label=cargo_test pane=p_2 詳細: herdr pane job-log job-123"
+            "[herdr run] exit=0 label=cargo_test pane=p_2 詳細: herdr pane job-log job-123 tail=hello\\nworld"
         );
         assert!(!line.contains('\n'));
+    }
+
+    #[test]
+    fn run_notification_tail_keeps_last_100_nonempty_lines() {
+        let sample = (0..105)
+            .map(|line| format!("line-{line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let tail = notification_tail_sample(&sample).unwrap();
+
+        assert!(!tail.contains("line-0\\n"));
+        assert!(tail.starts_with("line-5\\n"));
+        assert!(tail.ends_with("line-104"));
     }
 
     #[test]
