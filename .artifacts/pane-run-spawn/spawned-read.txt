@@ -1,0 +1,11 @@
+'/Users/kazuph/src/github.com/kazuph/herdr/.worktree/p
+ane-run-spawn/target/release/herdr' __pane-notify-run
+--parent 'p_1' --target 'p_2' --job-id 'job-1783463157
+772-37191' --run-label 'demo' -- ''\''sh'\'' '\''-c'\'
+' '\''sleep 1; echo done-from-herdr-run'\'''sh-3.2$ '/
+rktree/pane-run-spawn/target/release/herdr' __pane-not
+ify-run --parent 'p_1' --target 'p_2' --job-id 'job-17
+83463157772-37191' --run-label 'demo' -- ''\''sh'\'' '
+\''-c'\'' '\''sleep 1; echo done-from-herdr-run'\'''
+done-from-herdr-run
+sh-3.2$

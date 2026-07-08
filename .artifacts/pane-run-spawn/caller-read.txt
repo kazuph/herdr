@@ -1,0 +1,4 @@
+sh-3.2$ [herdr run] exit=0 label=demo pane=p_2 詳細
+: herdr pane job-log job-1783463157772-37191
+sh: [herdr: command not found
+sh-3.2$

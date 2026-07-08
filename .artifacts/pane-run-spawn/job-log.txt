@@ -1,0 +1,10 @@
+job_id: job-1783463157772-37191
+target_pane: p_2
+parent_pane: p_1
+command: 'sh' '-c' 'sleep 1; echo done-from-herdr-run'
+started_unix_ms: 1783463158390
+
+[stdout] done-from-herdr-run
+
+finished_unix_ms: 1783463159423
+exit_code: 0

@@ -1,0 +1,2 @@
+status: not running
+socket: /tmp/herdr-run-e2e.yUj6GA/runtime/herdr.sock

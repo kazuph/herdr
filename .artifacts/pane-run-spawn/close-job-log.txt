@@ -1,0 +1,9 @@
+job_id: job-1783463160116-39559
+target_pane: p_3
+parent_pane: p_1
+command: 'true'
+started_unix_ms: 1783463160657
+
+
+finished_unix_ms: 1783463160682
+exit_code: 0

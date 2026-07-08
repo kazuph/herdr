@@ -1,0 +1,5 @@
+status: running
+version: 0.6.1
+protocol: 10
+compatible: yes
+socket: /tmp/herdr-run-e2e.yUj6GA/runtime/herdr.sock
