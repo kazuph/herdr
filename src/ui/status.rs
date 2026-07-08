@@ -125,10 +125,7 @@ pub(crate) fn toast_notification_rect(
     let width = content_width.saturating_add(2).min(area.width);
     let height = 4u16.min(area.height);
     let x = area.x + area.width.saturating_sub(width);
-    let y = area.y
-        + area
-            .height
-            .saturating_sub(height + if offset_for_warning { 1 } else { 0 });
+    let y = area.y + if offset_for_warning { 1 } else { 0 };
     Rect::new(x, y, width, height)
 }
 
@@ -264,7 +261,16 @@ pub(super) fn state_label_color(state: AgentState, seen: bool, p: &Palette) -> C
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::state::Palette;
+    use crate::app::state::{Palette, ToastKind, ToastNotification};
+
+    fn test_toast() -> ToastNotification {
+        ToastNotification {
+            kind: ToastKind::Finished,
+            title: "pane job exited: 0".into(),
+            context: "p_2 · job-1".into(),
+            target: None,
+        }
+    }
 
     #[test]
     fn state_summary_icon_animates_working_state() {
@@ -274,5 +280,21 @@ mod tests {
 
         assert_eq!(icon, super::super::spinner_frame(0));
         assert_eq!(style, Style::default().fg(palette.yellow));
+    }
+
+    #[test]
+    fn toast_notification_rect_anchors_to_top_right() {
+        let rect = toast_notification_rect(Rect::new(2, 3, 100, 30), &test_toast(), false);
+
+        assert_eq!(rect.y, 3);
+        assert_eq!(rect.x + rect.width, 102);
+    }
+
+    #[test]
+    fn toast_notification_rect_stays_below_config_warning() {
+        let rect = toast_notification_rect(Rect::new(2, 3, 100, 30), &test_toast(), true);
+
+        assert_eq!(rect.y, 4);
+        assert_eq!(rect.x + rect.width, 102);
     }
 }
