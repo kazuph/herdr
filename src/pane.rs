@@ -1,8 +1,9 @@
 use std::cell::Cell;
 use std::io::{BufWriter, Read, Write};
+use std::process::Command;
 use std::sync::{
     atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering},
-    Arc, Mutex,
+    Arc, Mutex, OnceLock,
 };
 
 use bytes::Bytes;
@@ -41,6 +42,36 @@ fn apply_pane_terminal_env(cmd: &mut CommandBuilder) {
     // Herdr panes are interactive color-capable TTYs. A global NO_COLOR from the
     // launching environment makes nested TUI status helpers render monochrome.
     cmd.env_remove("NO_COLOR");
+}
+
+fn apply_user_shell_path_env(cmd: &mut CommandBuilder) {
+    if let Some(path) = user_shell_path() {
+        cmd.env("PATH", path);
+    }
+}
+
+fn user_shell_path() -> Option<&'static str> {
+    static PATH: OnceLock<Option<String>> = OnceLock::new();
+    PATH.get_or_init(resolve_user_shell_path).as_deref()
+}
+
+fn resolve_user_shell_path() -> Option<String> {
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| !shell.trim().is_empty())
+        .unwrap_or_else(|| "/bin/sh".into());
+    let output = Command::new(shell)
+        .arg("-lc")
+        .arg("printf '%s' \"$PATH\"")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -399,6 +430,7 @@ impl PaneRuntime {
         cmd.cwd(cwd);
         cmd.env(crate::HERDR_ENV_VAR, crate::HERDR_ENV_VALUE);
         apply_pane_terminal_env(&mut cmd);
+        apply_user_shell_path_env(&mut cmd);
         crate::integration::apply_pane_env(&mut cmd, pane_id);
         Self::spawn_command_builder(
             pane_id,
