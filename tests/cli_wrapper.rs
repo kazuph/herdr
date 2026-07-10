@@ -1791,12 +1791,19 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
         caller_text.contains(&format!("詳細: herdr pane job-log {job}")),
         "{caller_text}"
     );
-    assert!(caller_text.contains("tail=run-spawn-done"), "{caller_text}");
+    assert!(
+        !caller_text.contains("tail=run-spawn-done"),
+        "{caller_text}"
+    );
 
     let log = run_cli(&socket_path, &["pane", "job-log", job]);
     assert!(log.status.success());
     let log_text = String::from_utf8(log.stdout).unwrap();
     assert!(log_text.contains("run-spawn-done"), "{log_text}");
+    let log_tail = run_cli(&socket_path, &["pane", "job-log", job, "tail=1"]);
+    assert!(log_tail.status.success());
+    let log_tail_text = String::from_utf8(log_tail.stdout).unwrap();
+    assert!(log_tail_text.contains("exit_code: 0"), "{log_tail_text}");
 
     let fetched = run_cli(&socket_path, &["pane", "get", &pane]);
     assert!(
@@ -1837,6 +1844,91 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
         thread::sleep(Duration::from_millis(25));
     }
     assert!(closed, "{error_pane} was not closed after failed run");
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
+fn herdr_run_adds_cwd_node_modules_bin_to_path() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let project = base.join("project");
+    let node_bin = project.join("node_modules").join(".bin");
+    std::fs::create_dir_all(&node_bin).unwrap();
+    let tool = node_bin.join("local-wrangler");
+    std::fs::write(&tool, "#!/bin/sh\nprintf 'local-tool-ok\\n'\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&tool).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&tool, perms).unwrap();
+    }
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_run_spawn_node_bin","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+
+    let run = run_cli(
+        &socket_path,
+        &[
+            "run",
+            "--caller",
+            "1-1",
+            "--cwd",
+            project.to_str().unwrap(),
+            "--label",
+            "node-bin",
+            "--",
+            "local-wrangler",
+        ],
+    );
+    assert!(
+        run.status.success(),
+        "stderr: {} stdout: {}",
+        String::from_utf8_lossy(&run.stderr),
+        String::from_utf8_lossy(&run.stdout)
+    );
+    let run_json: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let job = run_json["job"].as_str().unwrap();
+
+    let waited_notice = run_cli(
+        &socket_path,
+        &[
+            "wait",
+            "output",
+            "1-1",
+            "--match",
+            "[herdr run] exit=0 label=node-bin",
+            "--source",
+            "recent",
+            "--lines",
+            "80",
+            "--timeout",
+            "5000",
+        ],
+    );
+    assert!(
+        waited_notice.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&waited_notice.stderr)
+    );
+
+    let log = run_cli(&socket_path, &["pane", "job-log", job]);
+    assert!(log.status.success());
+    let log_text = String::from_utf8(log.stdout).unwrap();
+    assert!(log_text.contains("local-tool-ok"), "{log_text}");
 
     cleanup_spawned_herdr(herdr, base);
 }

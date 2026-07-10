@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
@@ -21,8 +20,6 @@ use crate::api::schema::{
 
 const CLI_SUBMIT_DELAY: Duration = Duration::from_millis(500);
 const PANE_NOTIFY_SAMPLE_CHARS: usize = 20_000;
-const PANE_NOTIFY_SAMPLE_LINES: usize = 100;
-const PANE_RUN_NOTIFICATION_CHARS: usize = 12_000;
 
 pub enum CommandOutcome {
     Handled(i32),
@@ -2359,13 +2356,20 @@ fn pane_run_notify(args: &[String]) -> std::io::Result<i32> {
 
 fn pane_job_log(args: &[String]) -> std::io::Result<i32> {
     let Some(job_id) = args.first() else {
-        eprintln!("usage: herdr pane job-log <job_id>");
+        eprintln!("usage: herdr pane job-log <job_id> [--tail N|tail=N]");
         return Ok(2);
     };
-    if args.len() != 1 || !valid_pane_job_id(job_id) {
-        eprintln!("usage: herdr pane job-log <job_id>");
+    if !valid_pane_job_id(job_id) {
+        eprintln!("usage: herdr pane job-log <job_id> [--tail N|tail=N]");
         return Ok(2);
     }
+    let tail_lines = match parse_job_log_tail(&args[1..]) {
+        Ok(tail_lines) => tail_lines,
+        Err(()) => {
+            eprintln!("usage: herdr pane job-log <job_id> [--tail N|tail=N]");
+            return Ok(2);
+        }
+    };
 
     let log_path = pane_job_log_path(job_id)?;
     let text = std::fs::read_to_string(&log_path).map_err(|err| {
@@ -2374,8 +2378,38 @@ fn pane_job_log(args: &[String]) -> std::io::Result<i32> {
             format!("failed to read {}: {err}", log_path.display()),
         )
     })?;
-    print!("{text}");
+    if let Some(tail_lines) = tail_lines {
+        print!("{}", tail_text(&text, tail_lines));
+    } else {
+        print!("{text}");
+    }
     Ok(0)
+}
+
+fn parse_job_log_tail(args: &[String]) -> Result<Option<usize>, ()> {
+    match args {
+        [] => Ok(None),
+        [arg] if arg.starts_with("tail=") => parse_tail_value(&arg["tail=".len()..]).map(Some),
+        [flag, value] if flag == "--tail" => parse_tail_value(value).map(Some),
+        _ => Err(()),
+    }
+}
+
+fn parse_tail_value(value: &str) -> Result<usize, ()> {
+    value.parse::<usize>().map_err(|_| ())
+}
+
+fn tail_text(text: &str, max_lines: usize) -> String {
+    if max_lines == 0 {
+        return String::new();
+    }
+    let mut lines = text.lines().rev().take(max_lines).collect::<Vec<_>>();
+    lines.reverse();
+    let mut result = lines.join("\n");
+    if text.ends_with('\n') && !result.is_empty() {
+        result.push('\n');
+    }
+    result
 }
 
 fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
@@ -2900,9 +2934,12 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
     }
 
     let tail = Arc::new(Mutex::new(String::new()));
-    let mut child = Command::new("/bin/sh")
-        .arg("-lc")
-        .arg(&command)
+    let mut child_command = Command::new("/bin/sh");
+    child_command.arg("-lc").arg(&command);
+    if let Some(path) = path_with_cwd_node_bin()? {
+        child_command.env("PATH", path);
+    }
+    let mut child = child_command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
@@ -2968,20 +3005,42 @@ fn pane_run_notification_line(
     pane_id: &str,
     job_id: &str,
     code: Option<i32>,
-    sample: &str,
+    _sample: &str,
 ) -> String {
-    let mut line = format!(
+    format!(
         "[herdr run] exit={} label={} pane={} 詳細: herdr pane job-log {}",
         exit_code_label(code),
         one_line_field(label),
         pane_id,
         job_id
-    );
-    if let Some(sample) = notification_tail_sample(sample) {
-        line.push_str(" tail=");
-        line.push_str(&sample);
+    )
+}
+
+fn path_with_cwd_node_bin() -> std::io::Result<Option<std::ffi::OsString>> {
+    let cwd = std::env::current_dir()?;
+    path_with_node_bin_from(&cwd, std::env::var_os("PATH").as_deref())
+}
+
+fn path_with_node_bin_from(
+    cwd: &std::path::Path,
+    existing_path: Option<&std::ffi::OsStr>,
+) -> std::io::Result<Option<std::ffi::OsString>> {
+    let node_bin = cwd.join("node_modules").join(".bin");
+    if !node_bin.is_dir() {
+        return Ok(None);
     }
-    line
+
+    let mut paths = existing_path
+        .map(std::env::split_paths)
+        .map(Iterator::collect::<Vec<_>>)
+        .unwrap_or_default();
+    if paths.iter().any(|path| path == &node_bin) {
+        return Ok(None);
+    }
+    paths.insert(0, node_bin);
+    std::env::join_paths(paths)
+        .map(Some)
+        .map_err(|err| std::io::Error::other(format!("failed to construct PATH: {err}")))
 }
 
 fn one_line_field(value: &str) -> String {
@@ -3032,40 +3091,6 @@ fn append_tail_sample(tail: &Arc<Mutex<String>>, chunk: &str) {
             .skip(count - PANE_NOTIFY_SAMPLE_CHARS)
             .collect();
     }
-}
-
-fn notification_tail_sample(sample: &str) -> Option<String> {
-    let mut lines = VecDeque::with_capacity(PANE_NOTIFY_SAMPLE_LINES);
-    for line in sample
-        .lines()
-        .map(str::trim_end)
-        .filter(|line| !line.is_empty())
-    {
-        if lines.len() == PANE_NOTIFY_SAMPLE_LINES {
-            lines.pop_front();
-        }
-        lines.push_back(line.to_string());
-    }
-    if lines.is_empty() {
-        return None;
-    }
-
-    let mut escaped = lines
-        .into_iter()
-        .map(|line| line.replace('\\', "\\\\").replace('\t', "\\t"))
-        .collect::<Vec<_>>()
-        .join("\\n");
-    let count = escaped.chars().count();
-    if count > PANE_RUN_NOTIFICATION_CHARS {
-        escaped = format!(
-            "{}…",
-            escaped
-                .chars()
-                .skip(count - PANE_RUN_NOTIFICATION_CHARS.saturating_sub(1))
-                .collect::<String>()
-        );
-    }
-    Some(escaped)
 }
 
 fn pane_notify_toast(
@@ -3399,7 +3424,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID]");
     eprintln!("  herdr pane run <pane_id> <command>");
     eprintln!("  herdr pane run-notify <pane_id> <command>");
-    eprintln!("  herdr pane job-log <job_id>");
+    eprintln!("  herdr pane job-log <job_id> [--tail N|tail=N]");
     eprintln!("  pane current uses HERDR_PANE_ID first, then the calling process session, then its parent process tree");
     eprintln!("  if pane current cannot identify you, inspect pane list/get/read and fail closed when the candidate is ambiguous");
     eprintln!("  pane send-text writes literal text without Enter; pane run submits command text with Enter");
@@ -3409,7 +3434,8 @@ fn print_pane_help() {
 fn print_run_help() {
     eprintln!("usage: herdr run [--label TEXT] [--cwd PATH] [--split right|down] [--caller <pane>] -- <command...>");
     eprintln!("  spawns a same-space pane beside the caller, starts the command, then returns immediately");
-    eprintln!("  on exit, closes the spawned pane and injects one line into the caller with exit, label, pane, tail log, and `herdr pane job-log <job>`");
+    eprintln!("  on exit, closes the spawned pane and injects one line into the caller with exit, label, pane, and `herdr pane job-log <job>`");
+    eprintln!("  commands run with the pane cwd's node_modules/.bin prepended to PATH when that directory exists");
     eprintln!("  caller resolution fails closed; pass --caller <pane> when the calling pane cannot be identified");
 }
 
@@ -3521,23 +3547,10 @@ mod tests {
 
         assert_eq!(
             line,
-            "[herdr run] exit=0 label=cargo_test pane=p_2 詳細: herdr pane job-log job-123 tail=hello\\nworld"
+            "[herdr run] exit=0 label=cargo_test pane=p_2 詳細: herdr pane job-log job-123"
         );
         assert!(!line.contains('\n'));
-    }
-
-    #[test]
-    fn run_notification_tail_keeps_last_100_nonempty_lines() {
-        let sample = (0..105)
-            .map(|line| format!("line-{line}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let tail = notification_tail_sample(&sample).unwrap();
-
-        assert!(!tail.contains("line-0\\n"));
-        assert!(tail.starts_with("line-5\\n"));
-        assert!(tail.ends_with("line-104"));
+        assert!(!line.contains("tail="));
     }
 
     #[test]
@@ -3549,6 +3562,58 @@ mod tests {
         ]);
 
         assert_eq!(command, "'sh' '-c' 'sleep 3; echo '\\''done'\\'''");
+    }
+
+    #[test]
+    fn pane_job_log_tail_accepts_legacy_tail_equals_arg() {
+        let args = vec!["tail=200".to_string()];
+        assert_eq!(parse_job_log_tail(&args), Ok(Some(200)));
+    }
+
+    #[test]
+    fn tail_text_returns_last_n_lines() {
+        assert_eq!(tail_text("a\nb\nc\n", 2), "b\nc\n");
+        assert_eq!(tail_text("a\nb\nc", 2), "b\nc");
+        assert_eq!(tail_text("a\nb\nc", 0), "");
+    }
+
+    #[test]
+    fn path_with_node_bin_prepends_existing_cwd_node_modules_bin() {
+        let base = std::env::temp_dir().join(format!(
+            "herdr-node-bin-test-{}",
+            unix_millis(SystemTime::now())
+        ));
+        let node_bin = base.join("node_modules").join(".bin");
+        std::fs::create_dir_all(&node_bin).unwrap();
+
+        let existing = std::env::join_paths([std::path::PathBuf::from("/usr/bin")]).unwrap();
+        let path = path_with_node_bin_from(&base, Some(&existing))
+            .unwrap()
+            .expect("node_modules/.bin should be prepended");
+        let paths = std::env::split_paths(&path).collect::<Vec<_>>();
+
+        assert_eq!(paths.first(), Some(&node_bin));
+        assert!(paths.contains(&std::path::PathBuf::from("/usr/bin")));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn path_with_node_bin_returns_none_when_missing_or_already_present() {
+        let base = std::env::temp_dir().join(format!(
+            "herdr-node-bin-test-{}",
+            unix_millis(SystemTime::now())
+        ));
+        assert!(path_with_node_bin_from(&base, None).unwrap().is_none());
+
+        let node_bin = base.join("node_modules").join(".bin");
+        std::fs::create_dir_all(&node_bin).unwrap();
+        let existing = std::env::join_paths([node_bin.clone()]).unwrap();
+        assert!(path_with_node_bin_from(&base, Some(&existing))
+            .unwrap()
+            .is_none());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
