@@ -63,6 +63,8 @@ pub struct TabSnapshot {
     #[serde(default)]
     pub custom_name: Option<String>,
     pub layout: LayoutSnapshot,
+    #[serde(default)]
+    pub pane_order: Vec<u32>,
     pub panes: HashMap<u32, PaneSnapshot>,
     pub zoomed: bool,
     #[serde(default)]
@@ -118,6 +120,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
         let tab = TabSnapshot {
             custom_name: None,
             layout: snap.layout,
+            pane_order: Vec::new(),
             panes: snap.panes,
             zoomed: snap.zoomed,
             focused: snap.focused,
@@ -380,6 +383,12 @@ fn capture_tab(
     TabSnapshot {
         custom_name: tab.custom_name.clone(),
         layout: capture_node(tab.layout.root()),
+        pane_order: tab
+            .layout
+            .pane_ids()
+            .into_iter()
+            .map(|id| id.raw())
+            .collect(),
         panes,
         zoomed: tab.zoomed,
         focused: Some(tab.layout.focused().raw()),
@@ -711,6 +720,7 @@ mod tests {
                         first: Box::new(LayoutSnapshot::Pane(0)),
                         second: Box::new(LayoutSnapshot::Pane(1)),
                     },
+                    pane_order: vec![1, 0],
                     panes,
                     zoomed: false,
                     focused: Some(0),
@@ -737,6 +747,7 @@ mod tests {
             Some("pi-mono")
         );
         assert_eq!(restored.workspaces[0].tabs.len(), 1);
+        assert_eq!(restored.workspaces[0].tabs[0].pane_order, vec![1, 0]);
         assert_eq!(restored.workspaces[0].tabs[0].panes.len(), 2);
         assert_eq!(
             restored.workspaces[0].tabs[0].panes[&0].cwd,
@@ -895,8 +906,31 @@ mod tests {
         assert!(matches!(tab.layout, LayoutSnapshot::Split { .. }));
         assert_eq!(tab.focused, Some(second.raw()));
         assert_eq!(tab.root_pane, Some(root.raw()));
+        assert_eq!(tab.pane_order, vec![root.raw(), second.raw()]);
         assert!(tab.zoomed);
         assert_eq!(tab.panes.len(), 2);
+    }
+
+    #[test]
+    fn capture_contract_tracks_user_reordered_panes() {
+        let mut state = state_with_workspaces(&["one"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let second = state.workspaces[0].test_split(Direction::Horizontal);
+        let rightmost = state.workspaces[0].test_split(Direction::Horizontal);
+        state.workspaces[0].tabs[0].layout.focus_pane(rightmost);
+        assert!(state.workspaces[0].tabs[0]
+            .layout
+            .move_focused_to_root_split_side(
+                Direction::Horizontal,
+                crate::layout::RootSplitSide::First,
+            ));
+
+        let snapshot = capture_from_state(&state);
+
+        assert_eq!(
+            snapshot.workspaces[0].tabs[0].pane_order,
+            vec![rightmost.raw(), root.raw(), second.raw()]
+        );
     }
 
     #[test]
@@ -1042,6 +1076,7 @@ mod tests {
                         first: Box::new(LayoutSnapshot::Pane(0)),
                         second: Box::new(LayoutSnapshot::Pane(1)),
                     },
+                    pane_order: vec![0, 1],
                     panes,
                     zoomed: false,
                     focused: Some(0),

@@ -841,21 +841,6 @@ impl AppState {
         self.save_agent_session_ledger();
     }
 
-    fn agent_ledger_entry_for_pane(
-        &self,
-        ws_idx: usize,
-        pane_id: PaneId,
-    ) -> Option<crate::persist::agent_ledger::AgentSessionLedgerEntry> {
-        let ws = self.workspaces.get(ws_idx)?;
-        let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
-        let workspace_id = ws.id.clone();
-        let tab_id = format!("{}:{}", workspace_id, tab_idx + 1);
-        self.agent_session_ledger
-            .get(&workspace_id, &tab_id, pane_id.raw())
-            .filter(|entry| crate::agent_sessions::is_safe_session_id(&entry.session_id))
-            .cloned()
-    }
-
     fn save_agent_session_ledger(&self) {
         if let Some(path) = &self.agent_session_ledger_path {
             if let Err(err) =
@@ -1557,41 +1542,6 @@ impl AppState {
         }
 
         let pane_terminal_id = self.terminal_id_for_pane(ws_idx, pane_id);
-        let ledger_entry = self.agent_ledger_entry_for_pane(ws_idx, pane_id);
-        if let Some(terminal_id) = pane_terminal_id.as_ref() {
-            if self.terminals.get(terminal_id).is_some_and(|terminal| {
-                terminal.effective_agent_label().is_some()
-                    && (ledger_entry.is_some() || terminal_has_restorable_agent_session(terminal))
-            }) {
-                if let Some(terminal) = self.terminals.get_mut(terminal_id) {
-                    if terminal
-                        .agent_session_id
-                        .as_deref()
-                        .is_none_or(|id| !crate::agent_sessions::is_safe_session_id(id))
-                    {
-                        if let Some(entry) = ledger_entry.as_ref() {
-                            terminal.agent_session_id = Some(entry.session_id.clone());
-                            terminal.agent_session_agent =
-                                crate::detect::parse_agent_label(&entry.agent);
-                        }
-                    }
-                    terminal.detected_agent = None;
-                    terminal.fallback_state = AgentState::Unknown;
-                    terminal.hook_authority = None;
-                    terminal.state = AgentState::Unknown;
-                    terminal.revision = terminal.revision.saturating_add(1);
-                }
-                if let Some(runtime) = self.terminal_runtimes.remove(terminal_id) {
-                    runtime.shutdown();
-                }
-                self.mark_session_dirty();
-                info!(
-                    pane = pane_id.raw(),
-                    "preserving restorable agent pane after child exit"
-                );
-                return;
-            }
-        }
         let workspace_terminal_ids = self.terminal_ids_for_workspace(ws_idx);
         let should_close_workspace = {
             let ws = &mut self.workspaces[ws_idx];
@@ -1622,24 +1572,6 @@ impl AppState {
             self.remove_unattached_terminal_ids(pane_terminal_id);
         }
     }
-}
-
-fn terminal_has_restorable_agent_session(terminal: &crate::terminal::TerminalState) -> bool {
-    if terminal
-        .agent_session_id
-        .as_deref()
-        .is_some_and(crate::agent_sessions::is_safe_session_id)
-        && terminal.agent_session_agent.is_some()
-    {
-        return true;
-    }
-    terminal.pending_restore.as_ref().is_some_and(|restore| {
-        restore
-            .session_id
-            .as_deref()
-            .is_some_and(crate::agent_sessions::is_safe_session_id)
-            && crate::detect::parse_agent_label(&restore.agent).is_some()
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2245,9 +2177,10 @@ mod tests {
     }
 
     #[test]
-    fn pane_died_preserves_restorable_agent_pane() {
+    fn pane_died_removes_restorable_agent_pane_and_reflows_survivors() {
         let mut state = app_with_workspaces(&["test"]);
         let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let survivor = state.workspaces[0].test_split(Direction::Horizontal);
         let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
         let terminal = state.terminals.get_mut(&terminal_id).unwrap();
         terminal.agent_session_agent = Some(Agent::Codex);
@@ -2258,20 +2191,20 @@ mod tests {
         state.handle_pane_died(pane_id);
 
         assert_eq!(state.workspaces.len(), 1);
-        assert!(state.workspaces[0].pane_state(pane_id).is_some());
-        let terminal = state.terminals.get(&terminal_id).unwrap();
-        assert_eq!(
-            terminal.agent_session_id.as_deref(),
-            Some("019ef3a2-749c-7b52-b324-2c20cb0b2379")
-        );
-        assert_eq!(terminal.agent_session_agent, Some(Agent::Codex));
-        assert_eq!(terminal.state, AgentState::Unknown);
+        assert!(state.workspaces[0].pane_state(pane_id).is_none());
+        let panes = state.workspaces[0].tabs[0]
+            .layout
+            .panes(ratatui::layout::Rect::new(0, 0, 120, 40));
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0].id, survivor);
+        assert_eq!(panes[0].rect, ratatui::layout::Rect::new(0, 0, 120, 40));
     }
 
     #[test]
-    fn pane_died_preserves_agent_pane_from_ledger_when_terminal_session_is_missing() {
+    fn pane_died_removes_agent_pane_even_when_ledger_has_a_session() {
         let mut state = app_with_workspaces(&["test"]);
         let pane_id = state.workspaces[0].tabs[0].root_pane;
+        state.workspaces[0].test_split(Direction::Horizontal);
         let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
         let workspace_id = state.workspaces[0].id.clone();
         let terminal = state.terminals.get_mut(&terminal_id).unwrap();
@@ -2295,14 +2228,7 @@ mod tests {
         state.handle_pane_died(pane_id);
 
         assert_eq!(state.workspaces.len(), 1);
-        assert!(state.workspaces[0].pane_state(pane_id).is_some());
-        let terminal = state.terminals.get(&terminal_id).unwrap();
-        assert_eq!(
-            terminal.agent_session_id.as_deref(),
-            Some("019ef3a2-749c-7b52-b324-2c20cb0b2379")
-        );
-        assert_eq!(terminal.agent_session_agent, Some(Agent::Codex));
-        assert_eq!(terminal.state, AgentState::Unknown);
+        assert!(state.workspaces[0].pane_state(pane_id).is_none());
     }
 
     #[test]

@@ -21,7 +21,7 @@
 - Pane context menus can now move the selected pane to the left, right, upper, or lower root split and equalize pane sizes.
 - Pane context menus can now rotate pane positions forward or backward while keeping the current split layout and each pane's ID/terminal pairing intact.
 - Workspace and pane context menus can now start Claude Code, Codex, or agy directly as agent panes instead of creating a plain terminal first.
-- Added a bottom pane action bar for cycling layouts, rotating panes, and equalizing pane sizes, plus clickable pane titles that toggle zoom and show a `ZOOM` prefix while active.
+- Added a bottom pane action bar for cycling layouts, including an equal two-row grid, rotating panes, and equalizing pane sizes. Layout cycling and session restore now preserve user-reordered pane sequences, exited agent panes collapse instead of leaving empty layout regions, and clickable pane titles toggle zoom and show a `ZOOM` prefix while active.
 - `herdr pane current` now falls back to resolving the calling process session when `HERDR_PANE_ID` is not set, instead of relying on focus inference.
 - `herdr --help` now prints an AI-readable SKILL.md-style command guide, and `herdr help` prints the same guide.
 - Added `herdr pane run-notify` for long-running pane commands: output streams in the target pane, a job log is saved, and Herdr shows an exit toast with a tail sample and job-log pointer.
