@@ -10,8 +10,8 @@ pub const SESSION_ENV_VAR: &str = "HERDR_SESSION";
 pub const DEFAULT_SESSION_NAME: &str = "default";
 
 const MAX_SESSION_NAME_LEN: usize = 64;
-const STOP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
-const STOP_WAIT_POLL: Duration = Duration::from_millis(25);
+pub(crate) const STOP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const STOP_WAIT_POLL: Duration = Duration::from_millis(25);
 
 static EXPLICIT_SESSION_REQUESTED: AtomicBool = AtomicBool::new(false);
 

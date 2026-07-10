@@ -29,6 +29,7 @@ fn root_help_is_skill_style_and_matches_help_command() {
         "Do not infer the requester pane from the focused pane",
         "herdr pane run-notify",
         "herdr run --label tests -- cargo test",
+        "herdr job list",
     ] {
         assert!(
             stdout.contains(expected),

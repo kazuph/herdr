@@ -228,6 +228,9 @@ fn run_cli(socket_path: &Path, args: &[&str]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_herdr"));
     command.args(args);
     command.env("HERDR_SOCKET_PATH", socket_path);
+    if let Some(base) = socket_path.parent().and_then(Path::parent) {
+        command.env("XDG_CONFIG_HOME", base.join("config"));
+    }
     command.output().unwrap()
 }
 
@@ -1703,6 +1706,7 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
         &socket_path,
         &[
             "run",
+            "--pane",
             "--caller",
             "1-1",
             "--label",
@@ -1815,6 +1819,7 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
         &socket_path,
         &[
             "run",
+            "--pane",
             "--caller",
             "1-1",
             "--label",
@@ -1879,6 +1884,11 @@ fn herdr_run_adds_cwd_node_modules_bin_to_path() {
         ),
     );
     assert!(created["result"]["workspace"]["workspace_id"].is_string());
+    let reported = send_request(
+        &socket_path,
+        r#"{"id":"req_run_agent","method":"pane.report_agent","params":{"pane_id":"1-1","source":"test","agent":"codex","state":"idle"}}"#,
+    );
+    assert!(reported["result"].is_object());
 
     let run = run_cli(
         &socket_path,
@@ -1903,32 +1913,110 @@ fn herdr_run_adds_cwd_node_modules_bin_to_path() {
     let run_json: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
     let job = run_json["job"].as_str().unwrap();
 
-    let waited_notice = run_cli(
-        &socket_path,
-        &[
-            "wait",
-            "output",
-            "1-1",
-            "--match",
-            "[herdr run] exit=0 label=node-bin",
-            "--source",
-            "recent",
-            "--lines",
-            "80",
-            "--timeout",
-            "5000",
-        ],
-    );
-    assert!(
-        waited_notice.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&waited_notice.stderr)
-    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let status = run_cli(&socket_path, &["job", "status", job]);
+        assert!(status.status.success());
+        let status_json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+        if status_json["status"] == "exited" {
+            assert_eq!(status_json["exit_code"], 0);
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "job did not finish: {status_json}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
 
-    let log = run_cli(&socket_path, &["pane", "job-log", job]);
+    let log = run_cli(&socket_path, &["job", "log", job]);
     assert!(log.status.success());
     let log_text = String::from_utf8(log.stdout).unwrap();
     assert!(log_text.contains("local-tool-ok"), "{log_text}");
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
+fn herdr_job_cancel_kills_term_ignoring_process_tree_before_marking_cancelled() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+    let child_pid_path = base.join("term-ignoring-child.pid");
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_cancel_workspace","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+    let reported = send_request(
+        &socket_path,
+        r#"{"id":"req_cancel_agent","method":"pane.report_agent","params":{"pane_id":"1-1","source":"test","agent":"codex","state":"idle"}}"#,
+    );
+    assert!(reported["result"].is_object());
+
+    let script = format!(
+        "trap '' TERM; (trap '' TERM; while :; do sleep 1; done) & child=$!; echo $child > '{}'; wait",
+        child_pid_path.display()
+    );
+    let run = run_cli(
+        &socket_path,
+        &[
+            "run",
+            "--caller",
+            "1-1",
+            "--completion",
+            "none",
+            "--",
+            "/bin/sh",
+            "-c",
+            &script,
+        ],
+    );
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let run_json: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let job = run_json["job"].as_str().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !child_pid_path.exists() {
+        assert!(Instant::now() < deadline, "child pid was not written");
+        thread::sleep(Duration::from_millis(25));
+    }
+    let child_pid: i32 = fs::read_to_string(&child_pid_path)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let cancelled = run_cli(&socket_path, &["job", "cancel", job]);
+    assert!(
+        cancelled.status.success(),
+        "stderr: {} stdout: {}",
+        String::from_utf8_lossy(&cancelled.stderr),
+        String::from_utf8_lossy(&cancelled.stdout)
+    );
+    let cancelled_json: serde_json::Value = serde_json::from_slice(&cancelled.stdout).unwrap();
+    assert_eq!(cancelled_json["status"], "cancelled");
+    let status = run_cli_json(&socket_path, &["job", "status", job]);
+    assert_eq!(status["status"], "cancelled");
+    assert_eq!(
+        unsafe { libc::kill(child_pid, 0) },
+        -1,
+        "child {child_pid} survived cancel"
+    );
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
 
     cleanup_spawned_herdr(herdr, base);
 }

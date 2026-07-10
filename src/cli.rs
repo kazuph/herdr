@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -46,10 +47,12 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "terminal" => run_terminal_command(&args[2..])?,
         "pane" => run_pane_command(&args[2..])?,
         "run" => herdr_run(&args[2..])?,
+        "job" => run_job_command(&args[2..])?,
         "msg" => run_msg_command(&args[2..])?,
         "wait" => run_wait_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
         "__pane-notify-run" => pane_notify_runner(&args[2..])?,
+        "__background-run" => background_runner(&args[2..])?,
         _ => return Ok(CommandOutcome::NotCli),
     };
 
@@ -493,11 +496,149 @@ fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
     }
 }
 
+fn run_job_command(args: &[String]) -> std::io::Result<i32> {
+    match args.first().map(String::as_str) {
+        Some("list") if args.len() == 1 => job_list(),
+        Some("status") if args.len() == 2 => job_status(&args[1]),
+        Some("log") if args.len() >= 2 => pane_job_log(&args[1..]),
+        Some("cancel") if args.len() == 2 => job_cancel(&args[1]),
+        Some("help" | "--help" | "-h") => {
+            print_job_help();
+            Ok(0)
+        }
+        _ => {
+            print_job_help();
+            Ok(2)
+        }
+    }
+}
+
+fn job_list() -> std::io::Result<i32> {
+    let jobs = crate::job::JobStore::open_active()
+        .and_then(|store| store.list())
+        .map_err(std::io::Error::other)?;
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({ "jobs": jobs }))?
+    );
+    Ok(0)
+}
+
+fn job_status(job_id: &str) -> std::io::Result<i32> {
+    if !valid_pane_job_id(job_id) {
+        eprintln!("invalid job id: {job_id}");
+        return Ok(2);
+    }
+    let Some(job) = crate::job::JobStore::open_active()
+        .and_then(|store| store.get(job_id))
+        .map_err(std::io::Error::other)?
+    else {
+        eprintln!("job not found: {job_id}");
+        return Ok(1);
+    };
+    println!("{}", serde_json::to_string(&job)?);
+    Ok(0)
+}
+
+fn job_cancel(job_id: &str) -> std::io::Result<i32> {
+    if !valid_pane_job_id(job_id) {
+        eprintln!("invalid job id: {job_id}");
+        return Ok(2);
+    }
+    let store = crate::job::JobStore::open_active().map_err(std::io::Error::other)?;
+    let Some(job) = store.get(job_id).map_err(std::io::Error::other)? else {
+        eprintln!("job not found: {job_id}");
+        return Ok(1);
+    };
+    if !matches!(job.status.as_str(), "queued" | "running") {
+        eprintln!("job {job_id} is not running (status={})", job.status);
+        return Ok(1);
+    }
+    let Some(pid) = job.runner_pid else {
+        eprintln!("job {job_id} has not published its runner pid yet; retry cancel");
+        return Ok(1);
+    };
+    let process_group = unsafe { libc::getpgid(pid as i32) };
+    if process_group != pid as i32 {
+        eprintln!("job {job_id} runner process group is no longer provable; refusing to signal");
+        return Ok(1);
+    }
+    if !store
+        .mark_cancelling(job_id)
+        .map_err(std::io::Error::other)?
+    {
+        eprintln!("job {job_id} reached a terminal state before cancellation acquired it");
+        return Ok(1);
+    }
+    signal_process_group(pid, libc::SIGTERM)?;
+    let mut escalated = false;
+    if !wait_for_process_group_exit(pid, crate::session::STOP_WAIT_TIMEOUT) {
+        escalated = true;
+        signal_process_group(pid, libc::SIGKILL)?;
+        if !wait_for_process_group_exit(pid, crate::session::STOP_WAIT_TIMEOUT) {
+            eprintln!(
+                "job {job_id} process group {pid} survived SIGKILL; status remains cancelling"
+            );
+            return Ok(1);
+        }
+    }
+    let cancelled = store
+        .mark_cancelled(job_id, unix_millis(SystemTime::now()))
+        .map_err(std::io::Error::other)?;
+    if cancelled && job.completion != "none" {
+        enqueue_job_mailbox(
+            &job,
+            format!(
+                "[herdr run] cancelled label={} job={} details: herdr job log {}",
+                one_line_field(&job.label),
+                job.id,
+                job.id
+            ),
+        )?;
+    }
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({
+            "job": job_id,
+            "status": "cancelled",
+            "signal": if escalated { "KILL" } else { "TERM" },
+        }))?
+    );
+    Ok(0)
+}
+
+fn signal_process_group(pid: u32, signal: i32) -> std::io::Result<()> {
+    let result = unsafe { libc::kill(-(pid as i32), signal) };
+    if result == -1 {
+        let err = std::io::Error::last_os_error();
+        if err.raw_os_error() != Some(libc::ESRCH) {
+            return Err(err);
+        }
+    }
+    Ok(())
+}
+
+fn wait_for_process_group_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let result = unsafe { libc::kill(-(pid as i32), 0) };
+        if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(crate::session::STOP_WAIT_POLL);
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct RunSpawnOutput {
-    pane: String,
     job: String,
     label: String,
+    mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pane: Option<String>,
 }
 
 fn herdr_run(args: &[String]) -> std::io::Result<i32> {
@@ -505,6 +646,10 @@ fn herdr_run(args: &[String]) -> std::io::Result<i32> {
     let mut cwd = None;
     let mut split = SplitDirection::Down;
     let mut caller = None;
+    let mut pane_mode = false;
+    let mut close_on_success = false;
+    let mut completion = "summary".to_string();
+    let mut completion_set = false;
     let mut index = 0;
 
     while index < args.len() {
@@ -537,6 +682,10 @@ fn herdr_run(args: &[String]) -> std::io::Result<i32> {
                 split = parse_split_direction(value)?;
                 index += 2;
             }
+            "--pane" => {
+                pane_mode = true;
+                index += 1;
+            }
             "--caller" => {
                 let Some(value) = args.get(index + 1) else {
                     eprintln!("missing value for --caller");
@@ -546,7 +695,21 @@ fn herdr_run(args: &[String]) -> std::io::Result<i32> {
                 index += 2;
             }
             "--close-on-success" => {
+                close_on_success = true;
                 index += 1;
+            }
+            "--completion" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --completion");
+                    return Ok(2);
+                };
+                if !matches!(value.as_str(), "summary" | "full" | "none") {
+                    eprintln!("invalid --completion: {value} (expected summary, full, or none)");
+                    return Ok(2);
+                }
+                completion = value.clone();
+                completion_set = true;
+                index += 2;
             }
             "--help" | "-h" | "help" => {
                 print_run_help();
@@ -570,8 +733,18 @@ fn herdr_run(args: &[String]) -> std::io::Result<i32> {
     }
 
     let command_args = &args[index..];
-    let command = shell_command_from_args(command_args);
     let label = label.unwrap_or_else(|| default_run_label(command_args));
+    if !pane_mode && (args.iter().any(|arg| arg == "--split") || close_on_success) {
+        eprintln!("--split and --close-on-success require --pane");
+        print_run_help();
+        return Ok(2);
+    }
+    if pane_mode && completion_set {
+        eprintln!(
+            "--completion applies only to pane-less background jobs; remove it or omit --pane"
+        );
+        return Ok(2);
+    }
     let caller = match resolve_run_caller(caller.as_deref()) {
         Ok(caller) => caller,
         Err(err) => {
@@ -580,6 +753,23 @@ fn herdr_run(args: &[String]) -> std::io::Result<i32> {
             return Ok(1);
         }
     };
+
+    if pane_mode {
+        return herdr_run_in_pane(command_args, label, cwd, split, caller, close_on_success);
+    }
+
+    herdr_run_background(command_args, label, cwd, caller, completion)
+}
+
+fn herdr_run_in_pane(
+    command_args: &[String],
+    label: String,
+    cwd: Option<String>,
+    split: SplitDirection,
+    caller: String,
+    close_on_success: bool,
+) -> std::io::Result<i32> {
+    let command = shell_command_from_args(command_args);
 
     let split_response = send_request(&Request {
         id: "cli:run:split".into(),
@@ -627,8 +817,12 @@ fn herdr_run(args: &[String]) -> std::io::Result<i32> {
         shell_quote(&job),
         "--run-label".to_string(),
         shell_quote(&label),
-        "--close-on-exit".to_string(),
     ];
+    if close_on_success {
+        runner_parts.push("--close-on-success".to_string());
+    } else {
+        runner_parts.push("--close-on-exit".to_string());
+    }
     runner_parts.push("--".to_string());
     runner_parts.push(shell_quote(&command));
     let runner = runner_parts.join(" ");
@@ -641,7 +835,100 @@ fn herdr_run(args: &[String]) -> std::io::Result<i32> {
 
     println!(
         "{}",
-        serde_json::to_string(&RunSpawnOutput { pane, job, label })?
+        serde_json::to_string(&RunSpawnOutput {
+            job,
+            label,
+            mode: "pane".into(),
+            pane: Some(pane),
+        })?
+    );
+    Ok(0)
+}
+
+fn herdr_run_background(
+    command_args: &[String],
+    label: String,
+    cwd: Option<String>,
+    caller: String,
+    completion: String,
+) -> std::io::Result<i32> {
+    let cwd = cwd
+        .map(std::path::PathBuf::from)
+        .unwrap_or(std::env::current_dir()?);
+    if !cwd.is_dir() {
+        eprintln!("--cwd is not a directory: {}", cwd.display());
+        return Ok(2);
+    }
+    let caller_identity = resolve_agent_target(&caller, "cli:run:agent")?;
+    if caller_identity.get("error").is_some() {
+        eprintln!("caller pane {caller} has no exact agent identity");
+        return Ok(1);
+    }
+    let caller_agent = caller_identity["result"]["agent"]["name"]
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| {
+            caller_identity["result"]["agent"]["agent"]
+                .as_str()
+                .map(|_| caller.clone())
+        })
+        .ok_or_else(|| std::io::Error::other("caller pane has no reported agent identity"))?;
+
+    let job = new_pane_job_id();
+    let log_path = pane_job_log_path(&job)?;
+    let record = crate::job::JobRecord {
+        id: job.clone(),
+        label: label.clone(),
+        command: shell_command_from_args(command_args),
+        cwd: cwd.display().to_string(),
+        caller_pane: caller.clone(),
+        caller_agent: caller_agent.clone(),
+        completion: completion.clone(),
+        status: "queued".into(),
+        runner_pid: None,
+        exit_code: None,
+        started_unix_ms: None,
+        finished_unix_ms: None,
+        log_path: log_path.display().to_string(),
+    };
+    crate::job::JobStore::open_active()
+        .and_then(|store| store.insert(&record))
+        .map_err(std::io::Error::other)?;
+
+    let exe = std::env::current_exe()?;
+    let mut runner = Command::new(exe);
+    runner
+        .arg("__background-run")
+        .arg("--job-id")
+        .arg(&job)
+        .arg("--")
+        .args(command_args)
+        .current_dir(&cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    unsafe {
+        runner.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    if let Err(err) = runner.spawn() {
+        let _ = crate::job::JobStore::open_active()
+            .and_then(|store| store.mark_start_failed(&job, 127, unix_millis(SystemTime::now())));
+        return Err(err);
+    }
+
+    println!(
+        "{}",
+        serde_json::to_string(&RunSpawnOutput {
+            job,
+            label,
+            mode: "background".into(),
+            pane: None,
+        })?
     );
     Ok(0)
 }
@@ -2856,6 +3143,7 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
     let mut job_id = None;
     let mut run_label = None;
     let mut close_on_exit = false;
+    let mut close_on_success = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -2876,7 +3164,7 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
                 index += 2;
             }
             "--close-on-success" => {
-                close_on_exit = true;
+                close_on_success = true;
                 index += 1;
             }
             "--close-on-exit" => {
@@ -2993,11 +3281,171 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
         let notification = pane_run_notification_line(&label, &target, &job_id, code, &sample);
         let _ = send_pane_input_text_enter(&parent, notification);
     }
-    if close_on_exit {
+    if close_on_exit || (close_on_success && code == Some(0)) {
         let _ = send_ok_request(Method::PaneClose(PaneTarget { pane_id: target }));
     }
 
     Ok(code.unwrap_or(1))
+}
+
+fn background_runner(args: &[String]) -> std::io::Result<i32> {
+    let Some(job_id_index) = args.iter().position(|arg| arg == "--job-id") else {
+        eprintln!("usage: herdr __background-run --job-id ID -- <argv...>");
+        return Ok(2);
+    };
+    let Some(job_id) = args
+        .get(job_id_index + 1)
+        .filter(|id| valid_pane_job_id(id))
+    else {
+        eprintln!("usage: herdr __background-run --job-id ID -- <argv...>");
+        return Ok(2);
+    };
+    let Some(separator) = args.iter().position(|arg| arg == "--") else {
+        eprintln!("usage: herdr __background-run --job-id ID -- <argv...>");
+        return Ok(2);
+    };
+    let command_args = &args[separator + 1..];
+    let Some((program, program_args)) = command_args.split_first() else {
+        eprintln!("usage: herdr __background-run --job-id ID -- <argv...>");
+        return Ok(2);
+    };
+
+    let store = crate::job::JobStore::open_active().map_err(std::io::Error::other)?;
+    let Some(job) = store.get(job_id).map_err(std::io::Error::other)? else {
+        eprintln!("job not found: {job_id}");
+        return Ok(1);
+    };
+    let started = SystemTime::now();
+    store
+        .mark_running(job_id, std::process::id(), unix_millis(started))
+        .map_err(std::io::Error::other)?;
+    let log_path = std::path::PathBuf::from(&job.log_path);
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let log = Arc::new(Mutex::new(std::fs::File::create(&log_path)?));
+    {
+        let mut log = log
+            .lock()
+            .map_err(|_| std::io::Error::other("job log lock poisoned"))?;
+        writeln!(log, "job_id: {job_id}")?;
+        writeln!(log, "caller_pane: {}", job.caller_pane)?;
+        writeln!(log, "command: {}", job.command)?;
+        writeln!(log, "cwd: {}", job.cwd)?;
+        writeln!(log, "started_unix_ms: {}", unix_millis(started))?;
+        writeln!(log)?;
+    }
+
+    let tail = Arc::new(Mutex::new(String::new()));
+    let mut command = Command::new(program);
+    command
+        .args(program_args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(path) = path_with_cwd_node_bin()? {
+        command.env("PATH", path);
+    }
+    let status = match command.spawn() {
+        Ok(mut child) => {
+            let stdout_thread = child.stdout.take().map(|stdout| {
+                stream_job_output(stdout, std::io::sink(), log.clone(), tail.clone(), "stdout")
+            });
+            let stderr_thread = child.stderr.take().map(|stderr| {
+                stream_job_output(stderr, std::io::sink(), log.clone(), tail.clone(), "stderr")
+            });
+            let status = child.wait()?;
+            if let Some(thread) = stdout_thread {
+                let _ = thread.join();
+            }
+            if let Some(thread) = stderr_thread {
+                let _ = thread.join();
+            }
+            status
+        }
+        Err(err) => {
+            if let Ok(mut log) = log.lock() {
+                let _ = writeln!(log, "[runner] failed to spawn: {err}");
+            }
+            let completed = store
+                .mark_finished(job_id, Some(127), unix_millis(SystemTime::now()))
+                .map_err(std::io::Error::other)?;
+            if completed {
+                enqueue_job_completion(&job, Some(127), &log_path)?;
+            }
+            return Ok(127);
+        }
+    };
+    let finished = SystemTime::now();
+    let code = status.code();
+    {
+        let mut log = log
+            .lock()
+            .map_err(|_| std::io::Error::other("job log lock poisoned"))?;
+        writeln!(log)?;
+        writeln!(log, "finished_unix_ms: {}", unix_millis(finished))?;
+        writeln!(log, "exit_code: {}", exit_code_label(code))?;
+    }
+    let completed = store
+        .mark_finished(job_id, code, unix_millis(finished))
+        .map_err(std::io::Error::other)?;
+    if completed {
+        enqueue_job_completion(&job, code, &log_path)?;
+    }
+    Ok(code.unwrap_or(1))
+}
+
+fn enqueue_job_mailbox(job: &crate::job::JobRecord, body: String) -> std::io::Result<()> {
+    let response = send_request(&Request {
+        id: format!("job:{}:completion", job.id),
+        method: Method::MsgSend(MsgSendParams {
+            room: "herdr-jobs".into(),
+            project: job.cwd.clone(),
+            from_agent: "herdr-run".into(),
+            to: job.caller_agent.clone(),
+            body: body.clone(),
+        }),
+    });
+    if matches!(response, Ok(ref value) if value.get("error").is_none()) {
+        return Ok(());
+    }
+
+    // The server may be restarting. Writing the same mailbox database keeps
+    // completion durable; startup recovery nudges the exact caller when idle.
+    let mut store = crate::msg::MsgStore::open_active().map_err(std::io::Error::other)?;
+    store
+        .insert_messages(
+            "herdr-jobs",
+            &job.cwd,
+            "herdr-run",
+            std::slice::from_ref(&job.caller_agent),
+            &body,
+        )
+        .map_err(std::io::Error::other)?;
+    Ok(())
+}
+
+fn enqueue_job_completion(
+    job: &crate::job::JobRecord,
+    code: Option<i32>,
+    log_path: &std::path::Path,
+) -> std::io::Result<()> {
+    if job.completion == "none" {
+        return Ok(());
+    }
+    let summary = format!(
+        "[herdr run] exit={} label={} job={} details: herdr job log {}",
+        exit_code_label(code),
+        one_line_field(&job.label),
+        job.id,
+        job.id
+    );
+    let body = if job.completion == "full" {
+        let output = std::fs::read_to_string(log_path)?;
+        format!("{summary}\n\n{output}")
+    } else {
+        summary
+    };
+    enqueue_job_mailbox(job, body)
 }
 
 fn pane_run_notification_line(
@@ -3400,6 +3848,14 @@ fn print_msg_help() {
     eprintln!("  send targets accept agent names, pane targets, or '*' for room broadcast");
 }
 
+fn print_job_help() {
+    eprintln!("herdr job commands:");
+    eprintln!("  herdr job list");
+    eprintln!("  herdr job status <job_id>");
+    eprintln!("  herdr job log <job_id> [--tail N|tail=N]");
+    eprintln!("  herdr job cancel <job_id>");
+}
+
 fn print_terminal_help() {
     eprintln!("herdr terminal commands:");
     eprintln!("  herdr terminal attach <terminal_id> [--takeover]");
@@ -3432,10 +3888,16 @@ fn print_pane_help() {
 }
 
 fn print_run_help() {
-    eprintln!("usage: herdr run [--label TEXT] [--cwd PATH] [--split right|down] [--caller <pane>] -- <command...>");
-    eprintln!("  spawns a same-space pane beside the caller, starts the command, then returns immediately");
-    eprintln!("  on exit, closes the spawned pane and injects one line into the caller with exit, label, pane, and `herdr pane job-log <job>`");
-    eprintln!("  commands run with the pane cwd's node_modules/.bin prepended to PATH when that directory exists");
+    eprintln!("usage: herdr run [--label TEXT] [--cwd PATH] [--caller <pane>] [--completion summary|full|none] [--pane [--split right|down] [--close-on-success]] -- <command...>");
+    eprintln!("  default: starts a pane-less, non-interactive background job and returns its job id immediately");
+    eprintln!("  --pane: starts the command in a visible same-space pane; use this for interactive/TTY commands");
+    eprintln!(
+        "  --pane closes after any exit by default; --close-on-success keeps a failed pane open"
+    );
+    eprintln!("  --split and --close-on-success are valid only with --pane");
+    eprintln!("  background completion is durable mailbox delivery to the exact caller: summary (default), full, or none");
+    eprintln!("  inspect background jobs with `herdr job list|status|log|cancel`");
+    eprintln!("  commands inherit cwd and environment; cwd/node_modules/.bin is prepended to PATH when present");
     eprintln!("  caller resolution fails closed; pass --caller <pane> when the calling pane cannot be identified");
 }
 

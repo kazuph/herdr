@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `herdr run` now starts pane-less background jobs by default, with durable idle-gated mailbox completion, persistent status/logs, cancellation, and server-restart recovery. Use `--pane` for the previous visible same-space execution.
+
 ### Added
 - Added workspace sidebar sections for `⭐ favorites`, `💼 work`, and `🏠 personal`, with right-click workspace actions to assign sections and clickable section headers to collapse or expand each section.
 - Added `[new]` buttons to workspace sidebar section headers so new spaces can be created directly inside favorites, work, personal, or spaces.

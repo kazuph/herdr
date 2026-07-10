@@ -30,6 +30,7 @@ mod ghostty;
 mod input;
 mod integration;
 mod ipc;
+mod job;
 mod kitty_graphics;
 mod layout;
 mod logging;
@@ -73,7 +74,7 @@ description: Terminal workspace manager for AI coding agents. Use this CLI to co
 - Do not infer the requester pane from the focused pane, active window, pane list order, or UI selection.
 - If `pane current` still cannot identify the pane, inspect `herdr pane list`, `herdr pane get <pane_id>`, and `herdr pane read <pane_id> --source recent --lines 40`; continue only when one candidate is proven.
 - Treat `p_...`, workspace-local ids like `1-2`, global ids like `23`, and tmux-style ids like `%23` as Herdr pane targets when they are accepted by Herdr commands.
-- Use `herdr run -- <command...>` when a long command should start in a new same-space pane and report completion back to the caller.
+- Use `herdr run -- <command...>` for non-interactive background work with durable idle-gated completion. Add `--pane` for interactive/TTY work in a visible same-space pane.
 - Use `herdr pane run-notify` for long-running commands when completion should be reported inside Herdr.
 - Use `herdr agent ...` only for AI agent terminals. Use `herdr pane ...` for shells, tests, servers, and ordinary commands.
 
@@ -92,7 +93,8 @@ herdr workspace <subcommand> ...
 herdr tab <subcommand> ...
 herdr agent <subcommand> ...
 herdr msg <subcommand> ...
-herdr run [--label TEXT] [--cwd PATH] [--split right|down] [--caller <pane>] -- <command...>
+herdr run [--label TEXT] [--cwd PATH] [--caller <pane>] [--completion summary|full|none] [--pane [--split right|down] [--close-on-success]] -- <command...>
+herdr job <subcommand> ...
 herdr pane <subcommand> ...
 herdr wait <subcommand> ...
 herdr session <subcommand> ...
@@ -110,7 +112,8 @@ herdr session <subcommand> ...
 | `herdr tab <subcommand>` | Create, list, rename, or focus tabs. |
 | `herdr agent <subcommand>` | List, start, read, send to, focus, attach to, rename, restore, or wait on AI agents. |
 | `herdr msg <subcommand>` | Send, read, tail, and list SQLite mailbox messages between Herdr agents. |
-| `herdr run -- <command...>` | Spawn a same-space pane, run a command, and inject a one-line exit notification into the caller pane. |
+| `herdr run -- <command...>` | Start a pane-less background job with durable idle-gated completion; add `--pane` for visible interactive execution. |
+| `herdr job <subcommand>` | List, inspect, read logs for, or cancel background jobs. |
 | `herdr pane <subcommand>` | List, split, read, run, notify, focus, rename, or close panes. |
 | `herdr wait <subcommand>` | Block until pane output or agent status matches. |
 | `herdr session <subcommand>` | Manage named persistent sessions. |
@@ -124,6 +127,8 @@ herdr pane split <pane_id> right
 herdr pane run <pane_id> <command>
 herdr pane run-notify <pane_id> <command>
 herdr run --label tests -- cargo test
+herdr run --pane --label dev-server -- npm run dev
+herdr job list
 herdr pane read <pane_id>
 herdr agent start --kind codex --cwd <path>
 herdr agent send <agent_target> <message>
@@ -151,6 +156,7 @@ herdr config --help
 herdr workspace --help
 herdr tab --help
 herdr agent --help
+herdr job --help
 herdr pane --help
 herdr wait --help
 herdr session --help

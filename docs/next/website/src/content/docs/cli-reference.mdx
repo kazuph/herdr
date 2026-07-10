@@ -186,3 +186,17 @@ Use `wait output` for normal commands and servers. Use `wait agent-status` for c
 | `HERDR_SOCKET_PATH` | Low-level socket path override. |
 | `HERDR_LOG` | Set log filter, for example `HERDR_LOG=herdr=debug`. |
 | `HERDR_DISABLE_SOUND` | Disable sound playback even when sound notifications are enabled. |
+
+# Background jobs
+
+`herdr run -- <command...>` starts a non-interactive job without creating a pane and immediately returns a structured job id. The detached runner inherits the launching environment and cwd, keeps the full stdout/stderr log, and survives a Herdr server restart.
+
+Use `--completion summary|full|none` to control the durable mailbox result sent to the exact caller after it becomes idle. Use `herdr job list`, `herdr job status <job>`, `herdr job log <job>`, and `herdr job cancel <job>` to manage jobs.
+
+Interactive and TTY commands require visible pane mode:
+
+```sh
+herdr run --pane --split right --close-on-success -- npm run dev
+```
+
+Visible panes close after success or failure by default. `--close-on-success` keeps a failed pane open for inspection. Both `--split` and `--close-on-success` are rejected unless `--pane` is present. Caller resolution uses `herdr pane current` semantics and fails closed when the exact caller cannot be proven.
