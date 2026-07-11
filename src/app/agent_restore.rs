@@ -395,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn pane_session_lifecycle_restores_same_id_after_snapshot_and_pane_died() {
+    fn pane_session_lifecycle_restores_from_snapshot_but_removes_exited_pane() {
         let mut state = crate::app::state::AppState::test_new();
         state.workspaces = vec![crate::workspace::Workspace::test_new("work")];
         state.ensure_test_terminals();
@@ -452,40 +452,8 @@ mod tests {
         terminal.state = crate::detect::AgentState::Working;
         state.handle_app_event(crate::events::AppEvent::PaneDied { pane_id });
 
-        let second_snapshot = crate::persist::capture(
-            &state.workspaces,
-            &state.terminals,
-            &state.terminal_runtimes,
-            state.active,
-            state.selected,
-            state.agent_panel_scope,
-            state.sidebar_width,
-            state.sidebar_section_split,
-            &state.collapsed_workspace_sections,
-            &state.agent_session_ledger,
-        );
-        let restore = second_snapshot.workspaces[0].tabs[0].panes[&pane_id.raw()]
-            .agent_restore
-            .clone()
-            .expect("second snapshot restore metadata");
-        assert_eq!(
-            restore.session_id.as_deref(),
-            Some("019ef3a2-749c-7b52-b324-2c20cb0b2379")
-        );
-
-        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
-        terminal.pending_restore = Some(PendingAgentRestore {
-            agent: restore.agent,
-            session_id: restore.session_id,
-        });
-        let entries = agent_restore_plan(&state);
-        assert_eq!(entries.len(), 1);
-        match &entries[0].outcome {
-            AgentRestoreOutcome::Launch(command) => {
-                assert_eq!(command, "codex resume 019ef3a2-749c-7b52-b324-2c20cb0b2379");
-            }
-            AgentRestoreOutcome::Skip(reason) => panic!("codex skipped after PaneDied: {reason}"),
-        }
+        assert!(state.workspaces.is_empty());
+        assert!(!state.terminals.contains_key(&terminal_id));
     }
 
     #[test]

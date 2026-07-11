@@ -91,6 +91,7 @@ pub enum Node {
 pub struct TileLayout {
     root: Node,
     focus: PaneId,
+    order: Vec<PaneId>,
 }
 
 impl TileLayout {
@@ -106,6 +107,7 @@ impl TileLayout {
         Self {
             root: Node::Pane(root_id),
             focus: root_id,
+            order: vec![root_id],
         }
     }
 
@@ -143,6 +145,12 @@ impl TileLayout {
         let placeholder = PaneId::from_raw(0);
         let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
         self.root = split_at(old, self.focus, direction, new_id);
+        let insert_at = self
+            .order
+            .iter()
+            .position(|id| *id == self.focus)
+            .map_or(self.order.len(), |index| index + 1);
+        self.order.insert(insert_at, new_id);
         self.focus = new_id;
     }
 
@@ -163,6 +171,7 @@ impl TileLayout {
         let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
         if let Some(new_root) = remove_pane(old, target) {
             self.root = new_root;
+            self.order.retain(|id| *id != target);
             self.focus = new_focus;
             true
         } else {
@@ -246,14 +255,14 @@ impl TileLayout {
             first,
             second,
         };
+        self.order = collect_node_ids(&self.root);
         self.focus = target;
         true
     }
 
-    /// Cycle through broad pane layout presets using PaneId order.
+    /// Cycle through broad pane layout presets while preserving user order.
     pub fn cycle_layout(&mut self) -> bool {
-        let mut ids = self.pane_ids();
-        ids.sort_by_key(|id| id.raw());
+        let ids = self.pane_ids();
         if ids.len() <= 1 {
             return false;
         }
@@ -261,6 +270,8 @@ impl TileLayout {
         if is_uniform_split(&self.root, Direction::Horizontal) {
             self.root = build_even_split(&ids, Direction::Vertical);
         } else if is_uniform_split(&self.root, Direction::Vertical) {
+            self.root = build_two_row_grid(&ids);
+        } else if is_balanced_two_row_grid(&self.root, &ids) {
             self.root = build_main_split(&ids, Direction::Horizontal, build_two_row_grid);
         } else if is_main_first_split(&self.root, Direction::Horizontal, is_two_row_grid, ids[0]) {
             self.root = build_main_split_reversed(&ids, Direction::Horizontal, build_two_row_grid);
@@ -301,6 +312,7 @@ impl TileLayout {
         } else {
             ids.rotate_right(1);
         }
+        self.order.clone_from(&ids);
         let mut rotated = ids.into_iter();
         replace_leaf_ids(&mut self.root, &mut rotated);
         true
@@ -377,9 +389,7 @@ impl TileLayout {
     }
 
     pub fn pane_ids(&self) -> Vec<PaneId> {
-        let mut ids = Vec::new();
-        collect_ids(&self.root, &mut ids);
-        ids
+        self.order.clone()
     }
 
     /// Access the tree root for serialization.
@@ -389,8 +399,15 @@ impl TileLayout {
 
     /// Reconstruct a layout from a saved tree.
     /// Reconstruct a layout from a saved tree.
-    pub fn from_saved(root: Node, focus: PaneId) -> Self {
-        Self { root, focus }
+    pub fn from_saved(root: Node, focus: PaneId, saved_order: &[PaneId]) -> Self {
+        let tree_order = collect_node_ids(&root);
+        let mut order = Vec::with_capacity(tree_order.len());
+        for id in saved_order.iter().chain(&tree_order) {
+            if tree_order.contains(id) && !order.contains(id) {
+                order.push(*id);
+            }
+        }
+        Self { root, focus, order }
     }
 }
 
@@ -512,6 +529,12 @@ fn collect_ids(node: &Node, ids: &mut Vec<PaneId>) {
     }
 }
 
+fn collect_node_ids(node: &Node) -> Vec<PaneId> {
+    let mut ids = Vec::new();
+    collect_ids(node, &mut ids);
+    ids
+}
+
 fn replace_leaf_ids(node: &mut Node, ids: &mut impl Iterator<Item = PaneId>) {
     match node {
         Node::Pane(id) => {
@@ -620,6 +643,24 @@ fn is_two_row_grid(node: &Node) -> bool {
         }
         _ => false,
     }
+}
+
+fn is_balanced_two_row_grid(node: &Node, order: &[PaneId]) -> bool {
+    let Node::Split {
+        direction,
+        first,
+        second,
+        ..
+    } = node
+    else {
+        return false;
+    };
+    *direction == Direction::Vertical
+        && is_uniform_split(first, Direction::Horizontal)
+        && is_uniform_split(second, Direction::Horizontal)
+        && count_panes(first) == order.len().div_ceil(2)
+        && count_panes(second) == order.len() / 2
+        && collect_node_ids(node) == order
 }
 
 fn is_main_first_split(
@@ -834,6 +875,10 @@ mod tests {
         assert_eq!(panes[0].rect, Rect::new(0, 0, 45, 20));
         assert_eq!(panes[1].rect, Rect::new(45, 0, 45, 20));
         assert_eq!(panes[2].rect, Rect::new(0, 20, 90, 10));
+        for _ in 0..7 {
+            assert!(layout.cycle_layout());
+            assert_eq!(layout.pane_ids(), vec![root, third, second]);
+        }
     }
 
     #[test]
@@ -851,6 +896,28 @@ mod tests {
         assert_eq!(panes[0].rect, Rect::new(0, 0, 30, 30));
         assert_eq!(panes[1].rect, Rect::new(30, 0, 30, 30));
         assert_eq!(panes[2].rect, Rect::new(60, 0, 30, 30));
+        for _ in 0..7 {
+            assert!(layout.cycle_layout());
+            assert_eq!(layout.pane_ids(), vec![second, root, third]);
+        }
+    }
+
+    #[test]
+    fn move_focused_to_root_split_side_can_place_target_rightmost() {
+        let (mut layout, root) = TileLayout::new();
+        let second = layout.split_focused(Direction::Horizontal);
+        let third = layout.split_focused(Direction::Horizontal);
+        layout.focus_pane(second);
+
+        assert!(
+            layout.move_focused_to_root_split_side(Direction::Horizontal, RootSplitSide::Second,)
+        );
+
+        assert_eq!(layout.pane_ids(), vec![root, third, second]);
+        for _ in 0..7 {
+            assert!(layout.cycle_layout());
+            assert_eq!(layout.pane_ids(), vec![root, third, second]);
+        }
     }
 
     #[test]
@@ -868,6 +935,10 @@ mod tests {
         assert_eq!(panes[0].rect, Rect::new(0, 0, 90, 10));
         assert_eq!(panes[1].rect, Rect::new(0, 10, 45, 20));
         assert_eq!(panes[2].rect, Rect::new(45, 10, 45, 20));
+        for _ in 0..7 {
+            assert!(layout.cycle_layout());
+            assert_eq!(layout.pane_ids(), vec![second, root, third]);
+        }
     }
 
     #[test]
@@ -891,6 +962,15 @@ mod tests {
         assert_eq!(rect_of(&panes, ids[8]), Rect::new(0, 40, 180, 5));
 
         assert!(layout.cycle_layout());
+        assert_eq!(layout.pane_ids(), ids);
+        let panes = layout.panes(Rect::new(0, 0, 180, 40));
+        assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 0, 36, 20));
+        assert_eq!(rect_of(&panes, ids[4]), Rect::new(144, 0, 36, 20));
+        assert_eq!(rect_of(&panes, ids[5]), Rect::new(0, 20, 45, 20));
+        assert_eq!(rect_of(&panes, ids[8]), Rect::new(135, 20, 45, 20));
+
+        assert!(layout.cycle_layout());
+        assert_eq!(layout.pane_ids(), ids);
         let panes = layout.panes(Rect::new(0, 0, 160, 40));
         assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 0, 80, 40));
         assert_eq!(rect_of(&panes, ids[1]), Rect::new(80, 0, 20, 20));
@@ -901,6 +981,7 @@ mod tests {
         assert_eq!(rect_of(&panes, ids[8]), Rect::new(140, 20, 20, 20));
 
         assert!(layout.cycle_layout());
+        assert_eq!(layout.pane_ids(), ids);
         let panes = layout.panes(Rect::new(0, 0, 160, 40));
         assert_eq!(rect_of(&panes, ids[0]), Rect::new(80, 0, 80, 40));
         assert_eq!(rect_of(&panes, ids[1]), Rect::new(0, 0, 20, 20));
@@ -909,21 +990,122 @@ mod tests {
         assert_eq!(rect_of(&panes, ids[8]), Rect::new(60, 20, 20, 20));
 
         assert!(layout.cycle_layout());
+        assert_eq!(layout.pane_ids(), ids);
         let panes = layout.panes(Rect::new(0, 0, 160, 40));
         assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 0, 160, 20));
         assert_eq!(rect_of(&panes, ids[1]), Rect::new(0, 20, 20, 20));
         assert_eq!(rect_of(&panes, ids[8]), Rect::new(140, 20, 20, 20));
 
         assert!(layout.cycle_layout());
+        assert_eq!(layout.pane_ids(), ids);
         let panes = layout.panes(Rect::new(0, 0, 160, 40));
         assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 20, 160, 20));
         assert_eq!(rect_of(&panes, ids[1]), Rect::new(0, 0, 20, 20));
         assert_eq!(rect_of(&panes, ids[8]), Rect::new(140, 0, 20, 20));
 
         assert!(layout.cycle_layout());
+        assert_eq!(layout.pane_ids(), ids);
         let panes = layout.panes(Rect::new(0, 0, 180, 40));
         assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 0, 20, 40));
         assert_eq!(rect_of(&panes, ids[8]), Rect::new(160, 0, 20, 40));
+    }
+
+    #[test]
+    fn equal_grid_balances_even_and_odd_pane_counts() {
+        for pane_count in [4_usize, 5] {
+            let (mut layout, _) = TileLayout::new();
+            for _ in 1..pane_count {
+                layout.split_focused(Direction::Horizontal);
+            }
+            layout.arrange_all(Direction::Horizontal);
+
+            assert!(layout.cycle_layout());
+            assert!(layout.cycle_layout());
+
+            let panes = layout.panes(Rect::new(0, 0, 120, 40));
+            let top = panes.iter().filter(|pane| pane.rect.y == 0).count();
+            let bottom = panes.iter().filter(|pane| pane.rect.y == 20).count();
+            assert_eq!(top, pane_count.div_ceil(2));
+            assert_eq!(bottom, pane_count / 2);
+            assert!(panes.iter().all(|pane| pane.rect.height == 20));
+            assert_eq!(
+                panes
+                    .iter()
+                    .map(|pane| u32::from(pane.rect.width) * u32::from(pane.rect.height))
+                    .sum::<u32>(),
+                120 * 40
+            );
+            for (index, pane) in panes.iter().enumerate() {
+                for other in panes.iter().skip(index + 1) {
+                    let overlaps = pane.rect.x < other.rect.x + other.rect.width
+                        && pane.rect.x + pane.rect.width > other.rect.x
+                        && pane.rect.y < other.rect.y + other.rect.height
+                        && pane.rect.y + pane.rect.height > other.rect.y;
+                    assert!(!overlaps, "grid panes must not overlap");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn reordered_panes_stay_ordered_across_cycle_and_rotation() {
+        let (mut layout, first) = TileLayout::new();
+        let second = layout.split_focused(Direction::Horizontal);
+        let third = layout.split_focused(Direction::Horizontal);
+        let rightmost = layout.split_focused(Direction::Horizontal);
+        layout.focus_pane(rightmost);
+        assert!(
+            layout.move_focused_to_root_split_side(Direction::Horizontal, RootSplitSide::First,)
+        );
+        let reordered = vec![rightmost, first, second, third];
+        assert_eq!(layout.pane_ids(), reordered);
+
+        for _ in 0..7 {
+            assert!(layout.cycle_layout());
+            assert_eq!(layout.pane_ids(), reordered);
+        }
+
+        assert!(layout.rotate_panes(false));
+        assert_eq!(layout.pane_ids(), vec![third, rightmost, first, second]);
+        assert!(layout.rotate_panes(true));
+        assert_eq!(layout.pane_ids(), reordered);
+    }
+
+    #[test]
+    fn saved_logical_order_survives_layout_restore() {
+        let first = PaneId::from_raw(41);
+        let second = PaneId::from_raw(42);
+        let third = PaneId::from_raw(43);
+        let root = build_even_split(&[first, second, third], Direction::Horizontal);
+
+        let layout = TileLayout::from_saved(root, third, &[third, first, second]);
+
+        assert_eq!(layout.pane_ids(), vec![third, first, second]);
+        assert_eq!(layout.focused(), third);
+    }
+
+    #[test]
+    fn closing_grid_leaf_reflows_survivors_over_the_full_viewport() {
+        let (mut layout, _) = TileLayout::new();
+        for _ in 1..5 {
+            layout.split_focused(Direction::Horizontal);
+        }
+        layout.arrange_all(Direction::Horizontal);
+        assert!(layout.cycle_layout());
+        assert!(layout.cycle_layout());
+
+        assert!(layout.close_focused());
+
+        let viewport = Rect::new(0, 0, 120, 40);
+        let panes = layout.panes(viewport);
+        assert_eq!(panes.len(), 4);
+        assert_eq!(
+            panes
+                .iter()
+                .map(|pane| u32::from(pane.rect.width) * u32::from(pane.rect.height))
+                .sum::<u32>(),
+            u32::from(viewport.width) * u32::from(viewport.height)
+        );
     }
 
     #[test]
@@ -953,11 +1135,13 @@ mod tests {
         let (mut layout, _root) = TileLayout::new();
         layout.split_focused(Direction::Horizontal);
         layout.split_focused(Direction::Horizontal);
+        let order = layout.pane_ids();
         layout.set_ratio_at(&[], 0.8);
         layout.set_ratio_at(&[true], 0.8);
 
         layout.equalize();
 
+        assert_eq!(layout.pane_ids(), order);
         let panes = layout.panes(Rect::new(0, 0, 90, 30));
         assert_eq!(panes[0].rect.width, 30);
         assert_eq!(panes[1].rect.width, 30);

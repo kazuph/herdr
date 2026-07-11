@@ -147,16 +147,30 @@ fn restore_tab(
     Vec<TerminalState>,
     HashMap<TerminalId, TerminalRuntime>,
 )> {
-    let (node, saved_id_for_pane) = if context.preserve_pane_ids {
-        (restore_node_preserving_ids(&snap.layout), HashMap::new())
-    } else {
-        let (node, id_map) = restore_node_remapped(&snap.layout);
-        let reverse_id_map: HashMap<PaneId, u32> = id_map
-            .iter()
-            .map(|(&old_id, &new_id)| (new_id, old_id))
-            .collect();
-        (node, reverse_id_map)
-    };
+    let (node, saved_id_for_pane, pane_order): (Node, HashMap<PaneId, u32>, Vec<PaneId>) =
+        if context.preserve_pane_ids {
+            (
+                restore_node_preserving_ids(&snap.layout),
+                HashMap::new(),
+                snap.pane_order
+                    .iter()
+                    .copied()
+                    .map(PaneId::from_raw)
+                    .collect(),
+            )
+        } else {
+            let (node, id_map) = restore_node_remapped(&snap.layout);
+            let pane_order = snap
+                .pane_order
+                .iter()
+                .filter_map(|id| id_map.get(id).copied())
+                .collect();
+            let reverse_id_map: HashMap<PaneId, u32> = id_map
+                .iter()
+                .map(|(&old_id, &new_id)| (new_id, old_id))
+                .collect();
+            (node, reverse_id_map, pane_order)
+        };
     let pane_ids = collect_pane_ids(&node);
 
     let mut panes = HashMap::new();
@@ -271,7 +285,7 @@ fn restore_tab(
     let pane_ids = collect_pane_ids(&node);
     let focus = resolve_restored_pane(snap.focused, &surviving, &pane_ids)?;
     let root_pane = resolve_restored_pane(snap.root_pane, &surviving, &pane_ids)?;
-    let layout = TileLayout::from_saved(node, focus);
+    let layout = TileLayout::from_saved(node, focus, &pane_order);
 
     Some((
         crate::workspace::Tab {
