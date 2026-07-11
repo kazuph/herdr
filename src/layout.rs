@@ -267,6 +267,16 @@ impl TileLayout {
             return false;
         }
 
+        if ids.len() == 2 {
+            let direction = if is_uniform_split(&self.root, Direction::Horizontal) {
+                Direction::Vertical
+            } else {
+                Direction::Horizontal
+            };
+            self.root = build_even_split(&ids, direction);
+            return true;
+        }
+
         if is_uniform_split(&self.root, Direction::Horizontal) {
             self.root = build_even_split(&ids, Direction::Vertical);
         } else if is_uniform_split(&self.root, Direction::Vertical) {
@@ -1008,6 +1018,28 @@ mod tests {
         let panes = layout.panes(Rect::new(0, 0, 180, 40));
         assert_eq!(rect_of(&panes, ids[0]), Rect::new(0, 0, 20, 40));
         assert_eq!(rect_of(&panes, ids[8]), Rect::new(160, 0, 20, 40));
+    }
+
+    #[test]
+    fn cycle_layout_toggles_two_panes_between_vertical_and_horizontal() {
+        let (mut layout, root) = TileLayout::new();
+        let second = layout.split_focused(Direction::Vertical);
+        layout.focus_pane(root);
+        let ids = vec![root, second];
+
+        assert!(layout.cycle_layout());
+        assert_eq!(layout.pane_ids(), ids);
+        assert_eq!(layout.focused(), root);
+        let panes = layout.panes(Rect::new(0, 0, 120, 40));
+        assert_eq!(panes[0].rect, Rect::new(0, 0, 60, 40));
+        assert_eq!(panes[1].rect, Rect::new(60, 0, 60, 40));
+
+        assert!(layout.cycle_layout());
+        assert_eq!(layout.pane_ids(), ids);
+        assert_eq!(layout.focused(), root);
+        let panes = layout.panes(Rect::new(0, 0, 120, 40));
+        assert_eq!(panes[0].rect, Rect::new(0, 0, 120, 20));
+        assert_eq!(panes[1].rect, Rect::new(0, 20, 120, 20));
     }
 
     #[test]
