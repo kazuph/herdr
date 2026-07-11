@@ -50,6 +50,7 @@ fn main() {
     let status = Command::new("zig")
         .arg("build")
         .arg("-Demit-lib-vt")
+        .arg("-Demit-xcframework=false")
         .arg(format!("-Doptimize={optimize}"))
         .arg(format!("-Dsimd={simd}"))
         .arg(format!("-Dtarget={zig_target}"))
