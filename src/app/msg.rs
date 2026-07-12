@@ -155,8 +155,9 @@ impl App {
             return Ok(false);
         };
 
+        let inbox_command = format!("herdr msg inbox --room {}", quote_shell_arg(&nudge.room));
         let message = format!(
-            "\u{1f4ec} herdr msg: 未読{}件 (room={}, from={})。`herdr msg inbox` を実行して確認して",
+            "\u{1f4ec} herdr msg: 未読{}件 (room={}, from={})。`{inbox_command}` を実行して確認して",
             nudge.count, nudge.room, nudge.latest_from
         );
         let text_bytes = encode_api_text(runtime, &message);
@@ -241,6 +242,10 @@ fn normalize_room(room: &str) -> Result<String, ErrorBody> {
         });
     }
     Ok(room.to_string())
+}
+
+fn quote_shell_arg(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn normalize_agent(value: &str, field: &str) -> Result<String, ErrorBody> {
@@ -520,6 +525,7 @@ mod tests {
             assert_eq!(texts.len(), 2);
             assert!(texts[0].contains("未読1件"));
             assert!(texts[0].contains("room=idle-direct"));
+            assert!(texts[0].contains("`herdr msg inbox --room 'idle-direct'`"));
             assert_eq!(texts[1], "\r");
             let delivered = harness.history("idle-direct");
             assert_eq!(delivered.len(), 1);
@@ -533,6 +539,23 @@ mod tests {
             let queued = harness.history("busy-direct");
             assert_eq!(queued.len(), 1);
             assert!(queued[0].delivered_at.is_none());
+        });
+    }
+
+    #[test]
+    fn nudge_quotes_room_in_inbox_command() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Idle);
+            harness.send("alpha", "beta", "review ui's notifications", "wake up");
+
+            let texts = harness.received_texts("beta");
+            assert_eq!(
+                texts[0]
+                    .split('`')
+                    .nth(1)
+                    .expect("nudge should contain an inbox command"),
+                "herdr msg inbox --room 'review ui'\\''s notifications'"
+            );
         });
     }
 
