@@ -1016,6 +1016,7 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
         let is_active = Some(i) == app.active;
         let is_dragged = dragged_ws_idx == Some(i);
         let highlighted = selected || is_active || is_dragged;
+        let display_height = row_height.max(2);
         let (agg_state, agg_seen) = ws.aggregate_state(&app.terminals);
 
         if highlighted {
@@ -1027,7 +1028,7 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
                 p.surface_dim
             };
             let buf = frame.buffer_mut();
-            for y in row_y..row_y + row_height {
+            for y in row_y..row_y + display_height {
                 if y >= list_bottom {
                     break;
                 }
@@ -1039,7 +1040,7 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
 
         if is_active {
             let buf = frame.buffer_mut();
-            for y in row_y..row_y + row_height {
+            for y in row_y..row_y + display_height {
                 if y >= list_bottom {
                     break;
                 }
@@ -1063,7 +1064,7 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
             card.rect.width.saturating_sub(1),
             1,
         );
-        let mut line1 = vec![
+        let line1 = vec![
             Span::styled(icon, icon_style),
             Span::styled(" ", Style::default()),
             Span::styled(
@@ -1072,68 +1073,10 @@ fn render_workspace_list(app: &AppState, frame: &mut Frame, area: Rect, is_navig
             ),
             Span::styled(display_name.clone(), name_style),
         ];
-        if row_height == 1 {
-            if let Some(branch) = ws.branch() {
-                let mut upstream_labels = workspace_upstream_labels(ws);
-                let mut diff_labels = workspace_diff_labels(ws);
-                let prefix_width = 2 + workspace_number.chars().count();
-                // Keep the last column free for the scrollbar overlay.
-                let available = (content_rect.width as usize)
-                    .saturating_sub(prefix_width + 1)
-                    .max(1);
-                // The workspace name always wins the row; git metadata only
-                // gets leftover width, shedding diff stats first, then
-                // upstream arrows, then the branch itself.
-                let name_width = display_name.chars().count().min(available);
-                line1[3] = Span::styled(truncate_to_width(&display_name, name_width), name_style);
-                let remaining = available.saturating_sub(name_width);
-
-                let labels_width = |labels: &[(String, bool)]| -> usize {
-                    labels
-                        .iter()
-                        .map(|(label, _)| label.chars().count() + 1)
-                        .sum()
-                };
-                const MIN_BRANCH_WIDTH: usize = 5;
-                let min_branch = branch.chars().count().min(MIN_BRANCH_WIDTH) + 1;
-                if labels_width(&upstream_labels) + labels_width(&diff_labels) + min_branch
-                    > remaining
-                {
-                    diff_labels.clear();
-                }
-                if labels_width(&upstream_labels) + min_branch > remaining {
-                    upstream_labels.clear();
-                }
-                let branch_budget = remaining
-                    .saturating_sub(labels_width(&upstream_labels) + labels_width(&diff_labels))
-                    .saturating_sub(1);
-                let branch_display = if branch_budget + 1 >= min_branch {
-                    truncate_to_width(&branch, branch_budget)
-                } else {
-                    String::new()
-                };
-                if !upstream_labels.is_empty() || !diff_labels.is_empty() {
-                    line1.push(Span::styled(" ", Style::default()));
-                }
-                push_git_labels(&mut line1, upstream_labels, diff_labels, p);
-                if !branch_display.is_empty() {
-                    let branch_color = if selected || is_active {
-                        p.mauve
-                    } else {
-                        p.overlay0
-                    };
-                    line1.push(Span::styled(" ", Style::default()));
-                    line1.push(Span::styled(
-                        branch_display,
-                        Style::default().fg(branch_color),
-                    ));
-                }
-            }
-        }
 
         frame.render_widget(Paragraph::new(Line::from(line1)), content_rect);
 
-        if row_height > 1 && row_y + 1 < list_bottom {
+        if row_y + 1 < list_bottom {
             let mut spans = vec![Span::styled("    ", Style::default())];
             if let Some(branch) = ws.branch() {
                 let upstream_labels = workspace_upstream_labels(ws);
@@ -1762,7 +1705,7 @@ mod tests {
     }
 
     #[test]
-    fn slim_workspace_panel_keeps_git_details_on_name_row() {
+    fn slim_workspace_panel_renders_git_details_on_second_row() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("one")];
         app.ensure_test_terminals();
@@ -1790,24 +1733,26 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        let row = (0..32).map(|x| buffer[(x, 2)].symbol()).collect::<String>();
+        let name_row = (0..32).map(|x| buffer[(x, 2)].symbol()).collect::<String>();
+        let git_row = (0..32).map(|x| buffer[(x, 3)].symbol()).collect::<String>();
 
-        assert!(row.contains("one"));
+        assert!(name_row.contains("one"));
         assert_eq!(buffer[(1, 2)].symbol(), "·");
         assert_eq!(buffer[(2, 2)].symbol(), " ");
         assert_eq!(buffer[(3, 2)].symbol(), "1");
-        assert!(row.contains("1 "));
-        assert!(row.contains("main"));
-        assert!(row.contains("↑2"));
-        assert!(row.contains("↓1"));
-        assert!(row.contains("+123"));
-        assert!(row.contains("-11"));
-        assert!(row.find("↑2").unwrap() < row.find("main").unwrap());
-        assert!(row.find("-11").unwrap() < row.find("main").unwrap());
+        assert!(name_row.contains("1 "));
+        assert!(!name_row.contains("main"));
+        assert!(git_row.contains("main"));
+        assert!(git_row.contains("↑2"));
+        assert!(git_row.contains("↓1"));
+        assert!(git_row.contains("+123"));
+        assert!(git_row.contains("-11"));
+        assert!(git_row.find("↑2").unwrap() < git_row.find("main").unwrap());
+        assert!(git_row.find("-11").unwrap() < git_row.find("main").unwrap());
     }
 
     #[test]
-    fn slim_workspace_panel_prefers_name_over_diff_stats_when_narrow() {
+    fn slim_workspace_panel_keeps_diff_stats_for_long_space_names() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("very-long-space-name")];
         app.ensure_test_terminals();
@@ -1835,11 +1780,15 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        let row = (0..28).map(|x| buffer[(x, 2)].symbol()).collect::<String>();
+        let name_row = (0..28).map(|x| buffer[(x, 2)].symbol()).collect::<String>();
+        let git_row = (0..28).map(|x| buffer[(x, 3)].symbol()).collect::<String>();
 
-        assert!(row.contains("very-long-space-name"), "row: {row:?}");
-        assert!(!row.contains("+203"), "row: {row:?}");
-        assert!(!row.contains("-31"), "row: {row:?}");
+        assert!(
+            name_row.contains("very-long-space-name"),
+            "row: {name_row:?}"
+        );
+        assert!(git_row.contains("+203"), "row: {git_row:?}");
+        assert!(git_row.contains("-31"), "row: {git_row:?}");
     }
 
     #[test]
