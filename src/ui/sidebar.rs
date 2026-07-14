@@ -324,6 +324,23 @@ fn agent_panel_id_label(entry: &AgentPanelEntry) -> String {
     entry.global_pane_id.clone()
 }
 
+fn agent_panel_status_style(is_active: bool, state: AgentState, seen: bool, p: &Palette) -> Style {
+    let style = Style::default().fg(state_label_color(state, seen, p));
+    if is_active {
+        style.add_modifier(Modifier::BOLD)
+    } else {
+        style
+    }
+}
+
+fn agent_panel_meta_style(is_active: bool, p: &Palette) -> Style {
+    if is_active {
+        Style::default().fg(p.subtext0)
+    } else {
+        Style::default().fg(p.overlay1)
+    }
+}
+
 fn workspace_row_height(app: &AppState, _ws: &crate::workspace::Workspace) -> u16 {
     if app.workspace_panel_density == WorkspacePanelDensity::Full {
         2
@@ -1215,7 +1232,6 @@ fn render_agent_detail(app: &AppState, frame: &mut Frame, area: Rect) {
         let is_active = app.is_active_pane(detail.ws_idx, detail.tab_idx, detail.pane_id);
 
         let (icon, icon_style) = agent_icon(detail.state, detail.seen, app.spinner_tick, p);
-        let label_color = state_label_color(detail.state, detail.seen, p);
         let label = state_label(detail.state, detail.seen);
 
         let row_style = if is_active {
@@ -1229,12 +1245,8 @@ fn render_agent_detail(app: &AppState, frame: &mut Frame, area: Rect) {
         } else {
             Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)
         };
-        let status_style = if is_active {
-            Style::default().fg(label_color)
-        } else {
-            Style::default().fg(label_color).add_modifier(Modifier::DIM)
-        };
-        let agent_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
+        let status_style = agent_panel_status_style(is_active, detail.state, detail.seen, p);
+        let agent_style = agent_panel_meta_style(is_active, p);
 
         let id_label = agent_panel_id_label(detail);
         let id_width = id_label.chars().count();
@@ -1887,6 +1899,37 @@ mod tests {
         let entries = agent_panel_entries(&app);
         assert_eq!(entries[0].primary_label, "bridge");
         assert_eq!(entries[0].agent_label.as_deref(), Some("planner"));
+    }
+
+    #[test]
+    fn inactive_agent_panel_status_keeps_readable_contrast() {
+        let p = Palette::catppuccin();
+
+        let status = agent_panel_status_style(false, AgentState::Working, true, &p);
+        let meta = agent_panel_meta_style(false, &p);
+
+        assert_eq!(
+            status.fg,
+            Some(state_label_color(AgentState::Working, true, &p))
+        );
+        assert!(!status.add_modifier.contains(Modifier::DIM));
+        assert_eq!(meta.fg, Some(p.overlay1));
+        assert!(!meta.add_modifier.contains(Modifier::DIM));
+    }
+
+    #[test]
+    fn active_agent_panel_status_keeps_selection_context() {
+        let p = Palette::catppuccin();
+
+        let status = agent_panel_status_style(true, AgentState::Working, true, &p);
+        let meta = agent_panel_meta_style(true, &p);
+
+        assert_eq!(
+            status.fg,
+            Some(state_label_color(AgentState::Working, true, &p))
+        );
+        assert!(status.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(meta.fg, Some(p.subtext0));
     }
 
     #[test]
