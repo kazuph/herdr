@@ -324,20 +324,17 @@ fn agent_panel_id_label(entry: &AgentPanelEntry) -> String {
     entry.global_pane_id.clone()
 }
 
-fn agent_panel_status_style(is_active: bool, state: AgentState, seen: bool, p: &Palette) -> Style {
-    let style = Style::default().fg(state_label_color(state, seen, p));
-    if is_active {
-        style.add_modifier(Modifier::BOLD)
-    } else {
-        style
-    }
+fn agent_panel_status_style(state: AgentState, seen: bool, p: &Palette) -> Style {
+    Style::default()
+        .fg(state_label_color(state, seen, p))
+        .add_modifier(Modifier::BOLD)
 }
 
 fn agent_panel_meta_style(is_active: bool, p: &Palette) -> Style {
     if is_active {
-        Style::default().fg(p.subtext0)
+        Style::default().fg(p.text)
     } else {
-        Style::default().fg(p.overlay1)
+        Style::default().fg(p.subtext0)
     }
 }
 
@@ -1237,7 +1234,7 @@ fn render_agent_detail(app: &AppState, frame: &mut Frame, area: Rect) {
         let row_style = if is_active {
             Style::default().bg(p.surface_dim)
         } else {
-            Style::default()
+            Style::default().bg(p.surface0)
         };
 
         let name_style = if is_active {
@@ -1245,7 +1242,7 @@ fn render_agent_detail(app: &AppState, frame: &mut Frame, area: Rect) {
         } else {
             Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)
         };
-        let status_style = agent_panel_status_style(is_active, detail.state, detail.seen, p);
+        let status_style = agent_panel_status_style(detail.state, detail.seen, p);
         let agent_style = agent_panel_meta_style(is_active, p);
 
         let id_label = agent_panel_id_label(detail);
@@ -1905,15 +1902,16 @@ mod tests {
     fn inactive_agent_panel_status_keeps_readable_contrast() {
         let p = Palette::catppuccin();
 
-        let status = agent_panel_status_style(false, AgentState::Working, true, &p);
+        let status = agent_panel_status_style(AgentState::Working, true, &p);
         let meta = agent_panel_meta_style(false, &p);
 
         assert_eq!(
             status.fg,
             Some(state_label_color(AgentState::Working, true, &p))
         );
+        assert!(status.add_modifier.contains(Modifier::BOLD));
         assert!(!status.add_modifier.contains(Modifier::DIM));
-        assert_eq!(meta.fg, Some(p.overlay1));
+        assert_eq!(meta.fg, Some(p.subtext0));
         assert!(!meta.add_modifier.contains(Modifier::DIM));
     }
 
@@ -1921,7 +1919,7 @@ mod tests {
     fn active_agent_panel_status_keeps_selection_context() {
         let p = Palette::catppuccin();
 
-        let status = agent_panel_status_style(true, AgentState::Working, true, &p);
+        let status = agent_panel_status_style(AgentState::Working, true, &p);
         let meta = agent_panel_meta_style(true, &p);
 
         assert_eq!(
@@ -1929,7 +1927,42 @@ mod tests {
             Some(state_label_color(AgentState::Working, true, &p))
         );
         assert!(status.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(meta.fg, Some(p.subtext0));
+        assert_eq!(meta.fg, Some(p.text));
+    }
+
+    #[test]
+    fn inactive_agent_panel_rows_get_solid_background() {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut workspace = Workspace::test_new("agents");
+        let first_pane_id = workspace.tabs[0].root_pane;
+        let second_pane_id = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        app.workspaces = vec![workspace];
+        app.ensure_test_terminals();
+        let active_bg = app.palette.surface_dim;
+        let inactive_bg = app.palette.surface0;
+        app.agent_panel_scope = AgentPanelScope::AllWorkspaces;
+        app.active = Some(0);
+        app.workspaces[0].active_tab = 0;
+        app.workspaces[0].tabs[0].layout.focus_pane(first_pane_id);
+
+        for pane_id in [first_pane_id, second_pane_id] {
+            let terminal_id = app.workspaces[0].tabs[0].panes[&pane_id]
+                .attached_terminal_id
+                .clone();
+            app.terminals.get_mut(&terminal_id).unwrap().detected_agent = Some(Agent::Claude);
+        }
+
+        let area = Rect::new(0, 0, 48, 10);
+        let backend = ratatui::backend::TestBackend::new(48, 10);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_agent_detail(&app, frame, area))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+
+        assert_eq!(buffer[(0, 3)].bg, active_bg);
+        assert_eq!(buffer[(0, 6)].bg, inactive_bg);
     }
 
     #[test]
