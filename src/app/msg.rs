@@ -649,7 +649,7 @@ mod tests {
     fn herdr_job_messages_are_injected_directly_and_marked_read() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
             harness.report_state("beta", PaneAgentState::Idle);
-            let body = "[herdr run] exit=0 label=tests job=job-1 details: herdr job log job-1";
+            let body = "[herdr run] exit=0 label=tests job=job-1 details: herdr log job-1";
 
             let nudged = harness.send("herdr-run", "beta", crate::msg::JOBS_ROOM, body);
 

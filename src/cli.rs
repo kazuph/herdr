@@ -619,7 +619,7 @@ fn job_cancel(job_id: &str) -> std::io::Result<i32> {
         enqueue_job_mailbox(
             &job,
             format!(
-                "[herdr run] cancelled label={} job={} details: herdr job log {}",
+                "[herdr run] cancelled label={} job={} details: herdr log {}",
                 one_line_field(&job.label),
                 job.id,
                 job.id
@@ -3964,7 +3964,7 @@ fn enqueue_job_completion(
         return Ok(());
     }
     let summary = format!(
-        "[herdr run] exit={} label={} job={} details: herdr job log {}",
+        "[herdr run] exit={} label={} job={} details: herdr log {}",
         exit_code_label(code),
         one_line_field(&job.label),
         job.id,
