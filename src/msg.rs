@@ -66,7 +66,18 @@ impl MsgStore {
             CREATE INDEX IF NOT EXISTS idx_unread ON messages(room, to_agent, read_at);
             CREATE INDEX IF NOT EXISTS idx_history ON messages(room, created_at);
             "#,
-        )
+        )?;
+        self.conn.execute(
+            r#"
+            UPDATE messages
+            SET read_at = COALESCE(read_at, delivered_at)
+            WHERE room = ?1
+              AND read_at IS NULL
+              AND delivered_at IS NOT NULL
+            "#,
+            params![JOBS_ROOM],
+        )?;
+        Ok(())
     }
 
     pub(crate) fn insert_messages(
@@ -446,5 +457,27 @@ mod tests {
             .pending_nudge_for(DEFAULT_ROOM, "bob")
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn delivered_job_messages_are_marked_read_on_open() {
+        let path = std::env::temp_dir()
+            .join(format!("herdr-msg-test-{}-job-cleanup", std::process::id()))
+            .join("msg.db");
+        let _ = std::fs::remove_file(&path);
+        let mut store = MsgStore::open_at(path.clone()).unwrap();
+        store
+            .insert_messages(JOBS_ROOM, "", "herdr-run", &["bob".to_string()], "done")
+            .unwrap();
+        store.mark_delivered(JOBS_ROOM, "bob").unwrap();
+        drop(store);
+
+        let mut reopened = MsgStore::open_at(path).unwrap();
+        assert!(reopened
+            .unread_for_agent(JOBS_ROOM, "bob")
+            .unwrap()
+            .is_empty());
+        let history = reopened.history(JOBS_ROOM, None, 10).unwrap();
+        assert!(history[0].read_at.is_some());
     }
 }
