@@ -885,6 +885,27 @@ fn cmdline_argv0_agent_name(cmdline: &str) -> Option<String> {
     agent_name_from_path_token(cmdline.split_whitespace().next()?)
 }
 
+pub(crate) fn model_from_cmdline(cmdline: &str) -> Option<String> {
+    let mut tokens = cmdline.split_whitespace();
+    while let Some(token) = tokens.next() {
+        let trimmed = token.trim_matches(|c| matches!(c, '"' | '\''));
+        if let Some(model) = trimmed.strip_prefix("--model=") {
+            let model = model.trim_matches(|c| matches!(c, '"' | '\''));
+            if !model.is_empty() {
+                return Some(model.to_string());
+            }
+        }
+        if matches!(trimmed, "--model" | "-m") {
+            let model = tokens.next()?;
+            let model = model.trim_matches(|c| matches!(c, '"' | '\''));
+            if !model.is_empty() {
+                return Some(model.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn agent_name_from_path_token(token: &str) -> Option<String> {
     let trimmed = token.trim_matches(|c| matches!(c, '"' | '\''));
     if trimmed.is_empty() || trimmed.starts_with('-') {
@@ -1146,6 +1167,23 @@ mod tests {
     #[test]
     fn cmdline_argv0_agent_name_requires_exact_agent_basename() {
         assert_eq!(cmdline_argv0_agent_name("/tmp/my-codex-helper"), None);
+    }
+
+    #[test]
+    fn model_from_cmdline_extracts_long_and_short_flags() {
+        assert_eq!(
+            model_from_cmdline("codex --model gpt-5.5"),
+            Some("gpt-5.5".to_string())
+        );
+        assert_eq!(
+            model_from_cmdline("claude -m claude-fable-5"),
+            Some("claude-fable-5".to_string())
+        );
+        assert_eq!(
+            model_from_cmdline("codex --model=gpt-5.6"),
+            Some("gpt-5.6".to_string())
+        );
+        assert_eq!(model_from_cmdline("codex --model"), None);
     }
 
     // ---- Workspace state rollup ----

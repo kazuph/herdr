@@ -191,7 +191,7 @@ Use `wait output` for normal commands and servers. Use `wait agent-status` for c
 
 `herdr run -- <command...>` starts a non-interactive job without creating a pane and immediately returns a structured job id. The detached runner inherits the launching environment and cwd, keeps the full stdout/stderr log, and survives a Herdr server restart.
 
-Use `--completion summary|full|none` to control the durable mailbox result sent to the exact caller after it becomes idle. Use `herdr job list`, `herdr job status <job>`, `herdr job log <job>`, and `herdr job cancel <job>` to manage jobs.
+Use `--completion summary|full|none` to control the durable mailbox result sent to the exact caller after it becomes idle. Use `herdr run list`, `herdr log <job>`, and `herdr run cancel <job>` to manage jobs. The older `herdr job ...` commands remain aliases.
 
 Interactive and TTY commands require visible pane mode:
 

@@ -2226,73 +2226,80 @@ mod tests {
         assert_eq!(seed_cwd, std::path::PathBuf::from("/tmp/pion"));
     }
 
-    #[tokio::test]
-    async fn duplicate_workspace_preserves_tabs_panes_and_cwds() {
-        let mut app = test_app();
-        let mut workspace = Workspace::test_new("source");
-        let root_pane = workspace.tabs[0].root_pane;
-        let split_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
-        let second_tab_idx = workspace.test_add_tab(Some("logs"));
-        workspace.active_tab = second_tab_idx;
+    #[test]
+    fn duplicate_workspace_preserves_tabs_panes_and_cwds() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut app = test_app();
+            let mut workspace = Workspace::test_new("source");
+            let root_pane = workspace.tabs[0].root_pane;
+            let split_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+            let second_tab_idx = workspace.test_add_tab(Some("logs"));
+            workspace.active_tab = second_tab_idx;
 
-        app.state.workspaces = vec![workspace];
-        app.state.ensure_test_terminals();
-        app.state.active = Some(0);
-        app.state.selected = 0;
+            app.state.workspaces = vec![workspace];
+            app.state.ensure_test_terminals();
+            app.state.active = Some(0);
+            app.state.selected = 0;
 
-        let base = std::env::temp_dir().join(format!(
-            "herdr-duplicate-workspace-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0)
-        ));
-        let one = base.join("one");
-        let two = base.join("two");
-        let three = base.join("three");
-        std::fs::create_dir_all(&one).unwrap();
-        std::fs::create_dir_all(&two).unwrap();
-        std::fs::create_dir_all(&three).unwrap();
+            let base = std::env::temp_dir().join(format!(
+                "herdr-duplicate-workspace-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_nanos())
+                    .unwrap_or(0)
+            ));
+            let one = base.join("one");
+            let two = base.join("two");
+            let three = base.join("three");
+            std::fs::create_dir_all(&one).unwrap();
+            std::fs::create_dir_all(&two).unwrap();
+            std::fs::create_dir_all(&three).unwrap();
 
-        for (pane_id, cwd) in [(root_pane, &one), (split_pane, &two)] {
-            let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            for (pane_id, cwd) in [(root_pane, &one), (split_pane, &two)] {
+                let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+                    .attached_terminal_id
+                    .clone();
+                app.state.terminals.get_mut(&terminal_id).unwrap().cwd = cwd.clone();
+            }
+            let second_tab_root = app.state.workspaces[0].tabs[second_tab_idx].root_pane;
+            let terminal_id = app.state.workspaces[0].tabs[second_tab_idx].panes[&second_tab_root]
                 .attached_terminal_id
                 .clone();
-            app.state.terminals.get_mut(&terminal_id).unwrap().cwd = cwd.clone();
-        }
-        let second_tab_root = app.state.workspaces[0].tabs[second_tab_idx].root_pane;
-        let terminal_id = app.state.workspaces[0].tabs[second_tab_idx].panes[&second_tab_root]
-            .attached_terminal_id
-            .clone();
-        app.state.terminals.get_mut(&terminal_id).unwrap().cwd = three.clone();
+            app.state.terminals.get_mut(&terminal_id).unwrap().cwd = three.clone();
 
-        app.duplicate_workspace(0).unwrap();
+            app.duplicate_workspace(0).unwrap();
 
-        assert_eq!(app.state.workspaces.len(), 2);
-        assert_eq!(app.state.active, Some(1));
-        let duplicate = &app.state.workspaces[1];
-        assert_eq!(duplicate.tabs.len(), 2);
-        assert_eq!(duplicate.active_tab, second_tab_idx);
-        assert_eq!(duplicate.tabs[0].layout.pane_count(), 2);
-        assert_eq!(duplicate.tabs[1].display_name(), "logs");
+            assert_eq!(app.state.workspaces.len(), 2);
+            assert_eq!(app.state.active, Some(1));
+            let duplicate = &app.state.workspaces[1];
+            assert_eq!(duplicate.tabs.len(), 2);
+            assert_eq!(duplicate.active_tab, second_tab_idx);
+            assert_eq!(duplicate.tabs[0].layout.pane_count(), 2);
+            assert_eq!(duplicate.tabs[1].display_name(), "logs");
 
-        let duplicated_cwds = duplicate
-            .tabs
-            .iter()
-            .flat_map(|tab| {
-                tab.layout.pane_ids().into_iter().filter_map(|pane_id| {
-                    tab.panes
-                        .get(&pane_id)
-                        .and_then(|pane| app.state.terminals.get(&pane.attached_terminal_id))
-                        .map(|terminal| terminal.cwd.clone())
+            let duplicated_cwds = duplicate
+                .tabs
+                .iter()
+                .flat_map(|tab| {
+                    tab.layout.pane_ids().into_iter().filter_map(|pane_id| {
+                        tab.panes
+                            .get(&pane_id)
+                            .and_then(|pane| app.state.terminals.get(&pane.attached_terminal_id))
+                            .map(|terminal| terminal.cwd.clone())
+                    })
                 })
-            })
-            .collect::<std::collections::HashSet<_>>();
-        assert!(duplicated_cwds.contains(&one));
-        assert!(duplicated_cwds.contains(&two));
-        assert!(duplicated_cwds.contains(&three));
+                .collect::<std::collections::HashSet<_>>();
+            assert!(duplicated_cwds.contains(&one));
+            assert!(duplicated_cwds.contains(&two));
+            assert!(duplicated_cwds.contains(&three));
 
-        let _ = std::fs::remove_dir_all(base);
+            let _ = std::fs::remove_dir_all(base);
+        });
+        runtime.shutdown_timeout(std::time::Duration::from_millis(100));
     }
 
     #[test]

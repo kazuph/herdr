@@ -25,6 +25,7 @@ mod cli;
 mod client;
 mod config;
 mod detect;
+mod dispatch;
 mod events;
 mod ghostty;
 mod input;
@@ -74,8 +75,8 @@ description: Terminal workspace manager for AI coding agents. Use this CLI to co
 - Do not infer the requester pane from the focused pane, active window, pane list order, or UI selection.
 - If `pane current` still cannot identify the pane, inspect `herdr pane list`, `herdr pane get <pane_id>`, and `herdr pane read <pane_id> --source recent --lines 40`; continue only when one candidate is proven.
 - Treat `p_...`, workspace-local ids like `1-2`, global ids like `23`, and tmux-style ids like `%23` as Herdr pane targets when they are accepted by Herdr commands.
-- Use `herdr run -- <command...>` for non-interactive background work with durable idle-gated completion. Add `--pane` for interactive/TTY work in a visible same-space pane.
-- Use `herdr pane run-notify` for long-running commands when completion should be reported inside Herdr.
+- Four-word agent workflow: send=talk, run=execute, log=inspect, inbox=pull fallback.
+- Use `herdr run -- <command...>` for non-interactive background work with durable completion. Add `--pane` for interactive/TTY work in a visible same-space pane.
 - Use `herdr agent ...` only for AI agent terminals. Use `herdr pane ...` for shells, tests, servers, and ordinary commands.
 
 ## Usage
@@ -92,8 +93,11 @@ herdr config <subcommand> ...
 herdr workspace <subcommand> ...
 herdr tab <subcommand> ...
 herdr agent <subcommand> ...
-herdr msg <subcommand> ...
+herdr send <agent_target> <message>
 herdr run [--label TEXT] [--cwd PATH] [--caller <pane>] [--completion summary|full|none] [--pane [--split right|down] [--close-on-success]] -- <command...>
+herdr log [--room R] [--project P] [--limit N]
+herdr inbox [--room R]
+herdr msg <subcommand> ...
 herdr job <subcommand> ...
 herdr pane <subcommand> ...
 herdr wait <subcommand> ...
@@ -111,9 +115,12 @@ herdr session <subcommand> ...
 | `herdr workspace <subcommand>` | Create, list, rename, or focus workspaces. |
 | `herdr tab <subcommand>` | Create, list, rename, or focus tabs. |
 | `herdr agent <subcommand>` | List, start, read, send to, focus, attach to, rename, restore, or wait on AI agents. |
-| `herdr msg <subcommand>` | Send, read, tail, and list SQLite mailbox messages between Herdr agents. |
-| `herdr run -- <command...>` | Start a pane-less background job with durable idle-gated completion; add `--pane` for visible interactive execution. |
-| `herdr job <subcommand>` | List, inspect, read logs for, or cancel background jobs. |
+| `herdr send <target> <text>` | Talk to another Herdr agent with recorded delivery. |
+| `herdr run -- <command...>` | Execute a pane-less background job with durable completion; add `--pane` for visible interactive execution. |
+| `herdr log <subcommand>` | Inspect message and command dispatch history, DB path, schema, stats, and job logs. |
+| `herdr inbox` | Pull queued fallback messages for the current agent. |
+| `herdr msg <subcommand>` | Alias namespace for old message commands. |
+| `herdr job <subcommand>` | Alias namespace for old job commands. |
 | `herdr pane <subcommand>` | List, split, read, run, notify, focus, rename, or close panes. |
 | `herdr wait <subcommand>` | Block until pane output or agent status matches. |
 | `herdr session <subcommand>` | Manage named persistent sessions. |
@@ -125,14 +132,14 @@ herdr pane current
 herdr pane list
 herdr pane split <pane_id> right
 herdr pane run <pane_id> <command>
-herdr pane run-notify <pane_id> <command>
 herdr run --label tests -- cargo test
 herdr run --pane --label dev-server -- npm run dev
-herdr job list
+herdr run list
+herdr log --db
+herdr log stats
 herdr pane read <pane_id>
 herdr agent start --kind codex --cwd <path>
-herdr agent send <agent_target> <message>
-herdr msg send <agent_target> <message>
+herdr send <agent_target> <message>
 herdr wait agent-status <agent_target> --status done
 ```
 
@@ -156,13 +163,18 @@ herdr config --help
 herdr workspace --help
 herdr tab --help
 herdr agent --help
-herdr job --help
+herdr send --help
+herdr run --help
+herdr log --help
+herdr inbox --help
 herdr pane --help
 herdr wait --help
 herdr session --help
 ```
 
 Config: {config_path}
+Data: ~/.config/herdr/herdr.db (per-session: ~/.config/herdr/sessions/<name>/herdr.db; WAL mode; safe to query while running)
+Lowest-level API: sqlite3 "$(herdr log --db)" — schema: herdr log --schema
 Logs: {log_paths}
 Env: HERDR_CONFIG_PATH overrides config file path. HERDR_SESSION selects a session. HERDR_PANE_ID identifies the current pane when set.
 Home: https://herdr.dev"#,

@@ -1089,6 +1089,20 @@ impl App {
                         .unwrap();
                     }
                 };
+                if let Some(model) = crate::detect::model_from_cmdline(&argv.join(" ")) {
+                    if let Some(actor_name) = agent.name.as_deref().or(agent.agent.as_deref()) {
+                        if let Ok(store) = crate::dispatch::DispatchStore::open_active() {
+                            let _ = store.upsert_actor(
+                                "agent",
+                                actor_name,
+                                agent.agent.as_deref(),
+                                Some(&model),
+                                None,
+                                Some(&agent.pane_id),
+                            );
+                        }
+                    }
+                }
                 SuccessResponse {
                     id: request.id,
                     result: ResponseResult::AgentStarted { agent, argv },
@@ -1598,6 +1612,16 @@ impl App {
                     })
                     .unwrap();
                 };
+                if let Ok(store) = crate::dispatch::DispatchStore::open_active() {
+                    let _ = store.upsert_actor(
+                        "agent",
+                        &agent_label,
+                        Some(&params.source),
+                        params.model.as_deref(),
+                        params.session_id.as_deref(),
+                        Some(&params.pane_id),
+                    );
+                }
                 if let Some(session_id) = params
                     .session_id
                     .clone()

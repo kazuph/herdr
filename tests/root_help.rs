@@ -27,9 +27,12 @@ fn root_help_is_skill_style_and_matches_help_command() {
         "HERDR_PANE_ID",
         "calling process session",
         "Do not infer the requester pane from the focused pane",
-        "herdr pane run-notify",
+        "send=talk, run=execute, log=inspect, inbox=pull fallback",
+        "herdr send <agent_target> <message>",
         "herdr run --label tests -- cargo test",
-        "herdr job list",
+        "herdr run list",
+        "herdr log --db",
+        "sqlite3 \"$(herdr log --db)\"",
     ] {
         assert!(
             stdout.contains(expected),

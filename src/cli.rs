@@ -46,7 +46,10 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "agent" => run_agent_command(&args[2..])?,
         "terminal" => run_terminal_command(&args[2..])?,
         "pane" => run_pane_command(&args[2..])?,
+        "send" => msg_send(&args[2..])?,
         "run" => herdr_run(&args[2..])?,
+        "log" => herdr_log(&args[2..])?,
+        "inbox" => msg_inbox(&args[2..])?,
         "job" => run_job_command(&args[2..])?,
         "msg" => run_msg_command(&args[2..])?,
         "wait" => run_wait_command(&args[2..])?,
@@ -400,11 +403,26 @@ fn run_msg_command(args: &[String]) -> std::io::Result<i32> {
     };
 
     match subcommand {
-        "send" => msg_send(&args[1..]),
-        "inbox" => msg_inbox(&args[1..]),
-        "history" => msg_history(&args[1..]),
-        "tail" => msg_tail(&args[1..]),
-        "rooms" => msg_rooms(&args[1..]),
+        "send" => {
+            eprintln!("notice: `herdr msg send` is an alias; use `herdr send`");
+            msg_send(&args[1..])
+        }
+        "inbox" => {
+            eprintln!("notice: `herdr msg inbox` is an alias; use `herdr inbox`");
+            msg_inbox(&args[1..])
+        }
+        "history" => {
+            eprintln!("notice: `herdr msg history` is an alias; use `herdr log`");
+            msg_history(&args[1..])
+        }
+        "tail" => {
+            eprintln!("notice: `herdr msg tail` is an alias; use `herdr log -f`");
+            msg_tail(&args[1..])
+        }
+        "rooms" => {
+            eprintln!("notice: `herdr msg rooms` is an alias; use `herdr log rooms`");
+            msg_rooms(&args[1..])
+        }
         "help" | "--help" | "-h" => {
             print_msg_help();
             Ok(0)
@@ -498,10 +516,22 @@ fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
 
 fn run_job_command(args: &[String]) -> std::io::Result<i32> {
     match args.first().map(String::as_str) {
-        Some("list") if args.len() == 1 => job_list(),
-        Some("status") if args.len() == 2 => job_status(&args[1]),
-        Some("log") if args.len() >= 2 => pane_job_log(&args[1..]),
-        Some("cancel") if args.len() == 2 => job_cancel(&args[1]),
+        Some("list") if args.len() == 1 => {
+            eprintln!("notice: `herdr job list` is an alias; use `herdr run list`");
+            job_list()
+        }
+        Some("status") if args.len() == 2 => {
+            eprintln!("notice: `herdr job status` is an alias; use `herdr log <job_id>`");
+            job_status(&args[1])
+        }
+        Some("log") if args.len() >= 2 => {
+            eprintln!("notice: `herdr job log` is an alias; use `herdr log <job_id>`");
+            pane_job_log(&args[1..])
+        }
+        Some("cancel") if args.len() == 2 => {
+            eprintln!("notice: `herdr job cancel` is an alias; use `herdr run cancel <job_id>`");
+            job_cancel(&args[1])
+        }
         Some("help" | "--help" | "-h") => {
             print_job_help();
             Ok(0)
@@ -642,6 +672,15 @@ struct RunSpawnOutput {
 }
 
 fn herdr_run(args: &[String]) -> std::io::Result<i32> {
+    match args.first().map(String::as_str) {
+        Some("list") if args.len() == 1 => return job_list(),
+        Some("cancel") if args.len() == 2 => return job_cancel(&args[1]),
+        Some("help" | "--help" | "-h") => {
+            print_run_help();
+            return Ok(0);
+        }
+        _ => {}
+    }
     let mut label = None;
     let mut cwd = None;
     let mut split = SplitDirection::Down;
@@ -901,6 +940,8 @@ fn herdr_run_background(
         .arg("__background-run")
         .arg("--job-id")
         .arg(&job)
+        .arg("--completion")
+        .arg(&completion)
         .arg("--")
         .args(command_args)
         .current_dir(&cwd)
@@ -1715,14 +1756,22 @@ fn parse_attach_target(args: &[String], usage: &str) -> Result<(String, bool), i
 }
 
 fn msg_send(args: &[String]) -> std::io::Result<i32> {
+    if matches!(
+        args.first().map(String::as_str),
+        Some("help" | "--help" | "-h")
+    ) {
+        print_send_help();
+        return Ok(0);
+    }
     if args.len() < 2 {
-        eprintln!("usage: herdr msg send <to> <text> [--room R] [--from NAME]");
+        eprintln!("usage: herdr send <to> <text> [--room R] [--reply-to ID] [--from NAME]");
         return Ok(2);
     }
 
     let to = args[0].clone();
     let mut room = crate::msg::DEFAULT_ROOM.to_string();
     let mut from = None;
+    let mut reply_to = None;
     let mut text = Vec::new();
     let mut index = 1;
     while index < args.len() {
@@ -1743,6 +1792,18 @@ fn msg_send(args: &[String]) -> std::io::Result<i32> {
                 from = Some(value.clone());
                 index += 2;
             }
+            "--reply-to" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --reply-to");
+                    return Ok(2);
+                };
+                reply_to = Some(
+                    value
+                        .parse::<i64>()
+                        .map_err(|_| std::io::Error::other("--reply-to must be a dispatch id"))?,
+                );
+                index += 2;
+            }
             "help" | "--help" | "-h" => {
                 print_msg_help();
                 return Ok(0);
@@ -1754,7 +1815,7 @@ fn msg_send(args: &[String]) -> std::io::Result<i32> {
         }
     }
     if text.is_empty() {
-        eprintln!("usage: herdr msg send <to> <text> [--room R] [--from NAME]");
+        eprintln!("usage: herdr send <to> <text> [--room R] [--reply-to ID] [--from NAME]");
         return Ok(2);
     }
 
@@ -1767,6 +1828,7 @@ fn msg_send(args: &[String]) -> std::io::Result<i32> {
             from_agent: identity.agent,
             to,
             body: text.join(" "),
+            reply_to,
         }),
     })?;
     print_msg_send_response(&response)
@@ -1897,6 +1959,464 @@ fn msg_rooms(args: &[String]) -> std::io::Result<i32> {
         println!("{room}");
     }
     Ok(0)
+}
+
+fn herdr_log(args: &[String]) -> std::io::Result<i32> {
+    match args.first().map(String::as_str) {
+        Some("--db") if args.len() == 1 => {
+            println!(
+                "{}",
+                crate::dispatch::DispatchStore::active_path().display()
+            );
+            Ok(0)
+        }
+        Some("--schema") if args.len() == 1 => {
+            println!("{}", crate::dispatch::DispatchStore::schema());
+            Ok(0)
+        }
+        Some("rooms") => msg_rooms(&args[1..]),
+        Some("stats") => log_stats(&args[1..]),
+        Some("-f") => msg_tail(&args[1..]),
+        Some("help" | "--help" | "-h") => {
+            print_log_help();
+            Ok(0)
+        }
+        Some(job_id) if !job_id.starts_with('-') && valid_pane_job_id(job_id) => {
+            job_status(job_id)?;
+            pane_job_log(args)
+        }
+        _ => log_timeline(args),
+    }
+}
+
+fn log_timeline(args: &[String]) -> std::io::Result<i32> {
+    let (room, project, limit) = parse_msg_history_args(args)?;
+    let _store = crate::dispatch::DispatchStore::open_active().map_err(std::io::Error::other)?;
+    let conn = rusqlite::Connection::open(crate::dispatch::DispatchStore::active_path())
+        .map_err(std::io::Error::other)?;
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT d.id, d.kind, d.room, d.project, fa.name, ta.name, d.body,
+                   d.label, d.status, d.exit_code, d.created_at
+            FROM dispatches d
+            JOIN actors fa ON fa.id=d.from_actor
+            JOIN actors ta ON ta.id=d.to_actor
+            WHERE d.room = ?1 AND (?2 IS NULL OR d.project = ?2)
+            ORDER BY d.id DESC
+            LIMIT ?3
+            "#,
+        )
+        .map_err(std::io::Error::other)?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params![room, project, i64::from(limit.max(1))],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, Option<i32>>(9)?,
+                    row.get::<_, String>(10)?,
+                ))
+            },
+        )
+        .map_err(std::io::Error::other)?;
+    let mut rows = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(std::io::Error::other)?;
+    rows.reverse();
+    if rows.is_empty() {
+        println!("log: no dispatches");
+        return Ok(0);
+    }
+    for (id, kind, room, _project, from, to, body, label, status, exit_code, created_at) in rows {
+        if kind == "command" {
+            println!(
+                "#{id} [{room}] {created_at} command {} -> {}: {} status={} exit={}",
+                from,
+                to,
+                label.unwrap_or(body),
+                status,
+                exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            );
+        } else {
+            println!("#{id} [{room}] {created_at} {from} -> {to}: {body}");
+        }
+    }
+    Ok(0)
+}
+
+fn log_stats(args: &[String]) -> std::io::Result<i32> {
+    let mut json = false;
+    let mut room: Option<String> = None;
+    let mut since: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--json" => {
+                json = true;
+                index += 1;
+            }
+            "--room" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --room");
+                    return Ok(2);
+                };
+                room = Some(value.clone());
+                index += 2;
+            }
+            "--since" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --since");
+                    return Ok(2);
+                };
+                since = Some(value.clone());
+                index += 2;
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                return Ok(2);
+            }
+        }
+    }
+    let _store = crate::dispatch::DispatchStore::open_active().map_err(std::io::Error::other)?;
+    let conn = rusqlite::Connection::open(crate::dispatch::DispatchStore::active_path())
+        .map_err(std::io::Error::other)?;
+    let room_filter = room.as_deref().unwrap_or("%");
+    let since_cutoff = log_stats_since_cutoff(&conn, since.as_deref())?;
+    let since_filter = since_cutoff.as_deref();
+    let reply_pairs = log_stats_reply_pairs(&conn, room_filter, since_filter)?;
+    let replied: usize = reply_pairs.iter().map(|row| row.count).sum();
+    let unanswered_rows = log_stats_unanswered(&conn, room_filter, since_filter)?;
+    let command_rows = log_stats_commands(&conn, since_filter)?;
+    let commands: i64 = command_rows.iter().map(|row| row.runs).sum();
+    let model_rows = log_stats_model_matrix(&conn, since_filter)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "reply_latency": {"replied": replied, "pairs": reply_pairs},
+                "unanswered": {"count": unanswered_rows.len(), "items": unanswered_rows},
+                "command_stats": {"commands": commands, "labels": command_rows},
+                "model_matrix": {"pairs": model_rows},
+            }))?
+        );
+    } else {
+        println!("■ 返答時間（返答済み {replied}件）");
+        println!("  pair                          p50     p95     max");
+        for row in &reply_pairs {
+            println!(
+                "  {:<29} {:>7} {:>7} {:>7}",
+                truncate_for_table(&row.pair, 29),
+                format_seconds(row.p50_seconds),
+                format_seconds(row.p95_seconds),
+                format_seconds(row.max_seconds)
+            );
+        }
+        println!("■ 返答抜け（未返答 {}件）", unanswered_rows.len());
+        for row in &unanswered_rows {
+            println!(
+                "  #{:<4} {} -> {}   {:?}   経過 {}",
+                row.id,
+                row.asked_by,
+                row.asked_to,
+                truncate_for_table(&row.body, 30),
+                format_seconds(row.waiting_seconds)
+            );
+        }
+        println!("■ コマンド実行（kind=command {commands}件）");
+        println!("  label                         件数   成功率   平均      最大");
+        for row in &command_rows {
+            println!(
+                "  {:<29} {:>4} {:>6} {:>8} {:>8}",
+                truncate_for_table(&row.label, 29),
+                row.runs,
+                format_percent(row.success_rate),
+                row.avg_seconds
+                    .map(format_seconds)
+                    .unwrap_or_else(|| "-".into()),
+                row.max_seconds
+                    .map(format_seconds)
+                    .unwrap_or_else(|| "-".into())
+            );
+        }
+        println!("■ モデル別（依頼→返答マトリクス）");
+        for row in &model_rows {
+            println!(
+                "  {} -> {}   {}",
+                row.asked_model, row.answered_model, row.dispatches
+            );
+        }
+    }
+    Ok(0)
+}
+
+#[derive(serde::Serialize)]
+struct ReplyLatencyStats {
+    pair: String,
+    count: usize,
+    p50_seconds: i64,
+    p95_seconds: i64,
+    max_seconds: i64,
+}
+
+#[derive(serde::Serialize)]
+struct UnansweredStats {
+    id: i64,
+    asked_by: String,
+    asked_to: String,
+    body: String,
+    waiting_seconds: i64,
+}
+
+#[derive(serde::Serialize)]
+struct CommandStats {
+    label: String,
+    runs: i64,
+    success_rate: Option<f64>,
+    avg_seconds: Option<i64>,
+    max_seconds: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+struct ModelMatrixStats {
+    asked_model: String,
+    answered_model: String,
+    dispatches: i64,
+}
+
+fn log_stats_since_cutoff(
+    conn: &rusqlite::Connection,
+    since: Option<&str>,
+) -> std::io::Result<Option<String>> {
+    let Some(since) = since.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let Some((amount, unit)) = parse_relative_since(since) else {
+        return Ok(Some(since.to_string()));
+    };
+    let modifier = format!("-{amount} {unit}");
+    conn.query_row(
+        "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now', ?1)",
+        rusqlite::params![modifier],
+        |row| row.get(0),
+    )
+    .map(Some)
+    .map_err(std::io::Error::other)
+}
+
+fn parse_relative_since(value: &str) -> Option<(u64, &'static str)> {
+    let (digits, suffix) = value.split_at(value.len().checked_sub(1)?);
+    let amount = digits.parse::<u64>().ok()?;
+    let unit = match suffix {
+        "s" => "seconds",
+        "m" => "minutes",
+        "h" => "hours",
+        "d" => "days",
+        _ => return None,
+    };
+    Some((amount, unit))
+}
+
+fn log_stats_reply_pairs(
+    conn: &rusqlite::Connection,
+    room_filter: &str,
+    since_filter: Option<&str>,
+) -> std::io::Result<Vec<ReplyLatencyStats>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT fa.name, COALESCE(fa.model, 'NULL'), ta.name, COALESCE(ta.model, 'NULL'),
+                   CAST((julianday(d.replied_at) - julianday(d.created_at)) * 86400 AS INTEGER)
+            FROM dispatches d
+            JOIN actors fa ON fa.id=d.from_actor
+            JOIN actors ta ON ta.id=d.to_actor
+            WHERE d.kind='message'
+              AND d.replied_at IS NOT NULL
+              AND d.room LIKE ?1
+              AND (?2 IS NULL OR d.created_at >= ?2)
+            ORDER BY d.id ASC
+            "#,
+        )
+        .map_err(std::io::Error::other)?;
+    let rows = stmt
+        .query_map(rusqlite::params![room_filter, since_filter], |row| {
+            let asked_by: String = row.get(0)?;
+            let asked_model: String = row.get(1)?;
+            let answered_by: String = row.get(2)?;
+            let answered_model: String = row.get(3)?;
+            let seconds: i64 = row.get(4)?;
+            Ok((
+                format!("{asked_model}({asked_by}) -> {answered_model}({answered_by})"),
+                seconds,
+            ))
+        })
+        .map_err(std::io::Error::other)?;
+    let mut grouped = std::collections::BTreeMap::<String, Vec<i64>>::new();
+    for row in rows {
+        let (pair, seconds) = row.map_err(std::io::Error::other)?;
+        grouped.entry(pair).or_default().push(seconds);
+    }
+    Ok(grouped
+        .into_iter()
+        .map(|(pair, mut seconds)| {
+            seconds.sort_unstable();
+            ReplyLatencyStats {
+                pair,
+                count: seconds.len(),
+                p50_seconds: percentile_seconds(&seconds, 50),
+                p95_seconds: percentile_seconds(&seconds, 95),
+                max_seconds: seconds.last().copied().unwrap_or(0),
+            }
+        })
+        .collect())
+}
+
+fn log_stats_unanswered(
+    conn: &rusqlite::Connection,
+    room_filter: &str,
+    since_filter: Option<&str>,
+) -> std::io::Result<Vec<UnansweredStats>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT id, asked_by, asked_to, body, waiting_seconds
+            FROM v_unanswered
+            WHERE room LIKE ?1 AND (?2 IS NULL OR created_at >= ?2)
+            ORDER BY id ASC
+            LIMIT 10
+            "#,
+        )
+        .map_err(std::io::Error::other)?;
+    let rows = stmt
+        .query_map(rusqlite::params![room_filter, since_filter], |row| {
+            Ok(UnansweredStats {
+                id: row.get(0)?,
+                asked_by: row.get(1)?,
+                asked_to: row.get(2)?,
+                body: row.get(3)?,
+                waiting_seconds: row.get(4)?,
+            })
+        })
+        .map_err(std::io::Error::other)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(std::io::Error::other)
+}
+
+fn log_stats_commands(
+    conn: &rusqlite::Connection,
+    since_filter: Option<&str>,
+) -> std::io::Result<Vec<CommandStats>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT COALESCE(label, body), COUNT(*),
+                   AVG(CASE WHEN exit_code = 0 THEN 1.0 ELSE 0.0 END),
+                   CAST(AVG((julianday(finished_at) - julianday(started_at)) * 86400) AS INTEGER),
+                   CAST(MAX((julianday(finished_at) - julianday(started_at)) * 86400) AS INTEGER)
+            FROM dispatches
+            WHERE kind='command'
+              AND finished_at IS NOT NULL
+              AND (?1 IS NULL OR created_at >= ?1)
+            GROUP BY COALESCE(label, body)
+            ORDER BY COUNT(*) DESC, COALESCE(label, body) ASC
+            LIMIT 10
+            "#,
+        )
+        .map_err(std::io::Error::other)?;
+    let rows = stmt
+        .query_map(rusqlite::params![since_filter], |row| {
+            Ok(CommandStats {
+                label: row.get(0)?,
+                runs: row.get(1)?,
+                success_rate: row.get(2)?,
+                avg_seconds: row.get(3)?,
+                max_seconds: row.get(4)?,
+            })
+        })
+        .map_err(std::io::Error::other)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(std::io::Error::other)
+}
+
+fn log_stats_model_matrix(
+    conn: &rusqlite::Connection,
+    since_filter: Option<&str>,
+) -> std::io::Result<Vec<ModelMatrixStats>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT COALESCE(fa.model, 'NULL'), COALESCE(ta.model, 'NULL'), COUNT(*)
+            FROM dispatches d
+            JOIN actors fa ON fa.id=d.from_actor
+            JOIN actors ta ON ta.id=d.to_actor
+            WHERE (?1 IS NULL OR d.created_at >= ?1)
+            GROUP BY fa.model, ta.model
+            ORDER BY COUNT(*) DESC, fa.model, ta.model
+            LIMIT 20
+            "#,
+        )
+        .map_err(std::io::Error::other)?;
+    let rows = stmt
+        .query_map(rusqlite::params![since_filter], |row| {
+            Ok(ModelMatrixStats {
+                asked_model: row.get(0)?,
+                answered_model: row.get(1)?,
+                dispatches: row.get(2)?,
+            })
+        })
+        .map_err(std::io::Error::other)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(std::io::Error::other)
+}
+
+fn percentile_seconds(sorted: &[i64], percentile: usize) -> i64 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    let rank = ((sorted.len() * percentile).div_ceil(100)).max(1);
+    sorted[rank.saturating_sub(1).min(sorted.len() - 1)]
+}
+
+fn format_seconds(seconds: i64) -> String {
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3600 {
+        format!("{}m{:02}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h{:02}m", seconds / 3600, (seconds % 3600) / 60)
+    }
+}
+
+fn format_percent(value: Option<f64>) -> String {
+    value
+        .map(|rate| format!("{:.0}%", rate * 100.0))
+        .unwrap_or_else(|| "-".into())
+}
+
+fn truncate_for_table(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!(
+            "{}…",
+            truncated
+                .chars()
+                .take(max_chars.saturating_sub(1))
+                .collect::<String>()
+        )
+    } else {
+        truncated
+    }
 }
 
 struct MsgIdentity {
@@ -2093,6 +2613,7 @@ fn agent_send(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
 
+    eprintln!("hint: AI間の連絡は `herdr send`（記録・順序保証付き）");
     print_response(&send_request(&Request {
         id: "cli:agent:send".into(),
         method: Method::AgentSend(AgentSendParams {
@@ -2610,35 +3131,9 @@ fn pane_run(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn pane_run_notify(args: &[String]) -> std::io::Result<i32> {
-    if args.len() < 2 {
-        eprintln!("usage: herdr pane run-notify <pane_id> <command>");
-        return Ok(2);
-    }
-
-    let target_pane = normalize_pane_id(&args[0]);
-    let command_args = if args.get(1).is_some_and(|arg| arg == "--") {
-        &args[2..]
-    } else {
-        &args[1..]
-    };
-    if command_args.is_empty() {
-        eprintln!("usage: herdr pane run-notify <pane_id> <command>");
-        return Ok(2);
-    }
-    let command = command_args.join(" ");
-    let parent_pane = resolve_current_pane_id()?;
-    let job_id = new_pane_job_id();
-    let exe = std::env::current_exe()?;
-    let runner = format!(
-        "{} __pane-notify-run --parent {} --target {} --job-id {} -- {}",
-        shell_quote(&exe.display().to_string()),
-        shell_quote(&parent_pane),
-        shell_quote(&target_pane),
-        shell_quote(&job_id),
-        shell_quote(&command)
-    );
-
-    send_pane_text_then_enter(target_pane, runner)
+    let _ = args;
+    eprintln!("error: `herdr pane run-notify` has been removed; use `herdr run -- <command...>`");
+    Ok(2)
 }
 
 fn pane_job_log(args: &[String]) -> std::io::Result<i32> {
@@ -2701,7 +3196,7 @@ fn tail_text(text: &str, max_lines: usize) -> String {
 
 fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
-        eprintln!("usage: herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID]");
+        eprintln!("usage: herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID] [--model NAME]");
         return Ok(2);
     };
 
@@ -2714,6 +3209,7 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
     let mut seq = None;
     let mut title = None;
     let mut session_id = None;
+    let mut model = None;
 
     let mut index = 1;
     while index < args.len() {
@@ -2782,6 +3278,14 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
                 session_id = Some(value.clone());
                 index += 2;
             }
+            "--model" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --model");
+                    return Ok(2);
+                };
+                model = Some(value.clone());
+                index += 2;
+            }
             other => {
                 eprintln!("unknown option: {other}");
                 return Ok(2);
@@ -2812,6 +3316,7 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
         seq,
         title,
         session_id,
+        model,
     }))
 }
 
@@ -3290,31 +3795,51 @@ fn pane_notify_runner(args: &[String]) -> std::io::Result<i32> {
 
 fn background_runner(args: &[String]) -> std::io::Result<i32> {
     let Some(job_id_index) = args.iter().position(|arg| arg == "--job-id") else {
-        eprintln!("usage: herdr __background-run --job-id ID -- <argv...>");
+        eprintln!("usage: herdr __background-run --job-id ID [--completion summary|full|none] -- <argv...>");
         return Ok(2);
     };
     let Some(job_id) = args
         .get(job_id_index + 1)
         .filter(|id| valid_pane_job_id(id))
     else {
-        eprintln!("usage: herdr __background-run --job-id ID -- <argv...>");
+        eprintln!("usage: herdr __background-run --job-id ID [--completion summary|full|none] -- <argv...>");
         return Ok(2);
     };
     let Some(separator) = args.iter().position(|arg| arg == "--") else {
-        eprintln!("usage: herdr __background-run --job-id ID -- <argv...>");
+        eprintln!("usage: herdr __background-run --job-id ID [--completion summary|full|none] -- <argv...>");
         return Ok(2);
     };
+    let mut completion_override = None;
+    let mut parse_index = 0;
+    while parse_index < separator {
+        if args[parse_index] == "--completion" {
+            let Some(value) = args
+                .get(parse_index + 1)
+                .filter(|_| parse_index + 1 < separator)
+            else {
+                eprintln!("missing value for --completion");
+                return Ok(2);
+            };
+            completion_override = Some(value.clone());
+            parse_index += 2;
+        } else {
+            parse_index += 1;
+        }
+    }
     let command_args = &args[separator + 1..];
     let Some((program, program_args)) = command_args.split_first() else {
-        eprintln!("usage: herdr __background-run --job-id ID -- <argv...>");
+        eprintln!("usage: herdr __background-run --job-id ID [--completion summary|full|none] -- <argv...>");
         return Ok(2);
     };
 
     let store = crate::job::JobStore::open_active().map_err(std::io::Error::other)?;
-    let Some(job) = store.get(job_id).map_err(std::io::Error::other)? else {
+    let Some(mut job) = store.get(job_id).map_err(std::io::Error::other)? else {
         eprintln!("job not found: {job_id}");
         return Ok(1);
     };
+    if let Some(completion) = completion_override {
+        job.completion = completion;
+    }
     let started = SystemTime::now();
     store
         .mark_running(job_id, std::process::id(), unix_millis(started))
@@ -3329,6 +3854,7 @@ fn background_runner(args: &[String]) -> std::io::Result<i32> {
             .lock()
             .map_err(|_| std::io::Error::other("job log lock poisoned"))?;
         writeln!(log, "job_id: {job_id}")?;
+        writeln!(log, "runner_pid: {}", std::process::id())?;
         writeln!(log, "caller_pane: {}", job.caller_pane)?;
         writeln!(log, "command: {}", job.command)?;
         writeln!(log, "cwd: {}", job.cwd)?;
@@ -3395,6 +3921,9 @@ fn background_runner(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn enqueue_job_mailbox(job: &crate::job::JobRecord, body: String) -> std::io::Result<()> {
+    let reply_to = crate::dispatch::DispatchStore::open_active()
+        .ok()
+        .and_then(|store| store.command_dispatch_id(&job.id).ok().flatten());
     let response = send_request(&Request {
         id: format!("job:{}:completion", job.id),
         method: Method::MsgSend(MsgSendParams {
@@ -3403,6 +3932,7 @@ fn enqueue_job_mailbox(job: &crate::job::JobRecord, body: String) -> std::io::Re
             from_agent: "herdr-run".into(),
             to: job.caller_agent.clone(),
             body: body.clone(),
+            reply_to,
         }),
     });
     if matches!(response, Ok(ref value) if value.get("error").is_none()) {
@@ -3413,12 +3943,13 @@ fn enqueue_job_mailbox(job: &crate::job::JobRecord, body: String) -> std::io::Re
     // completion durable; startup recovery nudges the exact caller when idle.
     let mut store = crate::msg::MsgStore::open_active().map_err(std::io::Error::other)?;
     store
-        .insert_messages(
+        .insert_message_with_reply(
             crate::msg::JOBS_ROOM,
             &job.cwd,
             "herdr-run",
-            std::slice::from_ref(&job.caller_agent),
+            &job.caller_agent,
             &body,
+            reply_to,
         )
         .map_err(std::io::Error::other)?;
     Ok(())
@@ -3840,12 +4371,40 @@ fn print_agent_help() {
 
 fn print_msg_help() {
     eprintln!("herdr msg commands:");
-    eprintln!("  herdr msg send <to> <text> [--room R] [--from NAME]");
+    eprintln!("  herdr msg send <to> <text> [--room R] [--reply-to ID] [--from NAME]");
     eprintln!("  herdr msg inbox [--room R] [--to NAME]");
     eprintln!("  herdr msg history [--room R] [--project P] [--limit N]");
     eprintln!("  herdr msg tail [--room R] [--project P] [--limit N]");
     eprintln!("  herdr msg rooms");
     eprintln!("  send targets accept agent names, pane targets, or '*' for room broadcast");
+    print_data_footer();
+}
+
+fn print_send_help() {
+    eprintln!("herdr send commands:");
+    eprintln!("  herdr send <to> <text> [--room R] [--reply-to ID] [--from NAME]");
+    eprintln!("  targets accept agent names, pane targets, or '*' for room broadcast");
+    print_data_footer();
+}
+
+fn print_log_help() {
+    eprintln!("herdr log commands:");
+    eprintln!("  herdr log [--room R] [--project P] [--limit N]");
+    eprintln!("  herdr log -f [--room R] [--project P] [--limit N]");
+    eprintln!("  herdr log <job_id>");
+    eprintln!("  herdr log rooms");
+    eprintln!("  herdr log --db");
+    eprintln!("  herdr log --schema");
+    eprintln!("  herdr log stats [--room R] [--since D] [--json]");
+    print_data_footer();
+}
+
+fn print_data_footer() {
+    eprintln!(
+        "data: ~/.config/herdr/herdr.db (per-session: ~/.config/herdr/sessions/<name>/herdr.db)"
+    );
+    eprintln!("      WAL mode; safe to query while running.");
+    eprintln!("lowest-level API: sqlite3 \"$(herdr log --db)\" — schema: herdr log --schema");
 }
 
 fn print_job_help() {
@@ -3877,14 +4436,13 @@ fn print_pane_help() {
     eprintln!("  herdr pane close <pane_id>");
     eprintln!("  herdr pane send-text <pane_id> <text>");
     eprintln!("  herdr pane send-keys <pane_id> <key> [key ...]");
-    eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID]");
+    eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID] [--model NAME]");
     eprintln!("  herdr pane run <pane_id> <command>");
-    eprintln!("  herdr pane run-notify <pane_id> <command>");
     eprintln!("  herdr pane job-log <job_id> [--tail N|tail=N]");
     eprintln!("  pane current uses HERDR_PANE_ID first, then the calling process session, then its parent process tree");
     eprintln!("  if pane current cannot identify you, inspect pane list/get/read and fail closed when the candidate is ambiguous");
     eprintln!("  pane send-text writes literal text without Enter; pane run submits command text with Enter");
-    eprintln!("  pane run-notify streams output in the target pane and reports exit with a Herdr toast plus job log");
+    eprintln!("  pane run-notify was removed; use herdr run for durable command execution");
 }
 
 fn print_run_help() {
@@ -3896,9 +4454,10 @@ fn print_run_help() {
     );
     eprintln!("  --split and --close-on-success are valid only with --pane");
     eprintln!("  background completion is durable mailbox delivery to the exact caller: summary (default), full, or none");
-    eprintln!("  inspect background jobs with `herdr job list|status|log|cancel`");
+    eprintln!("  inspect background jobs with `herdr run list`, `herdr log <job_id>`, and `herdr run cancel <job_id>`");
     eprintln!("  commands inherit cwd and environment; cwd/node_modules/.bin is prepended to PATH when present");
     eprintln!("  caller resolution fails closed; pass --caller <pane> when the calling pane cannot be identified");
+    print_data_footer();
 }
 
 fn print_wait_help() {

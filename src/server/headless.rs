@@ -2542,6 +2542,7 @@ mod tests {
                 from_agent: "alpha".into(),
                 to: to.into(),
                 body: body.into(),
+                reply_to: None,
             }),
         });
         let parsed: api::schema::SuccessResponse = serde_json::from_str(&response).unwrap();
@@ -2580,7 +2581,7 @@ mod tests {
                 &mut first_server,
                 &first_agents,
                 "beta",
-                crate::detect::AgentState::Working,
+                crate::detect::AgentState::Blocked,
             );
             headless_msg_send(&mut first_server, "beta", "headless-restart", "one");
             headless_msg_send(&mut first_server, "beta", "headless-restart", "two");
@@ -2609,7 +2610,8 @@ mod tests {
             let enter = rx.try_recv().unwrap();
             assert!(rx.try_recv().is_err());
             let text = String::from_utf8_lossy(&text);
-            assert!(text.contains("未読2件"));
+            assert!(text.contains("one"));
+            assert!(text.contains("two"));
             assert!(text.contains("room=headless-restart"));
             assert_eq!(enter, Bytes::from_static(b"\r"));
 
@@ -3914,6 +3916,7 @@ mod tests {
                     seq: Some(19),
                     title: None,
                     session_id: None,
+                    model: None,
                 }),
             },
             respond_to,

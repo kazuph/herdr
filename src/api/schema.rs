@@ -223,6 +223,8 @@ pub struct MsgSendParams {
     pub from_agent: String,
     pub to: String,
     pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -344,6 +346,9 @@ pub struct PaneReportAgentParams {
     /// `[agent_restore]` to relaunch the agent after a server restart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Explicit model name for analysis; omitted means unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -933,6 +938,7 @@ mod tests {
                 seq: Some(42),
                 title: Some("implement search".into()),
                 session_id: Some("0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9".into()),
+                model: Some("gpt-5.5".into()),
             }),
         };
 
