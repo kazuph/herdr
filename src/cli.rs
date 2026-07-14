@@ -3398,7 +3398,7 @@ fn enqueue_job_mailbox(job: &crate::job::JobRecord, body: String) -> std::io::Re
     let response = send_request(&Request {
         id: format!("job:{}:completion", job.id),
         method: Method::MsgSend(MsgSendParams {
-            room: "herdr-jobs".into(),
+            room: crate::msg::JOBS_ROOM.into(),
             project: job.cwd.clone(),
             from_agent: "herdr-run".into(),
             to: job.caller_agent.clone(),
@@ -3414,7 +3414,7 @@ fn enqueue_job_mailbox(job: &crate::job::JobRecord, body: String) -> std::io::Re
     let mut store = crate::msg::MsgStore::open_active().map_err(std::io::Error::other)?;
     store
         .insert_messages(
-            "herdr-jobs",
+            crate::msg::JOBS_ROOM,
             &job.cwd,
             "herdr-run",
             std::slice::from_ref(&job.caller_agent),

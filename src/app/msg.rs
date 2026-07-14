@@ -155,34 +155,34 @@ impl App {
             return Ok(false);
         };
 
+        if nudge.room == crate::msg::JOBS_ROOM {
+            let store = open_msg_store()?;
+            let messages = store
+                .pending_messages_for_agent(&nudge.room, &nudge.to_agent)
+                .map_err(msg_store_error)?;
+            drop(store);
+            if messages.is_empty() {
+                return Ok(false);
+            }
+            let message = messages
+                .iter()
+                .map(|message| message.body.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            inject_text_and_enter(runtime, &message)?;
+            let store = open_msg_store()?;
+            store
+                .mark_read(&nudge.room, &nudge.to_agent)
+                .map_err(msg_store_error)?;
+            return Ok(true);
+        }
+
         let inbox_command = format!("herdr msg inbox --room {}", quote_shell_arg(&nudge.room));
         let message = format!(
             "\u{1f4ec} herdr msg: 未読{}件 (room={}, from={})。`{inbox_command}` を実行して確認して",
             nudge.count, nudge.room, nudge.latest_from
         );
-        let text_bytes = encode_api_text(runtime, &message);
-        let enter = match encode_api_keys(runtime, &["enter".to_string()]) {
-            Ok(mut encoded_keys) => encoded_keys.pop().unwrap_or_default(),
-            Err(key) => {
-                return Err(ErrorBody {
-                    code: "invalid_key".into(),
-                    message: format!("unsupported key {key}"),
-                });
-            }
-        };
-        runtime
-            .try_send_bytes(Bytes::from(text_bytes))
-            .map_err(|err| ErrorBody {
-                code: "msg_nudge_failed".into(),
-                message: err.to_string(),
-            })?;
-        std::thread::sleep(AGENT_SEND_SUBMIT_DELAY);
-        runtime
-            .try_send_bytes(Bytes::from(enter))
-            .map_err(|err| ErrorBody {
-                code: "msg_nudge_failed".into(),
-                message: err.to_string(),
-            })?;
+        inject_text_and_enter(runtime, &message)?;
 
         let store = open_msg_store()?;
         store
@@ -220,6 +220,36 @@ impl App {
         }
         Ok(recipients)
     }
+}
+
+fn inject_text_and_enter(
+    runtime: &crate::terminal::TerminalRuntime,
+    message: &str,
+) -> Result<(), ErrorBody> {
+    let text_bytes = encode_api_text(runtime, message);
+    let enter = match encode_api_keys(runtime, &["enter".to_string()]) {
+        Ok(mut encoded_keys) => encoded_keys.pop().unwrap_or_default(),
+        Err(key) => {
+            return Err(ErrorBody {
+                code: "invalid_key".into(),
+                message: format!("unsupported key {key}"),
+            });
+        }
+    };
+    runtime
+        .try_send_bytes(Bytes::from(text_bytes))
+        .map_err(|err| ErrorBody {
+            code: "msg_nudge_failed".into(),
+            message: err.to_string(),
+        })?;
+    std::thread::sleep(AGENT_SEND_SUBMIT_DELAY);
+    runtime
+        .try_send_bytes(Bytes::from(enter))
+        .map_err(|err| ErrorBody {
+            code: "msg_nudge_failed".into(),
+            message: err.to_string(),
+        })?;
+    Ok(())
 }
 
 fn open_msg_store() -> Result<crate::msg::MsgStore, ErrorBody> {
@@ -556,6 +586,25 @@ mod tests {
                     .expect("nudge should contain an inbox command"),
                 "herdr msg inbox --room 'review ui'\\''s notifications'"
             );
+        });
+    }
+
+    #[test]
+    fn herdr_job_messages_are_injected_directly_and_marked_read() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Idle);
+            let body = "[herdr run] exit=0 label=tests job=job-1 details: herdr job log job-1";
+
+            let nudged = harness.send("herdr-run", "beta", crate::msg::JOBS_ROOM, body);
+
+            assert_eq!(nudged, vec!["beta"]);
+            let texts = harness.received_texts("beta");
+            assert_eq!(texts, vec![body.to_string(), "\r".to_string()]);
+            assert!(!texts[0].contains("herdr msg inbox"));
+            let messages = harness.history(crate::msg::JOBS_ROOM);
+            assert_eq!(messages.len(), 1);
+            assert!(messages[0].delivered_at.is_none());
+            assert!(messages[0].read_at.is_some());
         });
     }
 

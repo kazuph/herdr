@@ -5,6 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::api::schema::MsgMessage;
 
 pub(crate) const DEFAULT_ROOM: &str = "default";
+pub(crate) const JOBS_ROOM: &str = "herdr-jobs";
 pub(crate) const DEBOUNCE_SECONDS: i64 = 30;
 #[cfg(test)]
 pub(crate) const MSG_DB_PATH_ENV_VAR: &str = "HERDR_MSG_DB_PATH";
@@ -124,6 +125,26 @@ impl MsgStore {
         }
         tx.commit()?;
         Ok(messages)
+    }
+
+    pub(crate) fn pending_messages_for_agent(
+        &self,
+        room: &str,
+        to_agent: &str,
+    ) -> rusqlite::Result<Vec<MsgMessage>> {
+        Self::select_messages(
+            &self.conn,
+            r#"
+            SELECT id, room, project, from_agent, to_agent, body, created_at, delivered_at, read_at
+            FROM messages
+            WHERE room = ?1
+              AND to_agent = ?2
+              AND read_at IS NULL
+              AND delivered_at IS NULL
+            ORDER BY id ASC
+            "#,
+            params![room, to_agent],
+        )
     }
 
     pub(crate) fn history(
@@ -269,6 +290,19 @@ impl MsgStore {
               AND to_agent = ?2
               AND read_at IS NULL
               AND delivered_at IS NULL
+            "#,
+            params![room, to_agent],
+        )
+    }
+
+    pub(crate) fn mark_read(&self, room: &str, to_agent: &str) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            r#"
+            UPDATE messages
+            SET read_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            WHERE room = ?1
+              AND to_agent = ?2
+              AND read_at IS NULL
             "#,
             params![room, to_agent],
         )
