@@ -33,17 +33,29 @@ Do all code edits, tests, and validation inside the task worktree.
 
 Commit on the task branch in that worktree.
 
-When the change is ready, fast-forward the shared checkout at `../herdr` to the task branch commit, then push `origin/master` from `../herdr`. Do not treat the task branch as the final landing branch.
+When the change is ready, fast-forward the shared checkout at `../herdr` to the task branch commit, then push `origin/main` from `../herdr`. Do not treat the task branch as the final landing branch.
 
 If the current session is already inside an isolated task worktree, keep using it. Do not create nested worktrees.
 
-When the human asks for a change to be completed, treat commit and push to `origin/master` as a single completion step after local verification passes. Do not stop at an uncommitted handoff unless the human explicitly asks not to commit or not to push.
+When the human asks for a change to be completed, treat commit and push to `origin/main` as a single completion step after local verification passes. Do not stop at an uncommitted handoff unless the human explicitly asks not to commit or not to push.
 
 Before committing, propose the commit message and get alignment unless the human has already explicitly authorized commit/push for the current change.
 
 Restarting a running Herdr server or client is never implied by commit, push, build, or local runtime replacement. Restart only after the human explicitly authorizes that restart.
 
 After the change is integrated, remove the task worktree and delete the task branch locally and remotely.
+
+## Herdr server lifecycle (kill / restart / binary swap)
+
+- Never kill or restart the running Herdr server or client (`pkill herdr`, `herdr server stop`, killing the process, quitting the app) unless the human explicitly authorizes that exact restart in the current conversation. Commit, push, build, binary replacement, or "the fix needs a restart to take effect" never implies authorization.
+- Never replace `~/.local/bin/herdr` from an experimental branch or task worktree state. Binary replacement is allowed only from committed, integrated `main` state in the shared checkout, and even then it does not authorize a restart.
+- Verify unreleased builds with `target/release/herdr` in an isolated alternate-binary session, never by swapping the running runtime.
+- Pre-restart checklist — ALL steps must be complete before an authorized restart:
+  1. Every agent pane has reported its CURRENT session id (`herdr pane report-agent ... --session-id`). Ask stale panes to re-report first.
+  2. The pane-to-session ledger is saved and readable (e.g. `herdr-agent-sessions save`).
+  3. Any pane whose current session id cannot be proven is reported to the human as UNSAFE, and restart is blocked until the human decides per pane.
+  4. The restore plan names the exact session id per pane. `--last`, `resume --last`, and latest-session guessing are forbidden (see No Fallback Masking).
+- After restart, restore each pane only from its recorded session id and verify the restored conversation content matches before reporting success.
 
 ## Herdr agent title reporting
 
@@ -80,7 +92,7 @@ just check              # formatting check + cargo nextest + maintenance script 
 
 Default flow: run `just check` before committing. Do not commit until `just check` passes locally unless Can explicitly accepts a narrower validation for that commit.
 
-After every agent-driven change that is committed or handed off in this fork workspace, rebuild the release binary and replace the local runtime at `~/.local/bin/herdr` before reporting completion. A code change is not considered fully applied in this environment until the running `herdr` binary has been swapped.
+After every agent-driven change that is committed or handed off in this fork workspace, rebuild the release binary and replace the local runtime at `~/.local/bin/herdr` before reporting completion. A code change is not considered fully applied in this environment until the running `herdr` binary has been swapped. This applies only to committed, integrated `main` state — never swap from an experimental branch or task worktree, and a binary swap never authorizes a server restart (see "Herdr server lifecycle").
 
 Unit tests live next to the code (`#[cfg(test)] mod tests`). If you add behavior to `AppState` or `Workspace`, it should be testable with `AppState::test_new()` and `Workspace::test_new()` — no PTYs.
 
@@ -98,7 +110,7 @@ Unit tests live next to the code (`#[cfg(test)] mod tests`). If you add behavior
 
   refs #82
   ```
-  Do not use GitHub closing keywords like `fixes #<issue-number>`, `closes #<issue-number>`, or `resolves #<issue-number>` in normal commits, because `master` contains unreleased work and those keywords close issues before release. Release CI scans `refs #<issue-number>` body lines between release tags and closes the referenced issues after the GitHub Release is created.
+  Do not use GitHub closing keywords like `fixes #<issue-number>`, `closes #<issue-number>`, or `resolves #<issue-number>` in normal commits, because `main` contains unreleased work and those keywords close issues before release. Release CI scans `refs #<issue-number>` body lines between release tags and closes the referenced issues after the GitHub Release is created.
 - Rust: no `unwrap()` in production code. `tracing` for logging. `#[allow]` only with a comment explaining why.
 - Don't bypass checks. If tests fail, fix them before committing.
 - Don't add dependencies without a reason. Check if the existing deps cover it first.
@@ -114,7 +126,7 @@ just check
 just release 0.x.y
 ```
 
-`just release 0.x.y` prepares the changelog entry, bumps `Cargo.toml`, runs tests, commits, tags, and pushes. GitHub Actions builds the binaries after the tag is pushed, creates the GitHub release, uploads all four binary assets, then updates `website/latest.json` on `master` automatically.
+`just release 0.x.y` prepares the changelog entry, bumps `Cargo.toml`, runs tests, commits, tags, and pushes. GitHub Actions builds the binaries after the tag is pushed, creates the GitHub release, uploads all four binary assets, then updates `website/latest.json` on `main` automatically.
 
 The release workflow must publish these four assets:
 
@@ -142,7 +154,7 @@ The app update check and the in-app **What's New** flow both depend on that exac
 
 Do not edit `website/latest.json` during normal feature, fix, or test work. It describes the latest published release binaries, not the current unreleased source tree. The release workflow updates it after release assets are published.
 
-When changing the server/client wire protocol, compare `src/server/protocol.rs::PROTOCOL_VERSION` against the latest released tag. Bump it only if the current source protocol is not already greater than the latest released protocol. Multiple unreleased wire changes in the same release cycle must share the same single protocol bump; Herdr supports tagged releases, not arbitrary `master` client/server compatibility. When a bump is required, update all hardcoded protocol expectations and manual protocol fixtures in tests. Keep protocol test expectations intentionally explicit so compatibility changes are reviewed instead of silently following the constant.
+When changing the server/client wire protocol, compare `src/server/protocol.rs::PROTOCOL_VERSION` against the latest released tag. Bump it only if the current source protocol is not already greater than the latest released protocol. Multiple unreleased wire changes in the same release cycle must share the same single protocol bump; Herdr supports tagged releases, not arbitrary `main` client/server compatibility. When a bump is required, update all hardcoded protocol expectations and manual protocol fixtures in tests. Keep protocol test expectations intentionally explicit so compatibility changes are reviewed instead of silently following the constant.
 
 ## External contributor guardrail
 
