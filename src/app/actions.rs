@@ -1522,6 +1522,28 @@ impl AppState {
     }
 
     fn handle_pane_died(&mut self, pane_id: PaneId) {
+        if self
+            .pane_local_overlay
+            .is_some_and(|overlay| overlay.pane_id == pane_id)
+        {
+            self.pane_local_overlay = None;
+            let ws_idx = self
+                .workspaces
+                .iter()
+                .position(|ws| ws.find_tab_index_for_pane(pane_id).is_some());
+            if let Some(ws_idx) = ws_idx {
+                let pane_terminal_id = self.terminal_id_for_pane(ws_idx, pane_id);
+                if self.workspaces[ws_idx]
+                    .remove_transient_pane(pane_id)
+                    .is_some()
+                {
+                    self.mark_session_dirty();
+                    self.remove_unattached_terminal_ids(pane_terminal_id);
+                    return;
+                }
+            }
+        }
+
         let ws_idx = self
             .workspaces
             .iter()
@@ -2898,6 +2920,23 @@ mod tests {
         let mut state = app_with_workspaces(&["test"]);
         state.toggle_zoom();
         assert!(!state.workspaces[0].zoomed);
+    }
+
+    #[test]
+    fn terminal_input_prefers_active_pane_local_overlay() {
+        let mut state = app_with_workspaces(&["test"]);
+        let target_pane = state.workspaces[0].tabs[0].root_pane;
+        let overlay_pane = crate::layout::PaneId::alloc();
+        let overlay_terminal = crate::terminal::TerminalId::alloc();
+        state.workspaces[0].tabs[0]
+            .panes
+            .insert(overlay_pane, crate::pane::PaneState::new(overlay_terminal));
+        state.pane_local_overlay = Some(crate::app::state::PaneLocalOverlay {
+            pane_id: overlay_pane,
+            target_pane_id: target_pane,
+        });
+
+        assert_eq!(state.terminal_input_pane_id(0), Some(overlay_pane));
     }
 
     #[test]

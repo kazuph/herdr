@@ -120,8 +120,7 @@ impl App {
         }
 
         let ws_idx = self.state.active?;
-        let ws = self.state.workspaces.get(ws_idx)?;
-        let pane_id = ws.focused_pane_id()?;
+        let pane_id = self.state.terminal_input_pane_id(ws_idx)?;
         let rt = self.state.runtime_for_pane_in_workspace(ws_idx, pane_id)?;
 
         // Intercept plain PageUp/PageDown presses for pane scrollback when the
@@ -710,8 +709,10 @@ mod tests {
         ))
         .await;
 
-        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 2);
-        assert!(app.state.workspaces[0].tabs[0].zoomed);
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
+        assert_eq!(app.state.workspaces[0].tabs[0].panes.len(), 2);
+        assert!(app.state.pane_local_overlay.is_some());
+        assert!(!app.state.workspaces[0].tabs[0].zoomed);
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 

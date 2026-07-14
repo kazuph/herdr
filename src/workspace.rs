@@ -20,6 +20,7 @@ mod git;
 mod tab;
 
 use self::git::{git_ahead_behind, git_diff_stats};
+use self::tab::DetachedPane;
 pub use self::{
     git::{derive_label_from_cwd, git_branch},
     tab::Tab,
@@ -769,6 +770,16 @@ impl Workspace {
             self.unregister_pane(removed);
         }
         false
+    }
+
+    pub(crate) fn remove_transient_pane(&mut self, pane_id: PaneId) -> Option<DetachedPane> {
+        let tab_idx = self.find_tab_index_for_pane(pane_id)?;
+        if self.tabs[tab_idx].layout.pane_ids().contains(&pane_id) {
+            return None;
+        }
+        let pane = self.tabs[tab_idx].panes.remove(&pane_id)?;
+        self.unregister_pane(pane_id);
+        Some((pane_id, pane.attached_terminal_id))
     }
 
     fn register_new_pane(&mut self, pane_id: PaneId) {

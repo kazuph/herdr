@@ -1302,6 +1302,12 @@ pub struct MissingAgentSessionInfo {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PaneLocalOverlay {
+    pub pane_id: PaneId,
+    pub target_pane_id: PaneId,
+}
+
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 pub struct AppState {
@@ -1317,6 +1323,7 @@ pub struct AppState {
     pub mode: Mode,
     pub(crate) copy_mode: Option<CopyModeState>,
     pub(crate) copy_mode_fullscreen_pane: Option<PaneId>,
+    pub(crate) pane_local_overlay: Option<PaneLocalOverlay>,
     pub pane_focus_back: Vec<PaneFocusLocation>,
     pub pane_focus_forward: Vec<PaneFocusLocation>,
     pub should_quit: bool,
@@ -1551,9 +1558,24 @@ impl AppState {
         &self,
         ws_idx: usize,
     ) -> Option<&crate::terminal::TerminalRuntime> {
-        let ws = self.workspaces.get(ws_idx)?;
-        let pane_id = ws.focused_pane_id()?;
+        let pane_id = self.terminal_input_pane_id(ws_idx)?;
         self.runtime_for_pane_in_workspace(ws_idx, pane_id)
+    }
+
+    pub(crate) fn terminal_input_pane_id(&self, ws_idx: usize) -> Option<PaneId> {
+        if self.active == Some(ws_idx) {
+            if let Some(overlay) = self.pane_local_overlay {
+                if self
+                    .workspaces
+                    .get(ws_idx)
+                    .and_then(|ws| ws.active_tab())
+                    .is_some_and(|tab| tab.terminal_id(overlay.pane_id).is_some())
+                {
+                    return Some(overlay.pane_id);
+                }
+            }
+        }
+        self.workspaces.get(ws_idx)?.focused_pane_id()
     }
 
     pub fn is_active_pane(
@@ -1683,6 +1705,7 @@ impl AppState {
             mode: Mode::Navigate,
             copy_mode: None,
             copy_mode_fullscreen_pane: None,
+            pane_local_overlay: None,
             pane_focus_back: Vec::new(),
             pane_focus_forward: Vec::new(),
             should_quit: false,

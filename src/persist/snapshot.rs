@@ -316,28 +316,28 @@ fn capture_tab(
 ) -> TabSnapshot {
     let mut panes = HashMap::new();
     let tab_id = format!("{workspace_id}:{tab_number}");
-    for id in tab.panes.keys() {
+    for id in tab.layout.pane_ids() {
         let cwd = tab
-            .cwd_for_pane(*id, terminals, terminal_runtimes)
+            .cwd_for_pane(id, terminals, terminal_runtimes)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
         let label = tab
             .panes
-            .get(id)
+            .get(&id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id))
             .and_then(|terminal| terminal.manual_label.clone());
         let agent_name = tab
             .panes
-            .get(id)
+            .get(&id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id))
             .and_then(|terminal| terminal.agent_name.clone());
         let title = tab
             .panes
-            .get(id)
+            .get(&id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id))
             .and_then(|terminal| terminal.agent_task_title.clone());
         let agent_restore = tab
             .panes
-            .get(id)
+            .get(&id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id))
             .and_then(|terminal| {
                 let agent = terminal
@@ -909,6 +909,26 @@ mod tests {
         assert_eq!(tab.pane_order, vec![root.raw(), second.raw()]);
         assert!(tab.zoomed);
         assert_eq!(tab.panes.len(), 2);
+    }
+
+    #[test]
+    fn capture_skips_transient_panes_outside_layout() {
+        let mut state = state_with_workspaces(&["one"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let transient_pane = crate::layout::PaneId::alloc();
+        let transient_terminal = crate::terminal::TerminalId::alloc();
+        state.workspaces[0].tabs[0].panes.insert(
+            transient_pane,
+            crate::pane::PaneState::new(transient_terminal),
+        );
+
+        let snapshot = capture_from_state(&state);
+        let tab = &snapshot.workspaces[0].tabs[0];
+
+        assert_eq!(tab.pane_order, vec![root.raw()]);
+        assert_eq!(tab.panes.len(), 1);
+        assert!(tab.panes.contains_key(&root.raw()));
+        assert!(!tab.panes.contains_key(&transient_pane.raw()));
     }
 
     #[test]

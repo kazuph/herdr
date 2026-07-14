@@ -325,6 +325,24 @@ pub(super) fn compute_pane_infos(
     }
 
     let mut pane_infos = ws.layout.panes(area);
+    let pane_local_overlay = app.pane_local_overlay.and_then(|overlay| {
+        ws.active_tab().and_then(|tab| {
+            if tab.panes.contains_key(&overlay.pane_id)
+                && tab.panes.contains_key(&overlay.target_pane_id)
+            {
+                pane_infos
+                    .iter()
+                    .find(|info| info.id == overlay.target_pane_id)
+                    .cloned()
+                    .map(|target_info| (overlay, target_info))
+            } else {
+                None
+            }
+        })
+    });
+    if let Some((overlay, _)) = &pane_local_overlay {
+        pane_infos.retain(|info| info.id != overlay.target_pane_id);
+    }
 
     for info in &mut pane_infos {
         let border_set = if info.is_focused && terminal_active {
@@ -361,6 +379,34 @@ pub(super) fn compute_pane_infos(
 
         info.inner_rect = inner_rect;
         info.scrollbar_rect = scrollbar_rect;
+    }
+
+    if let Some((overlay, target_info)) = pane_local_overlay {
+        let pane_inner = pane_inner_rect(target_info.rect);
+        let mut inner_rect = pane_inner;
+        let mut scrollbar_rect = None;
+        if let Some(rt) = app.runtime_for_pane_in_workspace(ws_idx, overlay.pane_id) {
+            (inner_rect, scrollbar_rect) = stable_scrollbar_gutter(rt, pane_inner);
+            if resize_panes
+                && ws.terminal_id(overlay.pane_id).is_some_and(|terminal_id| {
+                    !app.direct_attach_resize_locks.contains(terminal_id)
+                })
+            {
+                rt.resize(
+                    inner_rect.height,
+                    inner_rect.width,
+                    cell_size.width_px,
+                    cell_size.height_px,
+                );
+            }
+        }
+        pane_infos.push(PaneInfo {
+            id: overlay.pane_id,
+            rect: target_info.rect,
+            inner_rect,
+            scrollbar_rect,
+            is_focused: true,
+        });
     }
 
     pane_infos
@@ -775,6 +821,51 @@ mod tests {
         assert_eq!(info.rect, area);
         assert_eq!(info.scrollbar_rect, None);
         assert_eq!(info.inner_rect, Rect::new(11, 4, 37, 6));
+    }
+
+    #[tokio::test]
+    async fn pane_local_overlay_replaces_only_target_pane_rect() {
+        let mut app = AppState::test_new();
+        let mut workspace = Workspace::test_new("test");
+        let target_pane = workspace.tabs[0].root_pane;
+        let other_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        let overlay_pane = crate::layout::PaneId::alloc();
+        let overlay_terminal = crate::terminal::TerminalId::alloc();
+        workspace.tabs[0]
+            .panes
+            .insert(overlay_pane, crate::pane::PaneState::new(overlay_terminal));
+        workspace.tabs[0].runtimes.insert(
+            overlay_pane,
+            TerminalRuntime::test_with_scrollback_bytes(40, 8, 1024, b"overlay\n"),
+        );
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        app.pane_local_overlay = Some(crate::app::state::PaneLocalOverlay {
+            pane_id: overlay_pane,
+            target_pane_id: target_pane,
+        });
+
+        let area = Rect::new(0, 0, 100, 20);
+        let infos = compute_pane_infos(
+            &app,
+            area,
+            false,
+            crate::kitty_graphics::HostCellSize::default(),
+        );
+
+        assert_eq!(infos.len(), 2);
+        assert!(infos.iter().any(|info| info.id == other_pane));
+        assert!(!infos.iter().any(|info| info.id == target_pane));
+        let overlay_info = infos
+            .iter()
+            .find(|info| info.id == overlay_pane)
+            .expect("overlay pane should render");
+        let other_info = infos
+            .iter()
+            .find(|info| info.id == other_pane)
+            .expect("other pane should remain visible");
+        assert_eq!(overlay_info.rect, Rect::new(0, 0, 50, 20));
+        assert_eq!(other_info.rect, Rect::new(50, 0, 50, 20));
     }
 
     #[tokio::test]

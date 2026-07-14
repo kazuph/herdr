@@ -308,6 +308,7 @@ impl App {
         let previous_focus = ws
             .focused_pane_id()
             .ok_or_else(|| std::io::Error::other("no focused pane"))?;
+        let previous_layout = ws.active_tab().map(|tab| tab.layout.clone());
         let previous_zoomed = ws.active_tab().map(|tab| tab.zoomed).unwrap_or(false);
         let cwd = ws.active_tab().and_then(|tab| {
             tab.cwd_for_pane(
@@ -337,9 +338,17 @@ impl App {
             .expect("workspace must have an active tab")
             .layout
             .focus_pane(new_pane_id);
-        ws.active_tab_mut()
-            .expect("workspace must have an active tab")
-            .zoomed = true;
+        if let Some(layout) = previous_layout {
+            let tab = ws
+                .active_tab_mut()
+                .expect("workspace must have an active tab");
+            tab.layout = layout;
+            tab.zoomed = previous_zoomed;
+        }
+        self.state.pane_local_overlay = Some(super::super::state::PaneLocalOverlay {
+            pane_id: new_pane_id,
+            target_pane_id: previous_focus,
+        });
         self.overlay_panes.insert(
             new_pane_id,
             super::super::OverlayPaneState {
@@ -1386,22 +1395,24 @@ mod tests {
         app.handle_key(TerminalKey::new(KeyCode::Char('g'), KeyModifiers::empty()))
             .await;
 
-        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 2);
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
+        assert_eq!(app.state.workspaces[0].tabs[0].panes.len(), 2);
         assert_eq!(app.state.terminal_runtimes.len(), 2);
-        assert!(app.state.workspaces[0].tabs[0].zoomed);
+        assert!(!app.state.workspaces[0].tabs[0].zoomed);
+        assert!(app.state.pane_local_overlay.is_some());
 
         let _ = wait_for_file(&output_path);
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
-            if app.drain_internal_events()
-                && app.state.workspaces[0].tabs[0].layout.pane_count() == 1
-            {
+            if app.drain_internal_events() && app.state.workspaces[0].tabs[0].panes.len() == 1 {
                 break;
             }
             std::thread::sleep(Duration::from_millis(20));
         }
 
         assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
+        assert_eq!(app.state.workspaces[0].tabs[0].panes.len(), 1);
+        assert!(app.state.pane_local_overlay.is_none());
         assert!(!app.state.workspaces[0].tabs[0].zoomed);
         assert_eq!(app.state.mode, Mode::Terminal);
         let _ = std::fs::remove_file(output_path);

@@ -315,6 +315,8 @@ impl App {
             let _ = std::fs::remove_file(temp_file);
         }
 
+        self.state.pane_local_overlay = None;
+
         let Some(ws) = self.state.workspaces.get_mut(overlay.ws_idx) else {
             return;
         };

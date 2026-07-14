@@ -377,6 +377,7 @@ impl App {
             mode,
             copy_mode: None,
             copy_mode_fullscreen_pane: None,
+            pane_local_overlay: None,
             pane_focus_back: Vec::new(),
             pane_focus_forward: Vec::new(),
             should_quit: false,
