@@ -251,6 +251,19 @@ mod tests {
         std::path::PathBuf::from(format!("/tmp/ha-{name}-{}-{nanos}", std::process::id()))
     }
 
+    fn assert_eventually_not_listening_at(socket_path: &std::path::Path) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            if !is_server_listening_at(socket_path) {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("socket stayed connectable after listener was dropped");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn is_server_listening_returns_false_for_nonexistent_path() {
         let dir = unique_test_dir("nonexistent");
@@ -310,8 +323,10 @@ mod tests {
             let _listener = UnixListener::bind(&path).unwrap();
         }
 
-        // The socket file exists but nobody is listening.
-        assert!(!is_server_listening_at(&path));
+        // The socket file exists but nobody is listening. Some platforms can
+        // report the just-dropped listener as connectable for a brief moment,
+        // so assert the stale state after the kernel has observed the close.
+        assert_eventually_not_listening_at(&path);
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -324,8 +339,8 @@ mod tests {
         // Bind and immediately drop the listener.
         drop(UnixListener::bind(&path).unwrap());
 
-        // Socket is stale — should return false.
-        assert!(!is_server_listening_at(&path));
+        // Socket is stale — should return false once the listener close is visible.
+        assert_eventually_not_listening_at(&path);
 
         let _ = std::fs::remove_dir_all(dir);
     }
