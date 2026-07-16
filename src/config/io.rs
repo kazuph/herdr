@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+#[cfg(not(test))]
+use std::sync::{Mutex, OnceLock};
 
 use tracing::warn;
 
@@ -18,12 +20,85 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "worktrees",
 ];
 
-pub fn app_dir_name() -> &'static str {
-    if cfg!(debug_assertions) {
-        "herdr-dev"
+const DEFAULT_APP_DIR_NAME: &str = "herdr";
+const DEFAULT_DEBUG_APP_DIR_NAME: &str = "herdr-dev";
+
+#[cfg(not(test))]
+fn app_namespace_override() -> &'static Mutex<Option<String>> {
+    static OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    OVERRIDE.get_or_init(|| Mutex::new(None))
+}
+
+pub fn configure_app_namespace_from_program(program: &str) {
+    set_app_namespace_override(binary_namespace_from_program(program));
+}
+
+#[cfg(not(test))]
+fn set_app_namespace_override(namespace: Option<String>) {
+    *app_namespace_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = namespace;
+}
+
+#[cfg(test)]
+fn set_app_namespace_override(namespace: Option<String>) {
+    APP_NAMESPACE_OVERRIDE.with(|override_name| {
+        *override_name.borrow_mut() = namespace;
+    });
+}
+
+pub fn app_dir_name() -> String {
+    if let Some(namespace) = app_namespace_override_value() {
+        namespace
+    } else if cfg!(debug_assertions) {
+        DEFAULT_DEBUG_APP_DIR_NAME.to_string()
     } else {
-        "herdr"
+        DEFAULT_APP_DIR_NAME.to_string()
     }
+}
+
+#[cfg(not(test))]
+fn app_namespace_override_value() -> Option<String> {
+    app_namespace_override()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+#[cfg(test)]
+thread_local! {
+    static APP_NAMESPACE_OVERRIDE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn app_namespace_override_value() -> Option<String> {
+    APP_NAMESPACE_OVERRIDE.with(|override_name| override_name.borrow().clone())
+}
+
+fn binary_namespace_from_program(program: &str) -> Option<String> {
+    let stem = Path::new(program)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(DEFAULT_APP_DIR_NAME);
+    if matches!(
+        stem,
+        DEFAULT_APP_DIR_NAME | DEFAULT_DEBUG_APP_DIR_NAME | "herdr-debug"
+    ) {
+        None
+    } else if valid_binary_namespace(stem) {
+        Some(stem.to_string())
+    } else {
+        None
+    }
+}
+
+fn valid_binary_namespace(stem: &str) -> bool {
+    !stem.is_empty()
+        && stem.len() <= 64
+        && stem
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 pub fn config_dir() -> PathBuf {

@@ -4,6 +4,7 @@ mod support;
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -149,6 +150,17 @@ fn app_dir_name() -> &'static str {
     } else {
         "herdr"
     }
+}
+
+fn copy_test_binary_as(base: &Path, name: &str) -> PathBuf {
+    let bin_dir = base.join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let copied = bin_dir.join(name);
+    fs::copy(env!("CARGO_BIN_EXE_herdr"), &copied).unwrap();
+    let mut permissions = fs::metadata(&copied).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&copied, permissions).unwrap();
+    copied
 }
 
 fn named_session_socket(config_home: &Path, session: &str) -> PathBuf {
@@ -2518,6 +2530,104 @@ fn config_check_reports_ok_when_config_is_missing() {
     assert!(checked.status.success());
     let stdout = String::from_utf8_lossy(&checked.stdout);
     assert!(stdout.contains("config: ok"), "{stdout}");
+
+    cleanup_test_base(&base);
+}
+
+#[test]
+fn alternate_binary_uses_own_namespace_and_ignores_inherited_socket_env() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let herdr_next = copy_test_binary_as(&base, "herdr-next");
+    let inherited_socket = config_home.join(app_dir_name()).join("herdr.sock");
+
+    fs::create_dir_all(config_home.join("herdr-next")).unwrap();
+    fs::create_dir_all(&runtime_dir).unwrap();
+    register_runtime_dir(&runtime_dir);
+    fs::write(
+        config_home.join("herdr-next").join("config.toml"),
+        "onboarding = false\n",
+    )
+    .unwrap();
+
+    let output = Command::new(&herdr_next)
+        .args(["status", "server"])
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .env("HERDR_SOCKET_PATH", &inherited_socket)
+        .env_remove("HERDR_SOCKET_PATH_EXPLICIT")
+        .env_remove("HERDR_CLIENT_SOCKET_PATH")
+        .env_remove("HERDR_ENV")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        output.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("status: not running"), "{stdout}");
+    assert!(
+        stdout.contains(
+            config_home
+                .join("herdr-next")
+                .join("herdr.sock")
+                .to_string_lossy()
+                .as_ref()
+        ),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains(inherited_socket.to_string_lossy().as_ref()),
+        "{stdout}"
+    );
+
+    cleanup_test_base(&base);
+}
+
+#[test]
+fn alternate_binary_honors_socket_env_when_marked_explicit() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let herdr_next = copy_test_binary_as(&base, "herdr-next");
+    let explicit_socket = base.join("manual").join("custom.sock");
+
+    fs::create_dir_all(config_home.join("herdr-next")).unwrap();
+    fs::create_dir_all(&runtime_dir).unwrap();
+    register_runtime_dir(&runtime_dir);
+    fs::write(
+        config_home.join("herdr-next").join("config.toml"),
+        "onboarding = false\n",
+    )
+    .unwrap();
+
+    let output = Command::new(&herdr_next)
+        .args(["status", "server"])
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .env("HERDR_SOCKET_PATH", &explicit_socket)
+        .env("HERDR_SOCKET_PATH_EXPLICIT", "1")
+        .env_remove("HERDR_CLIENT_SOCKET_PATH")
+        .env_remove("HERDR_ENV")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        output.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("status: not running"), "{stdout}");
+    assert!(
+        stdout.contains(explicit_socket.to_string_lossy().as_ref()),
+        "{stdout}"
+    );
 
     cleanup_test_base(&base);
 }

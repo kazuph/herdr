@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
-use super::{
-    terminal_targets::TerminalTargetError,
-    App, Mode,
-};
+use super::{terminal_targets::TerminalTargetError, App, Mode};
 use crate::api::schema::{AgentStartParams, SplitDirection};
 
 impl App {

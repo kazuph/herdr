@@ -180,7 +180,8 @@ impl App {
                                     ws_idx,
                                     focused,
                                 ) {
-                                    let _ = runtime.try_send_bytes(bytes::Bytes::from_static(b"\n"));
+                                    let _ =
+                                        runtime.try_send_bytes(bytes::Bytes::from_static(b"\n"));
                                 }
                             }
                         }

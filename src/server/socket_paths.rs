@@ -25,9 +25,9 @@ pub fn client_socket_path() -> PathBuf {
         return crate::session::client_socket_path_for(crate::session::active_name().as_deref());
     }
     client_socket_path_from_overrides(
-        std::env::var(crate::api::SOCKET_PATH_ENV_VAR)
-            .ok()
-            .as_deref(),
+        crate::session::active_api_socket_override()
+            .as_ref()
+            .and_then(|path| path.to_str()),
         std::env::var(CLIENT_SOCKET_PATH_ENV_VAR).ok().as_deref(),
     )
 }

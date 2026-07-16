@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "branch": "sync/upstream-v0.7.4",
+  "files": [
+    ".artifacts/upstream-v0.7.4/REPORT.md"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "started_at": "2026-07-16T06:15:18.356Z",
+      "submitted_at": null,
+      "decision": null,
+      "summary": ""
+    }
+  ],
+  "comments": []
+}

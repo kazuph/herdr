@@ -897,8 +897,7 @@ fn running_update_targets() -> Result<Vec<RunningUpdateTarget>, String> {
         }]);
     }
 
-    if let Some(socket_path) = std::env::var_os(crate::api::SOCKET_PATH_ENV_VAR) {
-        let socket_path = PathBuf::from(socket_path);
+    if let Some(socket_path) = crate::session::active_api_socket_override() {
         return Ok(vec![RunningUpdateTarget {
             name: None,
             label: socket_path.display().to_string(),
@@ -952,7 +951,7 @@ fn running_update_targets() -> Result<Vec<RunningUpdateTarget>, String> {
 #[cfg(not(windows))]
 fn target_client_protocol_server_is_running() -> Result<bool, String> {
     if crate::session::explicit_session_requested()
-        || std::env::var_os(crate::api::SOCKET_PATH_ENV_VAR).is_some()
+        || crate::session::active_api_socket_override().is_some()
     {
         return Ok(client_protocol_server_is_running());
     }
