@@ -40,17 +40,10 @@ impl App {
         target: &str,
     ) -> Result<crate::api::schema::AgentInfo, TerminalTargetError> {
         let resolved = self.resolve_terminal_target(target)?;
-        self.state.switch_workspace(resolved.ws_idx);
-        self.state.switch_tab(resolved.tab_idx);
-        if let Some(tab) = self
-            .state
-            .workspaces
-            .get_mut(resolved.ws_idx)
-            .and_then(|ws| ws.tabs.get_mut(resolved.tab_idx))
-        {
-            tab.layout.focus_pane(resolved.pane_id);
-        }
-        self.state.mode = Mode::Terminal;
+        self.state
+            .focus_pane_in_workspace(resolved.ws_idx, resolved.pane_id);
+        self.state.mark_active_tab_seen();
+        self.state.settle_terminal_mode_after_focus();
         self.agent_info(resolved.ws_idx, resolved.pane_id)
             .ok_or_else(|| TerminalTargetError::NotFound {
                 target: target.to_string(),
@@ -109,6 +102,7 @@ impl App {
     pub(super) fn start_agent(
         &mut self,
         params: AgentStartParams,
+        extra_env: Vec<(String, String)>,
     ) -> Result<(crate::api::schema::AgentInfo, Vec<String>), AgentStartError> {
         let name = params.name.trim().to_string();
         if name.is_empty() {
@@ -157,6 +151,7 @@ impl App {
                 params.split.unwrap_or(SplitDirection::Right),
                 cwd,
                 &argv,
+                extra_env,
                 focus,
             )?
         } else if let Some(workspace_id) = params.workspace_id {
@@ -173,10 +168,11 @@ impl App {
                 params.split.unwrap_or(SplitDirection::Right),
                 cwd,
                 &argv,
+                extra_env,
                 focus,
             )?
         } else if self.state.workspaces.is_empty() {
-            self.spawn_agent_workspace(cwd, rows, cols, &argv, focus)?
+            self.spawn_agent_workspace(cwd, rows, cols, &argv, extra_env, focus)?
         } else {
             let ws_idx = self.state.active.unwrap_or(0);
             let tab_idx = self.state.workspaces[ws_idx].active_tab;
@@ -187,6 +183,7 @@ impl App {
                 params.split.unwrap_or(SplitDirection::Right),
                 cwd,
                 &argv,
+                extra_env,
                 focus,
             )?
         };
@@ -442,9 +439,10 @@ impl App {
         rows: u16,
         cols: u16,
         argv: &[String],
+        extra_env: Vec<(String, String)>,
         focus: bool,
     ) -> Result<(usize, usize, crate::layout::PaneId), AgentStartError> {
-        let (ws, terminal, runtime) = crate::workspace::Workspace::new_argv_command(
+        let (ws, terminal, runtime) = crate::workspace::Workspace::new_argv_command_with_extra_env(
             cwd,
             rows,
             cols,
@@ -454,14 +452,15 @@ impl App {
             self.event_tx.clone(),
             self.render_notify.clone(),
             self.render_dirty.clone(),
+            extra_env,
         )
         .map_err(|err| AgentStartError::SpawnFailed(err.to_string()))?;
-        self.state
-            .terminal_runtimes
-            .insert(terminal.id.clone(), runtime);
+        self.terminal_runtimes.insert(terminal.id.clone(), runtime);
         self.state.terminals.insert(terminal.id.clone(), terminal);
         self.state.workspaces.push(ws);
         let ws_idx = self.state.workspaces.len() - 1;
+        self.state
+            .remove_alias_shadowed_by_new_pane(self.state.workspaces[ws_idx].tabs[0].root_pane);
         if focus || self.state.active.is_none() {
             self.state.switch_workspace(ws_idx);
             self.state.mode = Mode::Terminal;
@@ -478,9 +477,11 @@ impl App {
         split: SplitDirection,
         cwd: PathBuf,
         argv: &[String],
+        extra_env: Vec<(String, String)>,
         focus: bool,
     ) -> Result<(usize, usize, crate::layout::PaneId), AgentStartError> {
         let (rows, cols) = self.state.estimate_pane_size();
+        let previous_focus = self.state.current_pane_focus_target();
         let direction = match split {
             SplitDirection::Right => ratatui::layout::Direction::Horizontal,
             SplitDirection::Down => ratatui::layout::Direction::Vertical,
@@ -497,6 +498,7 @@ impl App {
                     cols,
                     Some(cwd),
                     argv,
+                    extra_env,
                     self.state.pane_scrollback_limit_bytes,
                     self.state.host_terminal_theme,
                     focus,
@@ -506,15 +508,17 @@ impl App {
                 target: target_pane.raw().to_string(),
             })?
             .map_err(|err| AgentStartError::SpawnFailed(err.to_string()))?;
-        self.state
-            .terminal_runtimes
+        self.terminal_runtimes
             .insert(result.1.terminal.id.clone(), result.1.runtime);
+        self.state
+            .remove_alias_shadowed_by_new_pane(result.1.pane_id);
         self.state
             .terminals
             .insert(result.1.terminal.id.clone(), result.1.terminal);
         if focus {
-            self.state.switch_workspace(ws_idx);
-            self.state.switch_tab(result.0);
+            self.state.switch_workspace_tab(ws_idx, result.0);
+            self.state
+                .record_pane_focus_change(previous_focus, ws_idx, result.1.pane_id);
             self.state.mode = Mode::Terminal;
         }
         self.schedule_session_save();
@@ -537,7 +541,15 @@ impl App {
             terminal_id: pane.terminal_id,
             name: terminal.agent_name.clone(),
             agent: pane.agent,
+            title: pane.title,
+            terminal_title: pane.terminal_title,
+            terminal_title_stripped: pane.terminal_title_stripped,
+            display_agent: pane.display_agent,
             agent_status: pane.agent_status,
+            screen_detection_skipped: terminal.full_lifecycle_hook_authority_active(),
+            state_labels: pane.state_labels,
+            tokens: pane.tokens,
+            agent_session: pane.agent_session,
             workspace_id: pane.workspace_id,
             tab_id: pane.tab_id,
             short_pane_id: pane.short_id,
@@ -546,6 +558,7 @@ impl App {
             pane_id: pane.pane_id,
             focused: pane.focused,
             cwd: pane.cwd,
+            foreground_cwd: pane.foreground_cwd,
             revision: pane.revision,
         })
     }

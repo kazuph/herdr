@@ -72,8 +72,20 @@ fn wait_for_socket(path: &Path, timeout: Duration) {
     panic!("socket did not appear at {}", path.display());
 }
 
+#[cfg(target_os = "linux")]
+fn wait_for_path(path: &Path, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if path.exists() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    panic!("path did not appear at {}", path.display());
+}
+
 fn spawn_herdr(config_home: &Path, runtime_dir: &Path, socket_path: &Path) -> SpawnedHerdr {
-    spawn_herdr_with_path(config_home, runtime_dir, socket_path, None)
+    spawn_herdr_with_options(config_home, runtime_dir, socket_path, None, "/bin/sh")
 }
 
 fn spawn_herdr_with_path(
@@ -81,6 +93,32 @@ fn spawn_herdr_with_path(
     runtime_dir: &Path,
     socket_path: &Path,
     path_override: Option<&Path>,
+) -> SpawnedHerdr {
+    spawn_herdr_with_options(
+        config_home,
+        runtime_dir,
+        socket_path,
+        path_override,
+        "/bin/sh",
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn spawn_herdr_with_shell(
+    config_home: &Path,
+    runtime_dir: &Path,
+    socket_path: &Path,
+    shell: &str,
+) -> SpawnedHerdr {
+    spawn_herdr_with_options(config_home, runtime_dir, socket_path, None, shell)
+}
+
+fn spawn_herdr_with_options(
+    config_home: &Path,
+    runtime_dir: &Path,
+    socket_path: &Path,
+    path_override: Option<&Path>,
+    shell: &str,
 ) -> SpawnedHerdr {
     fs::create_dir_all(config_home.join("herdr")).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
@@ -106,7 +144,7 @@ fn spawn_herdr_with_path(
     cmd.env("XDG_RUNTIME_DIR", runtime_dir);
     cmd.env("HERDR_SOCKET_PATH", socket_path);
     cmd.env_remove("HERDR_CLIENT_SOCKET_PATH");
-    cmd.env("SHELL", "/bin/sh");
+    cmd.env("SHELL", shell);
     cmd.env_remove("HERDR_ENV");
     if let Some(path) = path_override {
         cmd.env("PATH", path);
@@ -141,16 +179,24 @@ impl JsonLineReader {
     }
 
     fn read_json_line(&mut self, timeout: Duration) -> serde_json::Value {
+        self.try_read_json_line(timeout)
+            .unwrap_or_else(|| panic!("timed out waiting for json line"))
+    }
+
+    fn try_read_json_line(&mut self, timeout: Duration) -> Option<serde_json::Value> {
         let deadline = Instant::now() + timeout;
         self.stream.set_nonblocking(true).unwrap();
 
         loop {
-            assert!(Instant::now() < deadline, "timed out waiting for json line");
+            if Instant::now() >= deadline {
+                self.stream.set_nonblocking(false).unwrap();
+                return None;
+            }
 
             if let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
                 let line = String::from_utf8(self.buf.drain(..=pos).collect()).unwrap();
                 self.stream.set_nonblocking(false).unwrap();
-                return serde_json::from_str(&line).unwrap();
+                return Some(serde_json::from_str(&line).unwrap());
             }
 
             let mut bytes = [0u8; 256];
@@ -207,6 +253,37 @@ where
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+fn wait_for_events(
+    reader: &mut JsonLineReader,
+    expected: &[&str],
+    timeout: Duration,
+) -> Vec<serde_json::Value> {
+    let deadline = Instant::now() + timeout;
+    let mut remaining = expected.to_vec();
+    let mut events = Vec::new();
+    while !remaining.is_empty() {
+        let remaining_timeout = deadline.saturating_duration_since(Instant::now());
+        let value = reader.read_json_line(remaining_timeout.max(Duration::from_millis(1)));
+        let Some(event) = value["event"].as_str() else {
+            continue;
+        };
+        if let Some(index) = remaining.iter().position(|expected| *expected == event) {
+            remaining.remove(index);
+            events.push(value);
+        }
+    }
+    events
+}
+
+#[cfg(not(target_os = "macos"))]
+fn event_by_kind<'a>(events: &'a [serde_json::Value], kind: &str) -> &'a serde_json::Value {
+    events
+        .iter()
+        .find(|event| event["event"] == kind)
+        .unwrap_or_else(|| panic!("missing event {kind}"))
+}
+
 #[test]
 fn ping_over_socket_returns_version() {
     let _lock = test_lock();
@@ -227,7 +304,52 @@ fn ping_over_socket_returns_version() {
     assert_eq!(value["result"]["version"], env!("CARGO_PKG_VERSION"));
     // Intentionally hardcoded so wire protocol bumps require updating this test.
     // Changing this value means old clients/servers are no longer compatible.
-    assert_eq!(value["result"]["protocol"], 10);
+    assert_eq!(value["result"]["protocol"], 16);
+
+    cleanup_spawned_herdr(child, base);
+}
+
+#[test]
+fn server_reload_agent_manifests_reports_runtime_override() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let child = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let override_dir = config_home.join("herdr-dev").join("agent-detection");
+    fs::create_dir_all(&override_dir).unwrap();
+    let override_path = override_dir.join("codex.toml");
+    fs::write(
+        &override_path,
+        r#"
+id = "codex"
+
+[[rules]]
+id = "reload_marker"
+state = "blocked"
+contains = ["server-reload-marker"]
+"#,
+    )
+    .unwrap();
+
+    let response = send_request(
+        &socket_path,
+        r#"{"id":"reload_manifests","method":"server.reload_agent_manifests","params":{}}"#,
+    );
+    assert_eq!(response["id"], "reload_manifests");
+    assert_eq!(response["result"]["type"], "agent_manifest_reload");
+    let manifests = response["result"]["manifests"].as_array().unwrap();
+    let codex = manifests
+        .iter()
+        .find(|manifest| manifest["agent"] == "codex")
+        .expect("codex manifest summary");
+    assert_eq!(codex["source_kind"], "local override");
+    assert_eq!(codex["source"], override_path.display().to_string());
+    assert!(codex.get("warning").is_none());
 
     cleanup_spawned_herdr(child, base);
 }
@@ -284,7 +406,7 @@ fn workspace_list_and_create_round_trip() {
     assert_eq!(created["result"]["workspace"]["tab_count"], 1);
     assert_eq!(created["result"]["tab"]["tab_id"], active_tab_id);
     assert_eq!(created["result"]["root_pane"]["tab_id"], active_tab_id);
-    assert_eq!(active_tab_id, format!("{workspace_id}:1"));
+    assert_eq!(active_tab_id, format!("{workspace_id}:t1"));
 
     let listed = send_request(
         &socket_path,
@@ -303,6 +425,26 @@ fn workspace_list_and_create_round_trip() {
     );
     assert_eq!(fetched["result"]["workspace"]["workspace_id"], workspace_id);
 
+    let metadata = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_workspace_metadata","method":"workspace.report_metadata","params":{{"workspace_id":"{}","source":"user:test","tokens":{{"jj_status":"2 changes"}}}}}}"#,
+            workspace_id
+        ),
+    );
+    assert_eq!(metadata["result"]["type"], "ok");
+    let fetched = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_workspace_metadata_get","method":"workspace.get","params":{{"workspace_id":"{}"}}}}"#,
+            workspace_id
+        ),
+    );
+    assert_eq!(
+        fetched["result"]["workspace"]["tokens"]["jj_status"],
+        "2 changes"
+    );
+
     let panes = send_request(
         &socket_path,
         r#"{"id":"req_6","method":"pane.list","params":{}}"#,
@@ -314,6 +456,7 @@ fn workspace_list_and_create_round_trip() {
     let pane_id = panes[0]["pane_id"].as_str().unwrap().to_string();
     assert_eq!(pane_id, root_pane_id);
     assert_eq!(panes[0]["terminal_id"], root_terminal_id);
+    let legacy_pane_id = format!("{workspace_id}-1");
 
     let pane = send_request(
         &socket_path,
@@ -329,7 +472,7 @@ fn workspace_list_and_create_round_trip() {
         &socket_path,
         &format!(
             r#"{{"id":"req_8","method":"pane.read","params":{{"pane_id":"{}","source":"visible"}}}}"#,
-            pane_id
+            legacy_pane_id
         ),
     );
     assert_eq!(read["result"]["read"]["pane_id"], pane_id);
@@ -370,10 +513,12 @@ fn workspace_list_and_create_round_trip() {
         &socket_path,
         &format!(
             r#"{{"id":"req_12","method":"pane.wait_for_output","params":{{"pane_id":"{}","source":"recent","lines":40,"match":{{"type":"substring","value":"gamma"}},"timeout_ms":2000}}}}"#,
-            pane_id
+            legacy_pane_id
         ),
     );
     assert_eq!(waited["result"]["type"], "output_matched");
+    assert_eq!(waited["result"]["pane_id"], pane_id);
+    assert_eq!(waited["result"]["read"]["pane_id"], pane_id);
     assert!(waited["result"]["matched_line"]
         .as_str()
         .unwrap()
@@ -400,6 +545,8 @@ fn workspace_list_and_create_round_trip() {
         ),
     );
     assert_eq!(waited_delta["result"]["type"], "output_matched");
+    assert_eq!(waited_delta["result"]["pane_id"], pane_id);
+    assert_eq!(waited_delta["result"]["read"]["pane_id"], pane_id);
     assert!(waited_delta["result"]["matched_line"]
         .as_str()
         .unwrap()
@@ -413,6 +560,8 @@ fn workspace_list_and_create_round_trip() {
         ),
     );
     assert_eq!(waited_regex["result"]["type"], "output_matched");
+    assert_eq!(waited_regex["result"]["pane_id"], pane_id);
+    assert_eq!(waited_regex["result"]["read"]["pane_id"], pane_id);
     assert!(waited_regex["result"]["matched_line"]
         .as_str()
         .unwrap()
@@ -457,7 +606,7 @@ fn tab_methods_round_trip_over_socket() {
         .as_str()
         .unwrap()
         .to_string();
-    assert_eq!(first_tab_id, format!("{workspace_id}:1"));
+    assert_eq!(first_tab_id, format!("{workspace_id}:t1"));
 
     let tab_created = send_request(
         &socket_path,
@@ -481,7 +630,7 @@ fn tab_methods_round_trip_over_socket() {
         .to_string();
     assert!(second_root_terminal_id.starts_with("term_"));
     assert_ne!(second_root_terminal_id, second_root_pane_id);
-    assert_eq!(second_tab_id, format!("{workspace_id}:2"));
+    assert_eq!(second_tab_id, format!("{workspace_id}:t2"));
     assert_eq!(tab_created["result"]["tab"]["focused"], true);
     assert_eq!(tab_created["result"]["root_pane"]["tab_id"], second_tab_id);
 
@@ -545,6 +694,203 @@ fn tab_methods_round_trip_over_socket() {
         ),
     );
     assert_eq!(closed["result"]["type"], "ok");
+
+    cleanup_spawned_herdr(child, base);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn pane_info_reports_foreground_cwd_without_changing_pane_cwd() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let foreground = base.join("foreground-process");
+    let marker = base.join("foreground-ready");
+    let pid_file = base.join("foreground.pid");
+    fs::create_dir_all(&foreground).unwrap();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let child = spawn_herdr_with_shell(&config_home, &runtime_dir, &socket_path, "/bin/bash");
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"fg_ws","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let workspace_id = created["result"]["workspace"]["workspace_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let command = format!(
+        "/bin/sh -c 'cd {} && printf %s $$ > {} && touch {} && sleep 30; :'",
+        foreground.display(),
+        pid_file.display(),
+        marker.display()
+    );
+    let send_text = send_request(
+        &socket_path,
+        &serde_json::json!({
+            "id": "fg_send",
+            "method": "pane.send_text",
+            "params": {
+                "pane_id": pane_id,
+                "text": command,
+            },
+        })
+        .to_string(),
+    );
+    assert_eq!(send_text["result"]["type"], "ok");
+    let send_enter = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"fg_enter","method":"pane.send_keys","params":{{"pane_id":"{}","keys":["Enter"]}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(send_enter["result"]["type"], "ok");
+    wait_for_path(&marker, Duration::from_secs(5));
+
+    let foreground_pid: u32 = fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+    assert_eq!(
+        fs::read_link(format!("/proc/{foreground_pid}/cwd")).unwrap(),
+        foreground
+    );
+
+    let pane = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"fg_pane","method":"pane.get","params":{{"pane_id":"{}"}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(pane["result"]["pane"]["cwd"], base.display().to_string());
+    assert_eq!(
+        pane["result"]["pane"]["foreground_cwd"],
+        foreground.display().to_string()
+    );
+
+    let panes = send_request(
+        &socket_path,
+        r#"{"id":"fg_panes","method":"pane.list","params":{}}"#,
+    );
+    assert_eq!(
+        panes["result"]["panes"][0]["cwd"],
+        base.display().to_string()
+    );
+    assert_eq!(
+        panes["result"]["panes"][0]["foreground_cwd"],
+        foreground.display().to_string()
+    );
+
+    let process_info = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"fg_process_info","method":"pane.process_info","params":{{"pane_id":"{}"}}}}"#,
+            pane_id
+        ),
+    );
+    let process_info = &process_info["result"]["process_info"];
+    assert!(process_info["shell_pid"].is_number());
+    assert_eq!(process_info["foreground_process_group_id"], foreground_pid);
+    assert!(process_info.get("tty").is_none());
+    let foreground_processes = process_info["foreground_processes"].as_array().unwrap();
+    let foreground_shell = foreground_processes
+        .iter()
+        .find(|process| process["pid"] == foreground_pid)
+        .expect("foreground shell should be reported");
+    assert_eq!(foreground_shell["name"], "sh");
+    assert_eq!(foreground_shell["cwd"], foreground.display().to_string());
+    assert!(foreground_shell.get("argv0").is_none());
+    assert!(foreground_shell["argv"].is_array());
+    assert!(foreground_shell["cmdline"].is_string());
+    let foreground_sleep = foreground_processes
+        .iter()
+        .find(|process| process["name"] == "sleep" && process["pid"] != foreground_pid)
+        .expect("foreground sleep child should be reported separately");
+    assert_eq!(foreground_sleep["cwd"], foreground.display().to_string());
+
+    let reported = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"fg_report","method":"pane.report_agent","params":{{"pane_id":"{}","source":"test","agent":"probe","state":"working"}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(reported["result"]["type"], "ok");
+
+    let agents = send_request(
+        &socket_path,
+        r#"{"id":"fg_agents","method":"agent.list","params":{}}"#,
+    );
+    assert_eq!(
+        agents["result"]["agents"][0]["cwd"],
+        base.display().to_string()
+    );
+    assert_eq!(
+        agents["result"]["agents"][0]["foreground_cwd"],
+        foreground.display().to_string()
+    );
+
+    let split = send_request(
+        &socket_path,
+        &serde_json::json!({
+            "id": "fg_split",
+            "method": "pane.split",
+            "params": {
+                "target_pane_id": pane_id,
+                "direction": "right",
+                "focus": false,
+            },
+        })
+        .to_string(),
+    );
+    assert_eq!(
+        split["result"]["pane"]["cwd"],
+        foreground.display().to_string()
+    );
+
+    let tab = send_request(
+        &socket_path,
+        &serde_json::json!({
+            "id": "fg_tab",
+            "method": "tab.create",
+            "params": {
+                "workspace_id": workspace_id,
+                "focus": false,
+            },
+        })
+        .to_string(),
+    );
+    assert_eq!(
+        tab["result"]["root_pane"]["cwd"],
+        foreground.display().to_string()
+    );
+
+    let explicit_tab = send_request(
+        &socket_path,
+        &serde_json::json!({
+            "id": "fg_explicit_tab",
+            "method": "tab.create",
+            "params": {
+                "workspace_id": workspace_id,
+                "cwd": base,
+                "focus": false,
+            },
+        })
+        .to_string(),
+    );
+    assert_eq!(
+        explicit_tab["result"]["root_pane"]["cwd"],
+        base.display().to_string()
+    );
 
     cleanup_spawned_herdr(child, base);
 }
@@ -808,7 +1154,7 @@ fn tab_create_with_no_focus_preserves_active_tab() {
         .as_str()
         .unwrap()
         .to_string();
-    assert_eq!(second_tab_id, format!("{workspace_id}:2"));
+    assert_eq!(second_tab_id, format!("{workspace_id}:t2"));
     assert_eq!(tab_created["result"]["tab"]["focused"], false);
 
     let tab_list = send_request(
@@ -883,28 +1229,39 @@ fn events_subscribe_streams_workspace_tab_and_agent_events() {
         .unwrap()
         .to_string();
 
-    let workspace_created =
-        wait_for_event(&mut reader, "workspace_created", Duration::from_secs(2));
+    let initial_events = wait_for_events(
+        &mut reader,
+        &[
+            "workspace_created",
+            "workspace_focused",
+            "tab_created",
+            "tab_focused",
+            "pane_created",
+            "pane_focused",
+        ],
+        Duration::from_secs(2),
+    );
+
+    let workspace_created = event_by_kind(&initial_events, "workspace_created");
     assert_eq!(
         workspace_created["data"]["workspace"]["workspace_id"],
         workspace_id
     );
-    let workspace_focused =
-        wait_for_event(&mut reader, "workspace_focused", Duration::from_secs(2));
+    let workspace_focused = event_by_kind(&initial_events, "workspace_focused");
     assert_eq!(workspace_focused["data"]["workspace_id"], workspace_id);
 
-    let first_tab_id = format!("{workspace_id}:1");
-    let tab_created = wait_for_event(&mut reader, "tab_created", Duration::from_secs(2));
+    let first_tab_id = format!("{workspace_id}:t1");
+    let tab_created = event_by_kind(&initial_events, "tab_created");
     assert_eq!(tab_created["data"]["tab"]["tab_id"], first_tab_id);
-    let tab_focused = wait_for_event(&mut reader, "tab_focused", Duration::from_secs(2));
+    let tab_focused = event_by_kind(&initial_events, "tab_focused");
     assert_eq!(tab_focused["data"]["tab_id"], first_tab_id);
 
-    let pane_created = wait_for_event(&mut reader, "pane_created", Duration::from_secs(2));
+    let pane_created = event_by_kind(&initial_events, "pane_created");
     let pane_id = pane_created["data"]["pane"]["pane_id"]
         .as_str()
         .unwrap()
         .to_string();
-    let pane_focused = wait_for_event(&mut reader, "pane_focused", Duration::from_secs(2));
+    let pane_focused = event_by_kind(&initial_events, "pane_focused");
     assert_eq!(pane_focused["data"]["pane_id"], pane_id);
 
     let send_pi = send_request(
@@ -939,7 +1296,7 @@ fn events_subscribe_streams_workspace_tab_and_agent_events() {
         .as_str()
         .unwrap()
         .to_string();
-    assert_eq!(second_tab_id, format!("{workspace_id}:2"));
+    assert_eq!(second_tab_id, format!("{workspace_id}:t2"));
 
     let created_tab_event = wait_for_event(&mut reader, "tab_created", Duration::from_secs(2));
     assert_eq!(created_tab_event["data"]["tab"]["tab_id"], second_tab_id);
@@ -980,11 +1337,14 @@ fn events_subscribe_streams_pane_split_and_close_events() {
             base.display()
         ),
     );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let workspace_id = created["result"]["workspace"]["workspace_id"]
         .as_str()
         .unwrap()
         .to_string();
-    let pane_id = format!("{workspace_id}-1");
 
     let mut reader = open_subscription(
         &socket_path,
@@ -1018,8 +1378,8 @@ fn events_subscribe_streams_pane_split_and_close_events() {
     let closed = send_request(
         &socket_path,
         &format!(
-            r#"{{"id":"req_pc_3","method":"pane.close","params":{{"pane_id":"{}"}}}}"#,
-            split_pane_id
+            r#"{{"id":"req_pc_3","method":"pane.close","params":{{"pane_id":"{}-2"}}}}"#,
+            workspace_id
         ),
     );
     assert_eq!(closed["result"]["type"], "ok");
@@ -1073,7 +1433,7 @@ fn events_subscribe_streams_tab_and_workspace_close_events() {
 
     let mut reader = open_subscription(
         &socket_path,
-        r#"{"id":"sub_life_c","method":"events.subscribe","params":{"subscriptions":[{"type":"tab.closed"},{"type":"workspace.closed"}]}}"#,
+        r#"{"id":"sub_life_c","method":"events.subscribe","params":{"subscriptions":[{"type":"workspace.renamed"},{"type":"tab.closed"},{"type":"workspace.closed"}]}}"#,
     );
 
     let ack = reader.read_json_line(Duration::from_secs(2));
@@ -1083,8 +1443,8 @@ fn events_subscribe_streams_tab_and_workspace_close_events() {
     let closed_tab = send_request(
         &socket_path,
         &format!(
-            r#"{{"id":"req_tc_3","method":"tab.close","params":{{"tab_id":"{}"}}}}"#,
-            second_tab_id
+            r#"{{"id":"req_tc_3","method":"tab.close","params":{{"tab_id":"{}:2"}}}}"#,
+            workspace_id
         ),
     );
     assert_eq!(closed_tab["result"]["type"], "ok");
@@ -1092,12 +1452,23 @@ fn events_subscribe_streams_tab_and_workspace_close_events() {
     let tab_closed = wait_for_event(&mut reader, "tab_closed", Duration::from_secs(2));
     assert_eq!(tab_closed["data"]["tab_id"], second_tab_id);
 
-    let closed_ws = send_request(
+    let renamed_ws = send_request(
         &socket_path,
         &format!(
-            r#"{{"id":"req_tc_4","method":"workspace.close","params":{{"workspace_id":"{}"}}}}"#,
+            r#"{{"id":"req_tc_4","method":"workspace.rename","params":{{"workspace_id":"{}","label":"renamed"}}}}"#,
             workspace_id
         ),
+    );
+    assert_eq!(renamed_ws["result"]["workspace"]["label"], "renamed");
+
+    let workspace_renamed =
+        wait_for_event(&mut reader, "workspace_renamed", Duration::from_secs(2));
+    assert_eq!(workspace_renamed["data"]["workspace_id"], workspace_id);
+    assert_eq!(workspace_renamed["data"]["label"], "renamed");
+
+    let closed_ws = send_request(
+        &socket_path,
+        r#"{"id":"req_tc_5","method":"workspace.close","params":{"workspace_id":"1"}}"#,
     );
     assert_eq!(closed_ws["result"]["type"], "ok");
 
@@ -1146,10 +1517,10 @@ fn pane_report_agent_updates_effective_state() {
             base.display()
         ),
     );
-    let pane_id = created["result"]["workspace"]["workspace_id"]
+    let pane_id = created["result"]["root_pane"]["pane_id"]
         .as_str()
-        .map(|workspace_id| format!("{}-1", workspace_id))
-        .unwrap();
+        .unwrap()
+        .to_string();
 
     let send_pi = send_request(
         &socket_path,
@@ -1187,11 +1558,13 @@ fn pane_report_agent_updates_effective_state() {
         thread::sleep(Duration::from_millis(100));
     }
 
+    let session_path = base.join("pi-session.jsonl");
     let hook = send_request(
         &socket_path,
         &format!(
-            r#"{{"id":"req_hook_5","method":"pane.report_agent","params":{{"pane_id":"{}","source":"herdr:pi","agent":"pi","state":"working","message":"thinking"}}}}"#,
-            pane_id
+            r#"{{"id":"req_hook_5","method":"pane.report_agent","params":{{"pane_id":"{}","source":"herdr:pi","agent":"pi","state":"working","message":"thinking","agent_session_path":"{}"}}}}"#,
+            pane_id,
+            session_path.display()
         ),
     );
     assert_eq!(hook["result"]["type"], "ok");
@@ -1205,6 +1578,109 @@ fn pane_report_agent_updates_effective_state() {
     );
     assert_eq!(pane["result"]["pane"]["agent"], "pi");
     assert_eq!(pane["result"]["pane"]["agent_status"], "working");
+    assert_eq!(
+        pane["result"]["pane"]["agent_session"]["source"],
+        "herdr:pi"
+    );
+    assert_eq!(pane["result"]["pane"]["agent_session"]["agent"], "pi");
+    assert_eq!(pane["result"]["pane"]["agent_session"]["kind"], "path");
+    assert_eq!(
+        pane["result"]["pane"]["agent_session"]["value"],
+        session_path.display().to_string()
+    );
+
+    let metadata = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_hook_metadata","method":"pane.report_metadata","params":{{"pane_id":"{}","source":"user:pi-display","agent":"pi","applies_to_source":"herdr:pi","title":"Refactor auth","display_agent":"Pi auth","state_labels":{{"working":"deep in the mines"}},"tokens":{{"summary":"reviewing auth","model":"opus"}}}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(metadata["result"]["type"], "ok");
+
+    let pane = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_hook_metadata_get","method":"pane.get","params":{{"pane_id":"{}"}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(pane["result"]["pane"]["agent"], "pi");
+    assert_eq!(pane["result"]["pane"]["agent_status"], "working");
+    assert_eq!(pane["result"]["pane"]["title"], "Refactor auth");
+    assert_eq!(pane["result"]["pane"]["display_agent"], "Pi auth");
+    assert_eq!(
+        pane["result"]["pane"]["state_labels"]["working"],
+        "deep in the mines"
+    );
+    assert_eq!(
+        pane["result"]["pane"]["tokens"]["summary"],
+        "reviewing auth"
+    );
+    assert_eq!(pane["result"]["pane"]["tokens"]["model"], "opus");
+
+    let agent = send_request(
+        &socket_path,
+        r#"{"id":"req_hook_metadata_agent","method":"agent.get","params":{"target":"pi"}}"#,
+    );
+    assert_eq!(agent["result"]["agent"]["agent"], "pi");
+    assert_eq!(
+        agent["result"]["agent"]["agent_session"]["source"],
+        "herdr:pi"
+    );
+    assert_eq!(agent["result"]["agent"]["agent_session"]["agent"], "pi");
+    assert_eq!(agent["result"]["agent"]["agent_session"]["kind"], "path");
+    assert_eq!(
+        agent["result"]["agent"]["agent_session"]["value"],
+        session_path.display().to_string()
+    );
+    assert_eq!(agent["result"]["agent"]["title"], "Refactor auth");
+    assert_eq!(agent["result"]["agent"]["display_agent"], "Pi auth");
+    assert_eq!(
+        agent["result"]["agent"]["state_labels"]["working"],
+        "deep in the mines"
+    );
+    assert_eq!(
+        agent["result"]["agent"]["tokens"]["summary"],
+        "reviewing auth"
+    );
+    assert_eq!(agent["result"]["agent"]["tokens"]["model"], "opus");
+
+    let blank_source_metadata = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_hook_metadata_blank_source","method":"pane.report_metadata","params":{{"pane_id":"{}","source":"   ","title":"x"}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(
+        blank_source_metadata["error"]["code"],
+        "invalid_metadata_source"
+    );
+
+    let blank_title_clear_metadata = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_hook_metadata_blank_title_clear","method":"pane.report_metadata","params":{{"pane_id":"{}","source":"user:pi-display","title":"   ","clear_title":true}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(
+        blank_title_clear_metadata["error"]["code"],
+        "invalid_metadata_request"
+    );
+
+    let blank_authority_source_metadata = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_hook_metadata_blank_authority_source","method":"pane.report_metadata","params":{{"pane_id":"{}","source":"user:pi-display","applies_to_source":"   ","title":"x"}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(
+        blank_authority_source_metadata["error"]["code"],
+        "invalid_metadata_source"
+    );
 
     cleanup_spawned_herdr(child, base);
 }
@@ -1227,10 +1703,10 @@ fn pane_report_agent_accepts_unknown_agent_labels() {
             base.display()
         ),
     );
-    let pane_id = created["result"]["workspace"]["workspace_id"]
+    let pane_id = created["result"]["root_pane"]["pane_id"]
         .as_str()
-        .map(|workspace_id| format!("{}-1", workspace_id))
-        .unwrap();
+        .unwrap()
+        .to_string();
 
     let hook = send_request(
         &socket_path,
@@ -1300,10 +1776,10 @@ fn pane_release_agent_suppresses_reacquire_during_graceful_exit() {
             base.display()
         ),
     );
-    let pane_id = created["result"]["workspace"]["workspace_id"]
+    let pane_id = created["result"]["root_pane"]["pane_id"]
         .as_str()
-        .map(|workspace_id| format!("{}-1", workspace_id))
-        .unwrap();
+        .unwrap()
+        .to_string();
 
     let send_pi = send_request(
         &socket_path,
@@ -1440,10 +1916,10 @@ fn pane_clear_agent_authority_restores_fallback_state() {
             base.display()
         ),
     );
-    let pane_id = created["result"]["workspace"]["workspace_id"]
+    let pane_id = created["result"]["root_pane"]["pane_id"]
         .as_str()
-        .map(|workspace_id| format!("{}-1", workspace_id))
-        .unwrap();
+        .unwrap()
+        .to_string();
 
     let send_pi = send_request(
         &socket_path,
@@ -1565,7 +2041,10 @@ fn events_subscribe_streams_output_and_agent_status_events() {
             base.display()
         ),
     );
-    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+    let workspace_id = created["result"]["workspace"]["workspace_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let panes = send_request(
         &socket_path,
@@ -1575,12 +2054,13 @@ fn events_subscribe_streams_output_and_agent_status_events() {
         .as_str()
         .unwrap()
         .to_string();
+    let legacy_pane_id = format!("{workspace_id}-1");
 
     let mut reader = open_subscription(
         &socket_path,
         &format!(
             r#"{{"id":"sub_1","method":"events.subscribe","params":{{"subscriptions":[{{"type":"pane.output_matched","pane_id":"{}","source":"recent","lines":40,"match":{{"type":"substring","value":"hello from socket"}}}},{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"idle"}}]}}}}"#,
-            pane_id, pane_id,
+            legacy_pane_id, legacy_pane_id,
         ),
     );
 
@@ -1608,6 +2088,7 @@ fn events_subscribe_streams_output_and_agent_status_events() {
     let output_event = reader.read_json_line(Duration::from_secs(3));
     assert_eq!(output_event["event"], "pane.output_matched");
     assert_eq!(output_event["data"]["pane_id"], pane_id);
+    assert_eq!(output_event["data"]["read"]["pane_id"], pane_id);
     assert!(output_event["data"]["matched_line"]
         .as_str()
         .unwrap()
@@ -1654,9 +2135,13 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
 
     fs::create_dir_all(&bin_dir).unwrap();
     let fake_pi = bin_dir.join("pi");
+    let stop_file = base.join("pi-stop");
     fs::write(
         &fake_pi,
-        "#!/bin/sh\nprintf 'Working...\\n'\nsleep 1\nprintf '\\033[2J\\033[Hdone\\n'\n",
+        format!(
+            "#!/bin/sh\nprintf 'starting\\n'\nsleep 4\nprintf 'Working...\\n'\nsleep 1\nprintf '\\033[2J\\033[Hdone\\n'\nwhile [ ! -f '{}' ]; do sleep 0.05; done\n",
+            stop_file.display()
+        ),
     )
     .unwrap();
     #[cfg(unix)]
@@ -1688,7 +2173,10 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
         .as_str()
         .unwrap()
         .to_string();
-    let background_pane_id = format!("{}-1", workspace_id);
+    let background_pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let tab_created = send_request(
         &socket_path,
@@ -1727,7 +2215,7 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
     );
     assert_eq!(send_enter["result"]["type"], "ok");
 
-    let status_event = reader.read_json_line(Duration::from_secs(8));
+    let status_event = reader.read_json_line(Duration::from_secs(12));
     assert_eq!(status_event["event"], "pane.agent_status_changed");
     assert_eq!(status_event["data"]["pane_id"], background_pane_id);
     assert_eq!(status_event["data"]["agent_status"], "done");
@@ -1741,6 +2229,23 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
         ),
     );
     assert_eq!(pane["result"]["pane"]["agent_status"], "done");
+
+    let mut already_done_reader = open_subscription(
+        &socket_path,
+        &format!(
+            r#"{{"id":"sub_status_already_done","method":"events.subscribe","params":{{"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"done"}}]}}}}"#,
+            background_pane_id,
+        ),
+    );
+    let ack = already_done_reader.read_json_line(Duration::from_secs(2));
+    assert_eq!(ack["id"], "sub_status_already_done");
+    assert_eq!(ack["result"]["type"], "subscription_started");
+
+    let initial_status_event = already_done_reader.read_json_line(Duration::from_secs(2));
+    assert_eq!(initial_status_event["event"], "pane.agent_status_changed");
+    assert_eq!(initial_status_event["data"]["pane_id"], background_pane_id);
+    assert_eq!(initial_status_event["data"]["agent_status"], "done");
+    assert_eq!(initial_status_event["data"]["agent"], "pi");
 
     let focused_tab_id = created["result"]["workspace"]["active_tab_id"]
         .as_str()
@@ -1763,6 +2268,103 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
         ),
     );
     assert_eq!(pane_after_focus["result"]["pane"]["agent_status"], "idle");
+
+    fs::write(&stop_file, "stop").unwrap();
+
+    cleanup_spawned_herdr(child, base);
+}
+
+#[test]
+fn metadata_status_subscription_filter_and_ttl_expiry_are_observable() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let child = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_meta_sub_1","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let report_agent = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_meta_sub_2","method":"pane.report_agent","params":{{"pane_id":"{}","source":"herdr:pi","agent":"pi","state":"working"}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(report_agent["result"]["type"], "ok");
+
+    let mut done_reader = open_subscription(
+        &socket_path,
+        &format!(
+            r#"{{"id":"sub_meta_done","method":"events.subscribe","params":{{"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"done"}}]}}}}"#,
+            pane_id,
+        ),
+    );
+    let ack = done_reader.read_json_line(Duration::from_secs(2));
+    assert_eq!(ack["id"], "sub_meta_done");
+    assert_eq!(ack["result"]["type"], "subscription_started");
+
+    let metadata = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_meta_sub_3","method":"pane.report_metadata","params":{{"pane_id":"{}","source":"user:pi-display","agent":"pi","applies_to_source":"herdr:pi","title":"filtered out"}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(metadata["result"]["type"], "ok");
+    assert!(
+        done_reader
+            .try_read_json_line(Duration::from_millis(500))
+            .is_none(),
+        "done-filtered subscription emitted for a working metadata-only change"
+    );
+
+    let mut reader = open_subscription(
+        &socket_path,
+        &format!(
+            r#"{{"id":"sub_meta_ttl","method":"events.subscribe","params":{{"subscriptions":[{{"type":"pane.agent_status_changed","pane_id":"{}"}}]}}}}"#,
+            pane_id,
+        ),
+    );
+    let ack = reader.read_json_line(Duration::from_secs(2));
+    assert_eq!(ack["id"], "sub_meta_ttl");
+    assert_eq!(ack["result"]["type"], "subscription_started");
+
+    let metadata = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_meta_sub_4","method":"pane.report_metadata","params":{{"pane_id":"{}","source":"user:pi-display","agent":"pi","applies_to_source":"herdr:pi","title":"short lived","ttl_ms":100}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(metadata["result"]["type"], "ok");
+
+    let set_event = reader.read_json_line(Duration::from_secs(2));
+    assert_eq!(set_event["event"], "pane.agent_status_changed");
+    assert_eq!(set_event["data"]["pane_id"], pane_id);
+    assert_eq!(set_event["data"]["agent_status"], "working");
+    assert_eq!(set_event["data"]["agent"], "pi");
+    assert_eq!(set_event["data"]["title"], "short lived");
+
+    let expiry_event = reader.read_json_line(Duration::from_secs(3));
+    assert_eq!(expiry_event["event"], "pane.agent_status_changed");
+    assert_eq!(expiry_event["data"]["pane_id"], pane_id);
+    assert_eq!(expiry_event["data"]["agent_status"], "working");
+    assert_eq!(expiry_event["data"]["agent"], "pi");
+    assert!(expiry_event["data"]["title"].is_null());
 
     cleanup_spawned_herdr(child, base);
 }

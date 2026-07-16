@@ -32,7 +32,7 @@ main() {
 
     # check dependencies
     need curl
-    need sed
+    need awk
 
     # use the same manifest as `herdr update` so installs and updates agree
     # on the public latest release.
@@ -40,8 +40,17 @@ main() {
     log "fetching latest release manifest..."
     MANIFEST="$(curl -fsSL --retry 3 --connect-timeout 10 --max-time 20 "$MANIFEST_URL")" \
         || err "can't reach ${MANIFEST_URL}. Please try again later; herdr.dev might be down. Who let the sheeps out? baaa."
-    URL="$(printf '%s\n' "$MANIFEST" | sed -n "s/.*\"${TARGET}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p")"
-    VERSION="$(printf '%s\n' "$MANIFEST" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+    URL="$(printf '%s\n' "$MANIFEST" | awk -v target="\"${TARGET}\"" '
+        /^[[:space:]]*"assets"[[:space:]]*:/ { in_assets = 1; next }
+        in_assets && /^[[:space:]]*}/ { exit }
+        in_assets && index($0, target) {
+            sub(/^.*:[[:space:]]*"/, "")
+            sub(/".*$/, "")
+            print
+            exit
+        }
+    ')"
+    VERSION="$(printf '%s\n' "$MANIFEST" | awk -F '"' '/^[[:space:]]*"version"[[:space:]]*:/ { print $4; exit }')"
 
     if [ -z "$URL" ]; then
         err "release manifest does not include a binary for ${TARGET}"

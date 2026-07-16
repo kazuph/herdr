@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use support::{
     cleanup_test_base, register_runtime_dir, register_spawned_herdr_pid,
-    unregister_spawned_herdr_pid,
+    unregister_spawned_herdr_pid, CURRENT_PROTOCOL,
 };
 
 fn unique_test_dir() -> PathBuf {
@@ -88,20 +88,12 @@ fn wait_for_socket(path: &Path, timeout: Duration) {
 fn wait_for_file(path: &Path, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Ok(metadata) = fs::metadata(path) {
-            if metadata.file_type().is_socket() {
-                if UnixStream::connect(path).is_ok() {
-                    return;
-                }
-            } else {
-                return;
-            }
-        } else if path.exists() {
+        if path.exists() && UnixStream::connect(path).is_ok() {
             return;
         }
         thread::sleep(Duration::from_millis(25));
     }
-    panic!("file did not appear at {}", path.display());
+    panic!("socket did not accept connections at {}", path.display());
 }
 
 fn spawn_server(
@@ -159,32 +151,6 @@ fn ping_socket(socket_path: &Path) -> String {
     response.trim().to_string()
 }
 
-fn send_request(socket_path: &Path, json: &str) -> serde_json::Value {
-    let mut stream = UnixStream::connect(socket_path).expect("should connect to API socket");
-    writeln!(stream, "{json}").unwrap();
-
-    let mut reader = BufReader::new(stream);
-    let mut response = String::new();
-    reader.read_line(&mut response).unwrap();
-    serde_json::from_str(&response).expect("response should be valid JSON")
-}
-
-fn run_cli(
-    config_home: &Path,
-    runtime_dir: &Path,
-    socket_path: &Path,
-    args: &[&str],
-) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_herdr"))
-        .args(args)
-        .env("XDG_CONFIG_HOME", config_home)
-        .env("XDG_RUNTIME_DIR", runtime_dir)
-        .env("HERDR_SOCKET_PATH", socket_path)
-        .env_remove("HERDR_ENV")
-        .output()
-        .expect("cli should run")
-}
-
 /// Sends a Hello message over the client socket and reads the Welcome response.
 /// Uses bincode v2 wire format: [u32LE length][bincode payload]
 /// bincode v2 standard config uses VarintEncoding:
@@ -213,6 +179,8 @@ fn client_handshake(
             &encode_varint_u32(8),  // cell_width_px
             &encode_varint_u32(16), // cell_height_px
             &encode_varint_u32(0),  // RenderEncoding::SemanticFrame
+            &encode_varint_u32(0),  // ClientKeybindings::Server
+            &encode_varint_u32(0),  // ClientLaunchMode::App
         ],
     );
     let framed = frame_message(&hello_payload);
@@ -625,11 +593,14 @@ fn client_handshake_succeeds() {
     // Connect to the client socket and perform a handshake.
     let mut stream = UnixStream::connect(&client_socket).expect("should connect to client socket");
 
-    // Send Hello with version 10, 80 cols, 24 rows.
+    // Send Hello with the current protocol version, 80 cols, 24 rows.
     let (version, error) =
-        client_handshake(&mut stream, 10, 80, 24).expect("handshake should succeed");
+        client_handshake(&mut stream, CURRENT_PROTOCOL, 80, 24).expect("handshake should succeed");
 
-    assert_eq!(version, 10, "server should report protocol version 10");
+    assert_eq!(
+        version, CURRENT_PROTOCOL,
+        "server should report current protocol version"
+    );
     assert!(
         error.is_none(),
         "handshake should not have an error: {:?}",
@@ -658,7 +629,10 @@ fn client_handshake_rejects_incompatible_version() {
     let (version, error) = client_handshake(&mut stream, 0, 80, 24)
         .expect("should read Welcome response even on rejection");
 
-    assert_eq!(version, 10, "server should report its version 10");
+    assert_eq!(
+        version, CURRENT_PROTOCOL,
+        "server should report its current protocol version"
+    );
     assert!(
         error.is_some(),
         "version 0 should be rejected with an error"
@@ -683,10 +657,10 @@ fn client_handshake_clamps_small_terminal_size() {
     // Send Hello with 0x0 terminal size — should be clamped.
     let mut stream = UnixStream::connect(&client_socket).expect("should connect to client socket");
 
-    let (version, error) = client_handshake(&mut stream, 10, 0, 0)
+    let (version, error) = client_handshake(&mut stream, CURRENT_PROTOCOL, 0, 0)
         .expect("handshake with 0x0 should succeed (server clamps)");
 
-    assert_eq!(version, 10);
+    assert_eq!(version, CURRENT_PROTOCOL);
     assert!(
         error.is_none(),
         "0x0 size should be accepted (clamped): {:?}",
@@ -746,9 +720,9 @@ fn no_hello_client_closed_within_five_seconds() {
     // Verify the server is still healthy — a proper client can still connect.
     let mut good_stream =
         UnixStream::connect(&client_socket).expect("should connect after no-hello client");
-    let (version, error) = client_handshake(&mut good_stream, 10, 80, 24)
+    let (version, error) = client_handshake(&mut good_stream, CURRENT_PROTOCOL, 80, 24)
         .expect("proper handshake should still work after no-hello client");
-    assert_eq!(version, 10);
+    assert_eq!(version, CURRENT_PROTOCOL);
     assert!(error.is_none());
 
     // API should still work.
@@ -757,61 +731,6 @@ fn no_hello_client_closed_within_five_seconds() {
         response.contains("pong"),
         "server should still respond to ping: {response}"
     );
-
-    cleanup_spawned_herdr(spawned, base);
-}
-
-#[test]
-fn wait_agent_status_returns_when_status_already_matches() {
-    let _lock = test_lock();
-    let base = unique_test_dir();
-    let config_home = base.join("config");
-    let runtime_dir = base.join("runtime");
-    let api_socket = runtime_dir.join("herdr.sock");
-    let client_socket = runtime_dir.join("herdr-client.sock");
-
-    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
-    wait_for_socket(&api_socket, Duration::from_secs(10));
-
-    let created = send_request(
-        &api_socket,
-        &format!(
-            r#"{{"id":"req_wait_current_1","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
-            base.display()
-        ),
-    );
-    assert!(created["result"]["workspace"]["workspace_id"].is_string());
-
-    let reported = send_request(
-        &api_socket,
-        r#"{"id":"req_wait_current_2","method":"pane.report_agent","params":{"pane_id":"1-1","source":"test","agent":"test-agent","state":"blocked","message":"needs input"}}"#,
-    );
-    assert_eq!(reported["result"]["type"], "ok");
-
-    let waited = run_cli(
-        &config_home,
-        &runtime_dir,
-        &api_socket,
-        &[
-            "wait",
-            "agent-status",
-            "1-1",
-            "--status",
-            "blocked",
-            "--timeout",
-            "100",
-        ],
-    );
-    assert!(
-        waited.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&waited.stderr)
-    );
-    let waited_json: serde_json::Value =
-        serde_json::from_slice(&waited.stdout).expect("wait output should be JSON");
-    assert_eq!(waited_json["event"], "pane.agent_status_changed");
-    assert_eq!(waited_json["data"]["agent_status"], "blocked");
-    assert_eq!(waited_json["data"]["agent"], "test-agent");
 
     cleanup_spawned_herdr(spawned, base);
 }

@@ -12,12 +12,16 @@ pub struct PaneDetail {
     pub tab_idx: usize,
     pub tab_label: String,
     pub label: String,
+    pub pane_label: Option<String>,
+    pub terminal_title: Option<String>,
+    pub terminal_title_stripped: Option<String>,
     pub agent_label: String,
-    #[allow(dead_code)]
     pub agent: Option<Agent>,
     pub state: AgentState,
     pub seen: bool,
-    pub custom_status: Option<String>,
+    pub last_agent_state_change_seq: Option<u64>,
+    pub state_labels: HashMap<String, String>,
+    pub tokens: HashMap<String, String>,
 }
 
 impl Tab {
@@ -29,28 +33,44 @@ impl Tab {
         })
     }
 
-    pub fn pane_details(&self, terminals: &HashMap<TerminalId, TerminalState>) -> Vec<PaneDetail> {
+    fn pane_details(
+        &self,
+        terminals: &HashMap<TerminalId, TerminalState>,
+        tab_idx: usize,
+        tab_label: &str,
+    ) -> Vec<PaneDetail> {
         self.layout
             .pane_ids()
             .iter()
             .filter_map(|id| {
                 let pane = self.panes.get(id)?;
                 let terminal = terminals.get(&pane.attached_terminal_id)?;
-                let agent_label = terminal
+                let fallback_agent_label = terminal
                     .agent_name
                     .as_deref()
                     .or_else(|| terminal.effective_agent_label())?
                     .to_string();
+                let agent_label = terminal
+                    .effective_display_agent()
+                    .unwrap_or_else(|| fallback_agent_label.clone());
+                let presentation = terminal.effective_presentation();
                 Some(PaneDetail {
                     pane_id: *id,
-                    tab_idx: self.number.saturating_sub(1),
-                    tab_label: self.display_name(),
+                    tab_idx,
+                    tab_label: tab_label.to_string(),
                     label: agent_label.clone(),
+                    pane_label: terminal
+                        .effective_title()
+                        .or_else(|| terminal.manual_label.clone()),
+                    terminal_title: terminal.terminal_title.clone(),
+                    terminal_title_stripped: terminal.terminal_title_stripped(),
                     agent_label,
                     agent: terminal.effective_known_agent(),
                     state: terminal.state,
                     seen: pane.seen,
-                    custom_status: terminal.effective_custom_status().map(str::to_string),
+                    last_agent_state_change_seq: terminal.last_agent_state_change_seq,
+                    state_labels: presentation.state_labels,
+                    tokens: terminal.metadata_tokens.values(),
                 })
             })
             .collect()
@@ -92,7 +112,13 @@ impl Workspace {
         let multi_tab = self.tabs.len() > 1;
         self.tabs
             .iter()
-            .flat_map(|tab| tab.pane_details(terminals))
+            .enumerate()
+            .flat_map(|(tab_idx, tab)| {
+                let tab_label = self
+                    .tab_display_name(tab_idx)
+                    .unwrap_or_else(|| (tab_idx + 1).to_string());
+                tab.pane_details(terminals, tab_idx, &tab_label).into_iter()
+            })
             .map(|mut detail| {
                 if multi_tab {
                     detail.label = format!("{}·{}", detail.tab_label, detail.agent_label);
@@ -238,5 +264,28 @@ mod tests {
                 ("review·claude".into(), "claude".into(), Some(Agent::Claude)),
             ]
         );
+    }
+
+    #[test]
+    fn pane_details_use_tab_vector_index_not_stable_public_tab_number() {
+        let mut ws = Workspace::test_new("test");
+        let removed_tab = ws.test_add_tab(Some("removed"));
+        let survivor_tab = ws.test_add_tab(Some("survivor"));
+        let survivor_pane = ws.tabs[survivor_tab].root_pane;
+        assert!(ws.close_tab(removed_tab));
+
+        let mut terminals = HashMap::new();
+        let mut terminal = terminal_for_pane(&ws, survivor_pane);
+        terminal.detected_agent = Some(Agent::Codex);
+        terminals.insert(terminal.id.clone(), terminal);
+
+        let details = ws.pane_details(&terminals);
+        let survivor = details
+            .iter()
+            .find(|detail| detail.pane_id == survivor_pane)
+            .expect("surviving tab agent should be listed");
+
+        assert_eq!(ws.tabs[1].number, 3);
+        assert_eq!(survivor.tab_idx, 1);
     }
 }

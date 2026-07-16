@@ -70,6 +70,7 @@ Process:
 
 8. Verify finalization state.
    - Before `just release`, approved `docs/next/README.md` must be copied to root `README.md`, approved staged website docs must be copied from `docs/next/website/src/content/docs/` to `website/src/content/docs/`, and the deleted root doc files must stay deleted.
+   - If the release will change `Cargo.lock` or the package version, check `nix/package.nix` after the release version bump and refresh `cargoHash` before tagging. A stale hash fails both the `Nix` workflow and the release workflow's `flake-check` job with a fixed-output derivation mismatch. Use the `got:` hash printed by `nix flake check --print-build-logs` or CI, then rerun the Nix check when available.
    - Run or recommend:
      ```bash
      just release-docs-check
@@ -111,6 +112,9 @@ Accepted/no action:
 
 Root docs finalized: YES | NO
 <result of just release-docs-check or why it was not run>
+
+Nix cargoHash: OK | NEEDS UPDATE | NOT CHECKED
+<result of nix flake check or the hash-refresh status>
 
 Required before release:
 1. <short action>

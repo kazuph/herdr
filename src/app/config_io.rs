@@ -43,7 +43,13 @@ impl App {
 
     pub(super) fn save_theme(&mut self, name: &str) {
         if self.update_config_file("theme", |content| {
-            crate::config::upsert_section_value(content, "theme", "name", &format!("\"{name}\""))
+            let content = crate::config::upsert_section_value(
+                content,
+                "theme",
+                "name",
+                &format!("\"{name}\""),
+            );
+            crate::config::upsert_section_bool(&content, "theme", "auto_switch", false)
         }) {
             self.apply_config_from_disk(false);
         }
@@ -73,47 +79,54 @@ impl App {
         }
     }
 
-    pub(super) fn save_agent_panel_scope(&mut self, scope: crate::app::state::AgentPanelScope) {
-        let value = match scope {
-            crate::app::state::AgentPanelScope::CurrentWorkspace => {
-                crate::config::AgentPanelScopeConfig::All.as_str()
-            }
-            crate::app::state::AgentPanelScope::AllWorkspaces => {
-                crate::config::AgentPanelScopeConfig::All.as_str()
-            }
-            crate::app::state::AgentPanelScope::SortedAllWorkspaces => {
-                crate::config::AgentPanelScopeConfig::Sort.as_str()
-            }
-        };
-        if self.update_config_file("agent panel scope", |content| {
-            crate::config::upsert_section_value(
+    pub(super) fn save_agent_border_labels(&mut self, enabled: bool) {
+        if self.update_config_file("agent border labels", |content| {
+            crate::config::upsert_section_bool(
                 content,
                 "ui",
-                "agent_panel_scope",
-                &format!("\"{value}\""),
+                "show_agent_labels_on_pane_borders",
+                enabled,
             )
         }) {
             self.apply_config_from_disk(false);
         }
     }
 
-    pub(super) fn save_workspace_panel_density(
-        &mut self,
-        density: crate::app::state::WorkspacePanelDensity,
-    ) {
-        let value = match density {
-            crate::app::state::WorkspacePanelDensity::Full => {
-                crate::config::WorkspacePanelDensityConfig::Full.as_str()
+    pub(super) fn save_pane_history_persistence(&mut self, enabled: bool) {
+        if self.update_config_file("pane screen history", |content| {
+            crate::config::upsert_section_bool(content, "experimental", "pane_history", enabled)
+        }) {
+            self.apply_config_from_disk(false);
+        }
+    }
+
+    pub(super) fn save_switch_ascii_input_source_in_prefix(&mut self, enabled: bool) {
+        if self.update_config_file("prefix ascii input source", |content| {
+            crate::config::upsert_section_bool(
+                content,
+                "experimental",
+                "switch_ascii_input_source_in_prefix",
+                enabled,
+            )
+        }) {
+            self.apply_config_from_disk(false);
+        }
+    }
+
+    pub(super) fn save_agent_panel_sort(&mut self, sort: crate::app::state::AgentPanelSort) {
+        let value = match sort {
+            crate::app::state::AgentPanelSort::Spaces => {
+                crate::config::AgentPanelSortConfig::Spaces.as_str()
             }
-            crate::app::state::WorkspacePanelDensity::Slim => {
-                crate::config::WorkspacePanelDensityConfig::Slim.as_str()
+            crate::app::state::AgentPanelSort::Priority => {
+                crate::config::AgentPanelSortConfig::Priority.as_str()
             }
         };
-        if self.update_config_file("workspace panel density", |content| {
+        if self.update_config_file("agent panel sort", |content| {
             crate::config::upsert_section_value(
                 content,
                 "ui",
-                "workspace_panel_density",
+                "agent_panel_sort",
                 &format!("\"{value}\""),
             )
         }) {

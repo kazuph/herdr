@@ -15,6 +15,10 @@ fn prefix_rhs_label(bindings: &crate::config::ActionKeybinds) -> String {
         .unwrap_or_else(|| "unset".to_string())
 }
 
+fn keybind_label(bindings: &crate::config::ActionKeybinds) -> String {
+    bindings.label().unwrap_or_else(|| "unset".to_string())
+}
+
 fn render_bottom_bar(frame: &mut Frame, area: Rect, line: Line<'_>, bg: ratatui::style::Color) {
     frame.render_widget(Clear, area);
     let buf = frame.buffer_mut();
@@ -56,6 +60,73 @@ pub(super) fn render_prefix_overlay(app: &AppState, frame: &mut Frame, area: Rec
     render_bottom_bar(frame, overlay_area, line, app.palette.panel_bg);
 }
 
+pub(super) fn render_copy_mode_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    let key = Style::default()
+        .fg(app.palette.accent)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(app.palette.overlay0);
+    let mode_style = Style::default()
+        .fg(panel_contrast_fg(&app.palette))
+        .bg(app.palette.accent)
+        .add_modifier(Modifier::BOLD);
+
+    let Some(copy_mode) = app.copy_mode.as_ref() else {
+        return;
+    };
+    let line = if let Some(prompt) = copy_mode.search.prompt.as_ref() {
+        let marker = match prompt.direction {
+            crate::app::state::CopyModeSearchDirection::Forward => "/",
+            crate::app::state::CopyModeSearchDirection::Backward => "?",
+        };
+        Line::from(vec![
+            Span::styled(" COPY ", mode_style),
+            Span::raw(" "),
+            Span::styled(marker, key),
+            Span::styled(prompt.query.clone(), Style::default().fg(app.palette.text)),
+            Span::styled("█", key),
+            Span::styled("  enter search  esc cancel", dim),
+        ])
+    } else {
+        let select = if copy_mode.selection.is_some() {
+            "selecting"
+        } else {
+            "select"
+        };
+        let match_status = copy_mode
+            .search
+            .current
+            .map(|current| format!(" {}/{}", current + 1, copy_mode.search.matches.len()))
+            .or_else(|| (!copy_mode.search.query.is_empty()).then(|| " 0/0".to_string()))
+            .unwrap_or_default();
+        let (exit_keys, exit_label) =
+            if copy_mode.search.query.is_empty() && copy_mode.selection.is_none() {
+                ("q/esc", " exit")
+            } else {
+                ("esc", " clear  q exit")
+            };
+        Line::from(vec![
+            Span::styled(" COPY ", mode_style),
+            Span::raw(" "),
+            Span::styled("h/j/k/l w/b/e { }", key),
+            Span::styled(" move  ", dim),
+            Span::styled("/ ?", key),
+            Span::styled(" search  ", dim),
+            Span::styled("n/N", key),
+            Span::styled(format!(" repeat{match_status}  "), dim),
+            Span::styled("v/space", key),
+            Span::styled(format!(" {select}  "), dim),
+            Span::styled("y/enter", key),
+            Span::styled(" copy  ", dim),
+            Span::styled(exit_keys, key),
+            Span::styled(exit_label, dim),
+        ])
+    };
+
+    let overlay_y = area.y + area.height.saturating_sub(1);
+    let overlay_area = Rect::new(area.x, overlay_y, area.width, 1);
+    render_bottom_bar(frame, overlay_area, line, app.palette.panel_bg);
+}
+
 pub(super) fn render_navigate_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
     let key = Style::default()
         .fg(app.palette.accent)
@@ -76,16 +147,24 @@ pub(super) fn render_navigate_overlay(app: &AppState, frame: &mut Frame, area: R
     let resize = prefix_rhs_label(&kb.resize_mode);
     let help = prefix_rhs_label(&kb.help);
     let settings = prefix_rhs_label(&kb.settings);
+    let goto = prefix_rhs_label(&kb.goto);
     let detach = prefix_rhs_label(&kb.detach);
+    let workspace_nav = format!(
+        "{} / {}",
+        keybind_label(&kb.navigate.workspace_up),
+        keybind_label(&kb.navigate.workspace_down)
+    );
     let line = Line::from(vec![
         Span::styled(" NAVIGATE ", mode_style),
         Span::raw(" "),
         Span::styled("esc", key),
         Span::styled(" back  ", dim),
-        Span::styled("↑↓", key),
+        Span::styled(workspace_nav, key),
         Span::styled(" ws  ", dim),
         Span::styled("⇥", key),
         Span::styled(" pane  ", dim),
+        Span::styled(goto, key),
+        Span::styled(" navigator  ", dim),
         Span::styled(new_tab, key),
         Span::styled(" new tab  ", dim),
         Span::styled(split_vertical, key),

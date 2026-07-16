@@ -3,7 +3,7 @@ title: Quick start
 description: Create your first Herdr workspace and run agents in persistent terminal panes.
 ---
 
-Start Herdr from any project directory:
+If Herdr is not installed yet, see [Install](/docs/install/). Then start Herdr from any project directory:
 
 ```bash
 herdr
@@ -11,29 +11,31 @@ herdr
 
 Herdr launches or attaches to your default background session. You do not manage sockets. If you detach, agents keep running.
 
-For the local, SSH, and `herdr --remote` workflows, see [How to work with Herdr](/docs/how-to-work/).
-
 ## Create a workspace
 
-Press `n` to create a workspace. A workspace is a project-level container for tabs, panes, and agents.
+When a session has no workspaces, Herdr opens one automatically. A workspace is a project-level container for tabs, panes, and agents. Give each active project its own workspace; this keeps agent state readable in the sidebar.
 
-Give each active project its own workspace. This keeps agent state readable in the sidebar.
+## Use the mouse
 
-Right-click a workspace to assign it to `⭐ favorites`, `💼 work`, or `🏠 personal`. Click a section header to collapse or expand that section. The agents panel only shows agents from expanded workspace sections.
+Herdr is mouse-native, so start by clicking. Click panes, tabs, workspaces, and agents to focus them. Drag split borders to resize. Right-click for context menus, including splitting panes and creating tabs. Drag-select text to copy it to your clipboard; double-click a token to copy it directly. Copying does not require Ctrl+C.
+
+Ctrl-click opens pane links when your terminal sends the modified click to Herdr. This works for OSC 8 hyperlinks and visible `http://` or `https://` URLs. On macOS, use Ctrl-click for Herdr-handled pane links while mouse capture is enabled; Cmd-click is only available through the terminal-native bypass path, such as Shift-Cmd-click or `ui.mouse_capture = false`.
+
+If you configure `ui.right_click_passthrough_modifier`, that modifier plus right-click sends right-click, hold, and drag gestures to mouse-reporting pane apps.
 
 ## Run an agent
 
-Start your agent in the root pane.
+Start your coding agent in a pane:
 
 ```bash
-pi
+claude
 ```
 
-Herdr detects supported agents automatically. The sidebar shows whether each agent is `working`, `blocked`, `done`, or `idle`.
+Or `codex`, `pi`, `opencode`, or any other [supported agent](/docs/agents/). Herdr detects it automatically. The sidebar shows whether each agent is `working`, `blocked`, `done`, or `idle` — across every workspace, so you always know which project needs you.
 
 ## Keyboard control
 
-Press `ctrl+b` to enter prefix mode, then press an action key.
+Keyboard control is optional; the mouse covers everything. Press `ctrl+b` to enter prefix mode, then press an action key.
 
 Common actions:
 
@@ -47,40 +49,21 @@ Common actions:
 | New workspace | `prefix+shift+n` |
 | Detach client | `prefix+q` |
 
-After detaching, run `herdr` again to reattach to the same session.
+New to the prefix idea? [Keyboard](/docs/keyboard/) explains what it is, why multiplexers use one, and how to go prefix-free. Press `prefix+?` inside Herdr to see every active binding, and `prefix+[` to copy from the keyboard in copy mode.
 
-## Use the mouse
+## Detach and come back
 
-Herdr is mouse-native. You can click panes, tabs, workspaces, and agents; drag borders; select text; and use right-click menus. Double-clicking a pane opens the same pane menu as right click.
+Press `prefix+q` or simply close your terminal window. The Herdr server and every agent keep running. Run `herdr` again to reattach to the same session.
 
-## Manage named sessions
-
-Named sessions are separate Herdr server namespaces. Use them when you want fully separate runtime state.
+To actually end the session and stop its panes:
 
 ```bash
-herdr session list
-herdr session attach work
-herdr session attach side-project
-herdr session stop work
-herdr session delete side-project
+herdr server stop
 ```
 
-Workspaces are usually enough. Use named sessions when you need isolation between sets of panes, sockets, and persistent state.
+## Where next
 
-## Attach from another machine
-
-Run Herdr where the work lives. If the code and credentials are on a server, either SSH there and run Herdr like a terminal multiplexer:
-
-```bash
-ssh you@server
-herdr
-```
-
-Or attach from your local terminal through SSH:
-
-```bash
-herdr --remote workbox
-herdr --remote ssh://you@server:2222
-```
-
-For repeat targets, put the host in your SSH config. See [How to work with Herdr](/docs/how-to-work/) for the full model.
+- [Concepts](/docs/concepts/) — the workspace, tab, pane, and agent model in two minutes.
+- [How to work with Herdr](/docs/how-to-work/) — local, SSH, phone, and `herdr --remote` workflows.
+- [Agents](/docs/agents/) — supported agents, detection, and integrations that improve state accuracy.
+- [Configuration](/docs/configuration/) — keybindings, themes, notifications, and everything else.

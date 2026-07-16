@@ -111,6 +111,8 @@ fn is_routine_api_method(method: &str) -> bool {
             | "workspace.list"
             | "tab.list"
             | "pane.report_agent"
+            | "pane.report_agent_session"
+            | "pane.report_metadata"
     )
 }
 
@@ -252,6 +254,7 @@ pub(crate) fn workspace_renamed(workspace_id: &str) {
     );
 }
 
+#[cfg(test)]
 pub(crate) fn tab_created(workspace_id: &str, tab_id: &str, root_pane_id: u32) {
     tracing::info!(
         event = "tab.create",
@@ -275,6 +278,7 @@ pub(crate) fn tab_focused(workspace_id: &str, tab_id: &str) {
     );
 }
 
+#[cfg(test)]
 pub(crate) fn tab_closed(workspace_id: &str, tab_id: &str) {
     tracing::info!(
         event = "tab.close",

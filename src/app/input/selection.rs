@@ -1,10 +1,14 @@
 use crossterm::event::{MouseEvent, MouseEventKind};
 
-use crate::app::state::{AppState, SelectionAutoscroll, SelectionAutoscrollDirection};
+use crate::{
+    app::state::{AppState, SelectionAutoscroll, SelectionAutoscrollDirection},
+    terminal::TerminalRuntimeRegistry,
+};
 
 impl AppState {
     pub(crate) fn update_selection_cursor(
         &mut self,
+        terminal_runtimes: &TerminalRuntimeRegistry,
         pane_id: crate::layout::PaneId,
         screen_col: u16,
         screen_row: u16,
@@ -12,7 +16,7 @@ impl AppState {
         let Some(info) = self.pane_info_by_id(pane_id).cloned() else {
             return;
         };
-        let metrics = self.pane_scroll_metrics(pane_id);
+        let metrics = self.pane_scroll_metrics(terminal_runtimes, pane_id);
         if let Some(selection) = self.selection.as_mut() {
             selection.drag(screen_col, screen_row, info.inner_rect, metrics);
         }
@@ -22,7 +26,12 @@ impl AppState {
         usize::from(distance).saturating_mul(3).clamp(3, 15)
     }
 
-    pub(super) fn update_selection_drag(&mut self, screen_col: u16, screen_row: u16) {
+    pub(super) fn update_selection_drag(
+        &mut self,
+        terminal_runtimes: &TerminalRuntimeRegistry,
+        screen_col: u16,
+        screen_row: u16,
+    ) {
         let Some(pane_id) = self.selection.as_ref().map(|selection| selection.pane_id) else {
             return;
         };
@@ -44,14 +53,16 @@ impl AppState {
             // Anchor is stored in absolute row; for a simple screen
             // comparison, check whether the mouse is on a different
             // cell than the anchor's screen position.
-            let (ar, ac) =
-                s.anchor_screen_pos(info.inner_rect, self.pane_scroll_metrics(s.pane_id));
+            let (ar, ac) = s.anchor_screen_pos(
+                info.inner_rect,
+                self.pane_scroll_metrics(terminal_runtimes, s.pane_id),
+            );
             ar != screen_row || ac != screen_col
         });
         let is_dragging = was_dragging || anchor_differs_from_mouse;
 
         // Advance the selection cursor.
-        self.update_selection_cursor(pane_id, screen_col, screen_row);
+        self.update_selection_cursor(terminal_runtimes, pane_id, screen_col, screen_row);
 
         // If the mouse is on a different cell than the anchor but drag()
         // didn't transition (cursor clamped to edge == anchor), force
@@ -67,9 +78,13 @@ impl AppState {
         if screen_row < top {
             // Cursor above pane — immediate scroll + set autoscroll state
             if is_dragging {
-                self.scroll_pane_up(pane_id, Self::selection_edge_scroll_lines(top - screen_row));
+                self.scroll_pane_up(
+                    terminal_runtimes,
+                    pane_id,
+                    Self::selection_edge_scroll_lines(top - screen_row),
+                );
                 // Re-advance cursor after scroll so it reflects the new viewport position
-                self.update_selection_cursor(pane_id, screen_col, screen_row);
+                self.update_selection_cursor(terminal_runtimes, pane_id, screen_col, screen_row);
                 self.selection_autoscroll = Some(SelectionAutoscroll {
                     direction: SelectionAutoscrollDirection::Up,
                     last_mouse_screen_col: screen_col,
@@ -81,11 +96,12 @@ impl AppState {
             // Cursor below pane — immediate scroll + set autoscroll state
             if is_dragging {
                 self.scroll_pane_down(
+                    terminal_runtimes,
                     pane_id,
                     Self::selection_edge_scroll_lines(screen_row - bottom),
                 );
                 // Re-advance cursor after scroll so it reflects the new viewport position
-                self.update_selection_cursor(pane_id, screen_col, screen_row);
+                self.update_selection_cursor(terminal_runtimes, pane_id, screen_col, screen_row);
                 self.selection_autoscroll = Some(SelectionAutoscroll {
                     direction: SelectionAutoscrollDirection::Down,
                     last_mouse_screen_col: screen_col,
@@ -123,8 +139,12 @@ impl AppState {
         }
     }
 
-    pub(super) fn scroll_selection_with_wheel(&mut self, mouse: MouseEvent) -> bool {
-        const LINES_PER_NOTCH: usize = 3;
+    pub(super) fn scroll_selection_with_wheel(
+        &mut self,
+        terminal_runtimes: &TerminalRuntimeRegistry,
+        mouse: MouseEvent,
+    ) -> bool {
+        let lines_per_notch = self.mouse_scroll_lines;
 
         let Some(selection) = self.selection.as_ref() else {
             return false;
@@ -135,11 +155,15 @@ impl AppState {
         let pane_id = selection.pane_id;
         self.focus_pane(pane_id);
         match mouse.kind {
-            MouseEventKind::ScrollUp => self.scroll_pane_up(pane_id, LINES_PER_NOTCH),
-            MouseEventKind::ScrollDown => self.scroll_pane_down(pane_id, LINES_PER_NOTCH),
+            MouseEventKind::ScrollUp => {
+                self.scroll_pane_up(terminal_runtimes, pane_id, lines_per_notch)
+            }
+            MouseEventKind::ScrollDown => {
+                self.scroll_pane_down(terminal_runtimes, pane_id, lines_per_notch)
+            }
             _ => return false,
         }
-        self.update_selection_cursor(pane_id, mouse.column, mouse.row);
+        self.update_selection_cursor(terminal_runtimes, pane_id, mouse.column, mouse.row);
         true
     }
 }
@@ -148,6 +172,7 @@ impl AppState {
 mod autoscroll_tests {
     use super::*;
     use crate::layout::PaneInfo;
+    use crate::terminal::TerminalRuntimeRegistry;
     use crate::workspace::Workspace;
     use ratatui::layout::Rect;
 
@@ -164,6 +189,7 @@ mod autoscroll_tests {
             rect: Rect::new(0, 0, 80, 24),
             inner_rect: Rect::new(0, 0, 80, 24),
             scrollbar_rect: None,
+            borders: ratatui::widgets::Borders::NONE,
             is_focused: true,
         });
         (state, pane_id)
@@ -182,13 +208,15 @@ mod autoscroll_tests {
             rect: Rect::new(0, 5, 80, 24),
             inner_rect: Rect::new(0, 5, 80, 24),
             scrollbar_rect: None,
+            borders: ratatui::widgets::Borders::NONE,
             is_focused: true,
         });
         // Anchor at (5, 10), drag to different cell above pane
         let mut sel = crate::selection::Selection::anchor(pane_id, 5, 10, None);
         sel.drag(4, 5, Rect::new(0, 5, 80, 24), None);
         state.selection = Some(sel);
-        state.update_selection_drag(5, 4);
+        let terminal_runtimes = TerminalRuntimeRegistry::new();
+        state.update_selection_drag(&terminal_runtimes, 5, 4);
         let autoscroll = state.selection_autoscroll.as_ref().unwrap();
         assert_eq!(autoscroll.direction, SelectionAutoscrollDirection::Up);
     }
@@ -200,7 +228,8 @@ mod autoscroll_tests {
         let mut sel = crate::selection::Selection::anchor(pane_id, 5, 10, None);
         sel.drag(0, 0, Rect::new(0, 0, 80, 24), None);
         state.selection = Some(sel);
-        state.update_selection_drag(0, 0);
+        let terminal_runtimes = TerminalRuntimeRegistry::new();
+        state.update_selection_drag(&terminal_runtimes, 0, 0);
         let autoscroll = state.selection_autoscroll.as_ref().unwrap();
         assert_eq!(autoscroll.direction, SelectionAutoscrollDirection::Up);
     }
@@ -211,7 +240,8 @@ mod autoscroll_tests {
         let (mut state, pane_id) = make_state_with_pane();
         state.selection = Some(crate::selection::Selection::anchor(pane_id, 0, 0, None));
         // Same-cell drag on top edge row — still anchored
-        state.update_selection_drag(0, 0);
+        let terminal_runtimes = TerminalRuntimeRegistry::new();
+        state.update_selection_drag(&terminal_runtimes, 0, 0);
         assert!(state.selection_autoscroll.is_none());
     }
 
@@ -222,7 +252,8 @@ mod autoscroll_tests {
         let mut sel = crate::selection::Selection::anchor(pane_id, 0, 0, None);
         sel.drag(23, 0, Rect::new(0, 0, 80, 24), None);
         state.selection = Some(sel);
-        state.update_selection_drag(0, 23);
+        let terminal_runtimes = TerminalRuntimeRegistry::new();
+        state.update_selection_drag(&terminal_runtimes, 0, 23);
         let autoscroll = state.selection_autoscroll.as_ref().unwrap();
         assert_eq!(autoscroll.direction, SelectionAutoscrollDirection::Down);
     }
@@ -234,7 +265,8 @@ mod autoscroll_tests {
         // Anchor at bottom edge row
         state.selection = Some(crate::selection::Selection::anchor(pane_id, 23, 0, None));
         // Same-cell drag — still anchored
-        state.update_selection_drag(0, 23);
+        let terminal_runtimes = TerminalRuntimeRegistry::new();
+        state.update_selection_drag(&terminal_runtimes, 0, 23);
         assert!(state.selection_autoscroll.is_none());
     }
 
@@ -246,7 +278,8 @@ mod autoscroll_tests {
         sel.drag(5, 5, Rect::new(0, 0, 80, 24), None);
         state.selection = Some(sel);
         // Drag cursor one row below the pane bottom
-        state.update_selection_drag(0, 24);
+        let terminal_runtimes = TerminalRuntimeRegistry::new();
+        state.update_selection_drag(&terminal_runtimes, 0, 24);
         let autoscroll = state.selection_autoscroll.as_ref().unwrap();
         assert_eq!(autoscroll.direction, SelectionAutoscrollDirection::Down);
     }
@@ -266,7 +299,8 @@ mod autoscroll_tests {
             inner_rect: Rect::new(0, 0, 80, 24),
         });
         // Move cursor into safe zone (middle of pane, not on edge rows)
-        state.update_selection_drag(5, 12);
+        let terminal_runtimes = TerminalRuntimeRegistry::new();
+        state.update_selection_drag(&terminal_runtimes, 5, 12);
         assert!(state.selection_autoscroll.is_none());
     }
 }

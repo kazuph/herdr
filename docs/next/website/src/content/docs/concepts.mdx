@@ -23,9 +23,20 @@ A pane is a real terminal. Herdr renders the terminal output, sends input back t
 
 Panes can be split right or down. They can be renamed manually, read from the CLI, sent input, and closed.
 
+## Mouse UI
+
+Herdr is mouse-native. You can click panes, tabs, workspaces, and agents. You can drag split borders, select text, and use right-click menus. Everything below is also reachable by mouse; keyboard bindings are an optional layer.
+
+If you prefer keyboard-only control, or you want Herdr to stop capturing mouse input, disable mouse capture:
+
+```toml
+[ui]
+mouse_capture = false
+```
+
 ## Agent
 
-An agent is a process Herdr recognizes inside a pane. Herdr detects agents from foreground processes and screen heuristics.
+An agent is a process Herdr recognizes inside a pane. Herdr detects agents from foreground processes, screen manifests, and optional integrations.
 
 Agent states are:
 
@@ -71,15 +82,4 @@ Herdr has terminal mode, prefix mode, and navigate mode.
 
 Terminal mode sends keys to the focused pane. Prefix mode waits for one Herdr action after the prefix key. Navigate mode is the persistent workspace navigation surface.
 
-Press the prefix key, default `ctrl+b`, then an action key such as `c` for a new tab or `w` for workspace navigation.
-
-## Mouse UI
-
-Herdr is mouse-native. You can click panes, tabs, workspaces, and agents. You can drag split borders, select text, and use right-click menus.
-
-If you prefer keyboard-only control, or you want Herdr to stop capturing mouse input, disable mouse capture:
-
-```toml
-[ui]
-mouse_capture = false
-```
+Press the prefix key, default `ctrl+b`, then an action key such as `c` for a new tab or `w` for workspace navigation. New to the prefix idea? See [Keyboard](/docs/keyboard/).
