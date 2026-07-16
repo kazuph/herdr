@@ -552,7 +552,6 @@ mod tests {
         state.selected = 0;
         state.mode = Mode::RenameWorkspace;
         state.name_input = "heろ".into();
-        state.name_input_cursor = state.name_input.chars().count();
 
         let (buffer, cursor) = render_virtual(&mut state, Rect::new(0, 0, 80, 24), false);
         let cursor = cursor.expect("rename modal should set a frame cursor");

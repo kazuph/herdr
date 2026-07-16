@@ -170,6 +170,30 @@ impl App {
                 self.handle_paste(text).await;
                 true
             }
+            crate::raw_input::RawInputEvent::LineFeed => {
+                if self.state.mode == Mode::Terminal {
+                    if let Some(ws_idx) = self.state.active {
+                        if let Some(ws) = self.state.workspaces.get(ws_idx) {
+                            if let Some(focused) = ws.focused_pane_id() {
+                                if let Some(runtime) = self.state.runtime_for_pane_in_workspace(
+                                    &self.terminal_runtimes,
+                                    ws_idx,
+                                    focused,
+                                ) {
+                                    let _ = runtime.try_send_bytes(bytes::Bytes::from_static(b"\n"));
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    self.handle_key(crate::input::TerminalKey::new(
+                        crossterm::event::KeyCode::Char('j'),
+                        crossterm::event::KeyModifiers::CONTROL,
+                    ))
+                    .await;
+                }
+                true
+            }
             crate::raw_input::RawInputEvent::Mouse(mouse) => {
                 if self.state.popup_pane.is_some() || self.state.mouse_capture {
                     self.handle_mouse(mouse);

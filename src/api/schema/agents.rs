@@ -74,6 +74,9 @@ pub struct AgentInfo {
     pub agent_session: Option<AgentSessionInfo>,
     pub workspace_id: String,
     pub tab_id: String,
+    pub short_pane_id: String,
+    pub global_pane_id: String,
+    pub global_pane_number: u64,
     pub pane_id: String,
     pub focused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

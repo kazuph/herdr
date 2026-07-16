@@ -187,6 +187,13 @@ impl TitleOscTracker {
                         self.state = DefaultColorOscTrackerState::OscBody;
                     }
                 }
+                DefaultColorOscTrackerState::IgnoreString
+                | DefaultColorOscTrackerState::IgnoreStringEscape
+                | DefaultColorOscTrackerState::OversizedOsc
+                | DefaultColorOscTrackerState::OversizedOscEscape => {
+                    self.body.clear();
+                    self.state = DefaultColorOscTrackerState::Ground;
+                }
             }
 
             if self.body.len() > 1024 {

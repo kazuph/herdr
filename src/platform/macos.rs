@@ -823,6 +823,15 @@ fn process_bsdinfo(pid: u32) -> Option<libc::proc_bsdinfo> {
     (ret == size).then_some(info)
 }
 
+pub fn parent_process_id(pid: u32) -> Option<u32> {
+    let ppid = process_bsdinfo(pid)?.pbi_ppid;
+    (ppid > 0).then_some(ppid as u32)
+}
+
+pub fn process_name(pid: u32) -> Option<String> {
+    comm_from_bsdinfo(&process_bsdinfo(pid)?)
+}
+
 fn comm_from_bsdinfo(info: &libc::proc_bsdinfo) -> Option<String> {
     let end = info
         .pbi_comm

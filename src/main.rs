@@ -68,6 +68,7 @@ mod events;
 mod ghostty;
 mod handoff_runtime;
 mod input;
+#[allow(dead_code)]
 mod integration;
 mod ipc;
 mod kitty_graphics;
@@ -536,14 +537,11 @@ fn main() -> io::Result<()> {
         println!("       herdr --remote <ssh-target> [--session <name>]");
         println!("       herdr session attach <name>");
         println!("       herdr completion zsh");
-        println!("       herdr update [--handoff]");
-        println!("       herdr channel set <stable|preview>");
         println!("       herdr server stop");
         println!("       herdr server reload-config");
         println!("       herdr api <subcommand> ...");
         println!("       herdr completion <shell>");
         println!("       herdr config <subcommand> ...");
-        println!("       herdr channel <subcommand> ...");
         println!("       herdr workspace <subcommand> ...");
         println!("       herdr worktree <subcommand> ...");
         println!("       herdr tab <subcommand> ...");
@@ -552,7 +550,6 @@ fn main() -> io::Result<()> {
         println!("       herdr pane <subcommand> ...");
         println!("       herdr wait <subcommand> ...");
         println!("       herdr session <subcommand> ...");
-        println!("       herdr integration <subcommand> ...");
         println!();
         println!("Common commands:");
         for (command, description) in [
@@ -561,15 +558,10 @@ fn main() -> io::Result<()> {
                 "herdr status [server|client]",
                 "Show local client and running server status",
             ),
-            ("herdr update", "Download and install the latest version"),
             ("herdr completion zsh", "Generate shell completions for zsh"),
             (
                 "herdr server stop",
                 "Stop the running server via the API socket",
-            ),
-            (
-                "herdr channel set <stable|preview>",
-                "Choose the stable or preview update channel",
             ),
             (
                 "herdr server reload-config",
@@ -578,10 +570,6 @@ fn main() -> io::Result<()> {
             (
                 "herdr config reset-keys",
                 "Back up config.toml and remove custom keybindings",
-            ),
-            (
-                "herdr channel <subcommand>",
-                "Manage the stable or preview update channel",
             ),
             (
                 "herdr api <subcommand>",
@@ -616,10 +604,6 @@ fn main() -> io::Result<()> {
                 "herdr session <subcommand>",
                 "Manage named persistent sessions",
             ),
-            (
-                "herdr integration <subcommand>",
-                "Manage built-in agent integrations",
-            ),
         ] {
             println!("  {command:<32} {description}");
         }
@@ -633,7 +617,7 @@ fn main() -> io::Result<()> {
         println!("  --remote <target>   Attach through SSH to a remote Herdr server");
         println!("  --remote-keybindings <local|server>");
         println!("                      Keybindings for --remote app attach (default: local)");
-        println!("  --handoff           Opt into live handoff for update or remote attach");
+        println!("  --handoff           Opt into live handoff for remote attach");
         println!("  --default-config    Print default configuration and exit");
         println!("  --version, -V       Print version and exit");
         println!("  --help, -h          Show this help");

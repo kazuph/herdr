@@ -202,8 +202,8 @@ fn repeat_key_identity(
     (key.code, key.modifiers)
 }
 
-fn auto_updates_enabled(no_session: bool) -> bool {
-    !no_session && !cfg!(debug_assertions)
+fn auto_updates_enabled(_no_session: bool) -> bool {
+    false
 }
 
 fn background_update_check_enabled(no_session: bool, check_enabled: bool) -> bool {
@@ -1630,6 +1630,29 @@ impl App {
                                 }
                             }
                         }
+                    }
+                }
+                crate::raw_input::RawInputEvent::LineFeed => {
+                    if self.state.mode == Mode::Terminal {
+                        if let Some(ws_idx) = self.state.active {
+                            if let Some(ws) = self.state.workspaces.get(ws_idx) {
+                                if let Some(focused) = ws.focused_pane_id() {
+                                    if let Some(runtime) = self.state.runtime_for_pane_in_workspace(
+                                        &self.terminal_runtimes,
+                                        ws_idx,
+                                        focused,
+                                    ) {
+                                        let _ =
+                                            runtime.try_send_bytes(bytes::Bytes::from_static(b"\n"));
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        self.handle_non_terminal_key_headless(crate::input::TerminalKey::new(
+                            crossterm::event::KeyCode::Char('j'),
+                            crossterm::event::KeyModifiers::CONTROL,
+                        ));
                     }
                 }
                 crate::raw_input::RawInputEvent::OuterFocusGained => {

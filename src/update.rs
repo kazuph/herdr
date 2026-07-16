@@ -25,6 +25,7 @@ use serde::{Deserialize, Deserializer};
 
 const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
 const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/preview.json";
+pub(crate) const UPDATE_TRACK_ID: &str = "kazuph/herdr";
 const HOMEBREW_FORMULA_API_URL: &str = "https://formulae.brew.sh/api/formula/herdr.json";
 const HERDR_UPDATE_COMMAND: &str = "herdr update";
 const HOMEBREW_UPDATE_COMMAND: &str = "brew update && brew upgrade herdr";
@@ -1724,19 +1725,14 @@ fn print_running_session_update_outcomes(
 // ---------------------------------------------------------------------------
 
 pub(crate) fn update_install_command() -> &'static str {
-    if is_homebrew_managed_install() {
-        HOMEBREW_UPDATE_COMMAND
-    } else if is_mise_managed_install() {
-        MISE_UPDATE_COMMAND
-    } else if is_nix_managed_install() {
-        NIX_UPDATE_COMMAND
-    } else {
-        HERDR_UPDATE_COMMAND
-    }
+    "build from source and install target/release/herdr"
 }
 
 pub(crate) fn update_install_instruction(install_command: &str) -> String {
     match install_command {
+        "build from source and install target/release/herdr" => {
+            "detach, then run `build from source and install target/release/herdr`".to_string()
+        }
         HERDR_UPDATE_COMMAND => {
             "detach, run `herdr update`, then follow its restart guidance".to_string()
         }
@@ -1943,7 +1939,13 @@ fn homebrew_cellar_keg_root(path: &Path) -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 /// Manual self-update command (`herdr update`).
-pub fn self_update(options: SelfUpdateOptions) -> Result<Version, String> {
+pub fn self_update(_options: SelfUpdateOptions) -> Result<Version, String> {
+    return Err(
+        "self-update is disabled in the kazuph/herdr fork; build from source and install target/release/herdr explicitly"
+            .into(),
+    );
+    #[allow(unreachable_code)]
+    let options = _options;
     let channel = UpdateChannel::configured();
     #[cfg(windows)]
     if channel == UpdateChannel::Stable {

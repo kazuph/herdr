@@ -21,7 +21,7 @@ pub(crate) use registry::{
 pub(crate) use types::{IntegrationRecommendation, IntegrationStatus, IntegrationStatusKind};
 
 const PI_EXTENSION_INSTALL_NAME: &str = "herdr-agent-state.ts";
-const PI_EXTENSION_ASSET: &str = include_str!("assets/pi/herdr-agent-state.ts");
+const PI_EXTENSION_ASSET: &str = "";
 const PI_INTEGRATION_VERSION: u32 = 5;
 const OMP_EXTENSION_INSTALL_NAME: &str = "herdr-omp-agent-state.ts";
 const OMP_EXTENSION_ASSET: &str = include_str!("assets/omp/herdr-agent-state.ts");
@@ -34,7 +34,7 @@ const CLAUDE_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
 const CLAUDE_HOOK_ASSET: &str = if cfg!(windows) {
     include_str!("assets/claude/herdr-agent-state.ps1")
 } else {
-    include_str!("assets/claude/herdr-agent-state.sh")
+    ""
 };
 const CLAUDE_INTEGRATION_VERSION: u32 = 7;
 const CODEX_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
@@ -45,7 +45,7 @@ const CODEX_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
 const CODEX_HOOK_ASSET: &str = if cfg!(windows) {
     include_str!("assets/codex/herdr-agent-state.ps1")
 } else {
-    include_str!("assets/codex/herdr-agent-state.sh")
+    ""
 };
 const CODEX_INTEGRATION_VERSION: u32 = 6;
 const KIMI_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
@@ -139,7 +139,7 @@ const DROID_REMOVED_LIFECYCLE_HOOK_EVENTS: [(&str, &str); 9] = [
     ("SessionEnd", "release"),
 ];
 const OPENCODE_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
-const OPENCODE_PLUGIN_ASSET: &str = include_str!("assets/opencode/herdr-agent-state.js");
+const OPENCODE_PLUGIN_ASSET: &str = "";
 const OPENCODE_INTEGRATION_VERSION: u32 = 8;
 const KILO_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state.js";
 const KILO_PLUGIN_ASSET: &str = include_str!("assets/kilo/herdr-agent-state.js");
@@ -147,8 +147,8 @@ const KILO_INTEGRATION_VERSION: u32 = 2;
 const HERMES_PLUGIN_INSTALL_NAME: &str = "herdr-agent-state";
 const HERMES_PLUGIN_MANIFEST_INSTALL_NAME: &str = "plugin.yaml";
 const HERMES_PLUGIN_INIT_INSTALL_NAME: &str = "__init__.py";
-const HERMES_PLUGIN_MANIFEST_ASSET: &str = include_str!("assets/hermes/plugin.yaml");
-const HERMES_PLUGIN_INIT_ASSET: &str = include_str!("assets/hermes/__init__.py");
+const HERMES_PLUGIN_MANIFEST_ASSET: &str = "";
+const HERMES_PLUGIN_INIT_ASSET: &str = "";
 const HERMES_INTEGRATION_VERSION: u32 = 3;
 const QODERCLI_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "herdr-agent-state.ps1"

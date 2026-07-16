@@ -4056,6 +4056,7 @@ fn events_for_app_routing(
             }
             crate::raw_input::RawInputEvent::OuterFocusLost if !source_is_foreground => None,
             crate::raw_input::RawInputEvent::Key(_)
+            | crate::raw_input::RawInputEvent::LineFeed
             | crate::raw_input::RawInputEvent::Mouse(_)
             | crate::raw_input::RawInputEvent::Paste(_) => {
                 source_is_foreground = true;

@@ -15,10 +15,10 @@ use super::{KIMI_MIN_VERSION, PI_EXTENSION_INSTALL_NAME};
 pub(crate) fn install_target(
     target: crate::api::schema::IntegrationTarget,
 ) -> io::Result<Vec<String>> {
-    let result = install_target_inner(target);
-    let outcome = if result.is_ok() { "ok" } else { "error" };
-    crate::logging::integration_action("install", integration_target_label(target), outcome);
-    result
+    crate::logging::integration_action("install", integration_target_label(target), "disabled");
+    Err(io::Error::other(
+        "agent integration install is disabled in the kazuph/herdr fork; use trusted local tools to report agent state",
+    ))
 }
 
 fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Result<Vec<String>> {
@@ -216,6 +216,11 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
 pub(crate) fn uninstall_target(
     target: crate::api::schema::IntegrationTarget,
 ) -> io::Result<Vec<String>> {
+    crate::logging::integration_action("uninstall", integration_target_label(target), "disabled");
+    return Err(io::Error::other(
+        "agent integration uninstall is disabled in the kazuph/herdr fork; no hook/plugin changes are managed by this build",
+    ));
+    #[allow(unreachable_code)]
     let messages = match target {
         crate::api::schema::IntegrationTarget::Pi => {
             let result = uninstall_pi()?;
