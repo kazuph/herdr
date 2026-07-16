@@ -9,6 +9,7 @@
 - 各エントリは fork実装の内部構造ではなく**観測可能な挙動**（キー・メニュー文言・config key・表示・CLI）で書かれている。移植時は最新本家のAPI/構造に合わせて実装してよいが、**受け入れ条件とデグレ判定を満たすこと**が完了条件。
 - 新しいこだわり・機能を足すときは、**実装より先にこのSPECへエントリを追記**する。
 - エントリの正確さに疑問があれば、元コミット（fork master上のsha）を `git show` して確認する。
+- 各エントリの `status` は、upstream取り込み後の修復方針を示す。マージ時はstatusに従って本家採用範囲とfork保持差分を分離し、受け入れ条件で回帰を判定する。
 
 ## 分類の意味
 
@@ -18,6 +19,15 @@
 | PARTIAL | 本家に部分的な土台がある。本家APIに乗せて差分だけ実装する |
 | PLUGIN-ABLE | 本家のCLI/socket/通知APIで再実装可能。ただし**使い心地がデグレするならfork実装**にする |
 | POLICY | コードよりfork運用方針。docs/build/テスト衛生 |
+
+### status の意味
+
+| status | 判定 | マージ後の扱い |
+|---|---:|---|
+| 本家採用へ移行 | A | 重複するfork実装を捨てて本家実装を採用する。status行に明記したfork固有差分だけは保持する |
+| 本家基盤＋fork差分保持 | B | 本家の基盤・API・状態管理へ載せ替え、status行に明記した観測可能なfork差分を修復する |
+| fork独自・保持 | C | 本家に代替がないため、既存の受け入れ条件を満たす形で再実装・保持する |
+| 破棄 | 破棄 | ユーザー判断により本家取り込み後は再実装しない。経緯だけをSPECに残す |
 
 ## 全体運用ルール
 
@@ -30,9 +40,21 @@
 
 ## G1. レイアウト操作
 
+### tab・workspace間pane移動
+- **元コミット**: 2439864
+- **分類**: PARTIAL
+- **status: 本家採用へ移行 (A)** — tab・workspace間の移動は本家 `d35c642` の`pane.move` API/CLI、process維持、focus、layout結果、`pane.moved` eventを採用する。同一tab内でpaneをrootの上下左右へ寄せる次項のfork差分は置換しない。
+- **目的**: pane内processを止めずに既存tab、新規tab、新規workspaceへ移動する。
+- **受け入れ条件**:
+  - 移動前後でterminal processとpane identityが維持され、移動先がfocusされる。
+  - 既存tab、新規tab、新規workspaceをCLI/APIから選べ、成功時に`pane.moved` eventが出る。
+  - 同一tab内のroot side移動、menu条件、対象外pane tree保持は次項どおり残る。
+- **該当コミット**: fork `2439864`; upstream `d35c642`。
+
 ### pane 右クリックのレイアウト操作
 - **元コミット**: e778a18, 634fc6e, 9349d61, 487bfea
 - **分類**: CORE-UI
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `edd08e8`, `d35c642`, `15cab96` のlayout mutation・`pane.move`・eventを採用し、rootの上下左右への移動、menu条件と順序、対象外pane tree保持を残す。
 - **目的**: マウス操作だけで pane の分割、配置換え、均等化、zoom 解除まで完結できるようにする。タッチ端末やリモート UI でキーボードショートカットに頼らず pane レイアウトを整えるために必要。
 - **UI挙動**:
   - pane の右クリックメニューには、複数 pane がある場合だけレイアウト操作を表示する。単一 pane では `Move to left split` / `Move to right split` / `Move to upper split` / `Move to lower split` / `Equalize pane sizes` / `Cycle pane layout` / `Rotate panes` / `Rotate panes reverse` / `Zoom` / `Unzoom` を表示しない。
@@ -63,30 +85,33 @@
 ### レイアウト cycle
 - **元コミット**: b452173, 634fc6e
 - **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — preset巡回、保存された論理順、focus維持、均等2行gridに加え、`f286ec9`（merge `15e9f4a`）のexited pane reflow・順序保持と`bdbd3c1`の2pane縦横toggleを残す。
 - **目的**: pane が増えたとき、横一列や縦一列だけでなく、メイン pane とグリッドを含む実用的な配置へ 1 操作で巡回できるようにする。手作業の resize と split 作り直しを減らすための機能。
 - **UI挙動**:
   - pane 右クリックメニューの `Cycle pane layout`、または bottom pane action bar の ` CYCLE LAYOUT ` を選択すると cycle が 1 段進む。
-  - cycle は pane ID の昇順を基準に pane 順を組み直す。現在 focus 中 pane は cycle 後も focus されたまま維持する。
+  - cycle は保存された論理順を維持し、pane ID昇順へ並べ直さない。新規paneはfocus中paneの直後へ挿入し、root side移動後は再構成後のleaf順を論理順として保存する。現在 focus 中 pane は cycle 後も focus されたまま維持する（`f286ec9`）。
   - pane が 1 枚以下のときは何も変えない。
-  - 巡回順は、横一列 → 縦一列 → 左メイン + 右側 2 行グリッド → 右メイン + 左側 2 行グリッド → 上メイン + 下側横一列 → 下メイン + 上側横一列 → 横一列。
-  - メイン pane は pane ID 昇順の先頭 pane。メイン領域と残り領域の split 比率は 0.5。残り領域が 2 行グリッドの場合、上段の数は残り pane 数の切り上げ半分、下段が残り。
+  - 2 paneではpreset巡回を行わず、一様な左右分割から上下分割へ、それ以外から左右分割へ切り替え、論理順とfocusを維持する（`bdbd3c1`）。
+  - 3 pane以上の巡回順は、横一列 → 縦一列 → 均等2行grid → 左メイン + 右側 2 行グリッド → 右メイン + 左側 2 行グリッド → 上メイン + 下側横一列 → 下メイン + 上側横一列 → 横一列。
+  - 均等2行gridは上段を `ceil(N/2)`、下段を `floor(N/2)` とし、上下比率0.5、各段を横方向へ均等分割する（`f286ec9`, `b452173`）。メイン pane は保存された論理順の先頭 pane。メイン領域と残り領域の split 比率は 0.5。
+  - 手動resizeや混合splitで既知presetに一致しないtreeは、次回cycleで論理順を維持した横一列へ正規化する（`634fc6e`, `b452173`）。
 - **受け入れ条件**:
   - 9 pane を横一列にして `Cycle pane layout` を 1 回実行すると縦一列になる。180x45 では先頭 pane が y=0 高さ 5、最後 pane が y=40 高さ 5 になる。
-  - 2 回目は左メイン + 右 2 行グリッドになる。160x40 では先頭 pane が x=0 幅 80 高さ 40、右側の残り pane は 20x20 の 2 行グリッドになる。
-  - 3 回目は右メイン + 左 2 行グリッドになる。160x40 では先頭 pane が x=80 幅 80 高さ 40、残り pane は左側 80 幅に 2 行グリッドで並ぶ。
-  - 4 回目は上メイン + 下横一列になる。160x40 では先頭 pane が y=0 高さ 20 全幅、残り pane は下段で横一列に並ぶ。
-  - 5 回目は下メイン + 上横一列になる。160x40 では先頭 pane が y=20 高さ 20 全幅、残り pane は上段で横一列に並ぶ。
-  - 6 回目は横一列に戻る。180x40 では先頭 pane が x=0 幅 20、最後 pane が x=160 幅 20 になる。
-- **実装方針**: 本家に `cycle_layout` 相当がないため fork 側の core UI として持つ。pane tree の leaf を pane ID 昇順で収集し、既知 preset に一致するかを判定して次 preset の tree を生成する。本家 `pane.move` は単発移動の土台にはなるが、この preset cycle 全体は表現できない。
+  - 2 回目は均等2行gridになる。9 paneでは上段5 pane、下段4 pane、上下比率は0.5になる。
+  - 3 回目は左メイン + 右 2 行グリッド、4回目は右メイン + 左 2 行グリッド、5回目は上メイン + 下横一列、6回目は下メイン + 上横一列、7回目は横一列へ戻る。
+  - 2 paneをcycleすると、同じ論理順・focusのまま左右分割と上下分割が交互に切り替わる。
+- **実装方針**: 本家に `cycle_layout` 相当がないため fork 側の core UI として持つ。pane tree の leaf を保存された論理順で収集し、既知 preset に一致するかを判定して次 preset の tree を生成する。本家 `pane.move` は単発移動の土台にはなるが、この preset cycle 全体は表現できない。
 - **デグレ判定**:
-  - cycle が pane 作成順や現在の leaf 順に依存し、pane ID 昇順で安定しない。
+  - cycle が保存された論理順をpane ID昇順へ戻す、またはsplit作成・root side移動で確定した順を失う。
   - focus pane が cycle 後に先頭 pane へ勝手に移る。
-  - 左メイン、右メイン、上メイン、下メイン、2 行グリッドのいずれかが巡回から欠ける。
+  - 左メイン、右メイン、上メイン、下メイン、均等2行gridのいずれかが巡回から欠ける。
   - 2 行グリッドの上段数が切り上げ半分にならない。
+  - 2 paneがmain/grid presetへ進む、同じ分割方向のままになる、または論理順・focusが変わる。
 
 ### pane 回転と target 安定化
 - **元コミット**: 978e23c, 447bfa5
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `d35c642`, `15cab96` のstable pane/layout APIを採用し、leaf ID rotation、pane IDとterminalの対応維持、reverse rotationを残す。
 - **目的**: split の形を崩さずに pane の位置だけを前後へ回転し、見やすい位置へ pane を移せるようにする。同時に `%N` で狙う外部 command target と attached terminal の対応を rotation / restore 後も壊さない。
 - **UI挙動**:
   - pane 右クリックメニューの `Rotate panes` は forward rotation、`Rotate panes reverse` は reverse rotation を行う。
@@ -112,14 +137,18 @@
 ### bottom pane action bar と pane title zoom
 - **元コミット**: 8cb716c, 4cbc5e9
 - **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — persistent bottom action bar、pane title click zoom、各hit areaを残す。copy modeは本家採用へ移行するが、`2d6e8ea` の ` COPY ` buttonは本action barへ接続し直して保持する。
 - **目的**: よく使う pane レイアウト操作を常時クリック可能にし、右クリックメニューを開かずに cycle / rotate / equalize を実行できるようにする。pane title 自体も zoom toggle として使い、マウス中心の操作を短くする。
 - **UI挙動**:
   - desktop layout で active workspace があり、main body の高さが 2 行以上あるとき、terminal area の下に高さ 1 行の bottom pane action bar を表示する。mobile layout では表示しない。
   - tab bar が非表示でも action bar は main area の最下段 1 行を使い、terminal area はその分 1 行短くなる。例: 80x20 で tab bar 非表示なら terminal height は 19、action bar は y=19 高さ 1。
-  - action bar 左端の状態ラベルは通常 ` PANES `。`ui.vim_mode = true` で Vim normal mode のときは ` VIM NORMAL `、insert mode のときは ` VIM INSERT ` を表示する。`ui.vim_mode` の default は `false`。
+  - action bar左端はcopy buttonで、通常` COPY `、copy mode中` PHONE COPY `、fullscreen copy中` EXIT COPY `を表示する。fullscreen判定を優先し、hit areaは現在labelの全幅と一致する（`2d6e8ea`）。` PANES `は表示しない。
   - action bar の button は右寄せで、左から ` CYCLE LAYOUT `、1 桁 gap、` ROTATE PANES `、1 桁 gap、` EQUALIZE ` の順。右端には 1 桁 margin を置く。幅が足りない button は描画せず hit area も無効にする。
   - action bar 全体と左ラベルは背景 `Color::Reset`、前景 `overlay0`。button は背景 `Color::Reset`、前景 `accent`、太字 + 下線。
   - ` CYCLE LAYOUT ` のクリックは `Cycle pane layout` と同じ操作、` ROTATE PANES ` は `Rotate panes` と同じ forward rotation、` EQUALIZE ` は `Equalize pane sizes` と同じ操作。
+  - copy buttonは通常 → 通常layout内copy mode → 対象pane fullscreen copy mode → 通常の3状態をcycleし、終了時に元layoutへ戻す（`2d6e8ea`）。
+  - action bar hit areaが重なる座標ではcopy → cycle → rotate → equalizeの順で判定し、最初の1操作だけを発火する（`2d6e8ea`, `8cb716c`）。
+  - layout button 3個、gap 2個、右marginが全て収まる時だけ右寄せする。狭幅ではbar左端からcycle→rotate→equalizeの順に置き、完全に収まらないbuttonは描画せずhit areaをzeroにする（`8cb716c`）。
   - pane の title 行を左クリックすると、その pane を focus して zoom toggle する。zoom 中の focused pane title は先頭に `ZOOM` を追加し、例として `%5 terminal` は `ZOOM %5 terminal` になる。
   - action bar と pane title の mouse down は terminal への mouse forwarding、workspace press、tab press、drag を発生させない。
 - **受け入れ条件**:
@@ -128,19 +157,50 @@
   - pane title をクリックするとクリックした pane が focus され、zoomed になる。zoomed pane title を再度クリックすると zoom が解除される。
   - zoom 中の title には `ZOOM` prefix が出る。
   - action bar の背景が塗りつぶし surface / panel 色ではなく reset 背景になり、button は accent 色の太字下線で表示される。
+  - copy buttonの3文言、状態cycle、labelとhit area幅、重複時の発火順が一致する。
+  - 本家copy modeへ移行後も、`2d6e8ea` のbottom action bar ` COPY ` buttonからcopy modeへ入れる。
+  - `Copied 1 line` / `Copied N lines` はsidebar最下行に表示され、clipboard write成功から2秒で消える。この位置と期限をgeneric toastへ変更しない。
 - **実装方針**: 本家の render pipeline に、terminal area の下 1 行を予約する view geometry と hit area を追加する。action bar のクリックは本家の mouse input dispatcher から core の cycle / rotate / equalize action に接続する。plugin v1 では terminal area の persistent 1 行 UI と pane title hit area を安全に差し込めないため core UI として実装する。
 - **デグレ判定**:
   - action bar が active workspace なし、mobile layout、または高さ不足で表示される。
   - action bar が terminal area と重なり、terminal 内容を隠す。
   - button label が ` CYCLE LAYOUT ` / ` ROTATE PANES ` / ` EQUALIZE ` から変わる。
+  - 左端が非clickの` PANES `になる、copy状態とlabelが一致しない、またはCOPYを3回押して元layoutへ戻らない。
+  - 狭幅でlabelの一部だけが描画される、非表示buttonにhit areaが残る、または重複座標で複数actionが発火する。
   - button 背景が panel / surface で塗られ、現 fork の reset 背景 + accent 強調より目立つ配色に戻る。
   - pane title click が terminal に forwarding され、zoom toggle ではなく pane 内 click として扱われる。
+
+### pane描画・resize・mouse routingの微細契約
+- **元コミット**: fe693f6, 80da299, 047c240, 2911498, b038d78, 2d6e8ea, e5e0e0e, 0c1c2c7, f286ec9
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — pane frame、title、restore表示、copy fullscreen、overlay、close reflowとmouse hit-testの観測可能な境界を保持する。
+- **受け入れ条件**:
+  - border titleは左右1 space付きで、pane幅4以下では非表示、超過時はUnicode文字数基準で最大`pane_width - 4`文字へ切り詰め末尾を単一の`…`にする（`fe693f6`, `80da299`）。
+  - `width > 2 && height > 2`だけframeを描き、閾値以下ではframe/titleなしでpane rect全体をterminalへ渡す。single paneもTerminal modeではaccent色THICK、非Terminal modeのfocus時はaccent色PLAINのframeを持つ（`80da299`）。
+  - pane titleのbranchはruntimeの現在cwdを優先し、取得できない場合だけterminal stateの保存cwdを使う（`047c240`）。
+  - safeなsession IDとagent種別が揃うrecorded/pending restoreはtop border右端に` saved session `、agent根拠はあるがsafeな復元情報がない時は` no saved session `を表示する。非agentと幅34未満では表示せず、左titleと重なる時は右labelを優先する（`2911498`, `b038d78`）。
+  - single/zoom paneもframeで上下左右1 cellを控除し、frame内幅5以上ではscrollback有無によらず右端1列をgutterとして予約する。幅4以下ではgutterを作らない（`80da299`）。
+  - fullscreen copyは対象paneをterminal area全体へborder控除なしで表示し、border/title/restore label/scrollbar/split drag borderを出さずruntimeを全幅・全高へresizeする（`2d6e8ea`）。
+  - Copy mode cursorは対象paneのinner rect内だけに出し、前景`panel_bg`、背景`accent`、BOLDとする。範囲外座標を端へclampしない（`e5e0e0e`）。
+  - local overlayはactive tab内にoverlay/targetの両paneがある時だけtargetを同一rectで置換し、他paneの矩形・順序・split比率を変えない（`0c1c2c7`）。
+  - pane close後は論理順上の次pane、末尾なら直前paneへfocusし、親splitを畳んで空洞・重複なく全面reflowする。残存論理順を維持する（`f286ec9`）。
+  - split境界のhit areaは左右splitなら境界列＋first側1列、上下splitなら境界行＋first側1行とし、second側の最初の本文cellへ侵入しない。drag ratioは0.1〜0.9へclampする（`f286ec9`）。
+  - terminal領域のleft-downはaction bar → split境界 → pane scrollbar → pane title → pane本文の順で判定し、先頭の1操作だけを実行する（`8cb716c`, `80da299`）。
+  - pane本文は同じpane・同じcellを500ms以内に2回left-clickした時だけ、2回目の座標へpane menuを開く（`5b13801`）。
+- **デグレ判定**:
+  - titleの幅基準が表示幅へ変わる、ellipsis/paddingが消える、または幅4以下でborder角を上書きする。
+  - 極小paneでterminal領域がborderだけになる、single/zoomだけframe/gutter契約が変わる、またはscrollbar出現時にterminalがreflowする。
+  - stale cwdのbranchを表示し続ける、不正sessionをsaved扱いする、非agent/幅34未満へrestore labelを出す。
+  - fullscreen copyに通常zoomのframeが残る、Copy cursorが別pane/borderへ出る、overlayが全画面化または他paneをreflowする。
+  - close位置に空洞が残る、pane ID昇順へ戻る、split dragでpaneが0幅/0高になる、または本文clickがresizeへ奪われる。
+  - mouse routing順が変わって複数操作が発火する、別cell/別pane/500ms超過でpane menuが開く。
 
 ## G2. サイドバー & ワークスペースUI
 
 ### サイドバー幅プリセット
 - **元コミット**: c5b7668, aff2011, 8a51ff9
 - **分類**: CORE-UI
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `3189ede` のmin/max・drag resize永続化を採用し、narrow/normal/wide preset、最大72列、非drag操作を残す。
 - **目的**: タッチ端末や細かいドラッグ操作が苦手な環境でも、サイドバー幅を即座に狭い・標準・広い状態へ切り替えたい。workspace名、git情報、agent要約が長い時に、最大幅36列では不足するため広い表示を選べる必要がある。
 - **UI挙動**:
   - expanded sidebar の幅境界は設定キー `[ui] sidebar_min_width` と `[ui] sidebar_max_width` で制御する。
@@ -168,6 +228,7 @@
 ### Workspace Sections
 - **元コミット**: 6b5e3ac, a31d120, 3a9a374, 74d5512, 8a51ff9, d5a853a
 - **分類**: CORE-UI
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `0148c13`, `14d8e93` のgroup・collapse・treeと、`9c9490d` の起動時sidebar collapse設定を採用し、favorites/work/personal/spaces、section間drag、fork固有の表示順を残す。
 - **目的**: workspace数が増えた時に、重要な作業・仕事・個人・未分類を視覚的に分け、見たいまとまりだけを展開したい。agent panel も折りたたみ状態に追従し、隠したworkspaceのagentで注意が散らないようにする。
 - **UI挙動**:
   - workspace は4 sectionに属する。表示順は `⭐ favorites`、`💼 work`、`🏠 personal`、`spaces`。
@@ -185,10 +246,11 @@
   - section内の下端drop slotは、そのsection内の最後のcard直下に出る。別sectionの境界を越えて挿入位置が計算されてはいけない。
   - collapsed section内のworkspace cardは描画しない。headerだけは残す。
   - agent panel は expanded section に属するworkspaceのagentだけを表示する。collapsed section内のagentは非表示。
+  - `ui.sidebar_start_collapsed = true` では起動時だけsidebarをcollapsedにする。config reloadは利用者が現在選んでいるcollapsed/expanded状態を上書きしない。
   - mobile switcher も desktop sidebar と同じ section headerを表示し、header tapで折りたたみ/展開する。collapsed sectionのworkspaceはmobile switcherにも表示しない。
   - workspace名は custom name が無い場合、cwd由来名を使う。root pane がOSC title `0` / `1` / `2` でtitleを報告し、それがcwd由来名と異なる場合は `<cwd由来名>-<pane title>` と表示する。
-  - full densityのworkspace rowはgit branchが無くても2行を使い、2行目には `nogit` を表示する。
-  - workspace density toggle の `[full]` / `[slim]` は desktop sidebar の section header と同じ行に表示する。未分類だけの状態では `spaces` header と同じ高さに揃える。
+  - full/slimのどちらもworkspace名直下にgit情報用の2行目を描画し、branchが無ければ`nogit`を表示する。slimのclick/hit rectだけは高さ1とする（`74d5512`, `4c9cc42`）。
+  - workspace density toggle の `[full]` / `[slim]` は workspace panel最上段の` spaces` title行右端に表示し、`▾ spaces`等のsection headerとは別の行に置く（`b1d8526`）。
 - **受け入れ条件**:
   - `⭐ favorites` のheaderは `💼 work` より上に表示され、`💼 work` は `🏠 personal` より上、未分類は `spaces` として最後に表示される。
   - `⭐ favorites` を折りたたむと、そのsectionのworkspace cardは消え、headerだけ残る。
@@ -198,8 +260,9 @@
   - workspace cardをwork sectionのbody領域へドラッグして離すと、対象workspaceがwork sectionになる。
   - section下端へドラッグした時の挿入インジケータは、そのsectionの最後のcard直下に `─` として描画される。
   - mobile switcherでwork headerをtapするとwork sectionが折りたたまれ、もう一度tapすると展開される。
+  - `ui.sidebar_start_collapsed = true` で起動するとsidebarはcollapsedになり、その後config reloadしても利用者が切り替えた現在状態を維持する。
   - root paneがOSC title `planner` を出し、cwd由来名が `pion` の時、workspace表示名が `pion-planner` になる。
-  - 未分類workspaceだけがある desktop sidebar では、`spaces` header と `[slim]` / `[full]` toggle が同じ行に描画される。
+  - workspace panel最上段では左に` spaces`、右端に`[slim]` / `[full]`を表示し、section headerとは同じ高さにしない。
 - **実装方針**: 本家に `WorkspaceSection` 相当が無いため CORE-UI として移植する。既存workspace modelとsnapshotにsectionを保存し、sidebar/mobile switcher/agent panelの表示対象計算を section aware にする。本家の `pane.report_metadata` は将来的にpane title由来のworkspace名更新を縮小できる可能性があるが、section分類・折りたたみ・D&Dは本家APIだけでは足りない。
 - **デグレ判定**:
   - section headerが出ない、または表示順が `⭐ favorites`、`💼 work`、`🏠 personal`、`spaces` から変わる。
@@ -208,15 +271,15 @@
   - drag中のdrop targetがsection境界をまたぎ、別sectionの下端へ誤挿入される。
   - section headerとカードの間の空行、カードhit areaのsidebar全幅、1列インデントのいずれかが失われる。
   - OSC titleがworkspace identityへ反映されず、`pion-planner` のような区別ができなくなる。
+  - density toggleがsection header行へ移る、slimのgit/`nogit`行が消える、または次workspaceと重なる。
 
 ### サイドバー空白メニューと危険操作確認
 - **元コミット**: d5a853a, 17ad5aa
 - **分類**: CORE-UI
-- **目的**: workspace listの空白領域から session 全体の操作へ素早く到達したい一方、server停止・restart・agent restore は誤操作すると作業状態を壊すため、即実行せず確認を挟む必要がある。
+- **status: 本家基盤＋fork差分保持 (B)** — 旧sidebar blank menu（`d5a853a`）は`845a538`でfooter `[menu]` のglobal menuへ集約済み。本家 `8cf0e9b` のgroup close確認modalを採用し、global menu経由のStop server/Restart/Restore agents確認と正確な文言を残す。
+- **目的**: session全体の操作をfooter `[menu]`へ集約しつつ、server停止・restart・agent restoreは誤操作すると作業状態を壊すため、即実行せず確認を挟む。
 - **UI挙動**:
-  - expanded sidebar の workspace list 空白領域を右クリックすると context menu を開く。
-  - 同じ空白セルを500ms以内に左クリック2回しても同じ context menu を開く。
-  - 空白判定に含めるのは workspace list 内だけ。workspace card、section header、workspace list scrollbar、workspace density toggle、sidebar footer、agent panelの空白では開かない。
+  - `d5a853a`時点のworkspace list空白menuは旧仕様であり、`845a538`以後はworkspace list・agents panelの空白を右クリックまたはダブルクリックしてもmenuを開かない。session操作はfooter `[menu]` のglobal menuへ集約する。
   - d5a853a時点の sidebar blank menu は `New workspace`、`New tab`、`--`、`Settings`、`Keybinds`、`Reload config`、`--`、`Stop server`、`Restart`、`Detach`。
   - 17ad5aa適用後は危険操作のため `Restore agents...` が追加され、groupingは `New workspace`、`New tab`、`--`、`Settings`、`Keybinds`、`Reload config`、`--`、`Restore agents...`、`--`、`Detach`、`--`、`Stop server`、`Restart`。
   - `New workspace` は新規workspace作成を要求し、menuを閉じる。
@@ -226,7 +289,7 @@
   - `Reload config` は config reload を要求し、menuを閉じる。
   - `Detach` はclient detachを要求し、server停止はしない。
   - `Restore agents...`、`Stop server`、`Restart` は選択直後に実行せず、危険操作確認ダイアログを開く。
-  - 危険操作確認ダイアログは画面中央、赤い枠/赤いconfirm buttonで表示する。基本サイズは幅64列・高さ5行。
+  - 危険操作確認ダイアログは画面中央、赤い枠/赤いconfirm button、幅76列で表示する。高さは`5 + min(missing_session_count, 10)`（`17ad5aa`, `8d43e8c`）。
   - `Stop server` の確認titleは `Stop server?`、detailは `Stops the Herdr server and all running panes.`、confirm button labelは `stop`。
   - `Restart` の確認titleは `Restart Herdr?`、detailは `Restarts the Herdr server. The saved session can be restored.`、confirm button labelは `restart`。
   - `Restore agents...` の確認titleは `Restore agents?`、detailは `Types resume commands into panes with recorded agent sessions.`、confirm button labelは `restore`。
@@ -236,17 +299,15 @@
   - agent restore実行後のtoastは title `agent restore`。contextは対象が無ければ `no pending agent sessions`、dry-run相当のwould launchがあれば `would launch <N>, skipped <N>`、実行時は `launched <N>, skipped <N>`。
   - restart要求でserverがclientへshutdownを通知する時のreasonは `restart`。通常shutdownは `server is shutting down`。
 - **受け入れ条件**:
-  - workspace list空白を右クリックすると `ContextMenuKind::SidebarBlank` 相当のmenuが開く。
-  - workspace list空白を500ms以内に同一座標でdouble clickすると同じmenuが開く。
-  - agent panel空白、section header、scrollbar、density toggle、footerでは sidebar blank menu が開かない。
+  - workspace list・agent panelの空白を右クリックまたはダブルクリックしてもcontext menuが開かず、footer `[menu]`からglobal menuを開ける。
   - `Stop server` 選択直後は `should_quit` がfalseのまま確認ダイアログになり、confirm後にtrueになる。
   - `Restart` 選択直後は `should_quit` と `request_restart` がfalseのまま確認ダイアログになり、confirm後に両方trueになる。
   - `Restore agents...` 選択直後は restore要求がfalseのまま確認ダイアログになり、confirm後にrestore要求だけtrueになり、server quitしない。
   - confirmation overlayに上記title/detail/button labelが正確に表示される。
   - restart shutdownを受けたclientは同じsession名で再起動し、standalone restartは `--no-session` 付きで再起動する。
-- **実装方針**: 本家に sidebar blank menu と `ConfirmDanger` 相当のmodalが無いため fork移植が必要。既存context menu / modal / server shutdown reason の仕組みに、blank hit-test、danger pending state、confirm overlay、restart relaunch処理を追加する。
+- **実装方針**: 本家のcontext menu / modal / server shutdown reasonへfooter `[menu]`、danger pending state、confirm overlay、restart relaunch処理を接続する。旧blank hit-testは復活させない。
 - **デグレ判定**:
-  - workspace list空白から session 操作menuを開けない。
+  - 空白右クリックまたはダブルクリックでmenuが開く、またはfooter `[menu]`からglobal menuを開けない。
   - `Stop server`、`Restart`、`Restore agents...` が確認なしで即実行される。
   - `Detach` がserver quitやrestartを伴う。
   - 確認文言、button label、keyboard hintが変わり、危険操作の意味が曖昧になる。
@@ -255,6 +316,7 @@
 ### Workspace複製
 - **元コミット**: 2fe5eb5
 - **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — tab/pane/cwd構成を複製しつつ新しいpane IDを割り当てる挙動を残す。
 - **目的**: 既存workspaceのpane構成、tab構成、作業ディレクトリを保ったまま、別workspaceとして同じ作業環境をすぐ複製したい。
 - **UI挙動**:
   - workspace context menu に `Duplicate` を表示する。2fe5eb5時点では `New worktree`、`Open worktree`、`Remove worktree` の後、`Rename` と `Close` の前に表示される。
@@ -278,20 +340,21 @@
 ### ワークスペースGit統計表示
 - **元コミット**: 053bd55, d35f348, f0f4385, 848a8eb
 - **分類**: CORE-UI
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `5cfe5e5` のbranch・ahead/behind・metadata rowを採用し、`git diff --numstat` の `+N/-N`、色、drop順を残す。
 - **目的**: サイドバーだけで各 workspace のブランチ、upstream 差分、作業ツリー差分を確認できるようにする。狭い表示では workspace 名を最優先に残し、git 情報が名前を押しつぶさないようにする。
 - **UI挙動**:
   - workspace カードの git 行または slim 行に、upstream 差分を `↑2` / `↓1`、作業ツリー行数差分を `+123` / `-11` の形式で表示する。
   - `↑N` と `+N` は緑、`↓N` と `-N` は赤で表示する。0 件の値は表示しない。
   - full 密度で branch がある workspace は 2 行表示にし、1 行目は状態アイコン、workspace 番号、workspace 名、2 行目は 4 桁分のインデント後に git 情報を表示する。
   - full 密度の git 行では、表示順を `↑N` / `↓N` / `+N` / `-N` / branch 名にする。例: `    ↑2 ↓1 +123 -11 main`。
-  - slim 密度では workspace カードを 1 行に保ち、同じ行に workspace 名と git 情報を表示する。
-  - slim 密度の狭い行では workspace 名を優先する。幅が足りない場合は diff stats、upstream 矢印、branch 名の順で落とす。
+  - slim密度ではclick/hit rectを高さ1に保ちつつ、workspace名直下の2行目にgit情報または`nogit`を描画し、次workspace名は2行下に置く（`74d5512`, `4c9cc42`）。
+  - git行はupstream/diff統計の幅を先に予約し、残り幅へbranchを置く。branchが収まらない時だけ末尾を`…`にする（`f0f4385`, `053bd55`, `d35f348`）。
   - branch 名や workspace 名は幅に収まらない場合、末尾を `…` で省略する。
   - 作業ツリー差分は `git diff --numstat HEAD --` 相当の text file additions/deletions 合計を表示し、binary file の `-` は合計しない。
 - **受け入れ条件**:
   - branch `main`、ahead/behind `(2, 1)`、diff stats `(123, 11)` の workspace が `↑2`、`↓1`、`+123`、`-11`、`main` を表示する。
   - 表示順は `↑2` と `-11` が branch 名 `main` より左にある。
-  - slim 密度、幅 28、workspace 名 `very-long-space-name`、branch `main`、ahead/behind `(2, 1)`、diff stats `(203, 31)` の行では `very-long-space-name` が残り、`+203` と `-31` は表示されない。
+  - slim密度、狭幅でも`↑2 ↓1 +203 -31`をbranchより優先して残し、branchだけを末尾`…`で省略する。
   - branch あり full 密度の workspace では git 行が workspace 名の次行に出る。
   - diff stats が `None` または additions/deletions が 0 の場合、余計な `+0` / `-0` は表示しない。
 - **実装方針**: 本家に workspace の branch/ahead/behind 表示がある場合はその取得・更新周期に乗せる。ただし本家 `WorkspaceGitStatus` には作業ツリー行数差分が無いので、workspace git status に additions/deletions を追加し、サイドバー描画で upstream label と同じメタ情報として扱う必要がある。
@@ -300,16 +363,18 @@
   - `+N` / `-N` が表示されない、または branch 名より右ではなく左に寄らない。
   - 0 件の diff label が表示される。
   - upstream label と diff label の色が増減で区別されない。
+  - `+N/-N`または`↑N/↓N`がbranchより先に消える、統計がbranchより右へ移る、またはbranchが統計を押し出す。
 
 ### Slim密度とAgents並び替え
 - **元コミット**: b1d8526, 845a538
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `5449025`, `552aa8c`, `5b91dae` のpriority sort・compact rowと、`b16465a` のsidebar token別style設定を採用し、`3ed38ed` のfull/slim toggle、fork固有bucket順、`4c9cc42` のslim時git詳細保持をデフォルト表示として残す。
 - **目的**: workspace 数が多い時にサイドバーの表示密度を上げる。agents 一覧は注意が必要な pane を上へ寄せ、見落としを減らす。
 - **UI挙動**:
   - 設定キーは `[ui] workspace_panel_density`。保存値は `"full"` または `"slim"`、default は `"full"`。
   - expanded sidebar の workspace panel ヘッダー右端に密度トグルを表示する。現在値は `[full]` または `[slim]`。
   - 密度トグルを左クリックすると `full` と `slim` を切り替え、workspace scroll を 0 に戻し、設定ファイルにも `workspace_panel_density = "slim"` または `"full"` として保存する。
-  - `slim` では branch がある workspace も 1 行カードにする。`full` では branch がある workspace は 2 行カードにする。
+  - `slim`ではworkspace cardのclick/hit rectを高さ1にするが、名前行と直下のgit行の2行を描画する。`full`も名前行とgit行を表示する。
   - 設定キー `[ui] agent_panel_scope` は `"all"` または `"sort"` を受け付ける。default は `"all"`。古い `"current"` は起動時に all 相当として扱う。
   - agents panel のヘッダー右端に scope トグルを表示する。現在値は `[all]` または `[sort]`。
   - agents scope トグルを左クリックすると `"all"` と `"sort"` を切り替え、agent scroll を 0 に戻し、設定ファイルへ保存する。
@@ -317,20 +382,23 @@
   - agents panel は collapsed workspace section に属する pane を表示しない。
 - **受け入れ条件**:
   - default config で `workspace_panel_density` は full、`agent_panel_scope` は all になる。
-  - `workspace_panel_density = "slim"` を読んで起動すると、branch あり workspace のカード高さが 1 行になる。
+  - `workspace_panel_density = "slim"`を読んで起動すると、branchありworkspaceのhit rectは1行、描画は名前行＋git行の2行になる。
   - 密度トグルをクリックすると full から slim に変わり、workspace scroll が 0 になる。
   - `agent_panel_scope = "sort"` では Blocked、未確認 Idle、Working、確認済み Idle の順に表示される。
   - `agent_panel_scope = "current"` が既存 config に残っていても、current workspace 限定表示には戻らず all 表示になる。
-- **実装方針**: 本家に `ui.agent_panel_sort` など agents の sorting API がある場合はそれを使う。足りない部分は workspace panel density とヘッダー右端トグルで、これは本家 sidebar state/config/render/input に追加する必要がある。
+  - expanded desktop sidebarのagent/space tokenは、本家の文字列tokenと `{ token, fg, bold, dim }` 形式を受け付ける。styleを省略したtokenはforkのデフォルトstyleを維持し、明示したstyleだけをその出現箇所へ適用する。
+- **実装方針**: 本家の `ui.agent_panel_sort` とsidebar token/style設定を使う。足りない部分は workspace panel density とヘッダー右端トグルとして、本家 sidebar state/config/render/input に追加する。forkの色・太字・DIM契約は未設定時のデフォルトとし、利用者がtoken occurrenceへ明示したstyleを上書きしない。
 - **デグレ判定**:
   - `[full]` / `[slim]` のトグルが表示されない、またはクリックしても設定に保存されない。
-  - slim で branch あり workspace が 2 行のままになる。
+  - slimでhit rectが2行になる、git行が消える、または名前行とgit行のhighlightが分断される。
   - sort 表示で Blocked や未確認 Idle が Working より下に残る。
   - collapsed section の agents が agents panel に残る。
+  - style未指定のデフォルト表示がforkの配色・太字・DIM契約から変わる、または明示したtoken styleがforkのデフォルトstyleで上書きされる。利用者が明示したstyleによる表示差はデグレとみなさない。
 
 ### Pane target表示
 - **元コミット**: 6c0cf33, 78c0f64, e3acfae
 - **分類**: CORE-UI
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `d35c642`, `fbd20ad` のstable public pane handleを採用し、sidebarの`%N`表示とglobal ID固定表示を残す。
 - **目的**: agent sidebar から CLI の target に使う pane ID をその場で読めるようにする。workspace 行にも番号を出し、サイドバー上の対象を人間が短時間で識別できるようにする。
 - **UI挙動**:
   - workspace 行の先頭は状態アイコン、半角スペース、workspace 番号、半角スペース、workspace 名の順に表示する。例: `· 1 one`。
@@ -353,6 +421,7 @@
 ### Workspaceメニューとサイドバー操作
 - **元コミット**: 5b13801, 845a538
 - **分類**: CORE-UI
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `0148c13` のcontext menu・mouse操作を採用し、active-card tapと`[menu] [new]` footerを残す。
 - **目的**: touch 操作や mouse-first 操作で、workspace 作成・menu 起動・workspace context menu をサイドバーから迷わず実行できるようにする。
 - **UI挙動**:
   - active workspace card を左クリックまたはタップして release すると、workspace を切り替えずに、その位置で workspace context menu を開く。
@@ -377,6 +446,7 @@
 ### Workspaceセクションと幅プリセット
 - **元コミット**: 845a538
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `0148c13`, `14d8e93`, `3189ede` のgroup/collapse/resizeを採用し、section別`[new]`、表示条件、touch向け幅presetを残す。
 - **目的**: workspace を favorites/work/personal/spaces に分けて折りたたみ、サイドバー幅も touch 操作だけで narrow/normal/wide に切り替えられるようにする。
 - **UI挙動**:
   - workspace section は `⭐ favorites`, `💼 work`, `🏠 personal`, `spaces` の順に表示する。
@@ -405,6 +475,7 @@
 ### Worktree名とコピー状態
 - **元コミット**: 5699ca3, a1dedf2
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `0148c13`, `8485545` のworktree identity・copy feedbackを採用し、main repository名の導出と、`Copied N lines`をsidebar最下行に出す位置・2秒期限を残す。
 - **目的**: linked Git worktree を開いた時も同じ repo の workspace として認識しやすくする。text selection copy 後は、コピーが成功したことと行数を短時間だけ視覚確認できるようにする。
 - **UI挙動**:
   - workspace に custom name が無い場合、通常 Git repo は repo root の directory name を workspace 名にする。
@@ -427,11 +498,37 @@
   - copy 後の表示が行数なしの `Copied` だけになる。
   - `Copied N lines` が sidebar 最下行以外に出る、または消えずに残る。
 
+### sidebar・mobile・dragの微細契約
+- **元コミット**: a31d120, 4c9cc42, 845a538, 6b5e3ac, a1dedf2, 54e57e0, 6c0cf33, 142cc7d, 249b743, d5a853a, 5b13801
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — section、workspace/agent row、footer、mobile switcherとdrag/releaseの細かな表示・hit-test契約を保持する。
+- **受け入れ条件**:
+  - drop target section headerはsidebar全幅をaccent背景で塗り、arrow/labelを`panel_contrast_fg`の太字にする（`a31d120`）。
+  - slimのactive/selected/dragged workspaceは名前行とgit行の両方へ背景強調とaccent色`▌`を伝播する（`4c9cc42`）。
+  - section header幅6列以上では右端5列を`[new]`の表示/hit areaとし、labelとの間に1列を残す。幅5列以下では描画もhit areaも作らず、長いlabelだけを末尾`…`で省略する（`845a538`）。
+  - collapsed section内workspaceをscrollbarのtotal/offsetから除外し、各表示section headerはheader1行＋blank1行の2行をviewportで消費する（`6b5e3ac`）。
+  - copy statusはsidebar最下行左側`width - 1`列で幅presetより前面に出し、収まらなければ末尾`…`、幅1以下または高さ0では描画しない。右端1列は上書きしない（`a1dedf2`）。
+  - agents footer左端8列に幅preset buttonをaccent色の太字＋下線で置く。幅8列未満では描画/hit areaとも無効にし、agent row/scrollbarはfooter最下行へ侵入しない（`845a538`, `54e57e0`）。
+  - agent primary labelはglobal pane ID`%N`と周辺4列を先に予約する。`workspace · tab`はseparatorを保ち、十分な幅ではtabへ最低4文字、残りのおよそ2/3をworkspaceへ割り当て、余りを相互に戻す（`6c0cf33`）。
+  - mobile section headerはexpanded`▾ <label>`、collapsed`▸ <label>`を`overlay0`・`panel_bg`・太字で1行表示し、直後に空行1行を置く。tap対象はheader行だけ（`d5a853a`）。
+  - mobile workspace 1行目は2列indent後にstatus、1-based番号、workspace名を置き、番号を`overlay0`太字、名前を`text`太字にする。名前は固定領域を除いた残幅で末尾`…`にする（`d5a853a`）。
+  - mobile workspace 2行目は4列indent後にupstream labels → diff labels → branchの順で置き、labelsを先に確保してbranchだけを省略する。branchなしは`shell`、activeは`mauve`、inactiveは`overlay0`（`d5a853a`）。
+  - active workspace cardはpress後にdragせず同じworkspace rowでreleaseした時だけmenuを開く。別row release/reorder drag後は開かず、inactive cardはworkspace切替とする（`5b13801`）。
+  - workspace/tabはpress位置から縦横いずれかに1 cell以上動いた時にreorder dragへ移り、release click actionを抑止する。section上ではsection変更を優先し、inactive workspaceのtab reorderは適用しない（`a31d120`, `5b13801`）。
+  - sidebar dividerは350ms以内のdouble clickで`default_sidebar_width`へ戻し、source=config default、auto=false、session dirty、drag=Noneにする（`54e57e0`）。
+- **デグレ判定**:
+  - drop target背景が文字部分だけになる、slimのgit行だけhighlight/`▌`が途切れる、section labelと`[new]`が重なる、または不可視hit areaが残る。
+  - collapse後もthumbが非表示workspaceを数える、copy statusと幅labelが混在する、footerへagent row/scrollbarが侵入する。
+  - `%N`がtruncateされる、または長いworkspace名でtabが常に完全消失する。
+  - mobile headerの矢印/空行/tap範囲が変わる、番号が0-based/非表示になる、git labelsがbranchより先に消える。
+  - drag後にmenuが併発する、1 cell移動後もclick扱いになる、またはdivider double clickがpreset cycle/dragとして残る。
+
 ## G3. Agent復元（exact session restore・fail-closed）
 
 ### paneごとのexact agent session復元
 - **元コミット**: 7cf02fa, 573f85e, 6ee56ec, 0c8f7f0
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `db67e9d`, `36a4608`, `48641e2`, `92a10fc` のsession reference・resume・invalid/stale/duplicate拒否を採用する。`d4c94b0`, `ec2ceb0`, `b713fb0`, `99dbba3`, `427714f` のhook非依存session file検出・submit遅延、pane-session ledger、全pane exact ID証明、`--last`/cwd-latest/focus推測の全面禁止は必ず残す。
 - **目的**: 同じcwdから起動した複数のClaude Code/Codex paneを、cwd単位の「最新セッション」ではなく、それぞれのpaneで最後に動いていた会話へ戻す。session idが確定できないpaneは復元しないことで、別paneの会話を誤って起動する事故を防ぐ。
 - **UI挙動**:
   - 本家のnative agent resume（`agent_resume` / `[session] resume_agents_on_restore`）を土台にする。fork差分は、pane単位で観測済みのsession idだけをresume対象にし、cwd-latestや`--last`へ落とさない点。
@@ -462,6 +559,7 @@
 ### session id欠落時のfail-closed再起動警告
 - **元コミット**: 4e764ca, 8d43e8c
 - **分類**: PARTIAL
+- **status: fork独自・保持 (C)** — 本家はsession参照欠落時に通常shellへ戻すため、exact session ID以外で復元しない、`--last`等を全面禁止するfail-closed契約とrestart拒否を必ず残す。
 - **目的**: 復元に必要なsession idが欠けたままHerdr serverをrestartすると、AI paneが別会話へ戻るか復元不能になる。restart前に危険なpaneを明示し、復元時はunsafeなtemplate/idを拒否する。
 - **UI挙動**:
   - session idとして許可する文字列は、空でない、128文字以内、先頭が `-` ではない、`last` ではない、`--last` ではない、かつASCII英数字または `-` / `_` / `.` のみ。
@@ -486,6 +584,7 @@
 ### restorable agent paneの保持
 - **元コミット**: 7a982bb
 - **分類**: PARTIAL
+- **status: 本家採用へ移行 (A)** — pane保持は本家 `1f2b0f7`, `36a4608`, `48641e2`, `490510c` を採用する。ただしexact session ID、pane-session ledger、session欠落時hard stop、`--last`等の全面禁止は本家に無いため、前2項のfork差分として必ず保持する。
 - **目的**: 復元可能なagent paneで子processが終了したとき、pane/workspaceごと消えると、次のresume対象とpane identityが失われる。session idを持つagent paneはshellへ戻った空paneとして残し、後続の復元を可能にする。
 - **UI挙動**:
   - agent session idとagent種別がsafeに記録済み、またはpending restoreにsafe session idと解釈可能なagent labelがあるpaneでchild processが終了した場合、paneを閉じない。
@@ -505,6 +604,7 @@
 ### inactive shell paneの通常終了cleanup
 - **元コミット**: 9322429
 - **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — 過去ledgerだけのshellは閉じ、現在agentとして見えるrestorable paneだけを保護する境界を残す。
 - **目的**: 古いagent session ledgerが残っているだけの普通のshell paneまで保護すると、ユーザーが終了したshell/workspaceが閉じずに残る。現在agentとして見えていないpaneは通常のclose挙動に戻す。
 - **UI挙動**:
   - pane死亡時に保護するのは、terminalのeffective agent labelがあるpaneで、かつledgerまたはrestorable session情報がある場合だけ。
@@ -522,6 +622,7 @@
 ### agent restore結果toastの空状態明確化
 - **元コミット**: bcdaa3e
 - **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — 0件、既に実行中、dry-run、実行時を区別するtoast文言を残す。
 - **目的**: 手動restore実行後に対象がなかったとき、「何もしていない」のか「既にagentが動いている」のかをユーザーが区別できるようにする。
 - **UI挙動**:
   - 手動restore要求完了時のtoast titleは `agent restore`。
@@ -541,6 +642,7 @@
 ### Claude spinner化石の15秒失効
 - **元コミット**: 007d0c7
 - **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — spinner evidenceを15秒で失効させ、`2938c43`, `1d1aa94` のstale Codex/hook working clearと、`2911498`, `b038d78` のrestore status title/borderを含む表示整合性を残す。
 - **目的**: Claude Codeが完了後に古いspinner行やinterrupt hintをtranscriptへ残すと、paneが永遠にworking表示になる。live spinnerだけをworkingとして維持し、動かない化石行はidleへ戻す。
 - **UI挙動**:
   - Claude Code paneで、prompt box上にspinner行、`esc to interrupt`、`ctrl+c to interrupt` が見える場合、それらの行をactivity fingerprintとして扱う。
@@ -566,6 +668,7 @@
 ### paneコマンド終了通知
 - **元コミット**: 2650c3b
 - **分類**: PLUGIN-ABLE
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `4001fd2`, `fbd20ad` のnotification API・eventを採用し、prompt再出現検出とcommand単位の一回通知を残す。
 - **目的**: 長時間コマンドを別paneで実行したまま、依頼元paneへ終了・exit code・末尾ログ・job log参照を戻せるようにする。AIが別paneへ作業を投げたあと、完了確認のために目視巡回しなくてよい状態を作る。
 - **UI挙動**:
   - CLIに `herdr pane run-notify <pane_id> <command>` を追加する。`<command>` は `<pane_id>` 以降の引数を空白結合した文字列で、`herdr pane run-notify <pane_id> -- <command>` のように先頭 `--` がある場合はそれを区切りとして無視する。
@@ -596,6 +699,7 @@
 ### agent通知タイトルと本文抽出
 - **元コミット**: ef2a4ba, 6f638ec, 72ad4ad
 - **分類**: CORE-UI
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `28222b2`, `5cfe5e5` のlive workspace label・metadata titleを採用し、agent chrome除外と回答本文抽出を残す。
 - **目的**: background agent通知が `pi finished` のようなagent種別だけの表示や罫線だけの本文にならず、「どのworkspace/paneの、最新のAI応答なのか」を通知だけで判断できるようにする。
 - **UI挙動**:
   - agent状態変化通知は active tab では抑制する。background paneで `Blocked` になった時は `NeedsAttention`、作業中から `Idle` へ完了遷移した時は `Finished` のtoast/desktop通知を出す。
@@ -625,6 +729,7 @@
 ### agent通知rate limit
 - **元コミット**: 515f5a7
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `4001fd2` の`rate_limited`結果を採用し、agent/pane単位の具体的抑制条件を残す。
 - **目的**: hook報告とscreen検出が短時間に競合してagent状態が揺れた時、同じ質問通知が連発されたり、直後の完了通知が質問通知を上書きしたりしないようにする。
 - **UI挙動**:
   - 通知発火判定後、in-app Herdr toast、terminal/system desktop notification、headless server forwarding の全経路で同じrate limitを1回適用する。
@@ -648,6 +753,7 @@
 ### 通知クリックでpaneへ移動
 - **元コミット**: b64fb1b
 - **分類**: PARTIAL
+- **status: fork独自・保持 (C)** — OS通知のworkspace/tab/pane metadataから対象paneへ移動する挙動を残す。
 - **目的**: 通知を見てから手動でworkspace/tab/paneを探す手間をなくし、質問や完了が起きたpaneへ1操作で戻れるようにする。Antigravity CLI (`agy`) も通知対象agentとして同じ扱いにする。
 - **UI挙動**:
   - CLIに `herdr pane focus <pane_id>` を追加する。引数がない、または余分な引数がある場合は stderr に `usage: herdr pane focus <pane_id>` を出して exit code 2。
@@ -677,6 +783,7 @@
 ### render drain通知の正確化
 - **元コミット**: 4fd07f9
 - **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — render drain中の過去screen再評価による誤通知を防ぐ契約を残す。
 - **目的**: client writer がまだframeを書き終えていないのに「描画queueがdrainされた」とserverへ通知し、通知・clipboard・shutdownなどのcontrol message順序が実際の描画完了より先行する状態をなくす。
 - **UI挙動**:
   - client writer は render frame をsocketへ `write_all` で書き込み成功した後にだけ `ClientWriterDrained { client_id }` をserverへ送る。
@@ -698,6 +805,7 @@
 ### 右クリックからのAgent起動とpane移動
 - **元コミット**: 95b812a
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `fbd20ad`, `d35c642` の`agent.start`・split/move APIを採用し、`52cee5b` のconfigurable Claude/Codex/Gemini presetとクリック対象基準を残す。tab/workspace間移動 (`2439864`) 自体は本家採用へ移行する。
 - **目的**: AI agentを起動するたびに「paneを作る→shellでCLI名を打つ→agent扱いにする」という手作業をなくす。pane配置も右クリック対象を基準に左・右・上・下へ明示的に寄せられるようにし、複数agentを並べる初動を短くする。
 - **UI挙動**:
   - workspace右クリックメニューの先頭に `New Claude Code agent`、`New Codex agent`、`New Gemini agent` をこの順で表示する。
@@ -725,6 +833,7 @@
 ### paneタイトル常時表示とgit branch表示
 - **元コミット**: 80da299, 047c240
 - **分類**: CORE-UI
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `5cfe5e5`, `5fffc59` のterminal title・branch tokenを採用し、単一paneを含む常時border titleと`%N`表示を残す。
 - **目的**: paneが1枚だけの時やagentでない時でも、ユーザーとAIが対象paneを `%N` で常に識別できるようにする。作業dirがGit repoならbranch名も同じtitleに出し、paneの文脈を画面だけで判別できるようにする。
 - **UI挙動**:
   - すべてのpane枠にtitleを常時表示する。single-pane terminalでも表示する。
@@ -734,7 +843,7 @@
   - agent task titleがある場合はOSC titleより優先する。例: OSC titleが `herdr`、agent task titleが `restore pane sessions` なら `%81 codex restore pane sessions`。
   - pane cwdがGit repoの場合、branch名をtitle末尾に追加する。例: `%81 codex thinking feature`。
   - 設定 `ui.show_agent_labels_on_pane_borders` はdefault `false` のまま残すが、「pane title自体を出す/出さない」のtoggleとしては使わない。
-  - Settings popupから旧pane label toggleを削除する。設定画面のtab順は Theme → Sound → Toast → Integrations。
+  - Settings popupから旧pane label toggleを削除する。設定画面のsection順は Theme → Sound → Toastで、旧Integrations sectionは表示しない（`de0d64a`）。
 - **受け入れ条件**:
   - single-pane workspaceでもpane枠に `%1 terminal` のようなtitleが出る。
   - 手動pane名 `reviewer` があるpaneは `%N reviewer` と表示される。
@@ -752,19 +861,20 @@
 ### agent task titleとfooter labelの整理
 - **元コミット**: 54e57e0
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `5cfe5e5` のtitle/display-agent metadataを採用し、footer優先順位とclear規則を残す。
 - **目的**: shellやOSC titleの機械的な文字列と、AI agentが報告する短い作業名を分けて扱う。pane title・workspace名・footer labelで、何のagentが何をしているかを短く読めるようにする。
 - **UI挙動**:
   - `herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID]` を受け付ける。
   - `--title TEXT` は前後空白をtrimし、空文字なら未設定として扱う。
   - pane titleでは `--title` 由来のagent task titleをOSC titleより優先して表示する。
   - root paneがagent paneの場合、workspace表示名は `<workspace-cwd名>-<agent task title>` を使う。agent task titleがなければOSC titleを使う。shell paneのOSC titleはworkspace名に混ぜない。
-  - footer/action barのpane領域ラベルは通常時 ` PANES `、button labelは ` CYCLE LAYOUT `、` ROTATE PANES `、` EQUALIZE ` の大文字表記にする。
+  - bottom action bar左端は通常` COPY `、copy mode中` PHONE COPY `、fullscreen copy中` EXIT COPY `とし、layout buttonは` CYCLE LAYOUT `、` ROTATE PANES `、` EQUALIZE `の大文字表記にする（`2d6e8ea`）。
 - **受け入れ条件**:
   - `pane report-agent ... --title " restore pane sessions "` 後、対象pane titleに `restore pane sessions` が表示される。
   - 同じpaneにOSC titleがあっても、`--title` が表示に優先される。
   - root agent paneのworkspace名が `repo-restore pane sessions` の形になる。
   - shell root paneのOSC title `user@host:repo` はworkspace名に混入しない。
-  - bottom pane action barに ` PANES ` / ` CYCLE LAYOUT ` / ` ROTATE PANES ` / ` EQUALIZE ` が表示される。
+  - bottom pane action barに状態に応じた` COPY ` / ` PHONE COPY ` / ` EXIT COPY `と、` CYCLE LAYOUT ` / ` ROTATE PANES ` / ` EQUALIZE `が表示される。
 - **実装方針**: 本家の `pane.report_metadata` または `pane.report_agent` にtitle fieldを持たせ、semantic stateとは別の表示用短縮titleとして扱う。agent状態・通知・resume用session idとは結合しすぎず、titleは表示用metadataとしてpane/workspace title生成に渡す。
 - **デグレ判定**:
   - `--title` がCLI/APIで受け付けられない。
@@ -775,6 +885,7 @@
 ### fail-closedなcurrent pane解決
 - **元コミット**: 32d7de2, b8aa2b7
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `fbd20ad`, `c71c6c1` のcaller context・`pane current`を採用し、`5d1fd2c` のprocess/session解決とfocus/list/cwd-latestへのfallback全面禁止を残す。
 - **目的**: AIやskillが「自分が入っているpane」を間違えて別paneへ送信する事故を防ぐ。現在focus中pane・active tab・pane list順から推測せず、呼び出し元processに対応するpaneだけを返す。
 - **UI挙動**:
   - CLI `herdr pane current` を追加する。
@@ -800,6 +911,7 @@
 ### 短いpane targetとAI向けhelp
 - **元コミット**: a5f2d9d, 130f5d7, 87d2c49
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `fbd20ad`, `d35c642` のstable short handle・schemaを採用し、`%N`互換とAI向けfail-closed helpを残す。
 - **目的**: AIがpane targetを短く確実に読み書きできるようにする。CLI helpも人間向け一覧ではなく、agentが守るべきpane識別ルールを含む再利用可能な指示として読める形にする。
 - **UI挙動**:
   - pane targetとして `1-2` のようなworkspace-local short id、global pane number `23`、tmux風global pane number `%23`、stable id `w...-2` / `p_...` を受け付ける。
@@ -830,6 +942,7 @@
 ### agent sendとheadless入力の確実な送信
 - **元コミット**: f87cc86, 60036e2
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `866aaf7`, `fbd20ad` のstructured send/input APIを採用し、text後Enter、500ms間隔、`pane run` atomic submitを残す。
 - **目的**: AIへのmessage送信やheadless client入力がprompt欄に残ったり、長いIME/音声入力が途中で欠けたりする事故をなくす。agent向け送信は「文字列を書くだけ」ではなく、submitまで完了した操作として扱う。
 - **UI挙動**:
   - `herdr agent send <target> <text>` は対象agent terminalへtextを書き込み、500ms待ってからEnterを送る。
@@ -858,6 +971,7 @@
 ### leaked HERDR_ENVを無視するnested guard
 - **元コミット**: ab4a7c8
 - **分類**: PARTIAL
+- **status: fork独自・保持 (C)** — stale環境変数だけではblockせずancestor processで判定するguardを残す。
 - **目的**: Herdr内で起動したshellから環境変数だけが外へ漏れた時に、通常のHerdr CLIやclient起動を誤ってnested launchとして拒否しない。一方、本当にHerdr processの子孫として再帰起動している場合は従来通り止める。
 - **UI挙動**:
   - `experimental.allow_nested` のdefaultは `false`。
@@ -877,11 +991,37 @@
   - argument errorよりnested guardが先に出る。
   - stderrから `detected HERDR_ENV=1 with a herdr parent process.` が消え、何を検出したか分からない。
 
+### dialog・menu・tab・settingsの微細契約
+- **元コミット**: 5d1fd2c, 3a9a374, 2439864, de0d64a
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — 入力cursor、separator、tab marker、settings footerの観測可能な表示規則を保持する。
+- **受け入れ条件**:
+  - rename workspace/new tab/rename tab/rename paneの入力欄は疑似cursor`█`を使わず、`name_input_cursor`までのUnicode表示幅位置へ実terminal cursorを置き、入力欄右端でclampする（`5d1fd2c`）。
+  - context menuのseparator item`--`は正確に先頭1 space付き` --`を`overlay0`で表示し、通常項目の`text`色と区別する（`3a9a374`）。
+  - tab markerはBlocked`!`、Working`>`、未読Idle`+`とし、Blocked > Working > 未読Idle > Unknown > 既読Idleの優先順位で代表状態を決める。markerなしでも先頭2 spaceを確保し、tab幅は`max(8, display_name表示幅 + 6)`（`2439864`）。
+  - settingsのtheme/sound/toasts全sectionで`↵ apply`を常時表示し、その右に`esc close`を置く。旧`install`やprimary非表示分岐を戻さない（`de0d64a`）。
+- **デグレ判定**:
+  - rename cursorが常に末尾/全角文字上になる、疑似cursorへ戻る、separatorのspace/色が変わる。
+  - WorkingがBlockedを隠す、既読Idleに`+`が出る、marker有無でtab名の開始列がずれる。
+  - settings sectionによりapplyが消える、旧`install`へ戻る、またはcloseだけになる。
+
 ## G6. 入力・コピー・vim mode
+
+### pane copy mode本体
+- **元コミット**: e5e0e0e
+- **分類**: PARTIAL
+- **status: 本家採用へ移行 (A)** — copy mode本体は本家 `7626a9a`, `c8850a2`, `5e2dc40`, `17e2b2b`, `b0d46fb` を採用する。fork側では`prefix+]`入口 (`c3d0853`)、bottom action barの` COPY ` button (`2d6e8ea`)、`Copied N lines`のsidebar最下行という位置と2秒期限を保持する。
+- **目的**: 本家の検索、tmux風word motion、page navigation、copy mode内prefix、実テキスト行末停止を利用しながらforkの入口とcopy完了feedbackを維持する。
+- **受け入れ条件**:
+  - 本家copy modeの検索、word motion、page navigation、行末停止が動く。
+  - `prefix+[`と`prefix+]`、bottom action barの` COPY ` buttonの3経路から同じcopy modeへ入れる。
+  - yank成功後の`Copied 1 line` / `Copied N lines`はsidebar最下行に表示され、2秒で消える。
+- **該当コミット**: fork `e5e0e0e`, `c3d0853`, `2d6e8ea`; upstream `7626a9a`, `c8850a2`, `5e2dc40`, `17e2b2b`, `b0d46fb`。
 
 ### Vim風ターミナル操作モード
 - **元コミット**: da3e541
 - **分類**: CORE-UI
+- **status: 破棄** — 破棄（ユーザー判断 2026-07-16。本家copy mode採用で自然消滅させ、修復フェーズで再実装しない）。以下は破棄対象を識別するための旧仕様記録であり、受け入れ条件には使わない。
 - **目的**: キーボード中心で複数 workspace / pane を移動する利用者が、tmux prefix やマウスに戻らず Vim の Normal/Insert に近い感覚で Herdr 内の焦点を動かせるようにする。pane 内アプリへの入力と Herdr 自体のナビゲーションを明示的に分ける。
 - **UI挙動**:
   - 設定キーは `[ui] vim_mode`。default は `false`。
@@ -917,6 +1057,7 @@
 ### 右角括弧でもcopy modeに入る
 - **元コミット**: c3d0853
 - **分類**: CORE-UI
+- **status: 本家基盤＋fork差分保持 (B)** — copy mode本体 (`e5e0e0e`) は本家 `7626a9a`, `c8850a2`, `5e2dc40`, `17e2b2b`, `b0d46fb` 採用へ移行し、default `prefix+]`入口キー (`c3d0853`) だけを本家keybind基盤上に残す。
 - **目的**: copy mode 本体は本家実装を採用しつつ、左右どちらの角括弧でも copy mode に入れる fork の操作感を維持する。`prefix+[` が打ちにくい端末・配列でも `prefix+]` を同じ入口にする。
 - **UI挙動**:
   - default keybind は `[keys] copy_mode = ["prefix+[", "prefix+]"]`。
@@ -936,6 +1077,7 @@
 ### tmux風split default keybind
 - **元コミット**: bbf6c05
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家の複数binding・shifted punctuation基盤を採用し、`%`/`"`と既存keyのdefault組合せを残す。
 - **目的**: tmux 利用者が `prefix+%` と `prefix+"` の身体記憶で pane split できるようにする。既存 fork の `prefix+v` / `prefix+minus` も残して、移行コストを増やさない。
 - **UI挙動**:
   - default keybind は `[keys] split_vertical = ["prefix+percent", "prefix+v"]`。
@@ -958,6 +1100,7 @@
 ### Copilot CLI向けraw LFとGhostty入力互換
 - **元コミット**: 2ae1078, 480a8f6
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `5954ece`, `f7d315d`, `7a85249` のCopilot検出・integrationを採用し、raw LF、FixTerm応答、Legacy Shift+Enter、spinnerを残す。
 - **目的**: GitHub Copilot CLI など、`Shift+Enter` / raw line feed / FixTerm keyboard query に依存する pane 内 TUI が Herdr 内で改行入力や状態表示を壊さないようにする。特に Ghostty 経由で Copilot CLI を動かす時に、複数行入力と working 状態検出を安定させる。
 - **UI挙動**:
   - raw input byte `\n` は terminal mode では focused pane に byte `\n` としてそのまま送る。`Ctrl+j` / Enter に正規化しない。
@@ -989,6 +1132,7 @@
 ### pane内NO_COLORを引き継がない
 - **元コミット**: f4ac406
 - **分類**: PARTIAL
+- **status: fork独自・保持 (C)** — pane childから`NO_COLOR`だけを除去する挙動を残す。
 - **目的**: Herdr を起動した外側環境に `NO_COLOR` があっても、Herdr pane は対話的な color-capable TTY として Claude Code、Codex、その他の nested TUI status helper に色を出させる。外側の非対話用途向け `NO_COLOR` が pane 内 UI を単色化する事故を防ぐ。
 - **UI挙動**:
   - Herdr が pane child process を起動する時、child environment から `NO_COLOR` を削除する。
@@ -1005,15 +1149,31 @@
   - `NO_COLOR` 削除のために `TERM` / `COLORTERM` の pane identity が壊れる。
   - nested Claude Code / Codex / Copilot CLI の status helper が Herdr pane 内で単色表示に戻る。
 
+### mouse routing・overlay・helpの微細契約
+- **元コミット**: 5b13801, e5e0e0e, fa6288a
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — right click、wheel、overlay captureとkeybind help順を保持する。
+- **受け入れ条件**:
+  - right click対象はexpanded sidebar workspace row → tab → pane本文/frameの順で決める。tabは対象tabへ切り替えてtab menu、pane frameはframe所有paneをfocusしてpane menuを開く（`5b13801`）。
+  - wheelはtab barならtab移動、paneならmouse reporting → alternate scroll → host scrollの順へrouteする。mouse reporting中はpaneへ送りhost scrollせず、alternate screenではalternate-scroll key、それ以外は1 notch 3行host scrollとする（`5b13801`）。
+  - overlay中は背後へmouseを通さない。scrollbar thumb dragはgrab offsetを維持し、track clickは直接移動、wheelは3行、left-upでdrag解除する。keybind helpだけpopup外clickで閉じる（`5b13801`）。
+  - keybind helpのpanes groupは`rename pane → copy mode → edit scrollback`、末尾は`cycle pane previous → focus history back → focus history forward`の順にする（`e5e0e0e`, `fa6288a`）。
+- **デグレ判定**:
+  - tab/frame right clickが現在focus中または隣接paneを対象にする、tab bar wheelがpaneへ届く、frame wheelが別paneをscrollする。
+  - overlay操作で背後のfocus/selection/layoutが変わる、thumbがgrab位置から跳ぶ、release後もdragが続く。
+  - copy modeまたはfocus historyがhelpから消える、back/forwardが逆になる、別groupへ移る。
+
 ## G7. worktree操作
 
-fork独自実装（92edda7, e7338e4）は本家 0148c13 の git worktree workspace management（CLI/socket API付き）に完全吸収済み。**本家実装をそのまま採用**し、fork差分は持たない。
+- **status: 本家採用へ移行 (A)** — fork独自実装 (`92edda7`, `e7338e4`) は本家 `0148c13`, `9817820`, `89ca3ba`, `745ce42`, `5d7e567`, `fbc3f08` のgit worktree workspace管理、CLI/socket API、既存branch、Windows、bare repo、安全な削除へ移行する。fork差分は持たない。
+- **受け入れ条件**: sidebarとCLI/socketの両方からworktreeを作成・既存branch checkout・安全に削除でき、削除後focusが有効なworkspaceに残る。本家のgroup・event・bare repo対応を欠落させない。
 
 ## G8. fork運用ポリシー
 
 ### hook 統合を持たない agent 状態運用
 - **元コミット**: de0d64a
 - **分類**: PARTIAL
+- **status: fork独自・保持 (C)** — hook integrationを必須にせずscreen/process/session file観測で状態とsessionを確定するpolicyを残す。
 - **目的**: fork は agent 側の hook/plugin 設定ディレクトリを書き換えず、Herdr 本体の process detection と screen heuristic を基本にする。状態を明示したい場合も、agent config への組み込みではなく信頼済みローカルツールから Herdr socket API へ報告する。
 - **UI挙動**:
   - README と docs の導線から `integrations` ページへのリンクを出さない。
@@ -1035,6 +1195,7 @@ fork独自実装（92edda7, e7338e4）は本家 0148c13 の git worktree workspa
 ### fork からの build/install を正とする配布
 - **元コミット**: b2ea0fe, 73e429c
 - **分類**: POLICY
+- **status: fork独自・保持 (C)** — forkのintegrated mainからbuild/installする運用を正とする。
 - **目的**: kazuph/herdr fork は upstream の hosted installer / release manifest を正にせず、fork repository の source build と fork releases を配布導線にする。
 - **UI挙動**:
   - README の install 手順は次の 4 行を primary path として表示する。
@@ -1058,6 +1219,7 @@ fork独自実装（92edda7, e7338e4）は本家 0148c13 の git worktree workspa
 ### self-update と release download の無効化
 - **元コミット**: 73e429c
 - **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — upstream release binaryへ戻すself-update/download経路を無効のまま残す。
 - **目的**: fork の実行中 binary を network update や upstream/fork manifest download で勝手に置き換えない。更新は source build と明示的な local install に限定する。
 - **UI挙動**:
   - root help の Usage と Common commands に `herdr update` を表示しない。
@@ -1077,6 +1239,7 @@ fork独自実装（92edda7, e7338e4）は本家 0148c13 の git worktree workspa
 ### macOS 開発 binary の ad-hoc 署名更新
 - **元コミット**: 6f62ce7
 - **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — local install時のad-hoc署名を残す。
 - **目的**: macOS でコピー・置換された開発 build が無効な Mach-O 署名のまま SIGKILL されるのを防ぎ、fork の local runtime 置換を安定させる。
 - **UI挙動**:
   - `just install-local` を提供する。recipe は `just build` 後、`target/release/herdr` を macOS では `codesign -s - -f` で ad-hoc sign し、`${HERDR_INSTALL_DIR:-$HOME/.local/bin}/herdr` へ `install -m 755` で配置し、配置後 binary も macOS では再度 `codesign -s - -f` する。最後に `installed <dest>` を stdout に出す。
@@ -1093,6 +1256,7 @@ fork独自実装（92edda7, e7338e4）は本家 0148c13 の git worktree workspa
 ### agent 変更後の local runtime 置換必須
 - **元コミット**: f99d42f
 - **分類**: POLICY
+- **status: fork独自・保持 (C)** — committed・integrated mainのrelease binaryでlocal runtimeを置換する完了条件を残す。
 - **目的**: fork workspace では source code の変更だけで完了扱いにせず、実際にユーザーが使う `herdr` runtime へ反映することを agent 運用ルールにする。
 - **UI挙動**:
   - AGENTS.md の Testing section に、agent-driven change を commit または handoff するたびに release binary を rebuild し、local runtime `~/.local/bin/herdr` を置き換えてから completion report する、と明記する。
@@ -1106,6 +1270,7 @@ fork独自実装（92edda7, e7338e4）は本家 0148c13 の git worktree workspa
 ### テスト fixture の個人情報匿名化
 - **元コミット**: fd1e1ac
 - **分類**: POLICY
+- **status: fork独自・保持 (C)** — fixtureへ個人情報・実session IDを持ち込まないpolicyを残す。
 - **目的**: fork 固有のユーザー名、メールアドレス、ローカルパス、実モデル名を test fixture に残さず、upstream へ載せ替える AI が private details に依存しないようにする。
 - **UI挙動**:
   - ユーザー可視機能の挙動は変えない。変更対象は test fixture 文字列だけ。
@@ -1122,6 +1287,7 @@ fork独自実装（92edda7, e7338e4）は本家 0148c13 の git worktree workspa
 ### pane current の fail-closed 解決説明
 - **元コミット**: 659637e
 - **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `fbd20ad`, `c71c6c1` のcaller context/APIを採用し、focused pane・cwd最新・`--last`へfallbackしない説明とhard stopを残す。
 - **目的**: `herdr pane current` は「今 UI で focus されている pane」ではなく「呼び出し元プロセスが属する pane」を返す command であることを docs 上も明確にし、automation が focused pane / active tab / pane list に fallback しないようにする。
 - **UI挙動**:
   - changelog には `Added `herdr pane current` to safely print the calling pane from `HERDR_PANE_ID` or the calling process session without falling back to UI focus.` と記載する。
@@ -1134,3 +1300,146 @@ fork独自実装（92edda7, e7338e4）は本家 0148c13 の git worktree workspa
   - どちらも解決できない場合は focused pane / active tab / first pane を返さず失敗する。
 - **実装方針**: 本家には `pane current` や current pane lookup が部分的に存在するが、focused fallback が残る場合は fork spec と衝突する。API は本家の pane lookup / process session resolution に乗せ、fallback policy を fail-closed にする。
 - **デグレ判定**: `HERDR_PANE_ID` 不在時に focused pane、active tab、pane list の先頭、最近使った pane を返す。docs が `HERDR_PANE_ID` だけに限定して process session 解決を説明しない、または focus fallback 可能に読める。
+
+## G9. Agent間通信・長時間job・runtime信頼性
+
+### herdr msg durable mailbox
+- **該当コミット**: aacd871, 3660b51
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — 本家にmailbox、room、durable deliveryの代替がないため保持する。
+- **目的**: busyなagentの入力を壊さず、room単位のmessageをSQLiteへ永続化し、idleになった正確なagentへ通知する。
+- **挙動**:
+  - `msg.send` / `msg.inbox` / `msg.history` / `msg.rooms` と対応CLIを提供し、messageはroom、project、sender、recipient、本文、created/delivered/read時刻を持つ。
+  - direct sendとroom broadcastを扱い、busy中はqueue、idle時はnudgeする。nudgeにはshell quote済みの正確な `herdr msg inbox --room <room>` を含める。
+- **受け入れ条件**:
+  - server再起動後も未読messageと履歴が残り、inbox取得で既読化できる。
+  - room名に空白やquoteがあってもnudgeのinbox commandが安全に実行できる。
+  - busy agentの現在の入力へ割り込まず、idle時だけnudgeする。
+
+### pane-less background jobs
+- **該当コミット**: 92f6bd6, 287c32d, 9255326, 03fc5eb, 8b3ae29
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — paneを作らないdurable job lifecycleとexact caller配送を保持する。
+- **目的**: build/test/download等をpaneなしで開始し、呼び出し元を塞がず、終了結果とlogを再起動越しに取得できるようにする。
+- **挙動**:
+  - `herdr run`のdefaultはbackgroundで即座にjob IDを返し、job DBにcommand、cwd、caller pane/agent、status、PID、exit code、log pathを保存する。
+  - list/status/log/cancelを提供し、cancelはprocess groupへ段階的にsignalする。completionは正確なcallerへ一行配送し、詳細は`herdr log <job_id>`を指す。
+  - `herdr-jobs`のcompletionは直接注入後に既読化し、server起動時にも配送済みentryを未読へ戻さない。
+- **受け入れ条件**:
+  - background runはvisible paneを増やさず即時returnし、成功・失敗のexit codeとstdout/stderrをjob logで確認できる。
+  - caller identityがexactに解決できない時はjobを開始せずfail closedする。
+  - completionが一般mailboxの未読clutterにならず、server再起動後もjob status/logが残る。
+
+### unified communication dispatcher
+- **該当コミット**: 70041ec
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — agent/shell/humanの通信と実行履歴を一つのdispatcher/DBへ統合する契約を保持する。
+- **目的**: `send`、`inbox`、`log`、`run`を同じtarget解決・room・reply chain・audit trailで扱い、旧commandごとの配送差をなくす。
+- **挙動**:
+  - dispatchはkind、source/target identity、room、project、reply_to、body、status、session ID、pane ID、modelを持つ。
+  - `herdr send`はagent名、pane target、room broadcastを扱い、`herdr inbox`と`herdr log`は同じ永続storeを見る。blocked agentは直接pushせずqueueする。
+  - 旧`pane run-notify`は廃止し、durable command executionは`herdr run`へ集約する。
+- **受け入れ条件**:
+  - reply-toで元messageへ辿れ、room/project filterと時系列logが一致する。
+  - idle/working recipientへのdirect pushとblocked recipientのqueueが区別される。
+  - helpが`send`/`inbox`/`log`/`run`の正経路を示し、同じ操作に競合する旧経路を残さない。
+
+### herdr run のsame-space pane生成
+- **該当コミット**: c02598e
+- **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `2c7c8be` のpopup/pane基盤を採用し、same-space生成、exact caller、job log、終了通知を残す。
+- **目的**: interactive/TTY commandだけを呼び出し元と同じworkspace/tabのvisible paneで実行し、元paneへ完了を返す。
+- **挙動**:
+  - `herdr run --pane`はcaller横へpaneを作り、label/cwd/splitを適用してcommandをsubmitし、pane IDとjob IDを返す。
+  - callerは明示値または`pane current`でのみ解決し、focused paneへfallbackしない。終了通知はexit、label、pane、log参照を一行でcallerへ送る。
+- **受け入れ条件**:
+  - 生成paneがcallerと同じtabに属し、commandのargv quotingとcwdが保持される。
+  - caller解決不能時はpaneを作らず、`--caller <pane>`を求めてfail closedする。
+  - completionからbounded logとjob log全文へ到達できる。
+
+### herdr run paneのexit時close契約
+- **該当コミット**: d004cd9
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — visible run paneはcommandの成功・失敗を問わずexit時に閉じるdefaultを保持する。
+- **目的**: 長時間command終了後のdead paneを残さず、結果はcaller通知とjob logへ集約する。
+- **挙動**: internal runnerへ`--close-on-exit`を渡し、exit codeとtail sampleを通知した後にtarget paneを閉じる。失敗paneを残したい時だけ`--close-on-success`を明示する。
+- **受け入れ条件**:
+  - defaultのpane runはexit 0と非0の両方でpaneが閉じ、caller通知とlogは残る。
+  - `--close-on-success`では成功時だけ閉じ、失敗時は調査用paneが残る。
+
+### local overlay pane command
+- **該当コミット**: 0c1c2c7
+- **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家 `2c7c8be` のoverlay/popup基盤を採用し、local dispatcherとsnapshot除外規則を残す。
+- **目的**: sessionの恒久layoutを変えず、一時的なpane commandをoverlayとして実行する。
+- **挙動**: overlay paneは通常paneと別stateで描画・focusし、通常layout mutationやsession snapshotへ混入させない。
+- **受け入れ条件**:
+  - overlay open/closeで通常paneの順序、split比率、snapshotが変わらない。
+  - navigation/inputはoverlayが開いている間だけoverlayを対象にする。
+
+### alternate binary session隔離
+- **該当コミット**: 22f3177
+- **分類**: POLICY
+- **status: fork独自・保持 (C)** — `herdr-next`等のalternate binaryを既存runtimeから隔離するnamespace契約を保持する。
+- **目的**: unreleased binaryの検証が通常Herdrのsocket、config、session DB、paneへ誤接続することを防ぐ。
+- **挙動**: executable stemから安全なnamespaceを導出し、明示指定でない継承socketはnamespace不一致時に無視する。明示socket指定だけは尊重する。
+- **受け入れ条件**:
+  - alternate binaryは通常binaryと別data/socket namespaceを使う。
+  - 親から漏れたsocket環境変数だけで通常sessionへ接続せず、明示指定時だけ接続する。
+
+### user shell PATHでのagent command起動
+- **該当コミット**: 174df4b
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — GUI/daemon環境でもuser login shell由来PATHでagent commandを見つける挙動を保持する。
+- **目的**: Herdr process自身のPATHが短くても、ユーザーがshellで利用できるClaude/Codex等をpaneから起動できるようにする。
+- **挙動**: `$SHELL -lic`相当で一度だけPATHを解決・cacheし、agent commandのchild environmentへ適用する。解決失敗時に推測PATHを捏造しない。
+- **受け入れ条件**: Herdrの起動PATHにagent binary directoryがなくてもuser login shell PATHにあれば起動でき、引数とcwdは変わらない。
+
+### top-right toast anchor
+- **該当コミット**: c08e51e, fe05f03
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — toastのtop-right配置を保持する。
+- **目的**: terminal中央や主要操作を覆わず、config warningとも重ならない位置で通知を読む。
+- **挙動**: toast rectはviewの右上へanchorし、config warning表示中はその下へずらす。現実装の幅計算は`max(title.len(), context.len()) + 6`をview幅でclampしており、`len()`はUnicode表示幅ではなくUTF-8 byte長（`c08e51e`）。
+- **受け入れ条件**: view originが0以外でも右端marginを保ち、warningとtoastのrectが重ならない。toast幅はtitle/contextが欠けず表示され、view幅を超えない。Unicode文言のbyte長基準を現仕様としてtestで固定する。
+- **デグレ判定**: 長いtitle/contextが枠で切れる、toastがview幅を超える、warningと重なる、またはUnicode文言で現行byte長基準から無検証に幅が変わる。
+
+### pane focus history
+- **該当コミット**: fa6288a
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — workspace/tabをまたぐback/forward focus履歴をVim modeから切り離して保持する。
+- **目的**: copy modeや通常terminal操作から、直前に使ったpaneへ戻り、再び進めるようにする。
+- **挙動**: focus変更時にlocationを記録し、back/forward stackを辿る。閉じたpaneと現在地の重複はskipする。keybindはconfigurableでdefault unsetとする。
+- **受け入れ条件**: 2pane間でback/forwardが往復し、workspace/tab越しでも動き、削除済みpaneで停止しない。Vim mode破棄後も独立actionとして残る。
+
+### inactive agent rowの可読性
+- **該当コミット**: 142cc7d, 249b743
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — inactive workspaceのagent statusとmetadataのcontrastを保持する。
+- **目的**: all-workspaces agents panelで非active agentの状態・名前・messageを背景へ沈ませない。
+- **挙動**: inactive rowは`surface0`背景、primary labelは`subtext0`太字、statusはstate色太字、agent/custom metadataは`subtext0`とし、status/metadataへDIMを付けない。active rowは`surface_dim`背景、primary labelとmetadataを`text`にする。
+- **受け入れ条件**: inactive working/idle/blocked rowのstatusとmetadataを上記配色・太字で判読でき、active rowのselection contextも失われない。
+- **デグレ判定**: inactive status/metadataへDIMが復活する、背景がresetへ戻る、statusの太字が消える、またはactive/inactive metadataが同じ低contrast色になる。
+
+### macOS Ghostty buildとparallel testの安定化
+- **該当コミット**: a2ca616, cf93850
+- **分類**: POLICY
+- **status: fork独自・保持 (C)** — local Ghostty dependency build flagとprocess-global test stateの直列化を保持する。
+- **目的**: macOS buildで不要なxcframework生成を避け、parallel testがkitty graphics/global config stateを奪い合うflaky failureを防ぐ。
+- **挙動**: Ghostty buildへ`-Demit-xcframework=false`を渡す。process-global stateを変更するtestは共有lockと明示的resetを使う。
+- **受け入れ条件**: macOS release buildがxcframework生成なしで成功し、同じtest suiteのparallel反復でglobal state由来の失敗が出ない。
+
+### SPEC・運用規則・review evidenceの来歴
+- **該当コミット**: 56b1c24, 3d2dcd9, fc557be, 45da399, 9536cf1, 9c688d4
+- **分類**: POLICY
+- **status: fork独自・保持 (C)** — 機能実装ではないが、runtime運用、mailbox/runのreview evidence、SPEC正本、re-plant戦略、文言修正の来歴として保持する。
+- **目的**: マージ後の修復担当が、機能commitと文書・検証資産を混同せず、承認済み契約と過去の実証へ辿れるようにする。
+- **挙動**: `45da399`をSPEC初版、`9536cf1`をre-plant戦略、`9c688d4`をworkspace title表記修正、`56b1c24`をruntime rule、`3d2dcd9`/`fc557be`をmailbox/run evidenceとして扱う。
+- **受け入れ条件**: マージ時にこれらを独立featureとして重複実装せず、対応するG8/G9の受け入れ条件と検証根拠へ紐付ける。
+
+### SPEC未記載コミットの統合注記
+
+- `f286ec9`, `15e9f4a`, `bdbd3c1` のexited pane reflow・two-pane cycleはG1「レイアウト cycle」のfork保持差分に含める。`15e9f4a`は`f286ec9`のmerge commitであり独立機能として数えない。
+- `d4c94b0`, `ec2ceb0`, `2938c43`, `2911498`, `b038d78`, `b713fb0`, `99dbba3`, `427714f`, `1d1aa94` はG3のexact restore、stale evidence失効、restore表示へ統合した。
+- `2d6e8ea`, `3ed38ed`, `52cee5b`, `5d1fd2c`, `4c9cc42` はそれぞれG1/G2/G5/G6のstatusと受け入れ条件へ統合した。
+- `e5e0e0e`, `2439864` はA判定としてG6/G1に明示した。これによりoverlap-analysisの「SPEC未記載44コミット」はmerge commit・文書・evidenceを含めて全件追跡できる。
