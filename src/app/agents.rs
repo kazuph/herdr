@@ -140,7 +140,12 @@ impl App {
                     return Err(AgentStartError::PlacementConflict);
                 }
             }
-            let target_pane = self.state.workspaces[ws_idx].tabs[tab_idx].layout.focused();
+            let target_pane = self
+                .state
+                .implicit_pane_insertion_target(ws_idx, tab_idx)
+                .ok_or_else(|| AgentStartError::TargetNotFound {
+                    target: tab_id.clone(),
+                })?;
             self.spawn_agent_split(
                 ws_idx,
                 target_pane,
@@ -157,7 +162,12 @@ impl App {
                 }
             })?;
             let tab_idx = self.state.workspaces[ws_idx].active_tab;
-            let target_pane = self.state.workspaces[ws_idx].tabs[tab_idx].layout.focused();
+            let target_pane = self
+                .state
+                .implicit_pane_insertion_target(ws_idx, tab_idx)
+                .ok_or_else(|| AgentStartError::TargetNotFound {
+                    target: workspace_id.clone(),
+                })?;
             self.spawn_agent_split(
                 ws_idx,
                 target_pane,
@@ -172,7 +182,12 @@ impl App {
         } else {
             let ws_idx = self.state.active.unwrap_or(0);
             let tab_idx = self.state.workspaces[ws_idx].active_tab;
-            let target_pane = self.state.workspaces[ws_idx].tabs[tab_idx].layout.focused();
+            let target_pane = self
+                .state
+                .implicit_pane_insertion_target(ws_idx, tab_idx)
+                .ok_or_else(|| AgentStartError::TargetNotFound {
+                    target: self.public_workspace_id(ws_idx),
+                })?;
             self.spawn_agent_split(
                 ws_idx,
                 target_pane,

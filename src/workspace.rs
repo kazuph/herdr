@@ -1192,6 +1192,10 @@ impl Workspace {
         self.active_tab().map(|tab| tab.layout.focused())
     }
 
+    pub(crate) fn last_pane_id_in_tab(&self, tab_idx: usize) -> Option<PaneId> {
+        self.tabs.get(tab_idx)?.layout.pane_ids().last().copied()
+    }
+
     pub fn close_pane(&mut self, pane_id: PaneId) -> bool {
         let tab_idx = match self.find_tab_index_for_pane(pane_id) {
             Some(idx) => idx,
@@ -1306,6 +1310,26 @@ impl Workspace {
             .insert(new_id, PaneState::new(TerminalId::alloc()));
         self.register_new_pane(new_id);
         new_id
+    }
+
+    pub(crate) fn test_split_pane(
+        &mut self,
+        pane_id: PaneId,
+        direction: Direction,
+        focus_new_pane: bool,
+    ) -> Option<PaneId> {
+        let tab_idx = self.find_tab_index_for_pane(pane_id)?;
+        let tab = self.tabs.get_mut(tab_idx)?;
+        let previous_focus = tab.layout.focused();
+        tab.layout.focus_pane(pane_id);
+        let new_id = tab.layout.split_focused(direction);
+        tab.panes
+            .insert(new_id, PaneState::new(TerminalId::alloc()));
+        if !focus_new_pane {
+            tab.layout.focus_pane(previous_focus);
+        }
+        self.register_new_pane(new_id);
+        Some(new_id)
     }
 
     pub(crate) fn test_add_tab(&mut self, name: Option<&str>) -> usize {
@@ -1551,6 +1575,47 @@ mod tests {
         let generated = generate_workspace_id();
         assert_ne!(generated, "wZ");
         assert!(public_workspace_number(&generated) > public_workspace_number("wZ"));
+    }
+
+    #[test]
+    fn implicit_pane_additions_append_to_the_active_tab_order() {
+        let mut ws = Workspace::test_new("implicit-panes");
+        let root = ws.tabs[0].root_pane;
+        let mut added = Vec::new();
+
+        for _ in 0..3 {
+            let target = ws.last_pane_id_in_tab(ws.active_tab).unwrap();
+            added.push(
+                ws.test_split_pane(target, Direction::Horizontal, false)
+                    .unwrap(),
+            );
+        }
+
+        assert_eq!(
+            ws.tabs[ws.active_tab].layout.pane_ids(),
+            vec![root, added[0], added[1], added[2]]
+        );
+        assert_eq!(ws.focused_pane_id(), Some(root));
+        ws.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn explicit_pane_split_stays_adjacent_to_its_target() {
+        let mut ws = Workspace::test_new("explicit-split");
+        let root = ws.tabs[0].root_pane;
+        let second = ws
+            .test_split_pane(root, Direction::Horizontal, false)
+            .unwrap();
+        let third = ws
+            .test_split_pane(root, Direction::Horizontal, false)
+            .unwrap();
+
+        assert_eq!(
+            ws.tabs[ws.active_tab].layout.pane_ids(),
+            vec![root, third, second]
+        );
+        assert_eq!(ws.focused_pane_id(), Some(root));
+        ws.assert_invariants_for_test();
     }
 
     #[test]

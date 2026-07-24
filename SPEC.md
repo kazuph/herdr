@@ -92,7 +92,7 @@
 - **目的**: pane が増えたとき、横一列や縦一列だけでなく、メイン pane とグリッドを含む実用的な配置へ 1 操作で巡回できるようにする。手作業の resize と split 作り直しを減らすための機能。
 - **UI挙動**:
   - pane 右クリックメニューの `Cycle pane layout`、または bottom pane action bar の ` CYCLE LAYOUT ` を選択すると cycle が 1 段進む。
-  - cycle は保存された論理順を維持し、pane ID昇順へ並べ直さない。新規paneはfocus中paneの直後へ挿入し、root side移動後は再構成後のleaf順を論理順として保存する。現在 focus 中 pane は cycle 後も focus されたまま維持する（`f286ec9`）。
+  - cycle は保存された論理順を維持し、pane ID昇順へ並べ直さない。明示targetを持つsplitの新規paneは指定paneの直後へ挿入し、root side移動後は再構成後のleaf順を論理順として保存する。現在 focus 中 pane は cycle 後も focus されたまま維持する（`f286ec9`）。
   - pane が 1 枚以下のときは何も変えない。
   - 2 paneではpreset巡回を行わず、一様な左右分割から上下分割へ、それ以外から左右分割へ切り替え、論理順とfocusを維持する（`bdbd3c1`）。
   - 3 pane以上の巡回順は、横一列 → 縦一列 → 均等2行grid → 左メイン + 右側 2 行グリッド → 右メイン + 左側 2 行グリッド → 上メイン + 下側横一列 → 下メイン + 上側横一列 → 横一列。
@@ -110,6 +110,21 @@
   - 左メイン、右メイン、上メイン、下メイン、均等2行gridのいずれかが巡回から欠ける。
   - 2 行グリッドの上段数が切り上げ半分にならない。
   - 2 paneがmain/grid presetへ進む、同じ分割方向のままになる、または論理順・focusが変わる。
+
+### 非明示pane追加は既存順の末尾へ追記
+- **目的**: workspaceまたはtabだけを指定してpaneやagentを追加した時、既存paneの論理順を変えず、追加した順に末尾へ並べる。連続追加が最初のpaneの直後へ逆順で割り込む状態をなくす。
+- **UI挙動**:
+  - 明示paneを指定しない `agent.start` と `pane.split` は、対象tabの論理順で最後のpaneの後ろへ新規paneを追加する。
+  - keybind、pane menu、CLI/APIでpaneを明示したsplitは、従来どおり指定paneの隣へ新規paneを置く。
+  - 既存paneの順序、split tree、split ratio、pane IDを、末尾追記のために並べ替えない。
+- **受け入れ条件**:
+  - 既存paneが `[p1, p4, p5]` のtabへ明示paneなしで2つ追加すると、論理順は `[p1, p4, p5, p6, p7]` になり、既存3paneの相対順は変わらない。
+  - 同じtabで `p1` を明示してsplitすると、新規paneは `p1` の直後に入り、既存の末尾paneの後ろへ強制移動しない。
+  - 追加後にlayout cycleまたはsession保存・復元をしても、追加済みpaneの論理順をpane ID昇順へ並べ替えない。
+- **デグレ判定**:
+  - 明示paneなしの連続追加が毎回最初またはfocus中paneの直後へ入り、新しいpaneほど前に積まれる。
+  - 末尾追記のために既存paneの順序、split tree、split ratio、pane IDが変わる。
+  - 明示pane splitまで末尾追記になり、指定paneの隣へ作成されない。
 
 ### pane 回転と target 安定化
 - **元コミット**: 978e23c, 447bfa5
