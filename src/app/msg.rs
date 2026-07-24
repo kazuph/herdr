@@ -58,9 +58,10 @@ impl App {
     ) -> Result<ResponseResult, ErrorBody> {
         let room = normalize_room(&params.room)?;
         let to_agent = normalize_agent(&params.to_agent, "to_agent")?;
+        let recipients = self.mailbox_recipient_aliases(&to_agent);
         let mut store = open_msg_store()?;
         let messages = store
-            .unread_for_agent(&room, &to_agent)
+            .unread_for_recipients(&room, &recipients)
             .map_err(msg_store_error)?;
         Ok(ResponseResult::MsgInbox { messages })
     }
@@ -220,6 +221,34 @@ impl App {
             code: "agent_not_found".into(),
             message: format!("agent target {target} has no reported agent identity"),
         })
+    }
+
+    fn mailbox_recipient_aliases(&self, to_agent: &str) -> Vec<String> {
+        let Ok(resolved) = self.resolve_terminal_target(to_agent) else {
+            return vec![to_agent.to_string()];
+        };
+        let Some(agent) = self.agent_info(resolved.ws_idx, resolved.pane_id) else {
+            return vec![to_agent.to_string()];
+        };
+
+        let mut aliases = vec![agent.global_pane_id, agent.short_pane_id];
+        if let Some(name) = agent.name {
+            let name_resolves_to_pane =
+                self.resolve_terminal_target(&name)
+                    .is_ok_and(|name_target| {
+                        name_target.ws_idx == resolved.ws_idx
+                            && name_target.pane_id == resolved.pane_id
+                    });
+            if name_resolves_to_pane {
+                aliases.push(name);
+            }
+        }
+        if let Some(public_pane_id) = self.public_pane_id(resolved.ws_idx, resolved.pane_id) {
+            aliases.push(public_pane_id);
+        }
+        aliases.sort();
+        aliases.dedup();
+        aliases
     }
 
     fn broadcast_recipients(&self, room: &str, from_agent: &str) -> Result<Vec<String>, ErrorBody> {
@@ -516,6 +545,28 @@ mod tests {
             store.history(room, Some("/repo"), 100).unwrap()
         }
 
+        fn inbox(&mut self, to_agent: &str, room: &str) -> Vec<MsgMessage> {
+            let response = self.app.handle_api_request(Request {
+                id: format!("inbox-{to_agent}-{room}"),
+                method: Method::MsgInbox(MsgInboxParams {
+                    room: room.into(),
+                    to_agent: to_agent.into(),
+                }),
+            });
+            let result = success_result(&response);
+            match result.result {
+                ResponseResult::MsgInbox { messages } => messages,
+                other => panic!("expected msg.inbox result, got {other:?}"),
+            }
+        }
+
+        fn insert_queued_message(&self, room: &str, to_agent: &str, body: &str) {
+            crate::msg::MsgStore::open_at(self.db_path.clone())
+                .unwrap()
+                .insert_messages(room, "/repo", "alpha", &[to_agent.to_string()], body)
+                .unwrap();
+        }
+
         fn received_texts(&mut self, name: &str) -> Vec<String> {
             let rx = &mut self.agents.get_mut(name).unwrap().rx;
             let mut texts = Vec::new();
@@ -528,6 +579,14 @@ mod tests {
         fn public_pane_id(&self, name: &str) -> String {
             let agent = self.agents.get(name).unwrap();
             self.app.public_pane_id(0, agent.pane_id).unwrap()
+        }
+
+        fn global_pane_id(&self, name: &str) -> String {
+            let agent = self.agents.get(name).unwrap();
+            self.app
+                .agent_info(0, agent.pane_id)
+                .unwrap()
+                .global_pane_id
         }
     }
 
@@ -573,6 +632,50 @@ mod tests {
 
             assert_eq!(code, "agent_not_found");
             assert!(harness.history("direct-missing").is_empty());
+        });
+    }
+
+    #[test]
+    fn inbox_reads_pane_id_and_agent_name_recipients_for_the_same_pane() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Blocked);
+            let room = "recipient-aliases";
+            harness.insert_queued_message(room, &harness.global_pane_id("beta"), "pane id");
+            harness.insert_queued_message(room, "codex", "other pane kind");
+
+            let pane_id_messages = harness.inbox("beta", room);
+            assert_eq!(
+                pane_id_messages
+                    .iter()
+                    .map(|message| message.body.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["pane id"]
+            );
+            assert!(harness
+                .history(room)
+                .iter()
+                .find(|message| message.body == "pane id")
+                .is_some_and(|message| message.delivered_at.is_some()));
+            assert!(harness
+                .history(room)
+                .iter()
+                .find(|message| message.body == "other pane kind")
+                .is_some_and(|message| message.delivered_at.is_none()));
+
+            harness.send("alpha", "beta", room, "agent name");
+            let named_messages = harness.inbox("beta", room);
+            assert_eq!(
+                named_messages
+                    .iter()
+                    .map(|message| message.body.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["agent name"]
+            );
+            assert!(harness
+                .history(room)
+                .iter()
+                .find(|message| message.body == "agent name")
+                .is_some_and(|message| message.delivered_at.is_some()));
         });
     }
 
@@ -633,9 +736,10 @@ mod tests {
                     .expect("fallback should contain an inbox command"),
                 "herdr inbox --room 'review ui'\\''s notifications'"
             );
+            let recipients = ["beta".to_string()];
             let unread = crate::msg::MsgStore::open_at(harness.db_path.clone())
                 .unwrap()
-                .unread_for_agent("review ui's notifications", "beta")
+                .unread_for_recipients("review ui's notifications", &recipients)
                 .unwrap();
             assert_eq!(unread.len(), 6);
             let delivered = harness.history("review ui's notifications");
