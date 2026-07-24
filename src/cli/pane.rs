@@ -1473,6 +1473,9 @@ fn print_pane_help() {
     eprintln!("  herdr pane close <pane_id>");
     eprintln!("  herdr pane send-text <pane_id> <text>");
     eprintln!("  herdr pane send-keys <pane_id> <key> [key ...]");
+    eprintln!(
+        "  pane send-text writes literal text without Enter; pane run submits command text with Enter"
+    );
     eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID] [--agent-session-id ID] [--agent-session-path PATH] [--model NAME]");
     eprintln!("  herdr pane report-agent-session <pane_id> --source ID --agent LABEL [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
     eprintln!("  herdr pane release-agent <pane_id> --source ID --agent LABEL [--seq N]");

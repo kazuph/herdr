@@ -30,6 +30,7 @@ fn root_help_is_skill_style_and_matches_help_command() {
         "herdr pane current",
         "HERDR_PANE_ID",
         "calling process session",
+        "parent process tree",
         "Do not infer the requester pane from the focused pane",
         "send=talk, run=execute, log=inspect, inbox=pull fallback",
         "herdr send <agent_target> <message>",
@@ -59,6 +60,22 @@ fn root_help_hides_explicit_client_command() {
         !stdout.contains("herdr client"),
         "root help should not advertise the internal client command: {stdout}"
     );
+}
+
+#[test]
+fn pane_help_distinguishes_literal_text_from_submitted_commands() {
+    let output = Command::new(env!("CARGO_BIN_EXE_herdr"))
+        .args(["pane", "help"])
+        .env_remove("HERDR_ENV")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains(
+        "pane send-text writes literal text without Enter; pane run submits command text with Enter"
+    ));
 }
 
 #[test]

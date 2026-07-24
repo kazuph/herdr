@@ -2267,6 +2267,9 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     fn slim_workspace_keeps_one_row_hit_area_and_two_row_visual_footprint() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
+        for workspace in &mut app.workspaces {
+            workspace.cached_git_branch = Some("main".into());
+        }
         app.ensure_test_terminals();
         app.active = Some(0);
         app.selected = 0;

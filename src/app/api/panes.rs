@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use bytes::Bytes;
 
 use crate::api::schema::{
@@ -14,6 +16,7 @@ use crate::api::schema::{
     PaneZoomResult, ReadFormat, ReadSource, ResponseResult,
 };
 use crate::app::actions::{PaneZoomCommand, PaneZoomNoopReason};
+use crate::app::api::PANE_SEND_INPUT_KEY_DELAY;
 use crate::app::App;
 #[cfg(test)]
 use crate::app::Mode;
@@ -27,6 +30,21 @@ use super::super::api_helpers::{
 #[cfg(test)]
 use super::super::api_helpers::{METADATA_SOURCE_MAX_CHARS, METADATA_TTL_MAX_MS};
 use super::responses::{encode_error, encode_success};
+
+fn process_ancestor_pids(mut pid: u32) -> Vec<u32> {
+    let mut ancestors = Vec::new();
+    for _ in 0..64 {
+        let Some(parent_pid) = crate::platform::parent_process_id(pid) else {
+            break;
+        };
+        if parent_pid <= 1 || parent_pid == pid {
+            break;
+        }
+        ancestors.push(parent_pid);
+        pid = parent_pid;
+    }
+    ancestors
+}
 
 impl App {
     pub(super) fn handle_pane_split(&mut self, id: String, params: PaneSplitParams) -> String {
@@ -135,7 +153,7 @@ impl App {
             Some(caller_pane_id) => self.parse_pane_id(caller_pane_id),
             None => params
                 .caller_process_id
-                .and_then(|pid| self.resolve_pane_for_process_session(pid)),
+                .and_then(|pid| self.pane_for_process_id(pid).ok()),
         };
         let Some((ws_idx, pane_id)) = target else {
             return encode_error(id, "pane_not_found", "pane not found");
@@ -147,7 +165,42 @@ impl App {
         encode_success(id, ResponseResult::PaneCurrent { pane })
     }
 
-    fn resolve_pane_for_process_session(&self, caller_process_id: u32) -> Option<(usize, PaneId)> {
+    fn pane_for_process_id(&self, process_id: u32) -> Result<(usize, PaneId), String> {
+        if process_id == 0 {
+            return Err("process_id must be non-zero".into());
+        }
+
+        let session_pids = crate::platform::session_processes(process_id);
+        let mut errors = Vec::new();
+        if !session_pids.is_empty() {
+            match self.pane_for_session_processes(&session_pids) {
+                Ok(target) => return Ok(target),
+                Err(err) => errors.push(err),
+            }
+        }
+
+        let ancestor_pids = process_ancestor_pids(process_id);
+        if !ancestor_pids.is_empty() {
+            match self.pane_for_process_ancestors(&ancestor_pids) {
+                Ok(target) => return Ok(target),
+                Err(err) => errors.push(err),
+            }
+        }
+
+        if session_pids.is_empty() {
+            errors.push(format!(
+                "could not inspect process session for pid {process_id}"
+            ));
+        }
+        if errors.is_empty() {
+            errors.push("no Herdr pane owns that process session or parent process tree".into());
+        }
+        Err(errors.join("; "))
+    }
+
+    fn pane_for_session_processes(&self, session_pids: &[u32]) -> Result<(usize, PaneId), String> {
+        let session_pids = session_pids.iter().copied().collect::<HashSet<_>>();
+        let mut matches = Vec::new();
         for (ws_idx, workspace) in self.state.workspaces.iter().enumerate() {
             for tab in &workspace.tabs {
                 for pane_id in tab.layout.pane_ids() {
@@ -158,17 +211,51 @@ impl App {
                     else {
                         continue;
                     };
-                    let Some(shell_pid) = runtime.child_pid() else {
+                    let Some(child_pid) = runtime.child_pid() else {
                         continue;
                     };
-                    let session_pids = crate::platform::session_processes(shell_pid);
-                    if session_pids.contains(&caller_process_id) {
-                        return Some((ws_idx, pane_id));
+                    if session_pids.contains(&child_pid) {
+                        matches.push((ws_idx, pane_id));
                     }
                 }
             }
         }
-        None
+
+        match matches.as_slice() {
+            [one] => Ok(*one),
+            [] => Err("no Herdr pane owns that process session".into()),
+            _ => Err("process session matches multiple Herdr panes".into()),
+        }
+    }
+
+    fn pane_for_process_ancestors(&self, ancestor_pids: &[u32]) -> Result<(usize, PaneId), String> {
+        let ancestor_pids = ancestor_pids.iter().copied().collect::<HashSet<_>>();
+        let mut matches = Vec::new();
+        for (ws_idx, workspace) in self.state.workspaces.iter().enumerate() {
+            for tab in &workspace.tabs {
+                for pane_id in tab.layout.pane_ids() {
+                    let Some(pane) = tab.panes.get(&pane_id) else {
+                        continue;
+                    };
+                    let Some(runtime) = self.terminal_runtimes.get(&pane.attached_terminal_id)
+                    else {
+                        continue;
+                    };
+                    let Some(child_pid) = runtime.child_pid() else {
+                        continue;
+                    };
+                    if ancestor_pids.contains(&child_pid) {
+                        matches.push((ws_idx, pane_id));
+                    }
+                }
+            }
+        }
+
+        match matches.as_slice() {
+            [one] => Ok(*one),
+            [] => Err("no Herdr pane owns that parent process tree".into()),
+            _ => Err("parent process tree matches multiple Herdr panes".into()),
+        }
     }
 
     pub(super) fn handle_pane_get(&mut self, id: String, target: PaneTarget) -> String {
@@ -1612,6 +1699,9 @@ impl App {
             if let Err(err) = runtime.try_send_bytes(Bytes::from(text_bytes)) {
                 return encode_error(id, "pane_send_failed", err.to_string());
             }
+            if !encoded_keys.is_empty() {
+                std::thread::sleep(PANE_SEND_INPUT_KEY_DELAY);
+            }
         }
         for bytes in encoded_keys {
             if let Err(err) = runtime.try_send_bytes(Bytes::from(bytes)) {
@@ -2196,6 +2286,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_pane_send_input_delivers_text_then_enter_as_separate_chunks() {
+        let (mut app, pane_id, mut rx) = app_with_send_key_runtime(2);
+
+        assert_eq!(
+            PANE_SEND_INPUT_KEY_DELAY,
+            std::time::Duration::from_millis(500)
+        );
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req".into(),
+            method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
+                pane_id,
+                text: "echo ready".into(),
+                keys: vec!["enter".into()],
+            }),
+        });
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.id, "req");
+        assert_eq!(success.result, ResponseResult::Ok {});
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"echo ready")
+        );
+        assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"\r"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
     async fn api_pane_send_keys_rejects_invalid_keys_before_writing() {
         let (mut app, pane_id, mut rx) = app_with_send_key_runtime(2);
 
@@ -2379,6 +2497,59 @@ mod tests {
         );
 
         assert_eq!(metadata_error_code(&response), "pane_not_found");
+    }
+
+    #[tokio::test]
+    async fn api_pane_current_resolves_one_session_owner_and_rejects_ambiguity() {
+        let mut app = app_with_linked_worktree();
+        let root = app.state.workspaces[0].tabs[0].root_pane;
+        let right = app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        app.state.ensure_test_terminals();
+        let root_terminal = app.state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        let right_terminal = app.state.workspaces[0].tabs[0].panes[&right]
+            .attached_terminal_id
+            .clone();
+        app.terminal_runtimes.insert(
+            root_terminal,
+            crate::terminal::TerminalRuntime::test_with_child_pid(80, 24, 111),
+        );
+        app.terminal_runtimes.insert(
+            right_terminal,
+            crate::terminal::TerminalRuntime::test_with_child_pid(80, 24, 222),
+        );
+
+        assert_eq!(app.pane_for_session_processes(&[9, 111]), Ok((0, root)));
+        assert_eq!(app.pane_for_session_processes(&[9, 222]), Ok((0, right)));
+        assert!(app.pane_for_session_processes(&[9]).is_err());
+        assert!(app.pane_for_session_processes(&[111, 222]).is_err());
+    }
+
+    #[tokio::test]
+    async fn api_pane_current_resolves_one_parent_tree_owner_and_rejects_ambiguity() {
+        let mut app = app_with_linked_worktree();
+        let root = app.state.workspaces[0].tabs[0].root_pane;
+        let right = app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        app.state.ensure_test_terminals();
+        let root_terminal = app.state.workspaces[0].tabs[0].panes[&root]
+            .attached_terminal_id
+            .clone();
+        let right_terminal = app.state.workspaces[0].tabs[0].panes[&right]
+            .attached_terminal_id
+            .clone();
+        app.terminal_runtimes.insert(
+            root_terminal,
+            crate::terminal::TerminalRuntime::test_with_child_pid(80, 24, 111),
+        );
+        app.terminal_runtimes.insert(
+            right_terminal,
+            crate::terminal::TerminalRuntime::test_with_child_pid(80, 24, 222),
+        );
+
+        assert_eq!(app.pane_for_process_ancestors(&[999, 222]), Ok((0, right)));
+        assert!(app.pane_for_process_ancestors(&[999]).is_err());
+        assert!(app.pane_for_process_ancestors(&[111, 222]).is_err());
     }
 
     #[test]

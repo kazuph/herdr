@@ -252,7 +252,7 @@ herdr agent explain --file PATH --agent LABEL [--json|--verbose]
 
 智能体目标可以是终端 ID、唯一的智能体名称、检测到或上报的智能体标签,以及旧式窗格 ID。名称和标签是智能体的身份。终端 ID 和旧式窗格 ID 是底层的逃生舱。
 
-`agent read` 读取解析出的终端流。`agent send` 向该流写入字面文本。`agent get`、`agent focus`、`agent wait` 和 `agent attach` 要求解析出的终端具有智能体身份。`agent rename` 可以赋予这个身份。
+`agent read` 读取解析出的终端流。`agent send` 向解析出的 AI CLI 写入文本并按 Enter 提交，避免消息停留在输入框中。`agent get`、`agent focus`、`agent wait` 和 `agent attach` 要求解析出的终端具有智能体身份。`agent rename` 可以赋予这个身份。
 
 `agent explain` 请求运行中的服务器对屏幕检测所用的同一份底部缓冲区检测快照进行分类,因此实时输出反映服务器生效的清单缓存。因为它使用 `agent.explain` socket 方法,升级 Herdr 后,请先重启或交接到更新后的服务器,再使用实时 explain。用 `--file PATH --agent LABEL` 可以改为在本地解释一份保存的样本。默认输出显示智能体、最终状态、清单来源和版本、匹配的规则及其区域证据,以及任何回退、跳过或警告原因。加 `--verbose` 可以看到可见证据标志、缓存的远程版本、本地覆盖的遮蔽情况、远程更新状态,以及带匹配器和区域证据的完整已评估规则列表。提交问题报告或写测试时加 `--json`。
 

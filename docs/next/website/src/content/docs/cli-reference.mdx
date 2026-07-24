@@ -178,6 +178,12 @@ For pane commands that accept `--current`, Herdr uses the calling pane's
 an explicit pane id or `--pane ID` splits that pane, `--current` splits the
 calling pane, and an omitted target keeps using the UI-focused pane.
 
+`pane current` validates `HERDR_PANE_ID` with the running server first. Without
+that variable, the server resolves one owning pane from the calling process
+session, then its parent process tree. It fails instead of falling back to the
+focused pane, active tab, or pane-list order when ownership is missing or
+ambiguous.
+
 Read output:
 
 ```bash
@@ -269,7 +275,7 @@ herdr agent explain --file PATH --agent LABEL [--json|--verbose]
 
 Agent targets can be terminal IDs, unique agent names, detected or reported agent labels, or legacy pane IDs. Names and labels are agent identities. Terminal IDs and legacy pane IDs are low-level escape hatches.
 
-`agent read` reads the resolved terminal stream. `agent send` writes literal text to that stream. `agent get`, `agent focus`, `agent wait`, and `agent attach` require the resolved terminal to have agent identity. `agent rename` can assign that identity.
+`agent read` reads the resolved terminal stream. `agent send` writes text to the resolved AI CLI and submits it with Enter so the message is not left in the prompt input. `agent get`, `agent focus`, `agent wait`, and `agent attach` require the resolved terminal to have agent identity. `agent rename` can assign that identity.
 
 `agent explain` asks the running server to classify the same bottom-buffer detection snapshot used by screen detection, so live output reflects the server's active manifest cache. Because this uses the `agent.explain` socket method, restart or hand off to an updated server after upgrading Herdr before using live explain. Use `--file PATH --agent LABEL` to explain a saved fixture locally instead. The default output shows the agent, final state, manifest source and version, matched rule with its region evidence, and any fallback, skip, or warning reasons. Add `--verbose` for visible evidence flags, cached remote version, local override shadowing, remote update status, and the full evaluated-rules list with matcher and region evidence. Add `--json` for issue reports or tests.
 

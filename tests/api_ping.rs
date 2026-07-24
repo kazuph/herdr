@@ -1046,11 +1046,19 @@ fn agent_methods_round_trip_over_socket() {
     let sent = send_request(
         &socket_path,
         &format!(
-            r#"{{"id":"agent_send","method":"agent.send","params":{{"target":"{}","text":"echo agent-send-ok\n"}}}}"#,
+            r#"{{"id":"agent_send","method":"agent.send","params":{{"target":"{}","text":"echo agent-send-ok"}}}}"#,
             terminal_id
         ),
     );
     assert_eq!(sent["result"]["type"], "ok");
+    let submitted = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"agent_send_output","method":"pane.wait_for_output","params":{{"pane_id":"{}","source":"recent","lines":20,"match":{{"type":"substring","value":"agent-send-ok"}},"timeout_ms":2000}}}}"#,
+            pane_id
+        ),
+    );
+    assert_eq!(submitted["result"]["type"], "output_matched");
 
     let tab_created = send_request(
         &socket_path,

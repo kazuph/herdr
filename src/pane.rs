@@ -2807,6 +2807,12 @@ impl PaneRuntime {
         Self::test_with_scrollback_bytes(cols, rows, 0, bytes)
     }
 
+    pub(crate) fn test_with_child_pid(cols: u16, rows: u16, child_pid: u32) -> Self {
+        let runtime = Self::test_with_screen_bytes(cols, rows, &[]);
+        runtime.child_pid.store(child_pid, Ordering::Release);
+        runtime
+    }
+
     pub(crate) fn test_process_pty_bytes(&self, bytes: &[u8]) {
         let (tx, _rx) = mpsc::channel(1);
         let _ = self.terminal.process_pty_bytes(self.pane_id, 0, bytes, &tx);

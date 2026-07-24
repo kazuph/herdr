@@ -18,6 +18,7 @@ use crate::events::AppEvent;
 
 const API_NOTIFICATION_RATE_LIMIT: Duration = Duration::from_secs(1);
 pub(super) const AGENT_SEND_SUBMIT_DELAY: Duration = Duration::from_millis(500);
+pub(super) const PANE_SEND_INPUT_KEY_DELAY: Duration = Duration::from_millis(500);
 #[cfg(windows)]
 const WINDOWS_POWERSHELL_AGENT_EXIT_RESPAWN_GRACE: Duration = Duration::from_secs(2);
 

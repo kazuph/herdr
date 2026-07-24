@@ -489,6 +489,12 @@ impl TerminalRuntime {
         ))
     }
 
+    pub(crate) fn test_with_child_pid(cols: u16, rows: u16, child_pid: u32) -> Self {
+        Self(crate::pane::PaneRuntime::test_with_child_pid(
+            cols, rows, child_pid,
+        ))
+    }
+
     pub(crate) fn test_process_pty_bytes(&self, bytes: &[u8]) {
         self.0.test_process_pty_bytes(bytes);
     }
