@@ -79,6 +79,19 @@ new_cwd = "follow"
 
 `new_cwd = "follow"` はデフォルトの挙動を保ち、元のペインまたはワークスペースを継承します。元のワークスペースがない場合、Herdr は `$HOME` で起動します。常に `$HOME` で起動するには `"home"` を、Herdr のプロセスディレクトリを使うには `"current"` を、または `"~/Projects"` のような固定パスを使ってください。CLI またはソケット API から明示的に指定された `--cwd` の値は引き続き優先されます。
 
+## Agent の起動コマンド
+
+コンテキストメニューの `New Claude Code agent`、`New Codex agent`、`New agy agent` は、設定がある場合にその argv を使います。既存の起動フラグを、シェルの alias や既存 pane を変更せずに引き継げます:
+
+```toml
+[agent_start.commands]
+claude = ["claude", "--permission-mode", "auto"]
+codex = ["codex", "--sandbox", "workspace-write"]
+agy = ["agy", "--dangerously-skip-permissions"]
+```
+
+コマンドを省略した Agent は、追加引数なしで対応する実行ファイルを起動します。設定のリロードは以後のコンテキストメニュー起動に反映され、既存の Agent pane は再起動しません。
+
 ## Worktree
 
 サイドバーから作成される Git worktree チェックアウトに Herdr が使うルートディレクトリを設定します:

@@ -90,16 +90,15 @@ blocked なエージェントは、そのペイン、タブ、ワークスペー
 
 これが Herdr の中心的なワークフローです: 複数のエージェントを起動し、並行して働かせ、サイドバーでどのプロジェクトが判断を必要としているか、どれがまだ実行中か、どれがレビュー待ちかを把握します。
 
-## ダイレクトインテグレーション
+## 直接状態報告
 
-使っている各エージェントのインテグレーションをインストールしてください。スクリーン検出だけに頼らず、フックやプラグインの報告を Herdr に提供します:
+この fork は agent の設定ディレクトリを変更しません。信頼済みローカルツールからpane状態と正確なsession idを報告してください:
 
 ```bash
-herdr integration install claude
-herdr integration status
+herdr pane report-agent <pane_id> --source custom:tool --agent claude --state working --session-id <id>
 ```
 
-対応エージェントごとに、インテグレーションの名前と挙動は異なります。エージェント別の詳細と完全なインストール一覧は[インテグレーション](/ja/docs/integrations/)を参照してください。
+Herdr は screen/process/session evidence からもエージェントを検出し、ローカルツールは socket API でより強い状態を追加できます。
 
 ## カスタムエージェントラベル
 

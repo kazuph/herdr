@@ -1,9 +1,9 @@
 ---
 title: CLI reference
-description: Herdr commands for sessions, workspaces, tabs, panes, notifications, agents, waits, integrations, and status.
+description: Herdr commands for sessions, workspaces, tabs, panes, notifications, agents, waits, and status.
 ---
 
-Herdr’s CLI talks to the running server over the same local socket API used by integrations and agents.
+Herdr’s CLI talks to the running server over the same local socket API used by trusted local tools and agents.
 
 Most commands print JSON responses. Use them from scripts when you want deterministic automation.
 
@@ -17,12 +17,7 @@ herdr --remote workbox --remote-keybindings server
 herdr --remote workbox --handoff
 herdr --no-session            # single-process escape hatch
 herdr --default-config        # print default config
-herdr update                  # download and install from the configured channel
-herdr update --handoff        # opt into live handoff for supported running servers
 herdr completion zsh          # generate a zsh completion script
-herdr channel show            # print stable or preview
-herdr channel set preview     # opt into preview builds
-herdr channel set stable      # return Linux/macOS direct installs to stable
 herdr --version               # print version
 ```
 
@@ -85,13 +80,14 @@ compinit
 ```bash
 herdr server
 herdr server stop
+herdr server restart
 herdr server reload-config
 herdr server agent-manifests [--json]
 herdr server update-agent-manifests [--json]
 herdr server reload-agent-manifests
 ```
 
-`herdr server` runs the headless server explicitly. Use it for supervised or service-style setups. `reload-config` applies reloadable settings without restarting panes. `agent-manifests` shows the active agent detection manifest sources, cached remote versions, and last remote update results. `update-agent-manifests` fetches remote manifest updates immediately, reloads them into the running server, and prints the updated manifest status; pass `--json` for the raw status response. `reload-agent-manifests` reloads agent detection manifests into the running server after local override edits.
+`herdr server` runs the headless server explicitly. Use it for supervised or service-style setups. `restart` restarts the running server and restores its saved session. `reload-config` applies reloadable settings without restarting panes. `agent-manifests` shows the active agent detection manifest sources, cached remote versions, and last remote update results. `update-agent-manifests` fetches remote manifest updates immediately, reloads them into the running server, and prints the updated manifest status; pass `--json` for the raw status response. `reload-agent-manifests` reloads agent detection manifests into the running server after local override edits.
 
 ## Notifications
 
@@ -207,7 +203,7 @@ aliases for `ctrl+c`.
 
 `pane run` submits text plus Enter atomically. Prefer it over `send-text` plus `send-keys Enter` for commands.
 
-Report agent state from custom hooks:
+Report agent state, display metadata, and an exact restore session from a trusted local tool:
 
 ```bash
 herdr pane report-agent <pane_id> \
@@ -215,12 +211,16 @@ herdr pane report-agent <pane_id> \
   --agent LABEL \
   --state idle|working|blocked|unknown \
   [--message TEXT] \
+  [--custom-status TEXT] \
   [--seq N] \
+  [--title TEXT] \
+  [--session-id ID] \
   [--agent-session-id ID] \
-  [--agent-session-path PATH]
+  [--agent-session-path PATH] \
+  [--model NAME]
 ```
 
-`pane get`, `pane list`, `agent get`, and `agent list` include a read-only `agent_session` object when an official integration has reported a native session reference. If no native session reference is stored, the field is omitted.
+`pane get`, `pane list`, `agent get`, and `agent list` include a read-only `agent_session` object when a safe native session reference is stored. If no native session reference is stored, the field is omitted.
 
 Those commands include `foreground_cwd` when Herdr can resolve the cwd of the foreground process controlling the pane. The existing `cwd` field remains the pane/workspace cwd used for labels and follow-cwd behavior.
 
@@ -315,39 +315,16 @@ herdr wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [
 
 Use `wait output` for normal commands and servers. Use `wait agent-status` for coding agents.
 
-## Integrations
+## Agent state reporting
 
 ```bash
-herdr integration install pi
-herdr integration install omp
-herdr integration install claude
-herdr integration install codex
-herdr integration install copilot
-herdr integration install devin
-herdr integration install droid
-herdr integration install kimi
-herdr integration install opencode
-herdr integration install kilo
-herdr integration install hermes
-herdr integration install qodercli
-herdr integration install cursor
-herdr integration install mastracode
-herdr integration uninstall pi
-herdr integration uninstall omp
-herdr integration uninstall claude
-herdr integration uninstall codex
-herdr integration uninstall copilot
-herdr integration uninstall devin
-herdr integration uninstall droid
-herdr integration uninstall kimi
-herdr integration uninstall opencode
-herdr integration uninstall kilo
-herdr integration uninstall hermes
-herdr integration uninstall qodercli
-herdr integration uninstall cursor
-herdr integration uninstall mastracode
-herdr integration status [--outdated-only]
+herdr pane report-agent <pane_id> --source custom:tool --agent codex --state working
+herdr pane report-agent <pane_id> --source custom:tool --agent codex --state idle --session-id <id>
 ```
+
+This fork does not install or uninstall agent hooks/plugins through `herdr integration`.
+Use trusted local tools to report pane state through `pane report-agent` or the
+`pane.report_agent` socket method.
 
 ## Plugins
 

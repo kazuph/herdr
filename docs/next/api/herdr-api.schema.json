@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocol": 16,
+  "protocol": 17,
   "schema_version": 1,
   "schemas": {
     "error_response": {
@@ -1224,6 +1224,15 @@
           ],
           "type": "object"
         },
+        "AgentRestoreParams": {
+          "properties": {
+            "dry_run": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
         "AgentSendParams": {
           "properties": {
             "target": {
@@ -1719,47 +1728,6 @@
           ],
           "type": "object"
         },
-        "IntegrationInstallParams": {
-          "properties": {
-            "target": {
-              "$ref": "#/schemas/request/$defs/IntegrationTarget"
-            }
-          },
-          "required": [
-            "target"
-          ],
-          "type": "object"
-        },
-        "IntegrationTarget": {
-          "enum": [
-            "pi",
-            "omp",
-            "claude",
-            "codex",
-            "copilot",
-            "devin",
-            "droid",
-            "kimi",
-            "opencode",
-            "kilo",
-            "hermes",
-            "qodercli",
-            "cursor",
-            "mastracode"
-          ],
-          "type": "string"
-        },
-        "IntegrationUninstallParams": {
-          "properties": {
-            "target": {
-              "$ref": "#/schemas/request/$defs/IntegrationTarget"
-            }
-          },
-          "required": [
-            "target"
-          ],
-          "type": "object"
-        },
         "LayoutApplyParams": {
           "properties": {
             "focus": {
@@ -1919,6 +1887,78 @@
           ],
           "type": "object"
         },
+        "MsgHistoryParams": {
+          "properties": {
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "project": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "room": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "room",
+            "limit"
+          ],
+          "type": "object"
+        },
+        "MsgInboxParams": {
+          "properties": {
+            "room": {
+              "type": "string"
+            },
+            "to_agent": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "room",
+            "to_agent"
+          ],
+          "type": "object"
+        },
+        "MsgSendParams": {
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "from_agent": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            },
+            "reply_to": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "room": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "room",
+            "project",
+            "from_agent",
+            "to",
+            "body"
+          ],
+          "type": "object"
+        },
         "NotificationShowParams": {
           "properties": {
             "body": {
@@ -2032,6 +2072,14 @@
             "caller_pane_id": {
               "type": [
                 "string",
+                "null"
+              ]
+            },
+            "caller_process_id": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
                 "null"
               ]
             }
@@ -2407,7 +2455,19 @@
                 "null"
               ]
             },
+            "custom_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "message": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
               "type": [
                 "string",
                 "null"
@@ -2424,11 +2484,23 @@
                 "null"
               ]
             },
+            "session_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "source": {
               "type": "string"
             },
             "state": {
               "$ref": "#/schemas/request/$defs/PaneAgentState"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -4010,6 +4082,22 @@
         {
           "properties": {
             "method": {
+              "const": "server.restart",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "server.live_handoff",
               "type": "string"
             },
@@ -4559,6 +4647,86 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/AgentStartParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "agent.restore",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/AgentRestoreParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "msg.send",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MsgSendParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "msg.inbox",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MsgInboxParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "msg.history",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/MsgHistoryParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "msg.rooms",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
             }
           },
           "required": [
@@ -5130,38 +5298,6 @@
         {
           "properties": {
             "method": {
-              "const": "integration.install",
-              "type": "string"
-            },
-            "params": {
-              "$ref": "#/schemas/request/$defs/IntegrationInstallParams"
-            }
-          },
-          "required": [
-            "method",
-            "params"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "method": {
-              "const": "integration.uninstall",
-              "type": "string"
-            },
-            "params": {
-              "$ref": "#/schemas/request/$defs/IntegrationUninstallParams"
-            }
-          },
-          "required": [
-            "method",
-            "params"
-          ],
-          "type": "object"
-        },
-        {
-          "properties": {
-            "method": {
               "const": "plugin.link",
               "type": "string"
             },
@@ -5604,6 +5740,14 @@
                 "null"
               ]
             },
+            "global_pane_id": {
+              "type": "string"
+            },
+            "global_pane_number": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "name": {
               "type": [
                 "string",
@@ -5620,6 +5764,9 @@
             },
             "screen_detection_skipped": {
               "type": "boolean"
+            },
+            "short_pane_id": {
+              "type": "string"
             },
             "state_labels": {
               "additionalProperties": {
@@ -5670,6 +5817,9 @@
             "agent_status",
             "workspace_id",
             "tab_id",
+            "short_pane_id",
+            "global_pane_id",
+            "global_pane_number",
             "pane_id",
             "focused",
             "revision"
@@ -5736,6 +5886,45 @@
             "local_override_shadowing_remote"
           ],
           "type": "object"
+        },
+        "AgentRestoreActionInfo": {
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "command": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "status": {
+              "$ref": "#/schemas/success_response/$defs/AgentRestoreActionStatus"
+            }
+          },
+          "required": [
+            "pane_id",
+            "agent",
+            "status"
+          ],
+          "type": "object"
+        },
+        "AgentRestoreActionStatus": {
+          "enum": [
+            "launched",
+            "would_launch",
+            "skipped"
+          ],
+          "type": "string"
         },
         "AgentSessionInfo": {
           "properties": {
@@ -6533,53 +6722,6 @@
           ],
           "type": "object"
         },
-        "IntegrationInstallResult": {
-          "properties": {
-            "messages": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "messages"
-          ],
-          "type": "object"
-        },
-        "IntegrationTarget": {
-          "enum": [
-            "pi",
-            "omp",
-            "claude",
-            "codex",
-            "copilot",
-            "devin",
-            "droid",
-            "kimi",
-            "opencode",
-            "kilo",
-            "hermes",
-            "qodercli",
-            "cursor",
-            "mastracode"
-          ],
-          "type": "string"
-        },
-        "IntegrationUninstallResult": {
-          "properties": {
-            "messages": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "messages"
-          ],
-          "type": "object"
-        },
         "LayoutDescription": {
           "properties": {
             "focused_pane_id": {
@@ -6684,6 +6826,54 @@
               "type": "object"
             }
           ]
+        },
+        "MsgMessage": {
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string"
+            },
+            "delivered_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "from_agent": {
+              "type": "string"
+            },
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "project": {
+              "type": "string"
+            },
+            "read_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "room": {
+              "type": "string"
+            },
+            "to_agent": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "room",
+            "project",
+            "from_agent",
+            "to_agent",
+            "body",
+            "created_at"
+          ],
+          "type": "object"
         },
         "NotificationShowReason": {
           "enum": [
@@ -8296,6 +8486,108 @@
             },
             {
               "properties": {
+                "actions": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/AgentRestoreActionInfo"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "agent_restore",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "actions"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "messages": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/MsgMessage"
+                  },
+                  "type": "array"
+                },
+                "nudged": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "msg_send",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "messages",
+                "nudged"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "messages": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/MsgMessage"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "msg_inbox",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "messages"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "messages": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/MsgMessage"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "msg_history",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "messages"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "rooms": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "msg_rooms",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "rooms"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
                 "agents": {
                   "items": {
                     "$ref": "#/schemas/success_response/$defs/AgentInfo"
@@ -8707,46 +8999,6 @@
                 "type",
                 "changed",
                 "reason"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "details": {
-                  "$ref": "#/schemas/success_response/$defs/IntegrationInstallResult"
-                },
-                "target": {
-                  "$ref": "#/schemas/success_response/$defs/IntegrationTarget"
-                },
-                "type": {
-                  "const": "integration_install",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "target",
-                "details"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "details": {
-                  "$ref": "#/schemas/success_response/$defs/IntegrationUninstallResult"
-                },
-                "target": {
-                  "$ref": "#/schemas/success_response/$defs/IntegrationTarget"
-                },
-                "type": {
-                  "const": "integration_uninstall",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "target",
-                "details"
               ],
               "type": "object"
             },

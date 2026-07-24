@@ -92,7 +92,7 @@ herdr pane read w1:p2 --source recent --lines 50
 
 | 領域 | メソッド |
 | --- | --- |
-| サーバー | `ping`、`server.stop`、`server.reload_config`、`server.agent_manifests`、`server.reload_agent_manifests` |
+| サーバー | `ping`、`server.stop`、`server.restart`、`server.reload_config`、`server.agent_manifests`、`server.reload_agent_manifests` |
 | 通知 | `notification.show` |
 | クライアント | `client.window_title.set`、`client.window_title.clear` |
 | セッション | `session.snapshot` |
@@ -104,7 +104,6 @@ herdr pane read w1:p2 --source recent --lines 50
 | レイアウト | `layout.export`、`layout.apply`、`layout.set_split_ratio` |
 | エージェント | `agent.list`、`agent.get`、`agent.read`、`agent.explain`、`agent.send`、`agent.rename`、`agent.focus`、`agent.start` |
 | イベント | `events.subscribe`、`events.wait` |
-| インテグレーション | `integration.install`、`integration.uninstall` |
 | プラグイン | `plugin.link`、`plugin.list`、`plugin.unlink`、`plugin.enable`、`plugin.disable`、`plugin.action.list`、`plugin.action.invoke`、`plugin.log.list`、`plugin.pane.open`、`plugin.pane.focus`、`plugin.pane.close` |
 
 一部の CLI コマンドは、これらのメソッドの便利ラッパーです。たとえば `herdr agent wait` は、エージェントターゲットを解決してからペインのエージェント状態イベントを購読します。
