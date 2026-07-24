@@ -30,6 +30,7 @@ fork-spec-contracts:
     just test-one clicking_existing_section_new_button
     just test-one headless_deferred_workspace_create_preserves_requested_section
     just test-one slim_workspace_keeps_one_row
+    just test-one expanded_sidebar_workspace_rows_show_state_number_and_name
     just test-one default_space_rows_render_nogit
     just test-one space_row_gap_preserves_compact_worktree_children
     just test-one packed_workspace_drag_indicator
@@ -44,6 +45,8 @@ fork-spec-contracts:
     just test-one codex_ignores_fossilized_working_text_before_latest_prompt
     just test-one frozen_claude_activity_fingerprint_expires_to_idle
     just test-one frozen_codex_working_header_expires_to_idle
+    just test-one stale_codex_working_hook
+    just test-one stale_screen_idle_does_not_clear_full_lifecycle_hook
     just test-one stale_activity_filter_does_not_expire_other_agents_or_untracked_working
     just test-one agent_send_writes_text_then_submits_with_enter
     just test-one agent_send_normalizes_trailing_newlines_to_one_enter

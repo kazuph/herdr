@@ -13,6 +13,7 @@ pub(super) struct ResolvedToken {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ResolvedTokenKind {
     StateIcon,
+    WorkspaceNumber(usize),
     StateText(String),
     Workspace(String),
     Tab(String),
@@ -90,6 +91,7 @@ pub(super) fn agent_rows(
 }
 
 pub(super) struct SpaceTokenContext<'a> {
+    pub workspace_number: usize,
     pub workspace: &'a str,
     pub branch: Option<&'a str>,
     pub state_text: &'a str,
@@ -103,7 +105,7 @@ pub(super) fn space_rows(
     config: &SpacesSidebarConfig,
     context: SpaceTokenContext<'_>,
 ) -> Vec<Vec<ResolvedToken>> {
-    config
+    let mut rows = config
         .rows
         .iter()
         .filter_map(|row| {
@@ -150,11 +152,37 @@ pub(super) fn space_rows(
                 .collect::<Vec<_>>();
             (!resolved.is_empty()).then_some(resolved)
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    if let Some(row) = rows.iter_mut().find(|row| {
+        row.iter()
+            .any(|token| matches!(token.kind, ResolvedTokenKind::Workspace(_)))
+    }) {
+        let workspace_index = row
+            .iter()
+            .position(|token| matches!(token.kind, ResolvedTokenKind::Workspace(_)))
+            .expect("workspace row was selected");
+        let number_index = row[..workspace_index]
+            .iter()
+            .rposition(|token| matches!(token.kind, ResolvedTokenKind::StateIcon))
+            .map_or(workspace_index, |index| index + 1);
+        row.insert(
+            number_index,
+            ResolvedToken::new(
+                ResolvedTokenKind::WorkspaceNumber(context.workspace_number),
+                SidebarTokenStyle::default(),
+            ),
+        );
+    }
+
+    rows
 }
 
 pub(super) fn separator(previous: &ResolvedToken, current: &ResolvedToken) -> &'static str {
-    if matches!(previous.kind, ResolvedTokenKind::StateIcon)
+    if matches!(
+        previous.kind,
+        ResolvedTokenKind::StateIcon | ResolvedTokenKind::WorkspaceNumber(_)
+    ) || matches!(current.kind, ResolvedTokenKind::WorkspaceNumber(_))
         || matches!(
             current.kind,
             ResolvedTokenKind::GitStatus { .. } | ResolvedTokenKind::GitDiff { .. }
@@ -308,6 +336,7 @@ mod tests {
             space_rows(
                 &config,
                 SpaceTokenContext {
+                    workspace_number: 1,
                     workspace: "feature",
                     branch: Some("worktree/feature"),
                     state_text: "idle",
@@ -319,9 +348,20 @@ mod tests {
             ),
             vec![vec![
                 ResolvedToken::unstyled(ResolvedTokenKind::StateIcon),
+                ResolvedToken::unstyled(ResolvedTokenKind::WorkspaceNumber(1)),
                 ResolvedToken::unstyled(ResolvedTokenKind::Workspace("feature".into())),
             ]]
         );
+    }
+
+    #[test]
+    fn workspace_number_uses_plain_spaces_between_state_and_name() {
+        let state = ResolvedToken::unstyled(ResolvedTokenKind::StateIcon);
+        let number = ResolvedToken::unstyled(ResolvedTokenKind::WorkspaceNumber(1));
+        let workspace = ResolvedToken::unstyled(ResolvedTokenKind::Workspace("repo".to_string()));
+
+        assert_eq!(separator(&state, &number), " ");
+        assert_eq!(separator(&number, &workspace), " ");
     }
 
     #[test]
@@ -329,6 +369,7 @@ mod tests {
         let rows = space_rows(
             &SpacesSidebarConfig::default(),
             SpaceTokenContext {
+                workspace_number: 1,
                 workspace: "repo",
                 branch: Some("main"),
                 state_text: "idle",
@@ -356,6 +397,7 @@ mod tests {
         let rows = space_rows(
             &SpacesSidebarConfig::default(),
             SpaceTokenContext {
+                workspace_number: 1,
                 workspace: "shell",
                 branch: None,
                 state_text: "idle",
@@ -386,6 +428,7 @@ mod tests {
             space_rows(
                 &config,
                 SpaceTokenContext {
+                    workspace_number: 1,
                     workspace: "repo",
                     branch: None,
                     state_text: "idle",
