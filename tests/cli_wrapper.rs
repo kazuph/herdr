@@ -3160,12 +3160,30 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
         "{caller_text}"
     );
 
-    let log = run_cli(&socket_path, &["log", job]);
-    assert!(log.status.success());
+    let log = run_named_cli_with_socket_override(
+        &config_home,
+        &runtime_dir,
+        &["log", job],
+        Some(&socket_path),
+    );
+    assert!(
+        log.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&log.stderr)
+    );
     let log_text = String::from_utf8(log.stdout).unwrap();
     assert!(log_text.contains("run-spawn-done"), "{log_text}");
-    let log_tail = run_cli(&socket_path, &["log", job, "tail=1"]);
-    assert!(log_tail.status.success());
+    let log_tail = run_named_cli_with_socket_override(
+        &config_home,
+        &runtime_dir,
+        &["log", job, "tail=1"],
+        Some(&socket_path),
+    );
+    assert!(
+        log_tail.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&log_tail.stderr)
+    );
     let log_tail_text = String::from_utf8(log_tail.stdout).unwrap();
     assert!(log_tail_text.contains("exit_code: 0"), "{log_tail_text}");
 
