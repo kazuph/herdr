@@ -1,7 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-#[cfg(test)]
-use ratatui::layout::Direction;
-use ratatui::layout::Rect;
+use ratatui::layout::{Direction, Rect};
 
 use crate::{
     app::{
@@ -74,6 +72,15 @@ pub(super) fn modal_action_from_buttons<A: Copy>(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GlobalMenuAction {
+    NewWorkspace,
+    NewTab,
+    Separator,
+    SidebarNarrow,
+    SidebarNormal,
+    SidebarWide,
+    RestoreAgents,
+    StopServer,
+    Restart,
     Detach,
     WhatsNew,
     Keybinds,
@@ -83,19 +90,56 @@ pub(crate) enum GlobalMenuAction {
 
 pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
     let mut actions = vec![
+        GlobalMenuAction::NewWorkspace,
+        GlobalMenuAction::NewTab,
+        GlobalMenuAction::Separator,
         GlobalMenuAction::Settings,
         GlobalMenuAction::Keybinds,
         GlobalMenuAction::ReloadConfig,
+        GlobalMenuAction::SidebarNarrow,
+        GlobalMenuAction::SidebarNormal,
+        GlobalMenuAction::SidebarWide,
     ];
-    if state.update_available.is_some() || state.latest_release_notes_available {
+    if state.latest_release_notes_available {
         actions.push(GlobalMenuAction::WhatsNew);
     }
-    actions.push(GlobalMenuAction::Detach);
+    actions.extend([
+        GlobalMenuAction::Separator,
+        GlobalMenuAction::RestoreAgents,
+        GlobalMenuAction::Separator,
+        GlobalMenuAction::Detach,
+        GlobalMenuAction::Separator,
+        GlobalMenuAction::StopServer,
+        GlobalMenuAction::Restart,
+    ]);
     actions
 }
 
+pub(super) fn global_menu_action_label(action: GlobalMenuAction) -> &'static str {
+    match action {
+        GlobalMenuAction::NewWorkspace => "new workspace",
+        GlobalMenuAction::NewTab => "new tab",
+        GlobalMenuAction::Separator => "--",
+        GlobalMenuAction::Settings => "settings",
+        GlobalMenuAction::Keybinds => "keybinds",
+        GlobalMenuAction::ReloadConfig => "reload config",
+        GlobalMenuAction::SidebarNarrow => "sidebar narrow",
+        GlobalMenuAction::SidebarNormal => "sidebar normal",
+        GlobalMenuAction::SidebarWide => "sidebar wide",
+        GlobalMenuAction::WhatsNew => "what's new",
+        GlobalMenuAction::RestoreAgents => "restore agents...",
+        GlobalMenuAction::Detach => "detach",
+        GlobalMenuAction::StopServer => "stop server",
+        GlobalMenuAction::Restart => "restart",
+    }
+}
+
 pub(super) fn open_global_menu(state: &mut AppState) {
-    state.global_menu = MenuListState::new(0);
+    let first_action = global_menu_actions(state)
+        .iter()
+        .position(|action| *action != GlobalMenuAction::Separator)
+        .unwrap_or(0);
+    state.global_menu = MenuListState::new(first_action);
     state.mode = Mode::GlobalMenu;
 }
 
@@ -128,6 +172,25 @@ pub(super) fn request_detach(state: &mut AppState) {
 
 pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuAction) {
     match action {
+        GlobalMenuAction::NewWorkspace => {
+            state.request_new_workspace = true;
+            state.requested_new_workspace_section = None;
+            leave_modal(state);
+        }
+        GlobalMenuAction::NewTab => open_new_tab_dialog(state),
+        GlobalMenuAction::Separator => {}
+        GlobalMenuAction::SidebarNarrow => {
+            state.set_sidebar_width_preset(crate::app::state::SidebarWidthPreset::Narrow);
+            leave_modal(state);
+        }
+        GlobalMenuAction::SidebarNormal => {
+            state.set_sidebar_width_preset(crate::app::state::SidebarWidthPreset::Normal);
+            leave_modal(state);
+        }
+        GlobalMenuAction::SidebarWide => {
+            state.set_sidebar_width_preset(crate::app::state::SidebarWidthPreset::Wide);
+            leave_modal(state);
+        }
         GlobalMenuAction::Detach => {
             leave_modal(state);
             request_detach(state);
@@ -139,6 +202,15 @@ pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuA
             leave_modal(state);
         }
         GlobalMenuAction::Settings => super::settings::open_settings(state),
+        GlobalMenuAction::RestoreAgents => {
+            open_confirm_danger(state, crate::app::state::DangerousAction::RestoreAgents)
+        }
+        GlobalMenuAction::StopServer => {
+            open_confirm_danger(state, crate::app::state::DangerousAction::StopServer)
+        }
+        GlobalMenuAction::Restart => {
+            open_confirm_danger(state, crate::app::state::DangerousAction::Restart)
+        }
     }
 }
 
@@ -146,14 +218,34 @@ pub(crate) fn handle_global_menu_key(state: &mut AppState, key: KeyEvent) {
     let actions = global_menu_actions(state);
     match key.code {
         KeyCode::Esc => leave_modal(state),
-        KeyCode::Up | KeyCode::Char('k') => state.global_menu.move_prev(),
-        KeyCode::Down | KeyCode::Char('j') => state.global_menu.move_next(actions.len()),
+        KeyCode::Up | KeyCode::Char('k') => move_global_menu_selection(state, &actions, false),
+        KeyCode::Down | KeyCode::Char('j') => move_global_menu_selection(state, &actions, true),
         KeyCode::Enter => {
             if let Some(action) = actions.get(state.global_menu.highlighted).copied() {
                 apply_global_menu_action(state, action);
             }
         }
         _ => {}
+    }
+}
+
+fn move_global_menu_selection(state: &mut AppState, actions: &[GlobalMenuAction], forward: bool) {
+    if actions.is_empty() {
+        return;
+    }
+    for _ in 0..actions.len() {
+        state.global_menu.highlighted = if forward {
+            (state.global_menu.highlighted + 1) % actions.len()
+        } else {
+            state
+                .global_menu
+                .highlighted
+                .checked_sub(1)
+                .unwrap_or(actions.len() - 1)
+        };
+        if actions[state.global_menu.highlighted] != GlobalMenuAction::Separator {
+            return;
+        }
     }
 }
 
@@ -640,6 +732,37 @@ pub(super) fn open_confirm_close(state: &mut AppState) {
     state.mode = Mode::ConfirmClose;
 }
 
+pub(super) fn open_confirm_danger(
+    state: &mut AppState,
+    action: crate::app::state::DangerousAction,
+) {
+    state.dangerous_action = Some(action);
+    state.mode = Mode::ConfirmDanger;
+}
+
+pub(super) fn confirm_danger_accept(state: &mut AppState) {
+    match state.dangerous_action.take() {
+        Some(crate::app::state::DangerousAction::RestoreAgents) => {
+            state.request_agent_restore = true;
+        }
+        Some(crate::app::state::DangerousAction::StopServer) => {
+            state.request_restart = false;
+            state.should_quit = true;
+        }
+        Some(crate::app::state::DangerousAction::Restart) => {
+            state.request_restart = true;
+            state.should_quit = true;
+        }
+        None => {}
+    }
+    leave_modal(state);
+}
+
+pub(super) fn confirm_danger_cancel(state: &mut AppState) {
+    state.dangerous_action = None;
+    state.mode = Mode::Navigate;
+}
+
 #[cfg(test)]
 pub(super) fn confirm_close_accept(state: &mut AppState) {
     state.close_selected_workspace();
@@ -663,6 +786,66 @@ pub(crate) fn handle_confirm_close_key(state: &mut AppState, key: KeyEvent) {
     }
 }
 
+pub(crate) fn handle_confirm_danger_key(state: &mut AppState, key: KeyEvent) {
+    match modal_action_from_key(&key, CONFIRM_CLOSE_ACTIONS) {
+        Some(ModalAction::Confirm) => confirm_danger_accept(state),
+        Some(ModalAction::Cancel) => confirm_danger_cancel(state),
+        _ => {}
+    }
+}
+
+fn workspace_section_for_menu_item(
+    item: Option<&str>,
+) -> Option<crate::workspace::WorkspaceSection> {
+    match item {
+        Some("⭐ favorite") => Some(crate::workspace::WorkspaceSection::Favorite),
+        Some("💼 work") => Some(crate::workspace::WorkspaceSection::Work),
+        Some("🏠 personal") => Some(crate::workspace::WorkspaceSection::Personal),
+        Some("No section") => Some(crate::workspace::WorkspaceSection::None),
+        _ => None,
+    }
+}
+
+fn assign_workspace_section(
+    state: &mut AppState,
+    ws_idx: usize,
+    section: crate::workspace::WorkspaceSection,
+) {
+    let Some(workspace) = state.workspaces.get_mut(ws_idx) else {
+        return;
+    };
+    workspace.section = section;
+    state.collapsed_workspace_sections.remove(&section);
+    state.workspace_scroll = 0;
+    state.agent_panel_scroll = 0;
+    state.mark_session_dirty();
+}
+
+fn move_context_menu_selection(menu: &mut ContextMenuState, forward: bool) {
+    let items = menu.items();
+    if items.is_empty() {
+        return;
+    }
+    for _ in 0..items.len() {
+        if forward {
+            menu.list.move_next(items.len());
+        } else {
+            menu.list.move_prev();
+        }
+        if items[menu.list.highlighted] != "--" {
+            return;
+        }
+    }
+}
+
+fn context_menu_agent_argv(agent: &str, config: &crate::config::AgentStartConfig) -> Vec<String> {
+    config
+        .commands
+        .get(agent)
+        .cloned()
+        .unwrap_or_else(|| vec![agent.to_string()])
+}
+
 #[cfg(test)]
 pub(super) fn apply_context_menu_action(
     state: &mut AppState,
@@ -671,6 +854,18 @@ pub(super) fn apply_context_menu_action(
     idx: usize,
 ) {
     let item = menu.items().get(idx).copied();
+    let workspace_target = match &menu.kind {
+        ContextMenuKind::Workspace { ws_idx } | ContextMenuKind::GitWorkspace { ws_idx, .. } => {
+            Some(*ws_idx)
+        }
+        _ => None,
+    };
+    if let (Some(ws_idx), Some(section)) = (workspace_target, workspace_section_for_menu_item(item))
+    {
+        assign_workspace_section(state, ws_idx, section);
+        leave_modal(state);
+        return;
+    }
     match (menu.kind, item) {
         (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("New worktree")) => {
             state.request_new_linked_worktree = Some(ws_idx);
@@ -684,6 +879,7 @@ pub(super) fn apply_context_menu_action(
             state.request_open_existing_worktree = Some(ws_idx);
             leave_modal(state);
         }
+        (_, Some("--")) => {}
         (
             ContextMenuKind::GitWorkspace {
                 ws_idx, collapsed, ..
@@ -703,6 +899,14 @@ pub(super) fn apply_context_menu_action(
                 }
                 state.mark_session_dirty();
             }
+            leave_modal(state);
+        }
+        (
+            ContextMenuKind::Workspace { ws_idx } | ContextMenuKind::GitWorkspace { ws_idx, .. },
+            Some("Duplicate"),
+        ) => {
+            state.selected = ws_idx;
+            state.pending_duplicate_workspace = Some(ws_idx);
             leave_modal(state);
         }
         (
@@ -801,7 +1005,7 @@ pub(super) fn apply_context_menu_action(
                 pane_id,
                 ..
             },
-            Some("Split right"),
+            Some("Split vertical"),
         ) => {
             state.selected = ws_idx;
             state.active = Some(ws_idx);
@@ -817,7 +1021,7 @@ pub(super) fn apply_context_menu_action(
                 pane_id,
                 ..
             },
-            Some("Split down"),
+            Some("Split horizontal"),
         ) => {
             state.selected = ws_idx;
             state.active = Some(ws_idx);
@@ -833,7 +1037,147 @@ pub(super) fn apply_context_menu_action(
                 pane_id,
                 ..
             },
-            Some("Zoom"),
+            Some("Move to left split"),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            state.focus_pane_in_workspace(ws_idx, pane_id);
+            state.move_focused_pane_to_split_side(
+                Direction::Horizontal,
+                crate::layout::RootSplitSide::First,
+            );
+            state.mode = Mode::Terminal;
+        }
+        (
+            ContextMenuKind::Pane {
+                ws_idx,
+                tab_idx,
+                pane_id,
+                ..
+            },
+            Some("Move to right split"),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            state.focus_pane_in_workspace(ws_idx, pane_id);
+            state.move_focused_pane_to_split_side(
+                Direction::Horizontal,
+                crate::layout::RootSplitSide::Second,
+            );
+            state.mode = Mode::Terminal;
+        }
+        (
+            ContextMenuKind::Pane {
+                ws_idx,
+                tab_idx,
+                pane_id,
+                ..
+            },
+            Some("Move to upper split"),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            state.focus_pane_in_workspace(ws_idx, pane_id);
+            state.move_focused_pane_to_split_side(
+                Direction::Vertical,
+                crate::layout::RootSplitSide::First,
+            );
+            state.mode = Mode::Terminal;
+        }
+        (
+            ContextMenuKind::Pane {
+                ws_idx,
+                tab_idx,
+                pane_id,
+                ..
+            },
+            Some("Move to lower split"),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            state.focus_pane_in_workspace(ws_idx, pane_id);
+            state.move_focused_pane_to_split_side(
+                Direction::Vertical,
+                crate::layout::RootSplitSide::Second,
+            );
+            state.mode = Mode::Terminal;
+        }
+        (
+            ContextMenuKind::Pane {
+                ws_idx,
+                tab_idx,
+                pane_id,
+                ..
+            },
+            Some("Equalize pane sizes"),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            state.focus_pane_in_workspace(ws_idx, pane_id);
+            state.equalize_pane_sizes();
+            state.mode = Mode::Terminal;
+        }
+        (
+            ContextMenuKind::Pane {
+                ws_idx,
+                tab_idx,
+                pane_id,
+                ..
+            },
+            Some("Cycle pane layout"),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            state.focus_pane_in_workspace(ws_idx, pane_id);
+            state.cycle_pane_layout();
+            state.mode = Mode::Terminal;
+        }
+        (
+            ContextMenuKind::Pane {
+                ws_idx,
+                tab_idx,
+                pane_id,
+                ..
+            },
+            Some("Rotate panes"),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            state.focus_pane_in_workspace(ws_idx, pane_id);
+            state.rotate_panes(false);
+            state.mode = Mode::Terminal;
+        }
+        (
+            ContextMenuKind::Pane {
+                ws_idx,
+                tab_idx,
+                pane_id,
+                ..
+            },
+            Some("Rotate panes reverse"),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            state.focus_pane_in_workspace(ws_idx, pane_id);
+            state.rotate_panes(true);
+            state.mode = Mode::Terminal;
+        }
+        (
+            ContextMenuKind::Pane {
+                ws_idx,
+                tab_idx,
+                pane_id,
+                ..
+            },
+            Some("Zoom" | "Unzoom"),
         ) => {
             state.selected = ws_idx;
             state.active = Some(ws_idx);
@@ -880,12 +1224,12 @@ pub(crate) fn handle_context_menu_key(
         }
         KeyCode::Up => {
             if let Some(menu) = &mut state.context_menu {
-                menu.list.move_prev();
+                move_context_menu_selection(menu, false);
             }
         }
         KeyCode::Down => {
             if let Some(menu) = &mut state.context_menu {
-                menu.list.move_next(menu.items().len());
+                move_context_menu_selection(menu, true);
             }
         }
         KeyCode::Enter => {
@@ -1066,12 +1410,12 @@ impl App {
             }
             KeyCode::Up => {
                 if let Some(menu) = &mut self.state.context_menu {
-                    menu.list.move_prev();
+                    move_context_menu_selection(menu, false);
                 }
             }
             KeyCode::Down => {
                 if let Some(menu) = &mut self.state.context_menu {
-                    menu.list.move_next(menu.items().len());
+                    move_context_menu_selection(menu, true);
                 }
             }
             KeyCode::Enter => {
@@ -1084,9 +1428,99 @@ impl App {
         }
     }
 
+    fn start_context_menu_agent(&mut self, ws_idx: usize, command: &str) {
+        if self.state.workspaces.get(ws_idx).is_none() {
+            return;
+        }
+        let workspace_id = self.public_workspace_id(ws_idx);
+        let tab_idx = self.state.workspaces.get(ws_idx).map(|ws| ws.active_tab);
+        let Some(tab_id) = tab_idx.and_then(|tab_idx| self.public_tab_id(ws_idx, tab_idx)) else {
+            return;
+        };
+        let cwd = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| {
+                let pane_id = ws.focused_pane_id()?;
+                let terminal_id = ws.pane_state(pane_id)?.attached_terminal_id.clone();
+                self.state
+                    .terminals
+                    .get(&terminal_id)
+                    .map(|terminal| terminal.cwd.clone())
+            })
+            .map(|cwd| cwd.display().to_string());
+        let mut name = command.to_string();
+        let mut suffix = 2usize;
+        let existing = self.collect_agent_infos();
+        while existing
+            .iter()
+            .any(|agent| agent.name.as_deref() == Some(name.as_str()))
+        {
+            name = format!("{command}-{suffix}");
+            suffix += 1;
+        }
+        let _ = self.start_agent(
+            crate::api::schema::AgentStartParams {
+                name,
+                cwd,
+                workspace_id: Some(workspace_id),
+                tab_id: Some(tab_id),
+                split: Some(crate::api::schema::SplitDirection::Right),
+                focus: true,
+                argv: context_menu_agent_argv(command, &self.state.agent_start_config),
+                env: Default::default(),
+            },
+            Vec::new(),
+        );
+    }
+
     pub(crate) fn apply_context_menu_action_via_api(&mut self, menu: ContextMenuState, idx: usize) {
         let item = menu.items().get(idx).copied();
+        let workspace_target = match &menu.kind {
+            ContextMenuKind::Workspace { ws_idx }
+            | ContextMenuKind::GitWorkspace { ws_idx, .. } => Some(*ws_idx),
+            _ => None,
+        };
+        if let (Some(ws_idx), Some(section)) =
+            (workspace_target, workspace_section_for_menu_item(item))
+        {
+            assign_workspace_section(&mut self.state, ws_idx, section);
+            leave_modal(&mut self.state);
+            return;
+        }
         match (menu.kind, item) {
+            (
+                ContextMenuKind::Workspace { ws_idx }
+                | ContextMenuKind::GitWorkspace { ws_idx, .. },
+                Some("New Claude Code agent" | "New Codex agent" | "New agy agent"),
+            ) => {
+                self.focus_workspace_idx_via_api(ws_idx);
+                let command = match item {
+                    Some("New Claude Code agent") => "claude",
+                    Some("New Codex agent") => "codex",
+                    Some("New agy agent") => "agy",
+                    _ => unreachable!(),
+                };
+                self.start_context_menu_agent(ws_idx, command);
+                leave_modal(&mut self.state);
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some("New Claude Code agent" | "New Codex agent" | "New agy agent"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                let command = match item {
+                    Some("New Claude Code agent") => "claude",
+                    Some("New Codex agent") => "codex",
+                    Some("New agy agent") => "agy",
+                    _ => unreachable!(),
+                };
+                self.start_context_menu_agent(ws_idx, command);
+                leave_modal(&mut self.state);
+            }
             (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("New worktree")) => {
                 self.state.request_new_linked_worktree = Some(ws_idx);
                 leave_modal(&mut self.state);
@@ -1099,6 +1533,7 @@ impl App {
                 self.state.request_open_existing_worktree = Some(ws_idx);
                 leave_modal(&mut self.state);
             }
+            (_, Some("--")) => {}
             (
                 ContextMenuKind::GitWorkspace {
                     ws_idx, collapsed, ..
@@ -1119,6 +1554,15 @@ impl App {
                     }
                     self.state.mark_session_dirty();
                 }
+                leave_modal(&mut self.state);
+            }
+            (
+                ContextMenuKind::Workspace { ws_idx }
+                | ContextMenuKind::GitWorkspace { ws_idx, .. },
+                Some("Duplicate"),
+            ) => {
+                self.state.selected = ws_idx;
+                self.state.pending_duplicate_workspace = Some(ws_idx);
                 leave_modal(&mut self.state);
             }
             (
@@ -1207,7 +1651,7 @@ impl App {
                 ContextMenuKind::Pane {
                     ws_idx, pane_id, ..
                 },
-                Some("Split right"),
+                Some("Split vertical"),
             ) => {
                 self.focus_pane_internal_via_api(ws_idx, pane_id);
                 self.split_focused_pane_via_api(crate::api::schema::SplitDirection::Right);
@@ -1217,7 +1661,7 @@ impl App {
                 ContextMenuKind::Pane {
                     ws_idx, pane_id, ..
                 },
-                Some("Split down"),
+                Some("Split horizontal"),
             ) => {
                 self.focus_pane_internal_via_api(ws_idx, pane_id);
                 self.split_focused_pane_via_api(crate::api::schema::SplitDirection::Down);
@@ -1227,7 +1671,99 @@ impl App {
                 ContextMenuKind::Pane {
                     ws_idx, pane_id, ..
                 },
-                Some("Zoom"),
+                Some("Move to left split"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                self.state.move_focused_pane_to_split_side(
+                    Direction::Horizontal,
+                    crate::layout::RootSplitSide::First,
+                );
+                self.state.mode = Mode::Terminal;
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some("Move to right split"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                self.state.move_focused_pane_to_split_side(
+                    Direction::Horizontal,
+                    crate::layout::RootSplitSide::Second,
+                );
+                self.state.mode = Mode::Terminal;
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some("Move to upper split"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                self.state.move_focused_pane_to_split_side(
+                    Direction::Vertical,
+                    crate::layout::RootSplitSide::First,
+                );
+                self.state.mode = Mode::Terminal;
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some("Move to lower split"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                self.state.move_focused_pane_to_split_side(
+                    Direction::Vertical,
+                    crate::layout::RootSplitSide::Second,
+                );
+                self.state.mode = Mode::Terminal;
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some("Equalize pane sizes"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                self.state.equalize_pane_sizes();
+                self.state.mode = Mode::Terminal;
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some("Cycle pane layout"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                self.state.cycle_pane_layout();
+                self.state.mode = Mode::Terminal;
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some("Rotate panes"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                self.state.rotate_panes(false);
+                self.state.mode = Mode::Terminal;
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some("Rotate panes reverse"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                self.state.rotate_panes(true);
+                self.state.mode = Mode::Terminal;
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some("Zoom" | "Unzoom"),
             ) => {
                 self.focus_pane_internal_via_api(ws_idx, pane_id);
                 self.zoom_focused_pane_via_api();
@@ -1273,7 +1809,10 @@ impl AppState {
             return None;
         }
         let idx = (row - rect.y - 1) as usize;
-        global_menu_actions(self).get(idx).copied()
+        global_menu_actions(self)
+            .get(idx)
+            .copied()
+            .filter(|action| *action != GlobalMenuAction::Separator)
     }
 }
 
@@ -1286,8 +1825,8 @@ mod tests {
     use super::*;
     use crate::workspace::Workspace;
 
-    fn config_env_lock() -> &'static std::sync::Mutex<()> {
-        crate::config::test_config_env_lock()
+    fn config_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::config::lock_test_config_env()
     }
 
     fn temp_config_path(name: &str) -> std::path::PathBuf {
@@ -1300,6 +1839,21 @@ mod tests {
                 .as_nanos()
         );
         std::env::temp_dir().join(unique).join("config.toml")
+    }
+
+    #[test]
+    fn context_menu_agent_argv_uses_agent_start_config() {
+        let mut config = crate::config::AgentStartConfig::default();
+        config.commands.insert(
+            "codex".into(),
+            vec!["codex".into(), "--sandbox".into(), "workspace-write".into()],
+        );
+
+        assert_eq!(
+            context_menu_agent_argv("codex", &config),
+            vec!["codex", "--sandbox", "workspace-write"]
+        );
+        assert_eq!(context_menu_agent_argv("agy", &config), vec!["agy"]);
     }
 
     fn app_with_test_workspaces(names: &[&str]) -> App {
@@ -1386,6 +1940,71 @@ mod tests {
     }
 
     #[test]
+    fn global_menu_presets_persist_the_selected_sidebar_width() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.sidebar_min_width = 18;
+        state.sidebar_max_width = 72;
+        state.default_sidebar_width = 32;
+
+        apply_global_menu_action(&mut state, GlobalMenuAction::SidebarNarrow);
+        assert_eq!(state.sidebar_width, 18);
+        assert_eq!(
+            state.sidebar_width_source,
+            crate::app::state::SidebarWidthSource::Manual
+        );
+        assert!(state.session_dirty);
+
+        state.session_dirty = false;
+        apply_global_menu_action(&mut state, GlobalMenuAction::SidebarNormal);
+        assert_eq!(state.sidebar_width, 32);
+        assert_eq!(
+            state.sidebar_width_source,
+            crate::app::state::SidebarWidthSource::ConfigDefault
+        );
+        assert!(state.session_dirty);
+
+        state.session_dirty = false;
+        apply_global_menu_action(&mut state, GlobalMenuAction::SidebarWide);
+        assert_eq!(state.sidebar_width, 72);
+        assert_eq!(
+            state.sidebar_width_source,
+            crate::app::state::SidebarWidthSource::Manual
+        );
+        assert!(state.session_dirty);
+    }
+
+    #[test]
+    fn global_menu_dangerous_actions_require_confirmation() {
+        let mut state = state_with_workspaces(&["test"]);
+
+        apply_global_menu_action(&mut state, GlobalMenuAction::RestoreAgents);
+        assert_eq!(state.mode, Mode::ConfirmDanger);
+        assert_eq!(
+            state.dangerous_action,
+            Some(crate::app::state::DangerousAction::RestoreAgents)
+        );
+        assert!(!state.request_agent_restore);
+        assert!(!state.should_quit);
+        confirm_danger_accept(&mut state);
+        assert!(state.request_agent_restore);
+        assert!(!state.should_quit);
+
+        apply_global_menu_action(&mut state, GlobalMenuAction::StopServer);
+        assert!(!state.should_quit);
+        confirm_danger_accept(&mut state);
+        assert!(state.should_quit);
+        assert!(!state.request_restart);
+
+        state.should_quit = false;
+        apply_global_menu_action(&mut state, GlobalMenuAction::Restart);
+        assert!(!state.should_quit);
+        assert!(!state.request_restart);
+        confirm_danger_accept(&mut state);
+        assert!(state.should_quit);
+        assert!(state.request_restart);
+    }
+
+    #[test]
     fn detach_exits_in_no_session_mode() {
         let mut state = state_with_workspaces(&["test"]);
         state.detach_exits = true;
@@ -1398,7 +2017,7 @@ mod tests {
 
     #[test]
     fn global_menu_whats_new_opens_saved_release_notes() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = config_env_lock();
         let path = temp_config_path("whats-new-saved-release-notes");
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
         crate::release_notes::save_pending(env!("CARGO_PKG_VERSION"), "### Changed\n- Menu")
@@ -1916,7 +2535,13 @@ mod tests {
         };
         let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
 
-        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, 1);
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Close group")
+            .expect("close group item");
+
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, idx);
 
         assert_eq!(state.selected, 0);
         assert_eq!(state.mode, Mode::ConfirmClose);
@@ -1954,6 +2579,8 @@ mod tests {
                 pane_id,
                 source_pane_id: None,
                 has_manual_label: false,
+                has_layout_actions: false,
+                is_zoomed: false,
             },
             x: 0,
             y: 0,
@@ -1971,6 +2598,29 @@ mod tests {
         assert_eq!(state.selected, 0);
         assert_eq!(state.mode, Mode::ConfirmClose);
         assert_eq!(state.workspaces.len(), 2);
+    }
+
+    #[test]
+    fn context_menu_workspace_duplicate_defers_to_app_runtime() {
+        let mut state = state_with_workspaces(&["source"]);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Duplicate")
+            .expect("duplicate workspace item");
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+
+        apply_context_menu_action(&mut state, &mut terminal_runtimes, menu, idx);
+
+        assert_eq!(state.pending_duplicate_workspace, Some(0));
+        assert_eq!(state.selected, 0);
+        assert_eq!(state.mode, Mode::Terminal);
     }
 
     #[test]
@@ -2019,6 +2669,8 @@ mod tests {
                 pane_id,
                 source_pane_id: None,
                 has_manual_label: false,
+                has_layout_actions: false,
+                is_zoomed: false,
             },
             x: 0,
             y: 0,
@@ -2038,5 +2690,40 @@ mod tests {
         assert_eq!(app.state.mode, Mode::ConfirmClose);
         assert_eq!(app.state.workspaces.len(), 2);
         assert!(app.state.context_menu.is_none());
+    }
+
+    #[test]
+    fn workspace_context_menu_assigns_section_and_expands_it() {
+        let mut app = app_with_test_workspaces(&["one"]);
+        app.state.workspace_scroll = 4;
+        app.state.agent_panel_scroll = 3;
+        app.state
+            .collapsed_workspace_sections
+            .insert(crate::workspace::WorkspaceSection::Work);
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let work_idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "💼 work")
+            .expect("work section item");
+
+        app.apply_context_menu_action_via_api(menu, work_idx);
+
+        assert_eq!(
+            app.state.workspaces[0].section,
+            crate::workspace::WorkspaceSection::Work
+        );
+        assert!(!app
+            .state
+            .collapsed_workspace_sections
+            .contains(&crate::workspace::WorkspaceSection::Work));
+        assert_eq!(app.state.workspace_scroll, 0);
+        assert_eq!(app.state.agent_panel_scroll, 0);
+        assert!(app.state.session_dirty);
     }
 }

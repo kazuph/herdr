@@ -8,10 +8,11 @@ use ratatui::{
 
 use super::sidebar::{
     agent_panel_entries, agent_panel_entries_from, grouped_child_display_label,
-    next_entry_is_indented_workspace, workspace_list_entries_expanded, AgentPanelEntry,
+    next_entry_is_indented_workspace, workspace_list_entries_expanded,
+    workspace_section_is_expanded, workspace_sections_for_entries, AgentPanelEntry,
     WorkspaceListEntry,
 };
-use super::status::{agent_icon, state_dot};
+use super::status::{agent_icon, state_summary_icon};
 use super::text::{display_width_u16, truncate_end};
 use crate::app::state::{Palette, ToastKind, ToastNotification};
 use crate::app::AppState;
@@ -35,6 +36,7 @@ pub(crate) struct MobileSwitcherAreas {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MobileSwitcherTarget {
     NewWorkspace,
+    WorkspaceSection(crate::workspace::WorkspaceSection),
     Workspace(usize),
     NewTab,
     Tab(usize),
@@ -110,15 +112,24 @@ pub(crate) fn mobile_switcher_workspace_doc_range(
     app: &AppState,
     idx: usize,
 ) -> std::ops::Range<usize> {
-    // Spaces render in grouped order, so a workspace's row position is its index
-    // in the entry list, not its raw array index.
-    let pos = workspace_list_entries_expanded(app)
-        .iter()
-        .position(|WorkspaceListEntry::Workspace { ws_idx, .. }| *ws_idx == idx)
-        .unwrap_or(idx);
-    // spaces sit after the agents block, then a title + "new workspace" row.
-    let start = mobile_agents_block_height(app) + 2 + pos * 2;
-    start..start + 2
+    let mut cursor = mobile_agents_block_height(app) + 2;
+    for (section, entries) in
+        workspace_sections_for_entries(app, workspace_list_entries_expanded(app))
+    {
+        cursor += 1;
+        if !workspace_section_is_expanded(app, section) {
+            continue;
+        }
+        if let Some(position) = entries
+            .iter()
+            .position(|WorkspaceListEntry::Workspace { ws_idx, .. }| *ws_idx == idx)
+        {
+            let start = cursor + position * 2;
+            return start..start + 2;
+        }
+        cursor += entries.len() * 2;
+    }
+    cursor..cursor
 }
 
 pub(crate) fn mobile_switcher_max_scroll(app: &AppState) -> usize {
@@ -164,17 +175,29 @@ pub(crate) fn mobile_switcher_target_at(
         return Some(MobileSwitcherTarget::NewWorkspace);
     }
     cursor += 1;
-    // Spaces render in grouped (worktree-tree) order, which differs from raw
-    // array order, so map the clicked row to the entry's real workspace index.
-    let space_entries = workspace_list_entries_expanded(app);
-    let spaces_end = cursor + space_entries.len() * 2;
-    if doc_row >= cursor && doc_row < spaces_end {
-        let entry_idx = (doc_row - cursor) / 2;
-        return space_entries.get(entry_idx).map(
-            |WorkspaceListEntry::Workspace { ws_idx, .. }| MobileSwitcherTarget::Workspace(*ws_idx),
-        );
+    // Keep worktree-tree ordering within each section while making section
+    // headers tappable in the mobile switcher.
+    for (section, entries) in
+        workspace_sections_for_entries(app, workspace_list_entries_expanded(app))
+    {
+        if doc_row == cursor {
+            return Some(MobileSwitcherTarget::WorkspaceSection(section));
+        }
+        cursor += 1;
+        if !workspace_section_is_expanded(app, section) {
+            continue;
+        }
+        let section_end = cursor + entries.len() * 2;
+        if doc_row >= cursor && doc_row < section_end {
+            let entry_idx = (doc_row - cursor) / 2;
+            return entries.get(entry_idx).map(
+                |WorkspaceListEntry::Workspace { ws_idx, .. }| {
+                    MobileSwitcherTarget::Workspace(*ws_idx)
+                },
+            );
+        }
+        cursor = section_end;
     }
-    cursor = spaces_end;
 
     if let Some(ws) = app.active.and_then(|idx| app.workspaces.get(idx)) {
         cursor += 1; // tabs title
@@ -320,14 +343,7 @@ fn render_header_status(
     };
 
     let (state, seen) = ws.aggregate_state(&app.terminals);
-    let (dot, dot_style) = if matches!(state, AgentState::Working) {
-        (
-            super::spinner_frame(app.spinner_tick),
-            Style::default().fg(p.yellow),
-        )
-    } else {
-        state_dot(state, seen, p)
-    };
+    let (dot, dot_style) = state_summary_icon(state, seen, app.spinner_tick, p);
     let tab_label = mobile_tab_status(ws);
     let row1 = Rect::new(area.x, area.y, area.width, 1);
     let tab_w = display_width_u16(&tab_label)
@@ -453,7 +469,12 @@ fn render_close_button(app: &AppState, frame: &mut Frame, area: Rect) {
 fn mobile_switcher_content_height(app: &AppState) -> usize {
     // Derive spaces height from the same entry list the render/hit-test use so
     // the three never disagree.
-    let spaces_h = 2 + workspace_list_entries_expanded(app).len() * 2;
+    let spaces_h = 2 + workspace_sections_for_entries(app, workspace_list_entries_expanded(app))
+        .into_iter()
+        .map(|(section, entries)| {
+            1 + usize::from(workspace_section_is_expanded(app, section)) * entries.len() * 2
+        })
+        .sum::<usize>();
     let tabs_h = app
         .active
         .and_then(|idx| app.workspaces.get(idx))
@@ -565,76 +586,99 @@ fn render_mobile_switcher_content(
         p,
     );
     doc_y += 1;
-    let space_entries = workspace_list_entries_expanded(app);
-    for (entry_idx, WorkspaceListEntry::Workspace { ws_idx, indented }) in
-        space_entries.iter().enumerate()
+    for (section, space_entries) in
+        workspace_sections_for_entries(app, workspace_list_entries_expanded(app))
     {
-        let Some(ws) = app.workspaces.get(*ws_idx) else {
-            continue;
-        };
-        let active = Some(*ws_idx) == app.active;
-        let selected = *ws_idx == app.selected;
-        let bg = mobile_item_bg(selected, active, p);
-        let (state, seen) = ws.aggregate_state(&app.terminals);
-        let (dot, dot_style) = state_dot(state, seen, p);
-
-        let mut title_spans = vec![Span::styled("  ", Style::default().bg(bg))];
-        // Worktrees of the same space render as branches off their parent, so a
-        // child gets an L/T connector on its name row and a matching vertical
-        // continuation on its detail row.
-        let detail_prefix = if *indented {
-            let last_child = !next_entry_is_indented_workspace(&space_entries, entry_idx);
-            title_spans.push(Span::styled(
-                if last_child { "└─ " } else { "├─ " },
-                Style::default().fg(p.overlay0).bg(bg),
-            ));
-            if last_child {
-                "       "
-            } else {
-                "  │    "
-            }
+        let arrow = if workspace_section_is_expanded(app, section) {
+            "▾"
         } else {
-            "  "
+            "▸"
         };
-
-        title_spans.push(Span::styled(dot, dot_style.bg(bg)));
-        title_spans.push(Span::styled(" ", Style::default().bg(bg)));
-        let raw_label = ws.display_name_from(&app.terminals, terminal_runtimes);
-        let name = if *indented {
-            grouped_child_display_label(
-                &raw_label,
-                ws.branch().as_deref(),
-                ws.custom_name.is_some(),
-            )
-        } else {
-            raw_label
-        };
-        let name_budget = content.width.saturating_sub(if *indented { 8 } else { 5 }) as usize;
-        title_spans.push(Span::styled(
-            truncate_end(&name, name_budget),
-            Style::default()
-                .fg(p.text)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        ));
-
-        let detail = format!(
-            "{detail_prefix}{} · {}",
-            ws.branch().unwrap_or_else(|| "shell".into()),
-            mobile_tab_status(ws)
-        );
-        render_two_line_item(
+        let section_label = format!("{arrow} {}", section.label());
+        render_section_title_at(
             frame,
             viewport,
             content,
             doc_y,
             app.mobile_switcher_scroll,
-            bg,
-            Line::from(title_spans),
-            truncate_end(&detail, content.width as usize),
-            p.overlay0,
+            &section_label,
+            p,
         );
-        doc_y += 2;
+        doc_y += 1;
+        if !workspace_section_is_expanded(app, section) {
+            continue;
+        }
+
+        for (entry_idx, WorkspaceListEntry::Workspace { ws_idx, indented }) in
+            space_entries.iter().enumerate()
+        {
+            let Some(ws) = app.workspaces.get(*ws_idx) else {
+                continue;
+            };
+            let active = Some(*ws_idx) == app.active;
+            let selected = *ws_idx == app.selected;
+            let bg = mobile_item_bg(selected, active, p);
+            let (state, seen) = ws.aggregate_state(&app.terminals);
+            let (dot, dot_style) = state_summary_icon(state, seen, app.spinner_tick, p);
+
+            let mut title_spans = vec![Span::styled("  ", Style::default().bg(bg))];
+            // Worktrees of the same space render as branches off their parent, so a
+            // child gets an L/T connector on its name row and a matching vertical
+            // continuation on its detail row.
+            let detail_prefix = if *indented {
+                let last_child = !next_entry_is_indented_workspace(&space_entries, entry_idx);
+                title_spans.push(Span::styled(
+                    if last_child { "└─ " } else { "├─ " },
+                    Style::default().fg(p.overlay0).bg(bg),
+                ));
+                if last_child {
+                    "       "
+                } else {
+                    "  │    "
+                }
+            } else {
+                "  "
+            };
+
+            title_spans.push(Span::styled(dot, dot_style.bg(bg)));
+            title_spans.push(Span::styled(" ", Style::default().bg(bg)));
+            let raw_label = ws.display_name_from(&app.terminals, terminal_runtimes);
+            let name = if *indented {
+                grouped_child_display_label(
+                    &raw_label,
+                    ws.branch().as_deref(),
+                    ws.custom_name.is_some(),
+                )
+            } else {
+                raw_label
+            };
+            let name_budget = content.width.saturating_sub(if *indented { 8 } else { 5 }) as usize;
+            title_spans.push(Span::styled(
+                truncate_end(&name, name_budget),
+                Style::default()
+                    .fg(p.text)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+
+            let detail = format!(
+                "{detail_prefix}{} · {}",
+                ws.branch().unwrap_or_else(|| "shell".into()),
+                mobile_tab_status(ws)
+            );
+            render_two_line_item(
+                frame,
+                viewport,
+                content,
+                doc_y,
+                app.mobile_switcher_scroll,
+                bg,
+                Line::from(title_spans),
+                truncate_end(&detail, content.width as usize),
+                p.overlay0,
+            );
+            doc_y += 2;
+        }
     }
 
     if let Some(ws) = app.active.and_then(|idx| app.workspaces.get(idx)) {
@@ -1248,8 +1292,9 @@ mod tests {
 
         assert_eq!(agent_panel_entries(&app).len(), 2);
         // agents title (1) + 2 agents * 2 rows = 5, then spaces title + "new
-        // workspace" (2) before the first workspace ribbon at doc row 7.
-        assert_eq!(mobile_switcher_workspace_doc_range(&app, 0).start, 7);
+        // workspace" (2) and the `spaces` section header before the first
+        // workspace ribbon at doc row 8.
+        assert_eq!(mobile_switcher_workspace_doc_range(&app, 0).start, 8);
 
         let viewport = mobile_switcher_areas(&app).viewport;
         let agent_hit = mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 1);
@@ -1257,7 +1302,7 @@ mod tests {
             agent_hit,
             Some(MobileSwitcherTarget::Agent { .. })
         ));
-        let workspace_hit = mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 7);
+        let workspace_hit = mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 8);
         assert_eq!(workspace_hit, Some(MobileSwitcherTarget::Workspace(0)));
     }
 
@@ -1289,19 +1334,19 @@ mod tests {
         // Grouped order pulls the worktree (idx 2) up under its parent (idx 0),
         // ahead of the unrelated "other" workspace (idx 1): rows are main,
         // feature, other.
-        assert_eq!(mobile_switcher_workspace_doc_range(&app, 2).start, 4);
-        assert_eq!(mobile_switcher_workspace_doc_range(&app, 1).start, 6);
+        assert_eq!(mobile_switcher_workspace_doc_range(&app, 2).start, 5);
+        assert_eq!(mobile_switcher_workspace_doc_range(&app, 1).start, 7);
 
         let viewport = mobile_switcher_areas(&app).viewport;
         // The second space row on screen is the worktree, not workspaces[1].
-        let hit = mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 4);
+        let hit = mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 5);
         assert_eq!(hit, Some(MobileSwitcherTarget::Workspace(2)));
 
         // Mobile ignores collapse: even with the space folded on desktop, the
         // worktree child still renders in the same position.
         app.collapsed_space_keys.insert("repo-key".to_string());
-        assert_eq!(mobile_switcher_workspace_doc_range(&app, 2).start, 4);
-        let hit = mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 4);
+        assert_eq!(mobile_switcher_workspace_doc_range(&app, 2).start, 5);
+        let hit = mobile_switcher_target_at(&app, viewport.x + 2, viewport.y + 5);
         assert_eq!(hit, Some(MobileSwitcherTarget::Workspace(2)));
     }
 
@@ -1314,7 +1359,7 @@ mod tests {
 
         // No attached terminals -> no agents -> no agents header, spaces lead.
         assert_eq!(agent_panel_entries(&app).len(), 0);
-        assert_eq!(mobile_switcher_workspace_doc_range(&app, 0).start, 2);
+        assert_eq!(mobile_switcher_workspace_doc_range(&app, 0).start, 3);
     }
 
     #[test]
@@ -1369,12 +1414,22 @@ mod tests {
             })
             .unwrap();
 
-        let row = (0..40)
-            .map(|x| terminal.backend().buffer()[(x, 10)].symbol())
-            .collect::<String>();
+        let rows = (0..20)
+            .map(|y| {
+                (0..40)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
 
-        assert!(row.contains("tab 2"), "mobile tab row: {row:?}");
-        assert!(!row.contains("tab 3"), "mobile tab row: {row:?}");
+        assert!(
+            rows.iter().any(|row| row.contains("tab 2")),
+            "mobile rows: {rows:?}"
+        );
+        assert!(
+            rows.iter().all(|row| !row.contains("tab 3")),
+            "mobile rows: {rows:?}"
+        );
     }
 
     #[cfg(unix)]

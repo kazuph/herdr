@@ -12,4 +12,4 @@ pub use self::{
 };
 
 #[cfg(test)]
-pub(super) use self::status::git_ahead_behind;
+pub(super) use self::status::{git_ahead_behind, git_diff_stats};

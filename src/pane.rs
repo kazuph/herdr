@@ -60,6 +60,9 @@ fn apply_pane_terminal_env(cmd: &mut CommandBuilder) {
     // when the remote side lacks matching terminfo entries.
     cmd.env("TERM", PANE_TERM);
     cmd.env("COLORTERM", PANE_COLORTERM);
+    // Pane children are interactive color-capable TTYs even when the outer
+    // launcher environment is configured for non-interactive monochrome output.
+    cmd.env_remove("NO_COLOR");
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -596,6 +599,7 @@ fn spawn_basic_detection_task(
         let mut last_screen_scan_detection_content_seq = None;
         let mut agent_startup_grace_until = None;
         let mut pending_idle = PendingIdleConfirmation::default();
+        let mut agent_activity_tracker = None;
 
         loop {
             let sleep_duration = if pending_idle.active() {
@@ -624,6 +628,7 @@ fn spawn_basic_detection_task(
                     last_screen_scan_detection_content_seq = None;
                     agent_startup_grace_until = None;
                     pending_idle.clear();
+                    agent_activity_tracker = None;
                 }
             }
 
@@ -718,6 +723,7 @@ fn spawn_basic_detection_task(
                     agent_changed = previous_agent != agent;
                     if agent_changed {
                         pending_idle.clear();
+                        agent_activity_tracker = None;
                         last_screen_scan_detection_content_seq = None;
                         // A new foreground agent must not inherit OSC
                         // title/progress evidence from the previous process.
@@ -753,6 +759,7 @@ fn spawn_basic_detection_task(
 
             if lifecycle_authority_active && !process_exited {
                 pending_idle.clear();
+                agent_activity_tracker = None;
                 continue;
             }
 
@@ -810,7 +817,7 @@ fn spawn_basic_detection_task(
 
             let osc_title = terminal.agent_osc_title();
             let osc_progress = terminal.agent_osc_progress();
-            let Some(screen_detection) = detection_update_for_publish_with_osc(
+            let Some(mut screen_detection) = detection_update_for_publish_with_osc(
                 agent,
                 &content,
                 &osc_title,
@@ -820,6 +827,25 @@ fn spawn_basic_detection_task(
                 pending_idle.clear();
                 continue;
             };
+            let fingerprint = match agent {
+                Some(Agent::Claude) if screen_detection.state == AgentState::Working => {
+                    crate::detect::claude_activity_fingerprint(&content)
+                }
+                Some(Agent::Codex) if screen_detection.state == AgentState::Working => {
+                    crate::detect::codex_activity_fingerprint(&content)
+                }
+                _ => None,
+            };
+            screen_detection.state = crate::terminal::state::filter_stale_claude_working(
+                agent,
+                screen_detection.state,
+                fingerprint,
+                now,
+                &mut agent_activity_tracker,
+            );
+            if screen_detection.state != AgentState::Working {
+                screen_detection.visible_working = false;
+            }
             match decide_screen_detection_publish(
                 ScreenDetectionPublishInput {
                     screen_detection,
@@ -2008,6 +2034,7 @@ impl PaneRuntime {
                 let mut last_screen_scan_detection_content_seq = None;
                 let mut agent_startup_grace_until = None;
                 let mut pending_idle = PendingIdleConfirmation::default();
+                let mut agent_activity_tracker = None;
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -2046,6 +2073,7 @@ impl PaneRuntime {
                             last_screen_scan_detection_content_seq = None;
                             agent_startup_grace_until = None;
                             pending_idle.clear();
+                            agent_activity_tracker = None;
                         }
                     }
 
@@ -2147,6 +2175,7 @@ impl PaneRuntime {
                                 agent = agent_presence.current_agent();
                                 if agent != previous_agent {
                                     pending_idle.clear();
+                                    agent_activity_tracker = None;
                                     last_screen_scan_detection_content_seq = None;
                                     // A new foreground agent must not inherit OSC
                                     // title/progress evidence from the previous process.
@@ -2212,6 +2241,7 @@ impl PaneRuntime {
 
                     if lifecycle_authority_active && !process_exited {
                         pending_idle.clear();
+                        agent_activity_tracker = None;
                         continue;
                     }
 
@@ -2269,7 +2299,7 @@ impl PaneRuntime {
 
                     let osc_title = terminal.agent_osc_title();
                     let osc_progress = terminal.agent_osc_progress();
-                    let Some(screen_detection) = detection_update_for_publish_with_osc(
+                    let Some(mut screen_detection) = detection_update_for_publish_with_osc(
                         agent,
                         &content,
                         &osc_title,
@@ -2279,6 +2309,25 @@ impl PaneRuntime {
                         pending_idle.clear();
                         continue;
                     };
+                    let fingerprint = match agent {
+                        Some(Agent::Claude) if screen_detection.state == AgentState::Working => {
+                            crate::detect::claude_activity_fingerprint(&content)
+                        }
+                        Some(Agent::Codex) if screen_detection.state == AgentState::Working => {
+                            crate::detect::codex_activity_fingerprint(&content)
+                        }
+                        _ => None,
+                    };
+                    screen_detection.state = crate::terminal::state::filter_stale_claude_working(
+                        agent,
+                        screen_detection.state,
+                        fingerprint,
+                        now,
+                        &mut agent_activity_tracker,
+                    );
+                    if screen_detection.state != AgentState::Working {
+                        screen_detection.visible_working = false;
+                    }
                     match decide_screen_detection_publish(
                         ScreenDetectionPublishInput {
                             screen_detection,
@@ -3152,6 +3201,14 @@ mod tests {
     fn pane_terminal_identity_overrides_outer_terminal_env() {
         let output = capture_shell_output("printf '%s\\n%s\\n' \"$TERM\" \"$COLORTERM\"", &[]);
         assert_eq!(output, "xterm-256color\ntruecolor\n");
+    }
+
+    #[test]
+    fn pane_terminal_identity_removes_no_color() {
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.env("NO_COLOR", "1");
+        apply_pane_terminal_env(&mut cmd);
+        assert!(cmd.get_env("NO_COLOR").is_none());
     }
 
     #[cfg(unix)]

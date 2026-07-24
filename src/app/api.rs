@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 
 mod agents;
 mod env;
-mod integrations;
 mod layouts;
 mod pane_graphics;
 mod panes;
@@ -18,6 +17,7 @@ use super::{api_helpers::pane_agent_status, App, Mode, OverlayPaneState, ToastKi
 use crate::events::AppEvent;
 
 const API_NOTIFICATION_RATE_LIMIT: Duration = Duration::from_secs(1);
+pub(super) const AGENT_SEND_SUBMIT_DELAY: Duration = Duration::from_millis(500);
 #[cfg(windows)]
 const WINDOWS_POWERSHELL_AGENT_EXIT_RESPAWN_GRACE: Duration = Duration::from_secs(2);
 
@@ -64,7 +64,7 @@ impl App {
             crate::selection::write_osc52_bytes(&content);
             #[cfg(test)]
             let _ = content;
-            self.show_clipboard_feedback();
+            self.show_clipboard_feedback(&content);
             return;
         }
 
@@ -374,16 +374,38 @@ impl App {
             return;
         }
 
-        let workspace_label = ws.display_name_from(&self.state.terminals, &self.terminal_runtimes);
-        let context = crate::app::actions::notification_context(
-            ws,
-            &workspace_label,
-            update.ws_idx,
-            update.pane_id,
-        );
+        let Some((title, context)) =
+            self.notification_presentation_for_pane(update.ws_idx, update.pane_id)
+        else {
+            return;
+        };
         if let Some(toast) = self.state.toast.as_mut() {
+            toast.title = title;
             toast.context = context;
         }
+    }
+
+    pub(crate) fn notification_presentation_for_pane(
+        &self,
+        ws_idx: usize,
+        pane_id: crate::layout::PaneId,
+    ) -> Option<(String, String)> {
+        let ws = self.state.workspaces.get(ws_idx)?;
+        let workspace_label = ws.display_name_from(&self.state.terminals, &self.terminal_runtimes);
+        let title = crate::app::actions::notification_title(&workspace_label, ws_idx);
+        let context = self
+            .state
+            .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
+            .and_then(|runtime| {
+                crate::app::actions::notification_body_excerpt(
+                    &runtime.recent_unwrapped_text(80),
+                    &title,
+                )
+            })
+            .unwrap_or_else(|| {
+                crate::app::actions::notification_context(ws, &workspace_label, ws_idx, pane_id)
+            });
+        Some((title, context))
     }
 
     fn sync_full_lifecycle_authority_detection_pauses(&self) {
@@ -406,14 +428,17 @@ impl App {
         }
     }
 
-    pub(crate) fn show_clipboard_feedback(&mut self) {
+    pub(crate) fn show_clipboard_feedback(&mut self, content: &[u8]) {
         if !self.state.toast_config.clipboard.enabled {
             self.state.copy_feedback = None;
             self.copy_feedback_deadline = None;
             return;
         }
+        let lines = std::str::from_utf8(content)
+            .map(|text| text.lines().count())
+            .unwrap_or_else(|_| content.split(|byte| *byte == b'\n').count());
         self.state.copy_feedback = Some(crate::app::state::CopyFeedback {
-            message: "copied to clipboard".to_string(),
+            message: format!("Copied {lines} lines"),
         });
         self.copy_feedback_deadline = Some(Instant::now() + super::COPY_FEEDBACK_DURATION);
     }
@@ -592,11 +617,14 @@ impl App {
                     state_labels: presentation.state_labels,
                 },
             });
+            if agent_status == crate::api::schema::AgentStatus::Idle {
+                self.flush_msg_nudges_for_idle_pane(update.ws_idx, update.pane_id);
+            }
         }
     }
 
     fn emit_terminal_or_system_agent_notifications(
-        &self,
+        &mut self,
         pane_updates: &[crate::app::actions::PaneStateUpdate],
     ) {
         if !self.local_terminal_notifications
@@ -624,46 +652,28 @@ impl App {
                     is_active_tab,
                     self.state.outer_terminal_focus,
                 );
-            let Some(kind) = crate::app::actions::notification_toast_for_pane_state_update(
+            let Some(_kind) = crate::app::actions::notification_toast_for_pane_state_update(
                 suppress_active_tab_notifications,
                 update,
             ) else {
                 continue;
             };
-            let Some(ws) = self.state.workspaces.get(update.ws_idx) else {
+            if !self.state.notification_throttle.allow(
+                update.pane_id,
+                _kind,
+                std::time::Instant::now(),
+            ) {
                 continue;
-            };
-            let Some(pane) = ws
-                .tabs
-                .iter()
-                .find_map(|tab| tab.panes.get(&update.pane_id))
+            }
+            if self.state.workspaces.get(update.ws_idx).is_none() {
+                continue;
+            }
+            let Some((title, context)) =
+                self.notification_presentation_for_pane(update.ws_idx, update.pane_id)
             else {
                 continue;
             };
-            let Some(agent_label) = self
-                .state
-                .terminals
-                .get(&pane.attached_terminal_id)
-                .and_then(|terminal| terminal.effective_agent_label())
-            else {
-                continue;
-            };
-            let event_text = match kind {
-                ToastKind::NeedsAttention => "needs attention",
-                ToastKind::Finished => "finished",
-                ToastKind::UpdateInstalled => "updated",
-            };
-            let workspace_label =
-                ws.display_name_from(&self.state.terminals, &self.terminal_runtimes);
-            let _ = notify(
-                &format!("{} {}", agent_label, event_text),
-                Some(&crate::app::actions::notification_context(
-                    ws,
-                    &workspace_label,
-                    update.ws_idx,
-                    update.pane_id,
-                )),
-            );
+            let _ = notify(&title, Some(&context));
         }
     }
 
@@ -723,19 +733,17 @@ impl App {
             else {
                 continue;
             };
-            let ws = &self.state.workspaces[ws_idx];
-            let workspace_label =
-                ws.display_name_from(&self.state.terminals, &self.terminal_runtimes);
-            let context = crate::app::actions::notification_context(
-                ws,
-                &workspace_label,
-                ws_idx,
-                delivery.pane_id,
-            );
+            let Some((title, context)) =
+                self.notification_presentation_for_pane(ws_idx, delivery.pane_id)
+            else {
+                continue;
+            };
             if let Some(toast) = delivery.toast.as_mut() {
+                toast.title = title.clone();
                 toast.context = context.clone();
             }
             if let Some(toast) = delivery.client_notification.as_mut() {
+                toast.title = title.clone();
                 toast.context = context.clone();
             }
             if let Some(toast) = self.state.toast.as_mut() {
@@ -743,6 +751,7 @@ impl App {
                     target.workspace_id == delivery.workspace_id
                         && target.pane_id == delivery.pane_id
                 }) {
+                    toast.title = title;
                     toast.context = context;
                 }
             }
@@ -879,6 +888,14 @@ impl App {
                     result: ResponseResult::Ok {},
                 }
             }
+            Method::ServerRestart(_) => {
+                self.state.request_restart = true;
+                self.state.should_quit = true;
+                SuccessResponse {
+                    id: request.id,
+                    result: ResponseResult::Ok {},
+                }
+            }
             Method::ServerLiveHandoff(_) => {
                 let response = ErrorResponse {
                     id: request.id,
@@ -995,9 +1012,26 @@ impl App {
             Method::AgentFocus(target) => return self.handle_agent_focus(request.id, target),
             Method::AgentRename(params) => return self.handle_agent_rename(request.id, params),
             Method::AgentStart(params) => return self.handle_agent_start(request.id, params),
+            Method::AgentRestore(params) => return self.handle_agent_restore(request.id, params),
             Method::AgentRead(params) => return self.handle_agent_read(request.id, params),
             Method::AgentExplain(target) => return self.handle_agent_explain(request.id, target),
             Method::AgentSend(params) => return self.handle_agent_send(request.id, params),
+            Method::MsgSend(params) => match self.handle_msg_send(params) {
+                Ok(result) => return responses::encode_success(request.id, result),
+                Err(error) => return responses::encode_error_body(request.id, error),
+            },
+            Method::MsgInbox(params) => match self.handle_msg_inbox(params) {
+                Ok(result) => return responses::encode_success(request.id, result),
+                Err(error) => return responses::encode_error_body(request.id, error),
+            },
+            Method::MsgHistory(params) => match self.handle_msg_history(params) {
+                Ok(result) => return responses::encode_success(request.id, result),
+                Err(error) => return responses::encode_error_body(request.id, error),
+            },
+            Method::MsgRooms(_) => match self.handle_msg_rooms() {
+                Ok(result) => return responses::encode_success(request.id, result),
+                Err(error) => return responses::encode_error_body(request.id, error),
+            },
             Method::PaneSplit(params) => return self.handle_pane_split(request.id, params),
             Method::PaneSwap(params) => return self.handle_pane_swap(request.id, params),
             Method::PaneMove(params) => return self.handle_pane_move(request.id, params),
@@ -1076,12 +1110,6 @@ impl App {
                 };
             }
             Method::PaneSendKeys(params) => return self.handle_pane_send_keys(request.id, params),
-            Method::IntegrationInstall(params) => {
-                return self.handle_integration_install(request.id, params);
-            }
-            Method::IntegrationUninstall(params) => {
-                return self.handle_integration_uninstall(request.id, params);
-            }
             Method::PluginLink(params) => {
                 return self.handle_plugin_link(request.id, params);
             }
@@ -1334,6 +1362,30 @@ mod tests {
             },
         );
         app
+    }
+
+    #[test]
+    fn server_restart_api_requests_restart_instead_of_stop() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "restart".into(),
+            method: crate::api::schema::Method::ServerRestart(
+                crate::api::schema::EmptyParams::default(),
+            ),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"]["type"], "ok");
+        assert!(app.state.should_quit);
+        assert!(app.state.request_restart);
     }
 
     #[tokio::test]
@@ -1630,7 +1682,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn herdr_toast_context_uses_live_root_runtime_cwd_label() {
+    async fn herdr_toast_uses_live_root_runtime_cwd_and_osc_title() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
             &crate::config::Config::default(),
@@ -1663,6 +1715,11 @@ mod tests {
         app.state.workspaces = vec![workspace];
         app.state.ensure_test_terminals();
         app.state.terminals.get_mut(&terminal_id).unwrap().cwd = stale_cwd;
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_terminal_title(Some("planner".into()));
         app.state.active = None;
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
@@ -1711,7 +1768,11 @@ mod tests {
 
         assert_eq!(
             app.state.toast.as_ref().map(|toast| toast.context.as_str()),
-            Some("__herdr_projects__ · 1")
+            Some("sh-3.2$")
+        );
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.title.as_str()),
+            Some("1 __herdr_projects__-planner")
         );
 
         for (_, runtime) in app.terminal_runtimes.drain() {
@@ -1808,7 +1869,7 @@ mod tests {
         assert!(app.handle_scheduled_tasks(notification_deadline, false));
         assert_eq!(
             app.state.toast.as_ref().map(|toast| toast.context.as_str()),
-            Some("__herdr_projects__ · 1")
+            Some("sh-3.2$")
         );
 
         for (_, runtime) in app.terminal_runtimes.drain() {

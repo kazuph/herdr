@@ -433,6 +433,10 @@ impl Tab {
         self.detach_pane(pane_id)
     }
 
+    pub fn rotate_panes(&mut self, reverse: bool) -> bool {
+        self.layout.rotate_panes(reverse)
+    }
+
     pub(crate) fn from_existing_pane(
         number: usize,
         custom_name: Option<String>,

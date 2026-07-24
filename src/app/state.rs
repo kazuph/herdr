@@ -621,6 +621,12 @@ pub struct WorkspaceCardArea {
     pub indented: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceSectionHeaderArea {
+    pub section: crate::workspace::WorkspaceSection,
+    pub rect: Rect,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeCreateState {
     pub source_workspace_id: String,
@@ -776,17 +782,29 @@ pub struct ViewState {
     pub layout: ViewLayout,
     pub sidebar_rect: Rect,
     pub workspace_card_areas: Vec<WorkspaceCardArea>,
+    pub workspace_section_header_areas: Vec<WorkspaceSectionHeaderArea>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
     pub tab_scroll_right_hit_area: Rect,
     pub new_tab_hit_area: Rect,
     pub terminal_area: Rect,
+    pub pane_action_bar_rect: Rect,
+    pub pane_action_copy_rect: Rect,
+    pub pane_action_cycle_layout_rect: Rect,
+    pub pane_action_rotate_rect: Rect,
+    pub pane_action_equalize_rect: Rect,
+    pub sidebar_width_toggle_rects: SidebarWidthToggleRects,
     pub mobile_header_rect: Rect,
     pub mobile_menu_hit_area: Rect,
     pub toast_hit_area: Rect,
     pub pane_infos: Vec<PaneInfo>,
     pub split_borders: Vec<SplitBorder>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SidebarWidthToggleRects {
+    pub button: Rect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -806,6 +824,7 @@ pub enum Mode {
     ConfirmRemoveWorktree,
     Resize,
     ConfirmClose,
+    ConfirmDanger,
     ContextMenu,
     Settings,
     GlobalMenu,
@@ -832,6 +851,7 @@ impl Mode {
                 | Mode::Copy
                 | Mode::Resize
                 | Mode::ConfirmClose
+                | Mode::ConfirmDanger
                 | Mode::ConfirmRemoveWorktree
                 | Mode::ContextMenu
                 | Mode::GlobalMenu
@@ -934,6 +954,13 @@ pub enum AgentPanelSort {
     Priority,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WorkspacePanelDensity {
+    #[default]
+    Full,
+    Slim,
+}
+
 // ---------------------------------------------------------------------------
 // Settings UI state
 // ---------------------------------------------------------------------------
@@ -944,20 +971,16 @@ pub enum SettingsSection {
     Theme,
     Sound,
     Toast,
+    // These config-backed surfaces remain available to focused tests, but the fork's
+    // settings modal intentionally exposes only Theme, Sound, and Toast.
+    #[allow(dead_code)]
     PaneLabels,
+    #[allow(dead_code)]
     Experiments,
-    Integrations,
 }
 
 impl SettingsSection {
-    pub const ALL: &[Self] = &[
-        Self::Theme,
-        Self::Sound,
-        Self::Toast,
-        Self::PaneLabels,
-        Self::Integrations,
-        Self::Experiments,
-    ];
+    pub const ALL: &[Self] = &[Self::Theme, Self::Sound, Self::Toast];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -966,7 +989,6 @@ impl SettingsSection {
             Self::Toast => "toasts",
             Self::PaneLabels => "pane labels",
             Self::Experiments => "experiments",
-            Self::Integrations => "integrations",
         }
     }
 }
@@ -1098,6 +1120,7 @@ pub(crate) enum DragTarget {
     WorkspaceReorder {
         source_ws_idx: usize,
         insert_idx: Option<usize>,
+        target_section: Option<crate::workspace::WorkspaceSection>,
     },
     TabReorder {
         ws_idx: usize,
@@ -1172,6 +1195,8 @@ pub enum ContextMenuKind {
         pane_id: PaneId,
         source_pane_id: Option<PaneId>,
         has_manual_label: bool,
+        has_layout_actions: bool,
+        is_zoomed: bool,
     },
 }
 
@@ -1184,29 +1209,81 @@ pub struct ContextMenuState {
 }
 
 impl ContextMenuState {
-    pub fn items(&self) -> &'static [&'static str] {
+    pub fn items(&self) -> Vec<&'static str> {
+        let mut items = self.base_items().to_vec();
+        let agent_items = ["New Claude Code agent", "New Codex agent", "New agy agent"];
         match self.kind {
-            ContextMenuKind::Workspace { .. } => &["Rename", "Close"],
+            ContextMenuKind::Workspace { .. } | ContextMenuKind::GitWorkspace { .. } => {
+                items.splice(0..0, agent_items.into_iter().chain(["--"]));
+            }
+            ContextMenuKind::Pane { .. } | ContextMenuKind::Tab { .. } => {}
+        }
+        items
+    }
+
+    fn base_items(&self) -> &'static [&'static str] {
+        match self.kind {
+            ContextMenuKind::Workspace { .. } => &[
+                "Duplicate",
+                "--",
+                "Rename",
+                "Close",
+                "--",
+                "⭐ favorite",
+                "💼 work",
+                "🏠 personal",
+                "No section",
+            ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: false,
                 ..
-            } => &["Rename", "Close", "New worktree", "Open worktree..."],
+            } => &[
+                "New worktree",
+                "Open worktree...",
+                "Duplicate",
+                "--",
+                "Rename",
+                "Close",
+                "--",
+                "⭐ favorite",
+                "💼 work",
+                "🏠 personal",
+                "No section",
+            ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: true,
                 ..
-            } => &["Rename", "Close", "Delete worktree checkout..."],
+            } => &[
+                "Delete worktree checkout...",
+                "Duplicate",
+                "--",
+                "Rename",
+                "Close",
+                "--",
+                "⭐ favorite",
+                "💼 work",
+                "🏠 personal",
+                "No section",
+            ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: true,
                 collapsed: true,
                 ..
             } => &[
-                "Rename",
-                "Close group",
                 "New worktree",
                 "Open worktree...",
+                "Duplicate",
+                "--",
+                "Rename",
+                "Close group",
                 "Expand",
+                "--",
+                "⭐ favorite",
+                "💼 work",
+                "🏠 personal",
+                "No section",
             ],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
@@ -1214,61 +1291,200 @@ impl ContextMenuState {
                 collapsed: false,
                 ..
             } => &[
-                "Rename",
-                "Close group",
                 "New worktree",
                 "Open worktree...",
+                "Duplicate",
+                "--",
+                "Rename",
+                "Close group",
                 "Collapse",
+                "--",
+                "⭐ favorite",
+                "💼 work",
+                "🏠 personal",
+                "No section",
             ],
             ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
             ContextMenuKind::Pane {
                 has_manual_label: true,
-                source_pane_id: Some(_),
+                has_layout_actions: true,
+                is_zoomed: false,
                 ..
             } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
                 "Rename pane",
                 "Clear pane name",
-                "Swap with focused pane",
-                "Split right",
-                "Split down",
-                "Zoom",
-                "Close pane",
-            ],
-            ContextMenuKind::Pane {
-                has_manual_label: false,
-                source_pane_id: Some(_),
-                ..
-            } => &[
-                "Rename pane",
-                "Swap with focused pane",
-                "Split right",
-                "Split down",
+                "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "Move to left split",
+                "Move to right split",
+                "Move to upper split",
+                "Move to lower split",
+                "Equalize pane sizes",
+                "Cycle pane layout",
+                "Rotate panes",
+                "Rotate panes reverse",
+                "--",
                 "Zoom",
                 "Close pane",
             ],
             ContextMenuKind::Pane {
                 has_manual_label: true,
-                source_pane_id: None,
+                has_layout_actions: true,
+                is_zoomed: true,
                 ..
             } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
                 "Rename pane",
                 "Clear pane name",
-                "Split right",
-                "Split down",
+                "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "Move to left split",
+                "Move to right split",
+                "Move to upper split",
+                "Move to lower split",
+                "Equalize pane sizes",
+                "Cycle pane layout",
+                "Rotate panes",
+                "Rotate panes reverse",
+                "--",
+                "Unzoom",
+                "Close pane",
+            ],
+            ContextMenuKind::Pane {
+                has_manual_label: true,
+                has_layout_actions: false,
+                ..
+            } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
+                "Rename pane",
+                "Clear pane name",
+                "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "Close pane",
+            ],
+            ContextMenuKind::Pane {
+                has_manual_label: false,
+                has_layout_actions: true,
+                is_zoomed: false,
+                ..
+            } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
+                "Rename pane",
+                "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "Move to left split",
+                "Move to right split",
+                "Move to upper split",
+                "Move to lower split",
+                "Equalize pane sizes",
+                "Cycle pane layout",
+                "Rotate panes",
+                "Rotate panes reverse",
+                "--",
                 "Zoom",
                 "Close pane",
             ],
             ContextMenuKind::Pane {
                 has_manual_label: false,
-                source_pane_id: None,
+                has_layout_actions: true,
+                is_zoomed: true,
                 ..
             } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
                 "Rename pane",
-                "Split right",
-                "Split down",
-                "Zoom",
+                "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "Move to left split",
+                "Move to right split",
+                "Move to upper split",
+                "Move to lower split",
+                "Equalize pane sizes",
+                "Cycle pane layout",
+                "Rotate panes",
+                "Rotate panes reverse",
+                "--",
+                "Unzoom",
                 "Close pane",
             ],
+            ContextMenuKind::Pane {
+                has_manual_label: false,
+                has_layout_actions: false,
+                ..
+            } => &[
+                "Split vertical",
+                "Split horizontal",
+                "--",
+                "Rename pane",
+                "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "Close pane",
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DangerousAction {
+    RestoreAgents,
+    StopServer,
+    Restart,
+}
+
+impl DangerousAction {
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            DangerousAction::RestoreAgents => "Restore agents?",
+            DangerousAction::StopServer => "Stop server?",
+            DangerousAction::Restart => "Restart Herdr?",
+        }
+    }
+
+    pub(crate) fn detail(self) -> &'static str {
+        match self {
+            DangerousAction::RestoreAgents => {
+                "Types resume commands into panes with recorded agent sessions."
+            }
+            DangerousAction::StopServer => "Stops the Herdr server and all running panes.",
+            DangerousAction::Restart => {
+                "Restarts the Herdr server. The saved session can be restored."
+            }
+        }
+    }
+
+    pub(crate) fn confirm_label(self) -> &'static str {
+        match self {
+            DangerousAction::RestoreAgents => "restore",
+            DangerousAction::StopServer => "stop",
+            DangerousAction::Restart => "restart",
         }
     }
 }
@@ -1293,6 +1509,45 @@ pub struct ToastNotification {
     pub context: String,
     pub position: Option<crate::config::ToastHerdrPosition>,
     pub target: Option<ToastTarget>,
+}
+
+#[derive(Debug, Default)]
+pub struct NotificationThrottle {
+    last_by_pane: std::collections::HashMap<PaneId, (ToastKind, std::time::Instant)>,
+    last_attention_at: Option<std::time::Instant>,
+}
+
+const NOTIFICATION_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl NotificationThrottle {
+    pub(crate) fn allow(
+        &mut self,
+        pane_id: PaneId,
+        kind: ToastKind,
+        now: std::time::Instant,
+    ) -> bool {
+        if kind == ToastKind::Finished
+            && self
+                .last_attention_at
+                .is_some_and(|at| now.duration_since(at) < NOTIFICATION_COOLDOWN)
+        {
+            return false;
+        }
+        if self
+            .last_by_pane
+            .get(&pane_id)
+            .is_some_and(|(last_kind, at)| {
+                *last_kind == kind && now.duration_since(*at) < NOTIFICATION_COOLDOWN
+            })
+        {
+            return false;
+        }
+        self.last_by_pane.insert(pane_id, (kind, now));
+        if kind == ToastKind::NeedsAttention {
+            self.last_attention_at = Some(now);
+        }
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1350,10 +1605,48 @@ pub enum SidebarWidthSource {
     Manual,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidebarWidthPreset {
+    Narrow,
+    Normal,
+    Wide,
+}
+
+impl SidebarWidthPreset {
+    pub(crate) fn button_label(self) -> &'static str {
+        match self {
+            Self::Narrow => " NARROW ",
+            Self::Normal => " NORMAL ",
+            Self::Wide => " WIDE ",
+        }
+    }
+
+    pub(crate) fn width(self, state: &AppState) -> u16 {
+        match self {
+            Self::Narrow => state.sidebar_min_width,
+            Self::Normal => state
+                .default_sidebar_width
+                .clamp(state.sidebar_min_width, state.sidebar_max_width),
+            Self::Wide => state.sidebar_max_width,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PaneFocusTarget {
     pub workspace_id: String,
     pub pane_id: PaneId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MissingAgentSessionWarning {
+    pub workspace_number: usize,
+    pub workspace_label: String,
+    pub pane_label: String,
+    pub agent: String,
+    pub title: Option<String>,
+    pub cwd: std::path::PathBuf,
+    pub reason: &'static str,
 }
 
 /// All application state — pure data, no channels or async runtime.
@@ -1368,6 +1661,8 @@ pub struct AppState {
     pub workspaces: Vec<Workspace>,
     pub active: Option<usize>,
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
+    pub(crate) pane_focus_back: Vec<PaneFocusTarget>,
+    pub(crate) pane_focus_forward: Vec<PaneFocusTarget>,
     pub selected: usize,
     pub mode: Mode,
     pub should_quit: bool,
@@ -1377,6 +1672,7 @@ pub struct AppState {
     /// The server's event loop checks this and handles client detach.
     pub detach_requested: bool,
     pub request_new_workspace: bool,
+    pub requested_new_workspace_section: Option<crate::workspace::WorkspaceSection>,
     pub request_new_tab: bool,
     pub request_new_linked_worktree: Option<usize>,
     pub request_open_existing_worktree: Option<usize>,
@@ -1386,6 +1682,8 @@ pub struct AppState {
     pub request_submit_worktree_open: bool,
     pub request_submit_worktree_remove: bool,
     pub request_reload_config: bool,
+    pub request_agent_restore: bool,
+    pub request_restart: bool,
     /// Set when the headless server should ask attached clients to reload
     /// their client-local sound config from disk.
     pub request_client_config_reload: bool,
@@ -1398,8 +1696,11 @@ pub struct AppState {
     pub worktree_create: Option<WorktreeCreateState>,
     pub worktree_open: Option<WorktreeOpenState>,
     pub worktree_remove: Option<WorktreeRemoveState>,
+    pub pending_duplicate_workspace: Option<usize>,
     pub worktree_directory: std::path::PathBuf,
     pub collapsed_space_keys: std::collections::HashSet<String>,
+    pub collapsed_workspace_sections:
+        std::collections::BTreeSet<crate::workspace::WorkspaceSection>,
     pub request_complete_onboarding: bool,
     pub name_input: String,
     pub name_input_replace_on_type: bool,
@@ -1408,6 +1709,7 @@ pub struct AppState {
     pub keybind_help: KeybindHelpState,
     pub navigator: NavigatorState,
     pub copy_mode: Option<CopyModeState>,
+    pub(crate) copy_mode_fullscreen_pane: Option<PaneId>,
     pub workspace_scroll: usize,
     pub agent_panel_scroll: usize,
     pub tab_scroll: usize,
@@ -1421,6 +1723,7 @@ pub struct AppState {
     pub selection: Option<Selection>,
     pub selection_autoscroll: Option<SelectionAutoscroll>,
     pub context_menu: Option<ContextMenuState>,
+    pub dangerous_action: Option<DangerousAction>,
     // Notifications
     pub update_available: Option<String>,
     pub update_install_command: String,
@@ -1428,12 +1731,14 @@ pub struct AppState {
     pub update_dismissed: bool,
     pub config_diagnostic: Option<String>,
     pub toast: Option<ToastNotification>,
+    pub notification_throttle: NotificationThrottle,
     pub pending_agent_notifications: std::collections::HashMap<PaneId, PendingAgentNotification>,
     pub copy_feedback: Option<CopyFeedback>,
     /// Last reported focus state for the outer terminal hosting herdr.
     /// None means unsupported or not yet reported, which preserves active-pane suppression.
     pub outer_terminal_focus: Option<bool>,
     // Config
+    pub agent_start_config: crate::config::AgentStartConfig,
     pub prefix_code: KeyCode,
     pub prefix_mods: KeyModifiers,
     pub default_sidebar_width: u16,
@@ -1447,6 +1752,7 @@ pub struct AppState {
     pub sidebar_collapsed_mode: crate::config::SidebarCollapsedModeConfig,
     /// Ratio of sidebar height allocated to the workspaces section.
     pub sidebar_section_split: f32,
+    pub workspace_panel_density: WorkspacePanelDensity,
     pub agent_panel_sort: AgentPanelSort,
     pub sidebar_agents: crate::config::AgentsSidebarConfig,
     pub sidebar_spaces: crate::config::SpacesSidebarConfig,
@@ -1464,6 +1770,7 @@ pub struct AppState {
     pub pane_borders: bool,
     pub pane_gaps: bool,
     pub show_agent_labels_on_pane_borders: bool,
+    pub show_tab_bar: bool,
     pub hide_tab_bar_when_single_tab: bool,
     pub pane_history_persistence: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
@@ -1505,14 +1812,10 @@ pub struct AppState {
     pub host_terminal_appearance_explicit: bool,
     /// Settings panel state.
     pub settings: SettingsState,
-    /// Cached integration recommendations for onboarding/settings UI.
-    pub integration_recommendations: Vec<crate::integration::IntegrationRecommendation>,
     /// Cached detection manifest source/version summaries for runtime/API status.
     pub agent_manifest_summaries: Vec<crate::detect::manifest::AgentManifestSummary>,
     /// Cached remote detection manifest update diagnostics for runtime/API status.
     pub agent_manifest_update_status: crate::detect::manifest_update::ManifestUpdateStatus,
-    /// Result messages from the latest integration install action.
-    pub integration_install_messages: Vec<String>,
     /// Installed or linked plugins known to this running Herdr instance.
     pub(crate) installed_plugins: InstalledPluginRegistry,
     /// Pane ids opened through the plugin pane API.
@@ -1537,6 +1840,7 @@ pub struct AppState {
     pub(crate) host_cell_size: crate::kitty_graphics::HostCellSize,
     /// Set when a persisted session snapshot would change.
     pub session_dirty: bool,
+    pub(crate) agent_session_ledger: crate::persist::agent_ledger::AgentSessionLedger,
     /// Terminal runtimes that should be shut down by the app/runtime layer
     /// after state has detached their terminal metadata.
     pub(crate) terminal_runtime_shutdowns: Vec<crate::terminal::TerminalId>,
@@ -1545,6 +1849,123 @@ pub struct AppState {
 impl AppState {
     pub(crate) fn mark_session_dirty(&mut self) {
         self.session_dirty = true;
+    }
+
+    pub(crate) fn set_sidebar_width_preset(&mut self, preset: SidebarWidthPreset) {
+        self.sidebar_width = preset.width(self);
+        self.sidebar_width_source = match preset {
+            SidebarWidthPreset::Normal => SidebarWidthSource::ConfigDefault,
+            SidebarWidthPreset::Narrow | SidebarWidthPreset::Wide => SidebarWidthSource::Manual,
+        };
+        self.sidebar_width_auto = false;
+        self.mark_session_dirty();
+    }
+
+    pub(crate) fn restart_missing_agent_sessions(&self) -> Vec<MissingAgentSessionWarning> {
+        let mut warnings = Vec::new();
+        for (ws_idx, workspace) in self.workspaces.iter().enumerate() {
+            for (tab_idx, tab) in workspace.tabs.iter().enumerate() {
+                let tab_id = workspace
+                    .public_tab_number(tab_idx)
+                    .map(|number| crate::workspace::public_tab_id_for_number(&workspace.id, number))
+                    .unwrap_or_else(|| format!("{}:t{}", workspace.id, tab_idx + 1));
+                for (&pane_id, pane) in &tab.panes {
+                    let Some(terminal) = self.terminals.get(&pane.attached_terminal_id) else {
+                        continue;
+                    };
+                    let Some(agent) = terminal.effective_agent_label() else {
+                        continue;
+                    };
+                    if terminal_safe_session_id(terminal).is_some() {
+                        continue;
+                    }
+
+                    let ledger_entry =
+                        self.agent_session_ledger
+                            .get(&workspace.id, &tab_id, pane_id.raw());
+                    if ledger_entry.is_some_and(|entry| {
+                        crate::agent_sessions::is_safe_session_id(&entry.session_id)
+                    }) {
+                        continue;
+                    }
+
+                    let reason = if terminal_has_unsafe_session_id(terminal) {
+                        "invalid terminal session id"
+                    } else if ledger_entry.is_some() {
+                        "invalid ledger session id"
+                    } else {
+                        "missing session id"
+                    };
+                    let workspace_number = crate::workspace::public_workspace_number(&workspace.id)
+                        .unwrap_or(ws_idx + 1);
+                    let pane_label = workspace
+                        .public_pane_number(pane_id)
+                        .map(|number| {
+                            crate::workspace::public_pane_id_for_number(&workspace.id, number)
+                        })
+                        .unwrap_or_else(|| format!("p{}", pane_id.raw()));
+                    warnings.push(MissingAgentSessionWarning {
+                        workspace_number,
+                        workspace_label: workspace.display_name(),
+                        pane_label,
+                        agent: agent.to_string(),
+                        title: terminal.effective_title(),
+                        cwd: terminal.cwd.clone(),
+                        reason,
+                    });
+                }
+            }
+        }
+        warnings
+    }
+
+    pub(crate) fn update_agent_session_ledger_for_pane(&mut self, pane_id: PaneId) {
+        let Some((ws_idx, tab_idx, terminal_id)) =
+            self.workspaces
+                .iter()
+                .enumerate()
+                .find_map(|(ws_idx, workspace)| {
+                    workspace
+                        .tabs
+                        .iter()
+                        .enumerate()
+                        .find_map(|(tab_idx, tab)| {
+                            tab.panes
+                                .get(&pane_id)
+                                .map(|pane| (ws_idx, tab_idx, pane.attached_terminal_id.clone()))
+                        })
+                })
+        else {
+            return;
+        };
+        let Some(terminal) = self.terminals.get(&terminal_id) else {
+            return;
+        };
+        let Some(agent) = terminal.effective_agent_label() else {
+            return;
+        };
+        let Some(session_id) = terminal_safe_session_id(terminal) else {
+            return;
+        };
+        let workspace = &self.workspaces[ws_idx];
+        let Some(tab_number) = workspace.public_tab_number(tab_idx) else {
+            return;
+        };
+        self.agent_session_ledger
+            .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                pane_id: pane_id.raw(),
+                terminal_id: terminal_id.to_string(),
+                workspace_id: workspace.id.clone(),
+                tab_id: crate::workspace::public_tab_id_for_number(&workspace.id, tab_number),
+                cwd: terminal.cwd.clone(),
+                agent: agent.to_string(),
+                session_id: session_id.to_string(),
+                observed_at: crate::persist::agent_ledger::now_millis(),
+                source: terminal_session_source(terminal)
+                    .unwrap_or_default()
+                    .to_string(),
+                title: terminal.effective_title(),
+            });
     }
 
     pub(crate) fn remove_alias_shadowed_by_new_pane(&mut self, pane_id: PaneId) {
@@ -1579,27 +2000,16 @@ impl AppState {
         true
     }
 
-    pub(crate) fn integration_updates_available(&self) -> bool {
-        self.integration_recommendations
-            .iter()
-            .any(|item| item.state == crate::integration::IntegrationStatusKind::Outdated)
-    }
-
     pub(crate) fn refresh_agent_manifest_summaries(&mut self) {
         self.agent_manifest_summaries = crate::detect::manifest::manifest_summaries();
     }
 
     pub(crate) fn global_menu_attention_badge_visible(&self) -> bool {
-        self.update_available.is_some() || self.integration_updates_available()
+        self.update_available.is_some()
     }
 
     pub(crate) fn global_menu_item_has_badge(&self, item: &str) -> bool {
-        (item == "update ready" && self.update_available.is_some())
-            || (item == "settings" && self.integration_updates_available())
-    }
-
-    pub(crate) fn settings_section_has_badge(&self, section: SettingsSection) -> bool {
-        section == SettingsSection::Integrations && self.integration_updates_available()
+        item == "update ready" && self.update_available.is_some()
     }
 
     pub(crate) fn focused_pane_requests_mouse_capture_from(
@@ -1713,6 +2123,64 @@ impl AppState {
     }
 }
 
+fn terminal_safe_session_id(terminal: &crate::terminal::TerminalState) -> Option<&str> {
+    terminal
+        .hook_authority
+        .as_ref()
+        .and_then(|authority| authority.session_ref.as_ref())
+        .and_then(|session_ref| {
+            (session_ref.kind == crate::agent_resume::AgentSessionRefKind::Id
+                && crate::agent_sessions::is_safe_session_id(&session_ref.value))
+            .then_some(session_ref.value.as_str())
+        })
+        .or_else(|| {
+            terminal
+                .persisted_agent_session
+                .as_ref()
+                .and_then(|session| {
+                    (session.session_ref.kind == crate::agent_resume::AgentSessionRefKind::Id
+                        && crate::agent_sessions::is_safe_session_id(&session.session_ref.value))
+                    .then_some(session.session_ref.value.as_str())
+                })
+        })
+}
+
+fn terminal_has_unsafe_session_id(terminal: &crate::terminal::TerminalState) -> bool {
+    terminal
+        .hook_authority
+        .as_ref()
+        .and_then(|authority| authority.session_ref.as_ref())
+        .is_some_and(|session_ref| {
+            session_ref.kind == crate::agent_resume::AgentSessionRefKind::Id
+                && !crate::agent_sessions::is_safe_session_id(&session_ref.value)
+        })
+        || terminal
+            .persisted_agent_session
+            .as_ref()
+            .is_some_and(|session| {
+                session.session_ref.kind == crate::agent_resume::AgentSessionRefKind::Id
+                    && !crate::agent_sessions::is_safe_session_id(&session.session_ref.value)
+            })
+}
+
+fn terminal_session_source(terminal: &crate::terminal::TerminalState) -> Option<&str> {
+    terminal
+        .hook_authority
+        .as_ref()
+        .and_then(|authority| {
+            authority
+                .session_ref
+                .as_ref()
+                .map(|_| authority.source.as_str())
+        })
+        .or_else(|| {
+            terminal
+                .persisted_agent_session
+                .as_ref()
+                .map(|session| session.source.as_str())
+        })
+}
+
 #[cfg(test)]
 pub fn key_matches(
     key: &crossterm::event::KeyEvent,
@@ -1741,12 +2209,15 @@ impl AppState {
             workspaces: Vec::new(),
             active: None,
             previous_pane_focus: None,
+            pane_focus_back: Vec::new(),
+            pane_focus_forward: Vec::new(),
             selected: 0,
             mode: Mode::Navigate,
             should_quit: false,
             detach_exits: false,
             detach_requested: false,
             request_new_workspace: false,
+            requested_new_workspace_section: None,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
@@ -1756,6 +2227,8 @@ impl AppState {
             request_submit_worktree_open: false,
             request_submit_worktree_remove: false,
             request_reload_config: false,
+            request_agent_restore: false,
+            request_restart: false,
             request_client_config_reload: false,
             request_clipboard_write: None,
             creating_new_tab: false,
@@ -1764,8 +2237,10 @@ impl AppState {
             worktree_create: None,
             worktree_open: None,
             worktree_remove: None,
+            pending_duplicate_workspace: None,
             worktree_directory: std::path::PathBuf::from("/tmp/herdr-worktrees"),
             collapsed_space_keys: std::collections::HashSet::new(),
+            collapsed_workspace_sections: std::collections::BTreeSet::new(),
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,
@@ -1774,6 +2249,7 @@ impl AppState {
             keybind_help: KeybindHelpState { scroll: 0 },
             navigator: NavigatorState::default(),
             copy_mode: None,
+            copy_mode_fullscreen_pane: None,
             workspace_scroll: 0,
             agent_panel_scroll: 0,
             tab_scroll: 0,
@@ -1783,12 +2259,19 @@ impl AppState {
                 layout: ViewLayout::Desktop,
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                workspace_section_header_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
                 tab_scroll_right_hit_area: Rect::default(),
                 new_tab_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
+                pane_action_bar_rect: Rect::default(),
+                pane_action_copy_rect: Rect::default(),
+                pane_action_cycle_layout_rect: Rect::default(),
+                pane_action_rotate_rect: Rect::default(),
+                pane_action_equalize_rect: Rect::default(),
+                sidebar_width_toggle_rects: SidebarWidthToggleRects::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_menu_hit_area: Rect::default(),
                 toast_hit_area: Rect::default(),
@@ -1801,27 +2284,31 @@ impl AppState {
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
+            dangerous_action: None,
             update_available: None,
-            update_install_command: "herdr update".into(),
+            update_install_command: crate::update::update_install_command().into(),
             latest_release_notes_available: false,
             update_dismissed: false,
             config_diagnostic: None,
             toast: None,
+            notification_throttle: NotificationThrottle::default(),
             pending_agent_notifications: std::collections::HashMap::new(),
             copy_feedback: None,
             outer_terminal_focus: None,
+            agent_start_config: crate::config::AgentStartConfig::default(),
             prefix_code: KeyCode::Char('b'),
             prefix_mods: KeyModifiers::CONTROL,
             default_sidebar_width: 26,
             sidebar_width: 26,
             sidebar_min_width: 18,
-            sidebar_max_width: 36,
+            sidebar_max_width: 72,
             mobile_width_threshold: crate::config::DEFAULT_MOBILE_WIDTH_THRESHOLD,
             sidebar_width_source: SidebarWidthSource::ConfigDefault,
             sidebar_width_auto: false,
             sidebar_collapsed: false,
             sidebar_collapsed_mode: crate::config::SidebarCollapsedModeConfig::Compact,
             sidebar_section_split: 0.5,
+            workspace_panel_density: WorkspacePanelDensity::Full,
             agent_panel_sort: AgentPanelSort::Spaces,
             sidebar_agents: crate::config::AgentsSidebarConfig::default(),
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),
@@ -1837,6 +2324,7 @@ impl AppState {
             pane_borders: true,
             pane_gaps: false,
             show_agent_labels_on_pane_borders: false,
+            show_tab_bar: true,
             hide_tab_bar_when_single_tab: false,
             pane_history_persistence: false,
             reveal_hidden_cursor_for_cjk_ime: false,
@@ -1876,11 +2364,9 @@ impl AppState {
                 original_palette: None,
                 original_theme: None,
             },
-            integration_recommendations: Vec::new(),
             agent_manifest_summaries: Vec::new(),
             agent_manifest_update_status:
                 crate::detect::manifest_update::ManifestUpdateStatus::default(),
-            integration_install_messages: Vec::new(),
             installed_plugins: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
             pane_graphics_layers: std::collections::HashMap::new(),
@@ -1894,6 +2380,7 @@ impl AppState {
             host_terminal_theme: TerminalTheme::default(),
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
             session_dirty: false,
+            agent_session_ledger: crate::persist::agent_ledger::AgentSessionLedger::default(),
             terminal_runtime_shutdowns: Vec::new(),
         }
     }
@@ -2155,6 +2642,7 @@ impl AppState {
                 DragTarget::WorkspaceReorder {
                     source_ws_idx,
                     insert_idx,
+                    ..
                 } => {
                     assert_workspace_index(*source_ws_idx, "workspace drag source");
                     if let Some(insert_idx) = insert_idx {
@@ -2249,6 +2737,43 @@ mod tests {
     use crossterm::event::KeyEvent;
 
     #[test]
+    fn notification_throttle_is_per_pane_and_kind() {
+        let mut throttle = NotificationThrottle::default();
+        let now = std::time::Instant::now();
+        let pane = PaneId::from_raw(1);
+
+        assert!(throttle.allow(pane, ToastKind::NeedsAttention, now));
+        assert!(!throttle.allow(
+            pane,
+            ToastKind::NeedsAttention,
+            now + std::time::Duration::from_secs(9),
+        ));
+        assert!(throttle.allow(
+            pane,
+            ToastKind::NeedsAttention,
+            now + std::time::Duration::from_secs(10),
+        ));
+    }
+
+    #[test]
+    fn notification_throttle_preserves_attention_over_finished_but_allows_new_attention() {
+        let mut throttle = NotificationThrottle::default();
+        let now = std::time::Instant::now();
+
+        assert!(throttle.allow(PaneId::from_raw(1), ToastKind::NeedsAttention, now));
+        assert!(!throttle.allow(
+            PaneId::from_raw(2),
+            ToastKind::Finished,
+            now + std::time::Duration::from_secs(1),
+        ));
+        assert!(throttle.allow(
+            PaneId::from_raw(2),
+            ToastKind::NeedsAttention,
+            now + std::time::Duration::from_secs(1),
+        ));
+    }
+
+    #[test]
     fn agent_terminal_keeps_final_child_cursor_exposed() {
         let mut state = AppState::test_new();
         let ws = crate::workspace::Workspace::test_new("test");
@@ -2333,6 +2858,35 @@ mod tests {
     }
 
     #[test]
+    fn workspace_context_menu_offers_duplicate_before_rename_and_close() {
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        assert_eq!(
+            menu.items().as_slice(),
+            &[
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "Duplicate",
+                "--",
+                "Rename",
+                "Close",
+                "--",
+                "⭐ favorite",
+                "💼 work",
+                "🏠 personal",
+                "No section"
+            ]
+        );
+    }
+
+    #[test]
     fn linked_worktree_context_menu_keeps_safe_close_and_explicit_remove() {
         let menu = ContextMenuState {
             kind: ContextMenuKind::GitWorkspace {
@@ -2347,8 +2901,23 @@ mod tests {
         };
 
         assert_eq!(
-            menu.items(),
-            &["Rename", "Close", "Delete worktree checkout..."]
+            menu.items().as_slice(),
+            &[
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "Delete worktree checkout...",
+                "Duplicate",
+                "--",
+                "Rename",
+                "Close",
+                "--",
+                "⭐ favorite",
+                "💼 work",
+                "🏠 personal",
+                "No section"
+            ]
         );
     }
 
@@ -2367,8 +2936,24 @@ mod tests {
         };
 
         assert_eq!(
-            menu.items(),
-            &["Rename", "Close", "New worktree", "Open worktree..."]
+            menu.items().as_slice(),
+            &[
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "New worktree",
+                "Open worktree...",
+                "Duplicate",
+                "--",
+                "Rename",
+                "Close",
+                "--",
+                "⭐ favorite",
+                "💼 work",
+                "🏠 personal",
+                "No section"
+            ]
         );
     }
 
@@ -2387,13 +2972,187 @@ mod tests {
         };
 
         assert_eq!(
-            menu.items(),
+            menu.items().as_slice(),
             &[
-                "Rename",
-                "Close group",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
                 "New worktree",
                 "Open worktree...",
-                "Collapse"
+                "Duplicate",
+                "--",
+                "Rename",
+                "Close group",
+                "Collapse",
+                "--",
+                "⭐ favorite",
+                "💼 work",
+                "🏠 personal",
+                "No section"
+            ]
+        );
+    }
+
+    #[test]
+    fn pane_context_menu_matches_legacy_fork_order_and_separators() {
+        let menu = |has_manual_label, has_layout_actions, is_zoomed| ContextMenuState {
+            kind: ContextMenuKind::Pane {
+                ws_idx: 0,
+                tab_idx: 0,
+                pane_id: PaneId::from_raw(1),
+                source_pane_id: None,
+                has_manual_label,
+                has_layout_actions,
+                is_zoomed,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        let single = menu(false, false, false);
+        assert_eq!(
+            single.items(),
+            [
+                "Split vertical",
+                "Split horizontal",
+                "--",
+                "Rename pane",
+                "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "Close pane",
+            ]
+        );
+
+        let multi = menu(true, true, false);
+        assert_eq!(
+            multi.items(),
+            [
+                "Split vertical",
+                "Split horizontal",
+                "--",
+                "Rename pane",
+                "Clear pane name",
+                "--",
+                "New Claude Code agent",
+                "New Codex agent",
+                "New agy agent",
+                "--",
+                "Move to left split",
+                "Move to right split",
+                "Move to upper split",
+                "Move to lower split",
+                "Equalize pane sizes",
+                "Cycle pane layout",
+                "Rotate panes",
+                "Rotate panes reverse",
+                "--",
+                "Zoom",
+                "Close pane",
+            ]
+        );
+
+        let zoomed = menu(false, true, true);
+        let items = zoomed.items();
+        assert_eq!(items[0], "Split vertical");
+        assert_eq!(items[1], "Split horizontal");
+        assert!(items.contains(&"Unzoom"));
+        assert!(!items.contains(&"Zoom"));
+        assert!(!items.contains(&"Swap with focused pane"));
+        assert!(!items.contains(&"Split right"));
+        assert!(!items.contains(&"Split down"));
+    }
+
+    #[test]
+    fn restart_missing_agent_sessions_reports_missing_and_invalid_sources() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![
+            crate::workspace::Workspace::test_new("missing"),
+            crate::workspace::Workspace::test_new("invalid-terminal"),
+            crate::workspace::Workspace::test_new("invalid-ledger"),
+            crate::workspace::Workspace::test_new("safe"),
+        ];
+        state.ensure_test_terminals();
+
+        let configure_agent = |state: &mut AppState, ws_idx: usize, agent| {
+            let pane_id = state.workspaces[ws_idx].tabs[0].root_pane;
+            let terminal_id = state.workspaces[ws_idx]
+                .terminal_id(pane_id)
+                .unwrap()
+                .clone();
+            state
+                .terminals
+                .get_mut(&terminal_id)
+                .unwrap()
+                .set_detected_state(Some(agent), crate::detect::AgentState::Idle);
+            (pane_id, terminal_id)
+        };
+
+        configure_agent(&mut state, 0, crate::detect::Agent::Claude);
+
+        let (_pane, terminal_id) = configure_agent(&mut state, 1, crate::detect::Agent::Codex);
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+                source: "herdr:codex".into(),
+                agent: "codex".into(),
+                session_ref: crate::agent_resume::AgentSessionRef {
+                    kind: crate::agent_resume::AgentSessionRefKind::Id,
+                    value: "bad;session".into(),
+                },
+            });
+
+        let (pane_id, terminal_id) = configure_agent(&mut state, 2, crate::detect::Agent::Claude);
+        let workspace = &state.workspaces[2];
+        state
+            .agent_session_ledger
+            .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                pane_id: pane_id.raw(),
+                terminal_id: terminal_id.to_string(),
+                workspace_id: workspace.id.clone(),
+                tab_id: crate::workspace::public_tab_id_for_number(&workspace.id, 1),
+                cwd: "/tmp".into(),
+                agent: "claude".into(),
+                session_id: "--last".into(),
+                observed_at: 1,
+                source: "herdr:claude".into(),
+                title: None,
+            });
+
+        let (_pane, terminal_id) = configure_agent(&mut state, 3, crate::detect::Agent::Codex);
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+                source: "herdr:codex".into(),
+                agent: "codex".into(),
+                session_ref: crate::agent_resume::AgentSessionRef {
+                    kind: crate::agent_resume::AgentSessionRefKind::Id,
+                    value: "019ef3a2-749c-7b52-b324-2c20cb0b2379".into(),
+                },
+            });
+
+        let reasons: Vec<_> = state
+            .restart_missing_agent_sessions()
+            .into_iter()
+            .map(|warning| (warning.workspace_label, warning.reason))
+            .collect();
+        assert_eq!(
+            reasons,
+            vec![
+                ("missing".to_string(), "missing session id"),
+                (
+                    "invalid-terminal".to_string(),
+                    "invalid terminal session id"
+                ),
+                ("invalid-ledger".to_string(), "invalid ledger session id"),
             ]
         );
     }

@@ -1,8 +1,8 @@
 use bytes::Bytes;
 
 use crate::api::schema::{
-    EventData, EventEnvelope, EventKind, PaneClearAgentAuthorityParams, PaneCurrentParams,
-    PaneDirection, PaneEdgesParams, PaneEdgesResult, PaneFocusDirectionParams,
+    EventData, EventEnvelope, EventKind, PaneAgentState, PaneClearAgentAuthorityParams,
+    PaneCurrentParams, PaneDirection, PaneEdgesParams, PaneEdgesResult, PaneFocusDirectionParams,
     PaneFocusDirectionReason, PaneFocusDirectionResult, PaneInfo, PaneLayoutPane, PaneLayoutParams,
     PaneLayoutRect, PaneLayoutSnapshot, PaneLayoutSplit, PaneListParams, PaneMoveDestination,
     PaneMoveParams, PaneMoveReason, PaneMoveResult, PaneNeighborParams, PaneNeighborResult,
@@ -133,7 +133,9 @@ impl App {
     pub(super) fn handle_pane_current(&mut self, id: String, params: PaneCurrentParams) -> String {
         let target = match params.caller_pane_id.as_deref() {
             Some(caller_pane_id) => self.parse_pane_id(caller_pane_id),
-            None => self.resolve_optional_pane(None),
+            None => params
+                .caller_process_id
+                .and_then(|pid| self.resolve_pane_for_process_session(pid)),
         };
         let Some((ws_idx, pane_id)) = target else {
             return encode_error(id, "pane_not_found", "pane not found");
@@ -143,6 +145,30 @@ impl App {
         };
 
         encode_success(id, ResponseResult::PaneCurrent { pane })
+    }
+
+    fn resolve_pane_for_process_session(&self, caller_process_id: u32) -> Option<(usize, PaneId)> {
+        for (ws_idx, workspace) in self.state.workspaces.iter().enumerate() {
+            for tab in &workspace.tabs {
+                for pane_id in tab.layout.pane_ids() {
+                    let Some(pane) = tab.panes.get(&pane_id) else {
+                        continue;
+                    };
+                    let Some(runtime) = self.terminal_runtimes.get(&pane.attached_terminal_id)
+                    else {
+                        continue;
+                    };
+                    let Some(shell_pid) = runtime.child_pid() else {
+                        continue;
+                    };
+                    let session_pids = crate::platform::session_processes(shell_pid);
+                    if session_pids.contains(&caller_process_id) {
+                        return Some((ws_idx, pane_id));
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub(super) fn handle_pane_get(&mut self, id: String, target: PaneTarget) -> String {
@@ -1224,20 +1250,98 @@ impl App {
         let Some(agent_label) = normalize_reported_agent_label(&params.agent) else {
             return invalid_agent(id);
         };
+        let agent_session_source = if params.agent_session_id.is_none()
+            && params.session_id.is_some()
+            && crate::agent_resume::is_official_agent_source(
+                &format!("herdr:{agent_label}"),
+                &agent_label,
+            ) {
+            Some(format!("herdr:{agent_label}"))
+        } else {
+            None
+        };
+        let agent_session_ref = agent_session_source.as_ref().and_then(|source| {
+            crate::agent_resume::session_ref_from_report(
+                source,
+                &agent_label,
+                params.session_id.clone(),
+                params.agent_session_path.clone(),
+            )
+        });
+        let title = normalize_presentation_text(params.title.clone());
+        let custom_status = normalize_presentation_text(params.custom_status.clone());
+        let metadata_source = params.source.clone();
+        let metadata_seq = params.seq;
+        let metadata_state = match params.state {
+            PaneAgentState::Idle => "idle",
+            PaneAgentState::Working => "working",
+            PaneAgentState::Blocked => "blocked",
+            PaneAgentState::Unknown => "unknown",
+        };
+        if let Ok(store) = crate::dispatch::DispatchStore::open_active() {
+            let session_id = params
+                .agent_session_id
+                .as_deref()
+                .or(params.session_id.as_deref());
+            let _ = store.upsert_actor(
+                "agent",
+                &agent_label,
+                Some(&params.source),
+                params.model.as_deref(),
+                session_id,
+                Some(&params.pane_id),
+            );
+        }
         self.handle_internal_event(crate::events::AppEvent::HookStateReported {
             pane_id,
-            session_ref: crate::agent_resume::session_ref_from_report(
-                &params.source,
-                &agent_label,
-                params.agent_session_id,
-                params.agent_session_path,
-            ),
+            session_ref: if agent_session_source.is_none() {
+                crate::agent_resume::session_ref_from_report(
+                    &params.source,
+                    &agent_label,
+                    params
+                        .agent_session_id
+                        .clone()
+                        .or(params.session_id.clone()),
+                    params.agent_session_path.clone(),
+                )
+            } else {
+                None
+            },
             source: params.source,
-            agent_label,
+            agent_label: agent_label.clone(),
             state: detect_state_from_api(params.state),
             message: params.message,
             seq: params.seq,
         });
+        if let (Some(source), Some(session_ref)) = (agent_session_source, agent_session_ref) {
+            self.handle_internal_event(crate::events::AppEvent::AgentSessionReported {
+                pane_id,
+                source,
+                agent_label: agent_label.clone(),
+                seq: params.seq,
+                session_ref: Some(session_ref),
+                session_start_source: None,
+            });
+        }
+        if title.is_some() || custom_status.is_some() {
+            let state_labels = custom_status
+                .map(|label| std::collections::HashMap::from([(metadata_state.into(), label)]))
+                .unwrap_or_default();
+            self.handle_internal_event(crate::events::AppEvent::HookMetadataReported {
+                pane_id,
+                source: metadata_source,
+                agent_label: Some(agent_label),
+                applies_to_source: None,
+                title,
+                display_agent: None,
+                state_labels,
+                clear_title: false,
+                clear_display_agent: false,
+                clear_state_labels: false,
+                seq: metadata_seq,
+                ttl: None,
+            });
+        }
 
         encode_success(id, ResponseResult::Ok {})
     }
@@ -2203,6 +2307,7 @@ mod tests {
             "req".into(),
             crate::api::schema::PaneCurrentParams {
                 caller_pane_id: Some(right_public.clone()),
+                caller_process_id: None,
             },
         );
 
@@ -2217,34 +2322,26 @@ mod tests {
     }
 
     #[test]
-    fn api_pane_current_falls_back_to_focused_pane() {
+    fn api_pane_current_without_caller_fails_closed() {
         let mut app = app_with_linked_worktree();
         app.state.active = Some(0);
         app.state.selected = 0;
         let root = app.state.workspaces[0].tabs[0].root_pane;
         app.state.workspaces[0].tabs[0].layout.focus_pane(root);
-        let root_public = app.public_pane_id(0, root).unwrap();
 
         let response = app.handle_pane_current(
             "req".into(),
             crate::api::schema::PaneCurrentParams::default(),
         );
 
-        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
-        let ResponseResult::PaneCurrent { pane } = success.result else {
-            panic!("expected pane current response");
-        };
-        assert_eq!(pane.pane_id, root_public);
-        assert!(pane.focused);
+        assert_eq!(metadata_error_code(&response), "pane_not_found");
     }
 
     #[test]
-    fn api_pane_current_dispatches_through_socket_request() {
+    fn api_pane_current_socket_request_without_caller_fails_closed() {
         let mut app = app_with_linked_worktree();
         app.state.active = Some(0);
         app.state.selected = 0;
-        let root = app.state.workspaces[0].tabs[0].root_pane;
-        let root_public = app.public_pane_id(0, root).unwrap();
 
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
@@ -2253,11 +2350,7 @@ mod tests {
             ),
         });
 
-        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
-        let ResponseResult::PaneCurrent { pane } = success.result else {
-            panic!("expected pane current response");
-        };
-        assert_eq!(pane.pane_id, root_public);
+        assert_eq!(metadata_error_code(&response), "pane_not_found");
     }
 
     #[test]
@@ -2268,6 +2361,7 @@ mod tests {
             "req".into(),
             crate::api::schema::PaneCurrentParams {
                 caller_pane_id: Some("missing".into()),
+                caller_process_id: None,
             },
         );
 
@@ -3583,6 +3677,149 @@ mod tests {
 
         let error: ErrorResponse = serde_json::from_str(&response).unwrap();
         assert_eq!(error.error.code, "pane_not_found");
+    }
+
+    #[test]
+    fn legacy_report_agent_fields_feed_native_session_and_metadata() {
+        let (mut app, pane_id) = app_with_test_workspace();
+        let internal_pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&internal_pane_id]
+            .attached_terminal_id
+            .clone();
+
+        let response = app.handle_pane_report_agent(
+            "legacy-report".into(),
+            PaneReportAgentParams {
+                pane_id,
+                source: "custom:tool".into(),
+                agent: "codex".into(),
+                state: PaneAgentState::Working,
+                message: None,
+                custom_status: Some("checking parity".into()),
+                seq: Some(1),
+                title: Some(" restore pane sessions ".into()),
+                agent_session_id: None,
+                session_id: Some("019f786c-335a-7b42-8f61-cf9f29068f56".into()),
+                agent_session_path: None,
+                model: Some("gpt-test".into()),
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert!(matches!(success.result, ResponseResult::Ok {}));
+        let terminal = &app.state.terminals[&terminal_id];
+        let authority = terminal.hook_authority.as_ref().unwrap();
+        assert_eq!(authority.source, "custom:tool");
+        assert!(authority.session_ref.is_none());
+        let session = terminal.persisted_agent_session.as_ref().unwrap();
+        assert_eq!(session.source, "herdr:codex");
+        assert_eq!(
+            session.session_ref.value,
+            "019f786c-335a-7b42-8f61-cf9f29068f56"
+        );
+        assert_eq!(
+            terminal.effective_title().as_deref(),
+            Some("restore pane sessions")
+        );
+        assert_eq!(
+            terminal
+                .effective_presentation()
+                .state_labels
+                .get("working")
+                .map(String::as_str),
+            Some("checking parity")
+        );
+        let cleared = app
+            .state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .clear_hook_authority_with_mutation(Some("custom:tool"), Some(2));
+        assert!(cleared.is_some());
+        let terminal = &app.state.terminals[&terminal_id];
+        assert!(terminal.hook_authority.is_none());
+        let session = terminal.persisted_agent_session.as_ref().unwrap();
+        assert_eq!(session.source, "herdr:codex");
+        assert_eq!(
+            session.session_ref.value,
+            "019f786c-335a-7b42-8f61-cf9f29068f56"
+        );
+        let snapshot = crate::persist::capture(
+            &app.state.workspaces,
+            &app.state.terminals,
+            &app.terminal_runtimes,
+            app.state.active,
+            app.state.selected,
+            app.state.sidebar_width,
+            app.state.sidebar_section_split,
+            app.state.collapsed_space_keys.clone(),
+            app.state.collapsed_workspace_sections.clone(),
+        );
+        let pane_snapshot = snapshot.workspaces[0].tabs[0]
+            .panes
+            .values()
+            .next()
+            .unwrap();
+        let saved_session = pane_snapshot.agent_session.as_ref().unwrap();
+        assert_eq!(saved_session.source, "herdr:codex");
+        assert_eq!(saved_session.value, "019f786c-335a-7b42-8f61-cf9f29068f56");
+    }
+
+    #[test]
+    fn legacy_state_report_preserves_restored_native_session() {
+        let (mut app, pane_id) = app_with_test_workspace();
+        let internal_pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&internal_pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+                source: "herdr:codex".into(),
+                agent: "codex".into(),
+                session_ref: crate::agent_resume::AgentSessionRef::id(
+                    "019f786c-335a-7b42-8f61-cf9f29068f56",
+                )
+                .unwrap(),
+            });
+
+        let response = app.handle_pane_report_agent(
+            "restored-report".into(),
+            PaneReportAgentParams {
+                pane_id,
+                source: "custom:tool".into(),
+                agent: "codex".into(),
+                state: PaneAgentState::Working,
+                message: None,
+                custom_status: Some("checking parity".into()),
+                seq: Some(1),
+                title: Some("restore pane sessions".into()),
+                agent_session_id: None,
+                session_id: Some("019f786c-335a-7b42-8f61-cf9f29068f56".into()),
+                agent_session_path: None,
+                model: None,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert!(matches!(success.result, ResponseResult::Ok {}));
+        let terminal = &app.state.terminals[&terminal_id];
+        assert_eq!(terminal.state, AgentState::Working);
+        assert_eq!(
+            terminal
+                .hook_authority
+                .as_ref()
+                .map(|authority| authority.source.as_str()),
+            Some("custom:tool")
+        );
+        let session = terminal.persisted_agent_session.as_ref().unwrap();
+        assert_eq!(session.source, "herdr:codex");
+        assert_eq!(
+            session.session_ref.value,
+            "019f786c-335a-7b42-8f61-cf9f29068f56"
+        );
     }
 
     #[test]

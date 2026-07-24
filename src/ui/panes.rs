@@ -228,6 +228,38 @@ pub(super) fn compute_pane_infos(
 
     let multi_pane = ws.layout.pane_count() > 1;
 
+    if let Some(fullscreen_pane) = app.copy_mode_fullscreen_pane {
+        if ws
+            .active_tab()
+            .is_some_and(|tab| tab.panes.contains_key(&fullscreen_pane))
+        {
+            if let Some(rt) =
+                app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, fullscreen_pane)
+            {
+                if resize_panes
+                    && ws.terminal_id(fullscreen_pane).is_some_and(|terminal_id| {
+                        !app.direct_attach_resize_locks.contains(terminal_id)
+                    })
+                {
+                    rt.resize(
+                        area.height,
+                        area.width,
+                        cell_size.width_px,
+                        cell_size.height_px,
+                    );
+                }
+            }
+            return vec![PaneInfo {
+                id: fullscreen_pane,
+                rect: area,
+                inner_rect: area,
+                scrollbar_rect: None,
+                borders: Borders::NONE,
+                is_focused: true,
+            }];
+        }
+    }
+
     if ws.zoomed {
         let focused_id = ws.layout.focused();
         let borders = if multi_pane && app.pane_borders {
@@ -310,6 +342,7 @@ pub(super) fn render_panes(
 
     let multi_pane = ws.layout.pane_count() > 1;
     let terminal_active = app.mode == Mode::Terminal;
+    let fullscreen_copy_pane = app.copy_mode_fullscreen_pane;
 
     for info in &app.view.pane_infos {
         if let Some(rt) = app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id) {
@@ -318,7 +351,9 @@ pub(super) fn render_panes(
                 && !pane_is_scrolled_back(rt)
                 && app.pane_exposes_host_cursor(ws_idx, info.id);
             rt.render(frame, info.inner_rect, show_cursor);
-            render_pane_scrollbar(app, frame, info, rt);
+            if fullscreen_copy_pane != Some(info.id) {
+                render_pane_scrollbar(app, frame, info, rt);
+            }
 
             let should_dim = !info.is_focused && multi_pane && !terminal_active;
             if should_dim {
@@ -614,10 +649,19 @@ fn render_pane_border_titles(app: &AppState, ws: &crate::workspace::Workspace, f
         if !info.borders.contains(Borders::TOP) || info.rect.width <= 4 {
             continue;
         }
+        let is_zoomed_title = ws.zoomed && info.is_focused;
         let Some(title) = ws
             .pane_state(info.id)
             .and_then(|pane| app.terminals.get(&pane.attached_terminal_id))
-            .and_then(|terminal| terminal.border_label(app.show_agent_labels_on_pane_borders))
+            .map(|terminal| pane_border_label(terminal, app.show_agent_labels_on_pane_borders))
+            .map(|label| {
+                let label = format!("%{} {label}", info.id.raw());
+                if is_zoomed_title {
+                    format!("ZOOM {label}")
+                } else {
+                    label
+                }
+            })
             .and_then(|label| pane_border_title(&label, info.rect.width, info.is_focused))
         else {
             continue;
@@ -653,6 +697,15 @@ fn render_pane_border_titles(app: &AppState, ws: &crate::workspace::Workspace, f
             style,
         );
     }
+}
+
+fn pane_border_label(terminal: &crate::terminal::TerminalState, show_agent_labels: bool) -> String {
+    let mut label = terminal.border_label(show_agent_labels);
+    if let Some(branch) = crate::workspace::git_branch(&terminal.cwd) {
+        label.push(' ');
+        label.push_str(&branch);
+    }
+    label
 }
 
 fn line_cell_symbol(line: LineCell) -> &'static str {
@@ -995,12 +1048,12 @@ mod tests {
     fn pane_border_renderer_places_adjacent_cjk_by_display_width() {
         let mut app = AppState::test_new();
         app.mode = Mode::Terminal;
-        app.view.terminal_area = Rect::new(0, 0, 12, 3);
+        app.view.terminal_area = Rect::new(0, 0, 80, 3);
         let ws = Workspace::test_new("test");
         let pane_id = ws.tabs[0].root_pane;
         app.view.pane_infos = vec![PaneInfo {
             id: pane_id,
-            rect: Rect::new(0, 0, 12, 3),
+            rect: Rect::new(0, 0, 80, 3),
             inner_rect: Rect::default(),
             scrollbar_rect: None,
             borders: Borders::ALL,
@@ -1009,19 +1062,95 @@ mod tests {
 
         let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
         let mut terminal_state = TerminalState::new(terminal_id.clone(), "/tmp".into());
-        terminal_state.set_manual_label("1 模块组织（已定）".into());
+        terminal_state.set_manual_label("模块组织（已定）".into());
         app.terminals.insert(terminal_id, terminal_state);
 
         let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(12, 3)).unwrap();
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 3)).unwrap();
         terminal
             .draw(|frame| render_pane_borders(&app, &ws, frame))
             .unwrap();
 
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(4, 0)].symbol(), "模");
-        assert_eq!(buffer[(5, 0)].symbol(), " ");
-        assert_eq!(buffer[(6, 0)].symbol(), "块");
+        let row = (0..80).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
+        assert!(row.contains("模 块"), "rendered row: {row:?}");
+    }
+
+    #[test]
+    fn zoomed_focused_pane_title_gets_zoom_prefix() {
+        let mut app = AppState::test_new();
+        app.mode = Mode::Terminal;
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].zoomed = true;
+        let pane_id = ws.tabs[0].root_pane;
+        app.view.pane_infos = vec![PaneInfo {
+            id: pane_id,
+            rect: Rect::new(0, 0, 80, 3),
+            inner_rect: Rect::default(),
+            scrollbar_rect: None,
+            borders: Borders::ALL,
+            is_focused: true,
+        }];
+
+        let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
+        let mut terminal_state = TerminalState::new(terminal_id.clone(), "/tmp".into());
+        terminal_state.set_manual_label("terminal".into());
+        app.terminals.insert(terminal_id, terminal_state);
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 3)).unwrap();
+        terminal
+            .draw(|frame| render_pane_borders(&app, &ws, frame))
+            .unwrap();
+
+        let row = (0..80)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(row.contains("ZOOM %"));
+        assert!(row.contains("terminal"));
+    }
+
+    #[test]
+    fn pane_border_title_includes_branch_after_agent_task_title() {
+        let root =
+            std::env::temp_dir().join(format!("herdr-pane-title-branch-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/feature\n").unwrap();
+
+        let mut app = AppState::test_new();
+        app.mode = Mode::Terminal;
+        let ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        app.view.pane_infos = vec![PaneInfo {
+            id: pane_id,
+            rect: Rect::new(0, 0, 80, 3),
+            inner_rect: Rect::default(),
+            scrollbar_rect: None,
+            borders: Borders::ALL,
+            is_focused: true,
+        }];
+        let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
+        let mut terminal_state = TerminalState::new(terminal_id.clone(), root.clone());
+        terminal_state.set_detected_state(
+            Some(crate::detect::Agent::Codex),
+            crate::detect::AgentState::Idle,
+        );
+        terminal_state.set_terminal_title(Some("thinking".into()));
+        app.terminals.insert(terminal_id, terminal_state);
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 3)).unwrap();
+        terminal
+            .draw(|frame| render_pane_borders(&app, &ws, frame))
+            .unwrap();
+        let row = (0..80)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(
+            row.contains("codex thinking feature"),
+            "rendered row: {row:?}"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -383,9 +383,7 @@ mod tests {
         let _guard = crate::msg::msg_db_env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let _config_guard = crate::app::config_env_test_lock()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _config_guard = crate::config::lock_test_config_env();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -461,7 +459,9 @@ mod tests {
                     custom_status: None,
                     seq: None,
                     title: None,
+                    agent_session_id: None,
                     session_id: None,
+                    agent_session_path: None,
                     model: None,
                 }),
             });

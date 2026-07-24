@@ -38,12 +38,48 @@ pub struct WorktreeSpaceMembership {
     pub is_linked_worktree: bool,
 }
 
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceSection {
+    #[default]
+    None,
+    Favorite,
+    Work,
+    Personal,
+}
+
+impl WorkspaceSection {
+    pub const ALL: [Self; 4] = [Self::Favorite, Self::Work, Self::Personal, Self::None];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Favorite => "⭐ favorites",
+            Self::Work => "💼 work",
+            Self::Personal => "🏠 personal",
+            Self::None => "spaces",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceGitStatus {
     pub workspace_id: String,
     pub resolved_identity_cwd: PathBuf,
     pub branch: Option<String>,
     pub ahead_behind: Option<(usize, usize)>,
+    pub diff_stats: Option<(usize, usize)>,
     pub space: Option<GitSpaceMetadata>,
 }
 
@@ -51,6 +87,7 @@ pub struct WorkspaceGitStatus {
 pub struct WorkspaceGitStatusSnapshot {
     pub branch: Option<String>,
     pub ahead_behind: Option<(usize, usize)>,
+    pub diff_stats: Option<(usize, usize)>,
     pub space: Option<GitSpaceMetadata>,
 }
 
@@ -65,6 +102,7 @@ impl WorkspaceGitStatusSnapshot {
             resolved_identity_cwd,
             branch: self.branch,
             ahead_behind: self.ahead_behind,
+            diff_stats: self.diff_stats,
             space: self.space,
         }
     }
@@ -147,12 +185,16 @@ pub struct Workspace {
     pub id: String,
     /// User-provided override. If set, auto-derived identity stops updating.
     pub custom_name: Option<String>,
+    /// User grouping shown by the sidebar section headers.
+    pub section: WorkspaceSection,
     /// Fallback workspace identity source for tests, old snapshots, or missing runtimes.
     pub identity_cwd: PathBuf,
     /// Cached current git branch for the workspace repo.
     pub(crate) cached_git_branch: Option<String>,
     /// Cached ahead/behind counts for the workspace repo's current branch upstream.
     pub(crate) cached_git_ahead_behind: Option<(usize, usize)>,
+    /// Cached working-tree additions and deletions relative to HEAD.
+    pub(crate) cached_git_diff_stats: Option<(usize, usize)>,
     /// Cached derived Git repo metadata for worktree actions and status display.
     pub(crate) cached_git_space: Option<GitSpaceMetadata>,
     /// Explicit Herdr-managed worktree grouping provenance.
@@ -213,9 +255,11 @@ impl Workspace {
         Self {
             id,
             custom_name: label,
+            section: WorkspaceSection::None,
             identity_cwd: identity_cwd.clone(),
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
+            cached_git_diff_stats: None,
             cached_git_space: git_space_metadata(&identity_cwd),
             worktree_space: None,
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
@@ -396,9 +440,11 @@ impl Workspace {
             Self {
                 id,
                 custom_name: None,
+                section: WorkspaceSection::None,
                 identity_cwd: initial_cwd.clone(),
                 cached_git_branch: git_branch(&initial_cwd),
                 cached_git_ahead_behind: None,
+                cached_git_diff_stats: None,
                 cached_git_space: None,
                 worktree_space: None,
                 metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
@@ -1070,9 +1116,26 @@ impl Workspace {
             return name.clone();
         }
 
-        self.resolved_identity_cwd_from(terminals, terminal_runtimes)
+        let cwd_label = self
+            .resolved_identity_cwd_from(terminals, terminal_runtimes)
             .map(|cwd| derive_label_from_cwd(&cwd))
-            .unwrap_or_else(|| "workspace".into())
+            .unwrap_or_else(|| "workspace".into());
+        let root_title = self
+            .tabs
+            .first()
+            .and_then(|tab| tab.panes.get(&tab.root_pane))
+            .and_then(|pane| terminals.get(&pane.attached_terminal_id))
+            .filter(|terminal| terminal.is_agent_terminal())
+            .and_then(|terminal| {
+                terminal
+                    .effective_title()
+                    .or_else(|| terminal.terminal_title_stripped())
+            })
+            .filter(|title| title != &cwd_label);
+
+        root_title
+            .map(|title| format!("{cwd_label}-{title}"))
+            .unwrap_or(cwd_label)
     }
 
     pub fn branch(&self) -> Option<String> {
@@ -1081,6 +1144,10 @@ impl Workspace {
 
     pub fn git_ahead_behind(&self) -> Option<(usize, usize)> {
         self.cached_git_ahead_behind
+    }
+
+    pub fn git_diff_stats(&self) -> Option<(usize, usize)> {
+        self.cached_git_diff_stats
     }
 
     pub fn git_space(&self) -> Option<&GitSpaceMetadata> {
@@ -1096,6 +1163,7 @@ impl Workspace {
         let cwd = self.resolved_identity_cwd();
         self.cached_git_branch = cwd.as_deref().and_then(git_branch);
         self.cached_git_ahead_behind = cwd.as_deref().and_then(git_ahead_behind);
+        self.cached_git_diff_stats = cwd.as_deref().and_then(self::git::git_diff_stats);
         self.cached_git_space = cwd.as_deref().and_then(git_space_metadata);
     }
 
@@ -1209,9 +1277,11 @@ impl Workspace {
         Self {
             id: generate_workspace_id(),
             custom_name: Some(name.to_string()),
+            section: WorkspaceSection::None,
             identity_cwd: identity_cwd.clone(),
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
+            cached_git_diff_stats: None,
             cached_git_space: None,
             worktree_space: None,
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
@@ -1588,6 +1658,86 @@ mod tests {
         assert_eq!(
             ws.resolved_identity_cwd_from(&terminals, &terminal_runtimes),
             Some(PathBuf::from("/herdr-test/pion"))
+        );
+    }
+
+    #[test]
+    fn workspace_identity_includes_distinct_root_agent_osc_title() {
+        let mut ws = Workspace::test_new("ignored");
+        ws.custom_name = None;
+        let root_pane = ws.tabs[0].root_pane;
+        let terminal_id = ws.tabs[0].terminal_id(root_pane).unwrap().clone();
+        let mut terminal =
+            TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"));
+        terminal.set_detected_state(
+            Some(crate::detect::Agent::Codex),
+            crate::detect::AgentState::Idle,
+        );
+        terminal.set_terminal_title(Some("planner".into()));
+        let terminals = HashMap::from([(terminal_id, terminal)]);
+
+        assert_eq!(
+            ws.display_name_from(&terminals, &TerminalRuntimeRegistry::new()),
+            "pion-planner"
+        );
+    }
+
+    #[test]
+    fn workspace_identity_prefers_agent_task_title_and_ignores_shell_osc_title() {
+        let mut ws = Workspace::test_new("ignored");
+        ws.custom_name = None;
+        let root_pane = ws.tabs[0].root_pane;
+        let terminal_id = ws.tabs[0].terminal_id(root_pane).unwrap().clone();
+        let mut shell_terminal =
+            TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"));
+        shell_terminal.set_terminal_title(Some("user@host:pion".into()));
+        let shell_terminals = HashMap::from([(terminal_id.clone(), shell_terminal)]);
+        assert_eq!(
+            ws.display_name_from(&shell_terminals, &TerminalRuntimeRegistry::new()),
+            "pion"
+        );
+
+        let mut agent_terminal =
+            TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"));
+        agent_terminal.set_terminal_title(Some("user@host:pion".into()));
+        agent_terminal.set_detected_state(
+            Some(crate::detect::Agent::Codex),
+            crate::detect::AgentState::Idle,
+        );
+        agent_terminal.set_agent_metadata(crate::terminal::AgentMetadataReport {
+            source: "user:task-title".into(),
+            agent_label: Some("codex".into()),
+            applies_to_source: None,
+            title: Some("restore pane sessions".into()),
+            display_agent: None,
+            state_labels: HashMap::new(),
+            clear_title: false,
+            clear_display_agent: false,
+            clear_state_labels: false,
+            ttl: None,
+            seq: None,
+        });
+        let agent_terminals = HashMap::from([(terminal_id, agent_terminal)]);
+        assert_eq!(
+            ws.display_name_from(&agent_terminals, &TerminalRuntimeRegistry::new()),
+            "pion-restore pane sessions"
+        );
+    }
+
+    #[test]
+    fn workspace_identity_does_not_repeat_matching_root_osc_title() {
+        let mut ws = Workspace::test_new("ignored");
+        ws.custom_name = None;
+        let root_pane = ws.tabs[0].root_pane;
+        let terminal_id = ws.tabs[0].terminal_id(root_pane).unwrap().clone();
+        let mut terminal =
+            TerminalState::new(terminal_id.clone(), PathBuf::from("/herdr-test/pion"));
+        terminal.set_terminal_title(Some("pion".into()));
+        let terminals = HashMap::from([(terminal_id, terminal)]);
+
+        assert_eq!(
+            ws.display_name_from(&terminals, &TerminalRuntimeRegistry::new()),
+            "pion"
         );
     }
 
