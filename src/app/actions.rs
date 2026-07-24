@@ -1714,9 +1714,13 @@ impl AppState {
             .unwrap_or_default()
     }
 
-    pub(crate) fn implicit_pane_insertion_target(&self, ws_idx: usize) -> Option<PaneId> {
+    pub(crate) fn implicit_pane_insertion_target(
+        &self,
+        ws_idx: usize,
+        tab_idx: usize,
+    ) -> Option<PaneId> {
         let workspace = self.workspaces.get(ws_idx)?;
-        workspace.last_pane_id_in_tab(workspace.active_tab)
+        workspace.last_pane_id_in_tab(tab_idx)
     }
 
     pub(crate) fn terminal_id_for_pane(
@@ -3346,15 +3350,21 @@ mod tests {
     }
 
     #[test]
-    fn implicit_pane_insertion_target_uses_the_active_tab_tail() {
+    fn implicit_pane_insertion_target_uses_the_requested_tab_tail() {
         let mut state = app_with_workspaces(&["main"]);
         let root = state.workspaces[0].tabs[0].root_pane;
         let second = state.workspaces[0].test_split(Direction::Horizontal);
         let third = state.workspaces[0].test_split(Direction::Horizontal);
+        let requested_tab = state.workspaces[0].test_add_tab(Some("requested"));
+        let requested_root = state.workspaces[0].tabs[requested_tab].root_pane;
 
         state.focus_pane_in_workspace(0, root);
 
-        assert_eq!(state.implicit_pane_insertion_target(0), Some(third));
+        assert_eq!(
+            state.implicit_pane_insertion_target(0, requested_tab),
+            Some(requested_root)
+        );
+        assert_eq!(state.implicit_pane_insertion_target(0, 0), Some(third));
         assert_eq!(
             state.workspaces[0].tabs[0].layout.pane_ids(),
             vec![root, second, third]

@@ -125,7 +125,7 @@ impl App {
         let (rows, cols) = self.state.estimate_pane_size();
 
         let (ws_idx, tab_idx, pane_id) = if let Some(tab_id) = params.tab_id {
-            let (ws_idx, _) =
+            let (ws_idx, tab_idx) =
                 self.parse_tab_id(&tab_id)
                     .ok_or_else(|| AgentStartError::TargetNotFound {
                         target: tab_id.clone(),
@@ -142,7 +142,7 @@ impl App {
             }
             let target_pane = self
                 .state
-                .implicit_pane_insertion_target(ws_idx)
+                .implicit_pane_insertion_target(ws_idx, tab_idx)
                 .ok_or_else(|| AgentStartError::TargetNotFound {
                     target: tab_id.clone(),
                 })?;
@@ -161,9 +161,10 @@ impl App {
                     target: workspace_id.clone(),
                 }
             })?;
+            let tab_idx = self.state.workspaces[ws_idx].active_tab;
             let target_pane = self
                 .state
-                .implicit_pane_insertion_target(ws_idx)
+                .implicit_pane_insertion_target(ws_idx, tab_idx)
                 .ok_or_else(|| AgentStartError::TargetNotFound {
                     target: workspace_id.clone(),
                 })?;
@@ -180,9 +181,10 @@ impl App {
             self.spawn_agent_workspace(cwd, rows, cols, &argv, extra_env, focus)?
         } else {
             let ws_idx = self.state.active.unwrap_or(0);
+            let tab_idx = self.state.workspaces[ws_idx].active_tab;
             let target_pane = self
                 .state
-                .implicit_pane_insertion_target(ws_idx)
+                .implicit_pane_insertion_target(ws_idx, tab_idx)
                 .ok_or_else(|| AgentStartError::TargetNotFound {
                     target: self.public_workspace_id(ws_idx),
                 })?;
