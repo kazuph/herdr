@@ -9,7 +9,7 @@ use crate::terminal::TerminalRuntimeRegistry;
 use crate::workspace::Workspace;
 
 /// Current snapshot format version.
-pub(super) const SNAPSHOT_VERSION: u32 = 3;
+pub(super) const SNAPSHOT_VERSION: u32 = 4;
 
 /// Serializable snapshot of the entire herdr session.
 #[derive(Serialize, Deserialize)]
@@ -102,6 +102,8 @@ pub struct TabSnapshot {
 
 #[derive(Serialize, Deserialize)]
 pub struct PaneSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub global_pane_number: Option<u32>,
     pub cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -422,6 +424,7 @@ fn capture_tab(
         panes.insert(
             id.raw(),
             PaneSnapshot {
+                global_pane_number: Some(id.raw()),
                 cwd,
                 label,
                 agent_name,
@@ -673,6 +676,7 @@ mod tests {
         panes.insert(
             0,
             PaneSnapshot {
+                global_pane_number: None,
                 cwd: PathBuf::from("/home/can/Projects/herdr"),
                 label: None,
                 agent_name: None,
@@ -684,6 +688,7 @@ mod tests {
         panes.insert(
             1,
             PaneSnapshot {
+                global_pane_number: None,
                 cwd: PathBuf::from("/home/can/Projects/website"),
                 label: Some("website".into()),
                 agent_name: None,
@@ -1275,6 +1280,7 @@ mod tests {
         panes.insert(
             0,
             PaneSnapshot {
+                global_pane_number: None,
                 cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test"),
                 label: None,
                 agent_name: None,
@@ -1286,6 +1292,7 @@ mod tests {
         panes.insert(
             1,
             PaneSnapshot {
+                global_pane_number: None,
                 cwd: std::env::var("HOME")
                     .map(PathBuf::from)
                     .unwrap_or_else(|_| PathBuf::from("/tmp")),

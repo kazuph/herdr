@@ -427,10 +427,13 @@ impl App {
                 config.advanced.scrollback_limit_bytes,
                 &config.terminal.default_shell,
                 config.terminal.shell_mode,
-                (
-                    config.session.resume_agents_on_restore || config.agent_restore.enabled,
-                    &config.agent_restore.commands,
-                ),
+                crate::persist::RestoreOptions {
+                    pane_id_restore_mode:
+                        crate::persist::PaneIdRestoreMode::PreserveSnapshotGlobalIds,
+                    resume_agents_on_restore: config.session.resume_agents_on_restore
+                        || config.agent_restore.enabled,
+                    agent_restore_commands: &config.agent_restore.commands,
+                },
                 event_tx.clone(),
                 render_notify.clone(),
                 render_dirty.clone(),
