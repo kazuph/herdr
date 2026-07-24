@@ -1455,6 +1455,23 @@ impl AppState {
         }
     }
 
+    pub(crate) fn visual_workspace_order(&self) -> Vec<usize> {
+        let entries = if self.view.layout == ViewLayout::Mobile {
+            crate::ui::workspace_list_entries_expanded(self)
+        } else {
+            crate::ui::workspace_list_entries(self)
+        };
+
+        crate::ui::workspace_sections_for_entries(self, entries)
+            .into_iter()
+            .filter(|(section, _)| crate::ui::workspace_section_is_expanded(self, *section))
+            .flat_map(|(_, entries)| entries)
+            .map(|entry| match entry {
+                crate::ui::WorkspaceListEntry::Workspace { ws_idx, .. } => ws_idx,
+            })
+            .collect()
+    }
+
     pub(crate) fn workspace_at_visible_position(&self, position: usize) -> Option<usize> {
         self.visible_workspace_order().get(position).copied()
     }
@@ -1483,7 +1500,10 @@ impl AppState {
             return;
         }
         let current = self.active.unwrap_or(self.selected);
-        let order = self.visible_workspace_order();
+        let order = self.visual_workspace_order();
+        if order.is_empty() {
+            return;
+        }
         let current_pos = order.iter().position(|idx| *idx == current).unwrap_or(0);
         let next = order[(current_pos + 1) % order.len()];
         self.switch_workspace(next);
@@ -1495,7 +1515,10 @@ impl AppState {
             return;
         }
         let current = self.active.unwrap_or(self.selected);
-        let order = self.visible_workspace_order();
+        let order = self.visual_workspace_order();
+        if order.is_empty() {
+            return;
+        }
         let current_pos = order.iter().position(|idx| *idx == current).unwrap_or(0);
         let prev = if current_pos == 0 {
             order[order.len() - 1]
@@ -3315,6 +3338,50 @@ mod tests {
             state.mode = Mode::Terminal;
         }
         state
+    }
+
+    #[test]
+    fn next_and_previous_workspace_follow_visible_sidebar_sections() {
+        let mut state = app_with_workspaces(&["work", "spaces", "favorite", "personal"]);
+        state.workspaces[0].section = crate::workspace::WorkspaceSection::Work;
+        state.workspaces[2].section = crate::workspace::WorkspaceSection::Favorite;
+        state.workspaces[3].section = crate::workspace::WorkspaceSection::Personal;
+
+        assert_eq!(state.visual_workspace_order(), vec![2, 0, 3, 1]);
+
+        state.switch_workspace(2);
+        state.next_workspace();
+        assert_eq!(state.active, Some(0));
+        state.next_workspace();
+        assert_eq!(state.active, Some(3));
+        state.next_workspace();
+        assert_eq!(state.active, Some(1));
+        state.next_workspace();
+        assert_eq!(state.active, Some(2));
+
+        state.previous_workspace();
+        assert_eq!(state.active, Some(1));
+
+        state
+            .collapsed_workspace_sections
+            .insert(crate::workspace::WorkspaceSection::Personal);
+        assert_eq!(state.visual_workspace_order(), vec![2, 0, 1]);
+
+        state.switch_workspace(0);
+        state.next_workspace();
+        assert_eq!(state.active, Some(1));
+        state.next_workspace();
+        assert_eq!(state.active, Some(2));
+    }
+
+    #[test]
+    fn mobile_workspace_navigation_uses_switcher_section_order() {
+        let mut state = app_with_workspaces(&["work", "spaces", "favorite"]);
+        state.workspaces[0].section = crate::workspace::WorkspaceSection::Work;
+        state.workspaces[2].section = crate::workspace::WorkspaceSection::Favorite;
+        state.view.layout = ViewLayout::Mobile;
+
+        assert_eq!(state.visual_workspace_order(), vec![2, 0, 1]);
     }
 
     fn insert_test_pane_graphics_layer(state: &mut AppState, pane_id: PaneId) {

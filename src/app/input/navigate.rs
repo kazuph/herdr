@@ -702,7 +702,7 @@ impl App {
     }
 
     fn relative_visible_workspace(&self, delta: isize) -> Option<usize> {
-        let order = self.state.visible_workspace_order();
+        let order = self.state.visual_workspace_order();
         if order.is_empty() {
             return None;
         }

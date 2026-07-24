@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
 #[cfg(test)]
 pub(crate) const HERDR_DB_PATH_ENV_VAR: &str = "HERDR_DB_PATH";
@@ -238,27 +238,37 @@ impl DispatchStore {
         Ok(())
     }
 
-    pub(crate) fn messages_for_inbox(
+    pub(crate) fn messages_for_inbox_recipients(
         &self,
         room: &str,
-        to_agent: &str,
+        recipients: &[String],
     ) -> rusqlite::Result<Vec<MessageRecord>> {
-        let messages = self.select_messages(
+        if recipients.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = std::iter::repeat_n("?", recipients.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
             r#"
             SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.delivered_at
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             JOIN actors ta ON ta.id=d.to_actor
             WHERE d.kind='message'
-              AND d.room=?1
-              AND d.to_actor=(SELECT id FROM actors WHERE kind='agent' AND name=?2)
+              AND d.room=?
+              AND ta.kind='agent'
+              AND ta.name IN ({placeholders})
               AND d.status='queued'
             ORDER BY d.id ASC
             "#,
-            params![room, to_agent],
-        )?;
+        );
+        let values = std::iter::once(room.to_string())
+            .chain(recipients.iter().cloned())
+            .collect::<Vec<_>>();
+        let messages = self.select_messages(&sql, params_from_iter(values.iter()))?;
         if !messages.is_empty() {
-            self.mark_messages_delivered(room, to_agent)?;
+            self.mark_messages_delivered_for_recipients(room, recipients)?;
         }
         Ok(messages)
     }
@@ -407,6 +417,40 @@ impl DispatchStore {
             "#,
             params![room, to_agent],
         )
+    }
+
+    pub(crate) fn mark_messages_delivered_for_recipients(
+        &self,
+        room: &str,
+        recipients: &[String],
+    ) -> rusqlite::Result<usize> {
+        if recipients.is_empty() {
+            return Ok(0);
+        }
+        let placeholders = std::iter::repeat_n("?", recipients.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            r#"
+            UPDATE dispatches
+            SET delivered_at = COALESCE(delivered_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                status = 'delivered'
+            WHERE id IN (
+              SELECT d.id
+              FROM dispatches d
+              JOIN actors ta ON ta.id=d.to_actor
+              WHERE d.kind='message'
+                AND d.room=?
+                AND ta.kind='agent'
+                AND ta.name IN ({placeholders})
+                AND d.status='queued'
+            )
+            "#,
+        );
+        let values = std::iter::once(room.to_string())
+            .chain(recipients.iter().cloned())
+            .collect::<Vec<_>>();
+        self.conn.execute(&sql, params_from_iter(values.iter()))
     }
 
     pub(crate) fn command_rows(&self) -> rusqlite::Result<Vec<crate::job::JobRecord>> {

@@ -72,13 +72,13 @@ impl MsgStore {
             .map(Into::into)
     }
 
-    pub(crate) fn unread_for_agent(
+    pub(crate) fn unread_for_recipients(
         &mut self,
         room: &str,
-        to_agent: &str,
+        recipients: &[String],
     ) -> rusqlite::Result<Vec<MsgMessage>> {
         self.store
-            .messages_for_inbox(room, to_agent)
+            .messages_for_inbox_recipients(room, recipients)
             .map(|messages| messages.into_iter().map(Into::into).collect())
     }
 
@@ -199,7 +199,10 @@ mod tests {
             .insert_messages(DEFAULT_ROOM, "/repo", "alice", &["bob".to_string()], "two")
             .unwrap();
 
-        let unread = store.unread_for_agent(DEFAULT_ROOM, "bob").unwrap();
+        let recipients = ["bob".to_string()];
+        let unread = store
+            .unread_for_recipients(DEFAULT_ROOM, &recipients)
+            .unwrap();
         assert_eq!(
             unread
                 .iter()
@@ -209,7 +212,9 @@ mod tests {
         );
         assert!(unread.iter().all(|message| message.read_at.is_none()));
 
-        let after = store.unread_for_agent(DEFAULT_ROOM, "bob").unwrap();
+        let after = store
+            .unread_for_recipients(DEFAULT_ROOM, &recipients)
+            .unwrap();
         assert!(after.is_empty());
     }
 
@@ -302,8 +307,9 @@ mod tests {
         drop(store);
 
         let mut reopened = MsgStore::open_at(path).unwrap();
+        let recipients = ["bob".to_string()];
         assert!(reopened
-            .unread_for_agent(JOBS_ROOM, "bob")
+            .unread_for_recipients(JOBS_ROOM, &recipients)
             .unwrap()
             .is_empty());
         let history = reopened.history(JOBS_ROOM, None, 10).unwrap();

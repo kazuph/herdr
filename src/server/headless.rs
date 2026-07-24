@@ -1819,6 +1819,7 @@ impl HeadlessServer {
                     protocol::NotifyKind::Sound,
                     sound_notify_message(sound),
                     None,
+                    None,
                 );
             }
         }
@@ -1850,6 +1851,7 @@ impl HeadlessServer {
                 .expect("toast forwarding requires a client notification kind"),
             title,
             non_empty_body(&context),
+            self.app.public_pane_id(update.ws_idx, update.pane_id),
         );
     }
 
@@ -1862,16 +1864,25 @@ impl HeadlessServer {
                 protocol::NotifyKind::Sound,
                 sound_notify_message(sound),
                 None,
+                None,
             );
         }
 
         if should_forward_toast_to_clients(self.app.state.toast_config.delivery) {
             if let Some(toast) = &delivery.client_notification {
+                let target_pane_id = self
+                    .app
+                    .state
+                    .workspaces
+                    .iter()
+                    .position(|workspace| workspace.id == delivery.workspace_id)
+                    .and_then(|ws_idx| self.app.public_pane_id(ws_idx, delivery.pane_id));
                 self.send_notify_to_foreground_client(
                     toast_notify_kind(self.app.state.toast_config.delivery)
                         .expect("toast forwarding requires a client notification kind"),
                     &toast.title,
                     non_empty_body(&toast.context),
+                    target_pane_id,
                 );
             }
         }
@@ -1882,11 +1893,13 @@ impl HeadlessServer {
         kind: protocol::NotifyKind,
         message: impl Into<String>,
         body: Option<String>,
+        target_pane_id: Option<String>,
     ) -> bool {
         self.send_to_foreground_client(ServerMessage::Notify {
             kind,
             message: message.into(),
             body,
+            target_pane_id,
         })
     }
 
@@ -1896,7 +1909,7 @@ impl HeadlessServer {
         message: impl AsRef<str>,
     ) -> bool {
         let (title, body) = crate::terminal_notify::split_message(message.as_ref());
-        self.send_notify_to_foreground_client(kind, title, body.map(str::to_string))
+        self.send_notify_to_foreground_client(kind, title, body.map(str::to_string), None)
     }
 
     fn handle_notification_show_api(
@@ -1960,7 +1973,7 @@ impl HeadlessServer {
         }
         let kind = toast_notify_kind(self.app.state.toast_config.delivery)
             .expect("terminal/system delivery has notify kind");
-        let shown = self.send_notify_to_foreground_client(kind, title, body);
+        let shown = self.send_notify_to_foreground_client(kind, title, body, None);
         if shown {
             self.app.mark_api_notification_shown(Instant::now());
             self.forward_api_notification_sound(params.sound);
@@ -2018,6 +2031,7 @@ impl HeadlessServer {
         self.send_notify_to_foreground_client(
             protocol::NotifyKind::Sound,
             sound_notify_message(sound),
+            None,
             None,
         );
     }
@@ -2100,6 +2114,7 @@ impl HeadlessServer {
                         self.send_notify_to_foreground_client(
                             protocol::NotifyKind::Sound,
                             sound_notify_message(sound),
+                            None,
                             None,
                         );
                     }
@@ -2192,6 +2207,7 @@ impl HeadlessServer {
                         self.send_notify_to_foreground_client(
                             protocol::NotifyKind::Sound,
                             sound_notify_message(sound),
+                            None,
                             None,
                         );
                     }
@@ -3195,6 +3211,14 @@ impl HeadlessServer {
                         .expect("toast forwarding requires a client notification kind"),
                     &toast.title,
                     non_empty_body(&toast.context),
+                    toast.target.as_ref().and_then(|target| {
+                        self.app
+                            .state
+                            .workspaces
+                            .iter()
+                            .position(|workspace| workspace.id == target.workspace_id)
+                            .and_then(|ws_idx| self.app.public_pane_id(ws_idx, target.pane_id))
+                    }),
                 );
                 true
             } else {
@@ -3276,6 +3300,7 @@ impl HeadlessServer {
                                     .expect("toast forwarding requires a client notification kind"),
                                 title,
                                 non_empty_body(&context),
+                                self.app.public_pane_id(*ws_idx, *pane_id),
                             );
                         }
                     }
@@ -3299,6 +3324,7 @@ impl HeadlessServer {
                     self.send_notify_to_foreground_client(
                         protocol::NotifyKind::Sound,
                         sound_notify_message(sound),
+                        None,
                         None,
                     );
                 }
@@ -8717,6 +8743,7 @@ next_tab = ""
             kind: protocol::NotifyKind::Toast,
             message: "pi finished".to_string(),
             body: Some("workspace 1".to_string()),
+            target_pane_id: Some("w_1-1".to_string()),
         }));
 
         match read_server_message(
@@ -8728,10 +8755,12 @@ next_tab = ""
                 kind,
                 message,
                 body,
+                target_pane_id,
             } => {
                 assert_eq!(kind, protocol::NotifyKind::Toast);
                 assert_eq!(message, "pi finished");
                 assert_eq!(body.as_deref(), Some("workspace 1"));
+                assert_eq!(target_pane_id.as_deref(), Some("w_1-1"));
             }
             other => panic!("expected toast notify, got {other:?}"),
         }
@@ -8813,6 +8842,7 @@ next_tab = ""
                 kind,
                 message,
                 body,
+                ..
             } => {
                 assert_eq!(kind, protocol::NotifyKind::SystemToast);
                 assert_eq!(message, "v9.9.9 available");
@@ -8890,6 +8920,7 @@ next_tab = ""
                 kind,
                 message,
                 body,
+                ..
             } => {
                 assert_eq!(kind, protocol::NotifyKind::SystemToast);
                 assert_eq!(message, "build failed");
@@ -8902,6 +8933,7 @@ next_tab = ""
                 kind,
                 message,
                 body,
+                ..
             } => {
                 assert_eq!(kind, protocol::NotifyKind::Sound);
                 assert_eq!(message, "agent attention");
@@ -8969,6 +9001,7 @@ next_tab = ""
                 kind,
                 message,
                 body,
+                ..
             } => {
                 assert_eq!(kind, protocol::NotifyKind::SystemToast);
                 assert_eq!(message, "build: failed");
@@ -9146,6 +9179,7 @@ next_tab = ""
                 kind,
                 message,
                 body,
+                ..
             } => {
                 assert_eq!(kind, protocol::NotifyKind::Sound);
                 assert_eq!(message, "agent done");
@@ -9234,10 +9268,12 @@ next_tab = ""
                 kind,
                 message,
                 body,
+                target_pane_id,
             } => {
                 assert_eq!(kind, protocol::NotifyKind::SystemToast);
                 assert_eq!(message, "1 background");
                 assert_eq!(body.as_deref(), Some("background · 1"));
+                assert_eq!(target_pane_id, server.app.public_pane_id(0, pane_id));
             }
             other => panic!("expected delayed system toast, got {other:?}"),
         }
@@ -9322,10 +9358,12 @@ next_tab = ""
                 kind,
                 message,
                 body,
+                target_pane_id,
             } => {
                 assert_eq!(kind, protocol::NotifyKind::SystemToast);
                 assert_eq!(message, "1 active");
                 assert_eq!(body.as_deref(), Some("active · 1"));
+                assert_eq!(target_pane_id, server.app.public_pane_id(0, pane_id));
             }
             other => panic!("expected delayed system toast, got {other:?}"),
         }

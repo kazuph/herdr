@@ -206,13 +206,24 @@ pub(super) fn msg_inbox(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
-    let identity = current_msg_identity(to_agent)?;
+    // Prefer the unambiguous pane id over a resolved agent name: unnamed
+    // agents otherwise fall back to their agent kind (`claude`, `codex`),
+    // which cannot be resolved back to one pane when several run at once.
+    // The server expands a pane id into the full recipient alias set.
+    let to_agent = match to_agent {
+        Some(agent) => {
+            let agent = agent.trim().to_string();
+            if agent.is_empty() {
+                eprintln!("--to must not be empty");
+                return Ok(2);
+            }
+            agent
+        }
+        None => resolve_current_pane_id()?,
+    };
     let response = super::send_request(&Request {
         id: "cli:msg:inbox".into(),
-        method: Method::MsgInbox(MsgInboxParams {
-            room,
-            to_agent: identity.agent,
-        }),
+        method: Method::MsgInbox(MsgInboxParams { room, to_agent }),
     })?;
     print_msg_messages_response(&response, "inbox")
 }
