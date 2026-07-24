@@ -65,6 +65,19 @@ type RestoredTab = (
 );
 type RestoreFailures<T> = (T, usize);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneIdRestoreMode {
+    PreserveSnapshotGlobalIds,
+    AllocateFreshIds,
+}
+
+#[derive(Clone, Copy)]
+pub struct RestoreOptions<'a> {
+    pub pane_id_restore_mode: PaneIdRestoreMode,
+    pub resume_agents_on_restore: bool,
+    pub agent_restore_commands: &'a BTreeMap<String, String>,
+}
+
 /// Restore workspaces from a snapshot. Each pane gets a fresh shell in its saved cwd.
 pub fn restore(
     snapshot: &SessionSnapshot,
@@ -74,7 +87,7 @@ pub fn restore(
     scrollback_limit_bytes: usize,
     default_shell: &str,
     shell_mode: crate::config::ShellModeConfig,
-    agent_restore: (bool, &BTreeMap<String, String>),
+    restore_options: RestoreOptions<'_>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<AtomicBool>,
@@ -87,7 +100,7 @@ pub fn restore(
         cols,
         scrollback_limit_bytes,
         crate::pane::PaneShellConfig::new(default_shell, shell_mode),
-        agent_restore,
+        restore_options,
         &mut imported_panes,
         events,
         render_notify,
@@ -113,7 +126,11 @@ pub fn restore_handoff(
         80,
         scrollback_limit_bytes,
         crate::pane::PaneShellConfig::new(default_shell, shell_mode),
-        (true, &BTreeMap::new()),
+        RestoreOptions {
+            pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
+            resume_agents_on_restore: true,
+            agent_restore_commands: &BTreeMap::new(),
+        },
         imports,
         events,
         render_notify,
@@ -207,7 +224,7 @@ fn restore_with_imports_strict(
     cols: u16,
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'_>,
-    agent_restore: (bool, &BTreeMap<String, String>),
+    restore_options: RestoreOptions<'_>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -220,7 +237,7 @@ fn restore_with_imports_strict(
         cols,
         scrollback_limit_bytes,
         shell_config,
-        agent_restore,
+        restore_options,
         imported_panes,
         events,
         render_notify,
@@ -247,7 +264,7 @@ fn restore_with_imports(
     cols: u16,
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'_>,
-    agent_restore: (bool, &BTreeMap<String, String>),
+    restore_options: RestoreOptions<'_>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -260,7 +277,7 @@ fn restore_with_imports(
         cols,
         scrollback_limit_bytes,
         shell_config,
-        agent_restore,
+        restore_options,
         imported_panes,
         events,
         render_notify,
@@ -276,13 +293,34 @@ fn restore_with_imports_and_failures(
     cols: u16,
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'_>,
-    agent_restore: (bool, &BTreeMap<String, String>),
+    restore_options: RestoreOptions<'_>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<AtomicBool>,
 ) -> RestoreFailures<RestoredSession> {
-    let (resume_agents_on_restore, agent_restore_commands) = agent_restore;
+    let saved_global_pane_ids = match restore_options.pane_id_restore_mode {
+        PaneIdRestoreMode::PreserveSnapshotGlobalIds => {
+            match validated_saved_global_pane_ids(snapshot) {
+                Ok(ids) => {
+                    let max = ids
+                        .values()
+                        .map(|id| id.raw())
+                        .max()
+                        .expect("a restored session must contain a pane");
+                    PaneId::reserve_after_restore(max);
+                    Some(ids)
+                }
+                Err(reason) => {
+                    warn!(%reason, "session snapshot global pane IDs are invalid; allocating fresh IDs for all panes");
+                    None
+                }
+            }
+        }
+        PaneIdRestoreMode::AllocateFreshIds => None,
+    };
+    let resume_agents_on_restore = restore_options.resume_agents_on_restore;
+    let agent_restore_commands = restore_options.agent_restore_commands;
     let mut workspaces = Vec::new();
     let mut terminals = HashMap::new();
     let mut terminal_runtimes = HashMap::new();
@@ -304,6 +342,7 @@ fn restore_with_imports_and_failures(
             rows,
             cols,
             &runtime_context,
+            saved_global_pane_ids.as_ref(),
             &mut resumed_agent_sessions,
             imported_panes,
         );
@@ -326,6 +365,7 @@ fn restore_workspace(
     rows: u16,
     cols: u16,
     runtime_context: &RestoreRuntimeContext<'_>,
+    saved_global_pane_ids: Option<&HashMap<u32, PaneId>>,
     resumed_agent_sessions: &mut HashSet<String>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
 ) -> RestoreFailures<Option<RestoredWorkspace>> {
@@ -380,6 +420,7 @@ fn restore_workspace(
             rows,
             cols,
             runtime_context,
+            saved_global_pane_ids,
             resumed_agent_sessions,
             imported_panes,
             &public_pane_ids_by_old_raw,
@@ -465,11 +506,12 @@ fn restore_tab(
     rows: u16,
     cols: u16,
     runtime_context: &RestoreRuntimeContext<'_>,
+    saved_global_pane_ids: Option<&HashMap<u32, PaneId>>,
     resumed_agent_sessions: &mut HashSet<String>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     public_pane_ids_by_old_raw: &HashMap<u32, String>,
 ) -> RestoreFailures<Option<RestoredTab>> {
-    let (node, id_map) = restore_node_remapped(&snap.layout);
+    let (node, id_map) = restore_node_remapped(&snap.layout, saved_global_pane_ids);
     let reverse_id_map: HashMap<PaneId, u32> = id_map
         .iter()
         .map(|(&old_id, &new_id)| (new_id, old_id))
@@ -911,18 +953,73 @@ pub(super) fn resolve_restored_pane(
         .or_else(|| pane_ids.first().copied())
 }
 
-/// Restore a layout tree, remapping every pane ID to a fresh globally unique one.
+fn validated_saved_global_pane_ids(
+    snapshot: &SessionSnapshot,
+) -> Result<HashMap<u32, PaneId>, &'static str> {
+    let mut saved_ids = HashMap::new();
+    let mut global_ids = HashSet::new();
+
+    for workspace in &snapshot.workspaces {
+        for tab in &workspace.tabs {
+            let mut layout_ids = Vec::new();
+            collect_layout_snapshot_pane_ids(&tab.layout, &mut layout_ids);
+            let layout_id_set: HashSet<u32> = layout_ids.iter().copied().collect();
+            if layout_id_set.len() != layout_ids.len()
+                || layout_id_set.len() != tab.panes.len()
+                || !layout_id_set.iter().all(|id| tab.panes.contains_key(id))
+                || tab.focused.is_some_and(|id| !layout_id_set.contains(&id))
+                || tab.root_pane.is_some_and(|id| !layout_id_set.contains(&id))
+                || (!tab.pane_order.is_empty()
+                    && tab.pane_order.iter().copied().collect::<HashSet<_>>() != layout_id_set)
+            {
+                return Err("layout and pane records do not describe the same pane set");
+            }
+
+            for old_id in layout_ids {
+                let Some(global_id) = tab
+                    .panes
+                    .get(&old_id)
+                    .and_then(|pane| pane.global_pane_number)
+                else {
+                    return Err("a pane has no saved global pane ID");
+                };
+                if global_id == 0 || global_id == u32::MAX {
+                    return Err("a saved global pane ID cannot be allocated safely");
+                }
+                if saved_ids.contains_key(&old_id) || !global_ids.insert(global_id) {
+                    return Err("saved global pane IDs are not unique across the session");
+                }
+                saved_ids.insert(old_id, PaneId::from_raw(global_id));
+            }
+        }
+    }
+
+    (!saved_ids.is_empty())
+        .then_some(saved_ids)
+        .ok_or("session snapshot has no panes")
+}
+
+/// Restore a layout tree, preserving validated global IDs when present.
 /// Returns the new tree and a map of old_raw_id → new PaneId.
-pub(super) fn restore_node_remapped(snap: &LayoutSnapshot) -> (Node, HashMap<u32, PaneId>) {
+pub(super) fn restore_node_remapped(
+    snap: &LayoutSnapshot,
+    saved_global_pane_ids: Option<&HashMap<u32, PaneId>>,
+) -> (Node, HashMap<u32, PaneId>) {
     let mut id_map = HashMap::new();
-    let node = remap_inner(snap, &mut id_map);
+    let node = remap_inner(snap, saved_global_pane_ids, &mut id_map);
     (node, id_map)
 }
 
-fn remap_inner(snap: &LayoutSnapshot, id_map: &mut HashMap<u32, PaneId>) -> Node {
+fn remap_inner(
+    snap: &LayoutSnapshot,
+    saved_global_pane_ids: Option<&HashMap<u32, PaneId>>,
+    id_map: &mut HashMap<u32, PaneId>,
+) -> Node {
     match snap {
         LayoutSnapshot::Pane(old_id) => {
-            let new_id = PaneId::alloc();
+            let new_id = saved_global_pane_ids
+                .and_then(|ids| ids.get(old_id).copied())
+                .unwrap_or_else(PaneId::alloc);
             id_map.insert(*old_id, new_id);
             Node::Pane(new_id)
         }
@@ -932,8 +1029,8 @@ fn remap_inner(snap: &LayoutSnapshot, id_map: &mut HashMap<u32, PaneId>) -> Node
             first,
             second,
         } => {
-            let first_node = remap_inner(first, id_map);
-            let second_node = remap_inner(second, id_map);
+            let first_node = remap_inner(first, saved_global_pane_ids, id_map);
+            let second_node = remap_inner(second, saved_global_pane_ids, id_map);
             let dir = match direction {
                 DirectionSnapshot::Horizontal => Direction::Horizontal,
                 DirectionSnapshot::Vertical => Direction::Vertical,
@@ -966,6 +1063,7 @@ fn collect_ids_inner(node: &Node, ids: &mut Vec<PaneId>) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::snapshot::PaneSnapshot;
     use super::*;
 
     fn test_session_path(name: &str) -> String {
@@ -986,6 +1084,173 @@ mod tests {
         "/bin/sh"
     }
 
+    fn test_pane_snapshot(cwd: PathBuf, global_pane_number: Option<u32>) -> PaneSnapshot {
+        PaneSnapshot {
+            global_pane_number,
+            cwd,
+            label: None,
+            agent_name: None,
+            title: None,
+            agent_session: None,
+            launch_argv: None,
+        }
+    }
+
+    fn test_workspace_snapshot(
+        cwd: &std::path::Path,
+        workspace_id: &str,
+        old_pane_id: u32,
+        global_pane_number: Option<u32>,
+    ) -> WorkspaceSnapshot {
+        WorkspaceSnapshot {
+            id: Some(workspace_id.into()),
+            custom_name: None,
+            section: crate::workspace::WorkspaceSection::None,
+            identity_cwd: cwd.to_path_buf(),
+            worktree_space: None,
+            public_pane_numbers: HashMap::from([(old_pane_id, 1)]),
+            next_public_pane_number: 2,
+            public_tab_numbers: vec![1],
+            next_public_tab_number: 2,
+            tabs: vec![TabSnapshot {
+                custom_name: None,
+                layout: LayoutSnapshot::Pane(old_pane_id),
+                pane_order: vec![old_pane_id],
+                panes: HashMap::from([(
+                    old_pane_id,
+                    test_pane_snapshot(cwd.to_path_buf(), global_pane_number),
+                )]),
+                zoomed: false,
+                focused: Some(old_pane_id),
+                root_pane: Some(old_pane_id),
+            }],
+            active_tab: 0,
+        }
+    }
+
+    fn test_session_snapshot(workspaces: Vec<WorkspaceSnapshot>) -> SessionSnapshot {
+        SessionSnapshot {
+            version: super::super::snapshot::SNAPSHOT_VERSION,
+            workspaces,
+            active: Some(0),
+            selected: 0,
+            sidebar_width: None,
+            sidebar_section_split: None,
+            collapsed_space_keys: Default::default(),
+            collapsed_workspace_sections: Default::default(),
+        }
+    }
+
+    fn restore_for_test(
+        snapshot: &SessionSnapshot,
+        pane_id_restore_mode: PaneIdRestoreMode,
+    ) -> (Vec<Workspace>, HashMap<TerminalId, TerminalState>) {
+        let (events, _event_rx) = mpsc::channel(4);
+        let (workspaces, terminals, _runtimes) = restore(
+            snapshot,
+            None,
+            24,
+            80,
+            0,
+            test_restore_shell(),
+            crate::config::ShellModeConfig::NonLogin,
+            RestoreOptions {
+                pane_id_restore_mode,
+                resume_agents_on_restore: false,
+                agent_restore_commands: &BTreeMap::new(),
+            },
+            events,
+            Arc::new(Notify::new()),
+            Arc::new(AtomicBool::new(false)),
+        );
+        (workspaces, terminals)
+    }
+
+    #[tokio::test]
+    async fn session_round_trip_preserves_global_pane_ids_across_workspaces_and_advances_allocator()
+    {
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot = test_session_snapshot(vec![
+            test_workspace_snapshot(&cwd, "w1", 10, Some(1000)),
+            test_workspace_snapshot(&cwd, "w2", 20, Some(1001)),
+        ]);
+        let snapshot = super::super::snapshot::parse_snapshot(
+            &serde_json::to_string(&snapshot).expect("snapshot should serialize"),
+        )
+        .expect("snapshot should deserialize");
+
+        let (workspaces, terminals) =
+            restore_for_test(&snapshot, PaneIdRestoreMode::PreserveSnapshotGlobalIds);
+        let restored_ids: HashSet<u32> = workspaces
+            .iter()
+            .flat_map(|workspace| workspace.tabs.iter())
+            .flat_map(|tab| tab.layout.pane_ids())
+            .map(PaneId::raw)
+            .collect();
+        assert_eq!(restored_ids, HashSet::from([1000, 1001]));
+        assert!(PaneId::alloc().raw() > 1001);
+
+        let mut state = crate::app::state::AppState::test_with_adversarial_identity_state();
+        state.assert_invariants_for_test();
+        state.workspaces = workspaces;
+        state.terminals = terminals;
+        state.active = Some(0);
+        state.selected = 0;
+        state.assert_invariants_for_test();
+    }
+
+    #[tokio::test]
+    async fn old_snapshot_without_global_pane_ids_reallocates_all_panes() {
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot = test_session_snapshot(vec![
+            test_workspace_snapshot(&cwd, "w1", 10, None),
+            test_workspace_snapshot(&cwd, "w2", 20, None),
+        ]);
+
+        let (workspaces, _) =
+            restore_for_test(&snapshot, PaneIdRestoreMode::PreserveSnapshotGlobalIds);
+        let restored_ids: HashSet<u32> = workspaces
+            .iter()
+            .flat_map(|workspace| workspace.tabs.iter())
+            .flat_map(|tab| tab.layout.pane_ids())
+            .map(PaneId::raw)
+            .collect();
+        assert_eq!(restored_ids.len(), 2);
+        assert!(!restored_ids.contains(&10));
+        assert!(!restored_ids.contains(&20));
+    }
+
+    #[tokio::test]
+    async fn invalid_duplicate_global_pane_ids_reallocate_all_panes() {
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot = test_session_snapshot(vec![
+            test_workspace_snapshot(&cwd, "w1", 10, Some(4000)),
+            test_workspace_snapshot(&cwd, "w2", 20, Some(4000)),
+        ]);
+
+        assert!(validated_saved_global_pane_ids(&snapshot).is_err());
+        let (workspaces, _) =
+            restore_for_test(&snapshot, PaneIdRestoreMode::PreserveSnapshotGlobalIds);
+        let restored_ids: HashSet<u32> = workspaces
+            .iter()
+            .flat_map(|workspace| workspace.tabs.iter())
+            .flat_map(|tab| tab.layout.pane_ids())
+            .map(PaneId::raw)
+            .collect();
+        assert_eq!(restored_ids.len(), 2);
+        assert!(!restored_ids.contains(&4000));
+    }
+
+    #[tokio::test]
+    async fn duplicate_workspace_mode_does_not_reuse_saved_global_pane_ids() {
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot =
+            test_session_snapshot(vec![test_workspace_snapshot(&cwd, "w1", 10, Some(5000))]);
+
+        let (workspaces, _) = restore_for_test(&snapshot, PaneIdRestoreMode::AllocateFreshIds);
+        assert_ne!(workspaces[0].tabs[0].root_pane.raw(), 5000);
+    }
+
     #[test]
     fn capture_and_restore_node_round_trip() {
         let node = Node::Split {
@@ -1001,7 +1266,7 @@ mod tests {
         };
 
         let snap = super::super::snapshot::capture_node(&node);
-        let (restored, id_map) = restore_node_remapped(&snap);
+        let (restored, id_map) = restore_node_remapped(&snap, None);
 
         assert_eq!(id_map.len(), 3);
         let ids = collect_pane_ids(&restored);
@@ -1257,6 +1522,7 @@ mod tests {
                     panes: HashMap::from([(
                         0,
                         super::super::snapshot::PaneSnapshot {
+                            global_pane_number: None,
                             cwd,
                             label: None,
                             agent_name: None,
@@ -1293,7 +1559,11 @@ mod tests {
             0,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            (false, &BTreeMap::new()),
+            RestoreOptions {
+                pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
+                resume_agents_on_restore: false,
+                agent_restore_commands: &BTreeMap::new(),
+            },
             events,
             Arc::new(Notify::new()),
             Arc::new(AtomicBool::new(false)),
@@ -1344,6 +1614,7 @@ mod tests {
                         (
                             10,
                             super::super::snapshot::PaneSnapshot {
+                                global_pane_number: None,
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
@@ -1355,6 +1626,7 @@ mod tests {
                         (
                             20,
                             super::super::snapshot::PaneSnapshot {
+                                global_pane_number: None,
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
@@ -1387,7 +1659,11 @@ mod tests {
             0,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            (false, &BTreeMap::new()),
+            RestoreOptions {
+                pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
+                resume_agents_on_restore: false,
+                agent_restore_commands: &BTreeMap::new(),
+            },
             events,
             Arc::new(Notify::new()),
             Arc::new(AtomicBool::new(false)),
@@ -1416,6 +1692,7 @@ mod tests {
             (
                 id.parse::<u32>().unwrap(),
                 super::super::snapshot::PaneSnapshot {
+                    global_pane_number: None,
                     cwd: cwd.clone(),
                     label: None,
                     agent_name: None,
@@ -1426,6 +1703,7 @@ mod tests {
             )
         };
         let final_pane = super::super::snapshot::PaneSnapshot {
+            global_pane_number: None,
             cwd: cwd.clone(),
             label: Some("planner".into()),
             agent_name: Some("planner".into()),
@@ -1507,7 +1785,11 @@ mod tests {
             0,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            (false, &BTreeMap::new()),
+            RestoreOptions {
+                pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
+                resume_agents_on_restore: false,
+                agent_restore_commands: &BTreeMap::new(),
+            },
             events,
             Arc::new(Notify::new()),
             Arc::new(AtomicBool::new(false)),
@@ -1588,6 +1870,7 @@ mod tests {
                     panes: HashMap::from([(
                         0,
                         super::super::snapshot::PaneSnapshot {
+                            global_pane_number: None,
                             cwd,
                             label: None,
                             agent_name: None,
@@ -1624,7 +1907,11 @@ mod tests {
             0,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            (true, &BTreeMap::new()),
+            RestoreOptions {
+                pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
+                resume_agents_on_restore: true,
+                agent_restore_commands: &BTreeMap::new(),
+            },
             events,
             Arc::new(Notify::new()),
             Arc::new(AtomicBool::new(false)),
@@ -1691,7 +1978,11 @@ mod tests {
             4096,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            (false, &BTreeMap::new()),
+            RestoreOptions {
+                pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
+                resume_agents_on_restore: false,
+                agent_restore_commands: &BTreeMap::new(),
+            },
             events,
             render_notify,
             render_dirty,
@@ -1730,7 +2021,11 @@ mod tests {
             4096,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            (false, &BTreeMap::new()),
+            RestoreOptions {
+                pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
+                resume_agents_on_restore: false,
+                agent_restore_commands: &BTreeMap::new(),
+            },
             events,
             render_notify,
             render_dirty,
@@ -1760,6 +2055,7 @@ mod tests {
         panes.insert(
             0,
             super::super::snapshot::PaneSnapshot {
+                global_pane_number: None,
                 cwd: cwd.clone(),
                 label: None,
                 agent_name: None,

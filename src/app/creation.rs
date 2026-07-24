@@ -263,7 +263,11 @@ impl App {
             self.state.pane_scrollback_limit_bytes,
             &self.state.default_shell,
             self.state.shell_mode,
-            (false, &std::collections::BTreeMap::new()),
+            crate::persist::RestoreOptions {
+                pane_id_restore_mode: crate::persist::PaneIdRestoreMode::AllocateFreshIds,
+                resume_agents_on_restore: false,
+                agent_restore_commands: &std::collections::BTreeMap::new(),
+            },
             self.event_tx.clone(),
             self.render_notify.clone(),
             self.render_dirty.clone(),

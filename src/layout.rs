@@ -27,6 +27,24 @@ impl PaneId {
     pub fn from_raw(id: u32) -> Self {
         Self(id)
     }
+
+    pub(crate) fn reserve_after_restore(max_restored_id: u32) {
+        let next = max_restored_id
+            .checked_add(1)
+            .expect("restored pane ID must leave room for the next pane");
+        let mut current = NEXT_PANE_ID.load(std::sync::atomic::Ordering::Relaxed);
+        while current < next {
+            match NEXT_PANE_ID.compare_exchange_weak(
+                current,
+                next,
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+    }
 }
 
 /// Snapshot of a pane's position and focus state after layout.
