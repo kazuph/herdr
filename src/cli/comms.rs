@@ -741,15 +741,28 @@ fn job_cancel(job_id: &str) -> std::io::Result<i32> {
         eprintln!("job {job_id} has not published its runner pid yet; retry cancel");
         return Ok(1);
     };
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        eprintln!("job cancellation is not implemented on this platform");
-        return Ok(1);
-    }
-    #[cfg(unix)]
+    cancel_running_job(&store, &job, pid, job_id)
+}
+
+#[cfg(not(unix))]
+fn cancel_running_job(
+    _store: &crate::job::JobStore,
+    _job: &crate::job::JobRecord,
+    _pid: u32,
+    _job_id: &str,
+) -> std::io::Result<i32> {
+    eprintln!("job cancellation is not implemented on this platform");
+    Ok(1)
+}
+
+#[cfg(unix)]
+fn cancel_running_job(
+    store: &crate::job::JobStore,
+    job: &crate::job::JobRecord,
+    pid: u32,
+    job_id: &str,
+) -> std::io::Result<i32> {
     let process_group = unsafe { libc::getpgid(pid as i32) };
-    #[cfg(unix)]
     if process_group != pid as i32 {
         eprintln!("job {job_id} runner process group is no longer provable; refusing to signal");
         return Ok(1);
@@ -761,13 +774,8 @@ fn job_cancel(job_id: &str) -> std::io::Result<i32> {
         eprintln!("job {job_id} reached a terminal state before cancellation acquired it");
         return Ok(1);
     }
-    #[cfg(unix)]
     signal_process_group(pid, libc::SIGTERM)?;
-    #[cfg(unix)]
     let mut escalated = false;
-    #[cfg(not(unix))]
-    let escalated = false;
-    #[cfg(unix)]
     if !wait_for_process_group_exit(pid, JOB_CANCEL_WAIT_TIMEOUT) {
         escalated = true;
         signal_process_group(pid, libc::SIGKILL)?;
@@ -782,7 +790,7 @@ fn job_cancel(job_id: &str) -> std::io::Result<i32> {
         .mark_cancelled(job_id, unix_millis(SystemTime::now()))
         .map_err(std::io::Error::other)?;
     if cancelled {
-        enqueue_job_completion(&job, None, std::path::Path::new(&job.log_path))?;
+        enqueue_job_completion(job, None, std::path::Path::new(&job.log_path))?;
     }
     println!(
         "{}",

@@ -330,6 +330,22 @@ fn snapshot_processes() -> Vec<WindowsProcessEntry> {
     output
 }
 
+pub fn parent_process_id(pid: u32) -> Option<u32> {
+    snapshot_processes()
+        .into_iter()
+        .find(|entry| entry.pid == pid)
+        .map(|entry| entry.parent_pid)
+        .filter(|parent_pid| *parent_pid > 0)
+}
+
+pub fn process_name(pid: u32) -> Option<String> {
+    snapshot_processes()
+        .into_iter()
+        .find(|entry| entry.pid == pid)
+        .map(|entry| entry.name)
+        .filter(|name| !name.is_empty())
+}
+
 fn process_command_line(pid: u32) -> Option<String> {
     let process = ProcessHandle::open(pid, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ)?;
     let parameters = read_process_parameters(process.0)?;

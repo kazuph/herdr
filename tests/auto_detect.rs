@@ -14,7 +14,6 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use serde_json::Value;
 use support::{
     cleanup_test_base, register_runtime_dir, register_spawned_herdr_pid,
     unregister_spawned_herdr_pid,
@@ -255,13 +254,6 @@ fn process_exists(pid: u32) -> bool {
     } else {
         std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
-}
-
-fn read_json_line(stream: UnixStream) -> Value {
-    let mut reader = BufReader::new(stream);
-    let mut response = String::new();
-    reader.read_line(&mut response).unwrap();
-    serde_json::from_str(&response).unwrap()
 }
 
 fn wait_for_pid_exit(pid: u32, timeout: Duration) -> bool {
