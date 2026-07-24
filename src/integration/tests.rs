@@ -267,7 +267,7 @@ fn windows_install_rejects_unsupported_integration_before_config_lookup() {
     let err = install_target(IntegrationTarget::Pi).unwrap_err();
     assert_eq!(
         err.to_string(),
-        "pi integration is not supported on Windows"
+        "agent integration install is disabled in the kazuph/herdr fork; use trusted local tools to report agent state"
     );
 
     if let Some(home) = original_home {

@@ -1293,8 +1293,12 @@ fn explicit_client_command_respects_nested_guard() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("nested herdr is disabled by default"),
-        "client should fail at the nested guard before connecting: {stderr}"
+        !stderr.contains("nested herdr is disabled by default"),
+        "stale HERDR_ENV without a herdr ancestor should not trigger the nested guard: {stderr}"
+    );
+    assert!(
+        stderr.contains("failed to connect to server"),
+        "client should continue to the normal connection path: {stderr}"
     );
 }
 
