@@ -81,7 +81,8 @@ pub(crate) use self::{
         workspace_list_entries, workspace_list_entries_expanded, workspace_list_rect,
         workspace_list_scroll_metrics, workspace_list_scrollbar_rect,
         workspace_panel_density_toggle_rect, workspace_parent_group_state,
-        workspace_section_new_button_rect, WorkspaceListEntry,
+        workspace_section_is_expanded, workspace_section_new_button_rect,
+        workspace_sections_for_entries, WorkspaceListEntry,
     },
 };
 pub(crate) use self::{
