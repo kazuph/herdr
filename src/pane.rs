@@ -836,7 +836,7 @@ fn spawn_basic_detection_task(
                 }
                 _ => None,
             };
-            screen_detection.state = crate::terminal::state::filter_stale_claude_working(
+            screen_detection.state = crate::terminal::state::filter_stale_agent_working(
                 agent,
                 screen_detection.state,
                 fingerprint,
@@ -2318,7 +2318,7 @@ impl PaneRuntime {
                         }
                         _ => None,
                     };
-                    screen_detection.state = crate::terminal::state::filter_stale_claude_working(
+                    screen_detection.state = crate::terminal::state::filter_stale_agent_working(
                         agent,
                         screen_detection.state,
                         fingerprint,

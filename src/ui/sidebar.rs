@@ -225,6 +225,7 @@ fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indent
     let rows = tokens::space_rows(
         &app.sidebar_spaces,
         SpaceTokenContext {
+            workspace_number: 1,
             workspace: &label,
             branch: ws.branch().as_deref(),
             state_text: state_label(state, seen),
@@ -1087,6 +1088,7 @@ fn resolved_token_spans(
         .iter()
         .map(|token| match &token.kind {
             ResolvedTokenKind::StateIcon => display_width(state_icon.0),
+            ResolvedTokenKind::WorkspaceNumber(number) => display_width(&number.to_string()),
             ResolvedTokenKind::GitStatus { ahead, behind } => {
                 usize::from(*ahead > 0) * display_width(&format!("↑{ahead}"))
                     + usize::from(*behind > 0) * display_width(&format!("↓{behind}"))
@@ -1203,6 +1205,12 @@ fn resolved_token_spans(
                 spans.push(Span::styled(
                     state_icon.0.to_string(),
                     apply_token_style(state_icon.1, token.style),
+                ));
+            }
+            ResolvedTokenKind::WorkspaceNumber(number) => {
+                spans.push(Span::styled(
+                    number.to_string(),
+                    Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
                 ));
             }
             ResolvedTokenKind::StateText(text) => {
@@ -1454,6 +1462,7 @@ fn render_workspace_list(
         let rows = tokens::space_rows(
             &app.sidebar_spaces,
             SpaceTokenContext {
+                workspace_number: i + 1,
                 workspace: &display_label,
                 branch: ws.branch().as_deref(),
                 state_text: state_label(display_state, display_seen),
@@ -1982,8 +1991,9 @@ rows = [[{ token = "$hype", fg = "#abcdef", bold = true, dim = false }, "workspa
             .unwrap();
         let buffer = terminal.backend().buffer();
         let h = buffer[(find_symbol_x(buffer, row, 25, "H"), row)].style();
-        let i = buffer[(find_symbol_x(buffer, row, 25, "I"), row)].style();
-        let separator = buffer[(find_symbol_x(buffer, row, 25, "·"), row)].style();
+        let i_x = find_symbol_x(buffer, row, 25, "I");
+        let i = buffer[(i_x, row)].style();
+        let separator = buffer[(i_x + 1, row)].style();
 
         for style in [h, i] {
             assert_eq!(style.fg, Some(ratatui::style::Color::Rgb(0xab, 0xcd, 0xef)));
@@ -2295,13 +2305,19 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
-        assert!(row_text(buffer, cards[0].rect.y, area.width).contains("one"));
+        let first_row = row_text(buffer, cards[0].rect.y, area.width);
+        let second_row = row_text(buffer, cards[1].rect.y, area.width);
+        assert!(first_row.contains("· 1 one"), "row: {first_row:?}");
+        assert!(second_row.contains("· 2 two"), "row: {second_row:?}");
+        let number_x = find_symbol_x(buffer, cards[0].rect.y, area.width, "1");
+        let number_style = buffer[(number_x, cards[0].rect.y)].style();
+        assert_eq!(number_style.fg, Some(app.palette.overlay0));
+        assert!(number_style.add_modifier.contains(Modifier::BOLD));
         let expected_git = app.workspaces[0]
             .branch()
             .unwrap_or_else(|| "nogit".to_string());
         let git_row = row_text(buffer, cards[0].rect.y + 1, area.width);
         assert!(git_row.contains(&expected_git), "row: {git_row:?}");
-        assert!(row_text(buffer, cards[1].rect.y, area.width).contains("two"));
         assert_eq!(buffer[(cards[0].rect.x, cards[0].rect.y)].symbol(), "▌");
         assert_eq!(buffer[(cards[0].rect.x, cards[0].rect.y + 1)].symbol(), "▌");
         assert_eq!(
