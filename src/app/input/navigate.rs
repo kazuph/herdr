@@ -560,11 +560,17 @@ impl App {
         &mut self,
         direction: crate::api::schema::SplitDirection,
     ) {
+        let Some((ws_idx, pane_id)) = self.focused_pane_target() else {
+            return;
+        };
+        let Some(target_pane_id) = self.public_pane_id(ws_idx, pane_id) else {
+            return;
+        };
         self.runtime_pane_split(
             "tui.pane.split",
             crate::api::schema::PaneSplitParams {
                 workspace_id: None,
-                target_pane_id: None,
+                target_pane_id: Some(target_pane_id),
                 direction,
                 ratio: None,
                 cwd: None,

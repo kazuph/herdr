@@ -52,12 +52,12 @@ impl App {
             self.parse_pane_id(target_pane_id)
         } else if let Some(workspace_id) = params.workspace_id.as_deref() {
             self.parse_workspace_id(workspace_id).and_then(|ws_idx| {
-                let pane_id = self.state.workspaces.get(ws_idx)?.focused_pane_id()?;
+                let pane_id = self.state.implicit_pane_insertion_target(ws_idx)?;
                 Some((ws_idx, pane_id))
             })
         } else {
             self.state.active.and_then(|ws_idx| {
-                let pane_id = self.state.workspaces.get(ws_idx)?.focused_pane_id()?;
+                let pane_id = self.state.implicit_pane_insertion_target(ws_idx)?;
                 Some((ws_idx, pane_id))
             })
         };

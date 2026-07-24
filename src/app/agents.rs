@@ -125,7 +125,7 @@ impl App {
         let (rows, cols) = self.state.estimate_pane_size();
 
         let (ws_idx, tab_idx, pane_id) = if let Some(tab_id) = params.tab_id {
-            let (ws_idx, tab_idx) =
+            let (ws_idx, _) =
                 self.parse_tab_id(&tab_id)
                     .ok_or_else(|| AgentStartError::TargetNotFound {
                         target: tab_id.clone(),
@@ -140,7 +140,12 @@ impl App {
                     return Err(AgentStartError::PlacementConflict);
                 }
             }
-            let target_pane = self.state.workspaces[ws_idx].tabs[tab_idx].layout.focused();
+            let target_pane = self
+                .state
+                .implicit_pane_insertion_target(ws_idx)
+                .ok_or_else(|| AgentStartError::TargetNotFound {
+                    target: tab_id.clone(),
+                })?;
             self.spawn_agent_split(
                 ws_idx,
                 target_pane,
@@ -156,8 +161,12 @@ impl App {
                     target: workspace_id.clone(),
                 }
             })?;
-            let tab_idx = self.state.workspaces[ws_idx].active_tab;
-            let target_pane = self.state.workspaces[ws_idx].tabs[tab_idx].layout.focused();
+            let target_pane = self
+                .state
+                .implicit_pane_insertion_target(ws_idx)
+                .ok_or_else(|| AgentStartError::TargetNotFound {
+                    target: workspace_id.clone(),
+                })?;
             self.spawn_agent_split(
                 ws_idx,
                 target_pane,
@@ -171,8 +180,12 @@ impl App {
             self.spawn_agent_workspace(cwd, rows, cols, &argv, extra_env, focus)?
         } else {
             let ws_idx = self.state.active.unwrap_or(0);
-            let tab_idx = self.state.workspaces[ws_idx].active_tab;
-            let target_pane = self.state.workspaces[ws_idx].tabs[tab_idx].layout.focused();
+            let target_pane = self
+                .state
+                .implicit_pane_insertion_target(ws_idx)
+                .ok_or_else(|| AgentStartError::TargetNotFound {
+                    target: self.public_workspace_id(ws_idx),
+                })?;
             self.spawn_agent_split(
                 ws_idx,
                 target_pane,
