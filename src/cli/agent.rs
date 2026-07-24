@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::api::schema::{
-    AgentReadParams, AgentRenameParams, AgentSendParams, AgentStartParams, AgentStatus,
-    AgentTarget, EmptyParams, Method, ReadFormat, ReadSource, Request, Subscription,
+    AgentReadParams, AgentRenameParams, AgentRestoreParams, AgentSendParams, AgentStartParams,
+    AgentStatus, AgentTarget, EmptyParams, Method, ReadFormat, ReadSource, Request, Subscription,
 };
 
 pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
@@ -21,6 +21,7 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         "wait" => agent_wait(&args[1..]),
         "attach" => agent_attach(&args[1..]),
         "start" => agent_start(&args[1..]),
+        "restore" => agent_restore(&args[1..]),
         "explain" => agent_explain(&args[1..]),
         "help" | "--help" | "-h" => {
             print_agent_help();
@@ -30,6 +31,34 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
             print_agent_help();
             Ok(2)
         }
+    }
+}
+
+fn agent_restore(args: &[String]) -> std::io::Result<i32> {
+    if matches!(args, [flag] if matches!(flag.as_str(), "help" | "--help" | "-h")) {
+        eprintln!("usage: herdr agent restore [--dry-run]");
+        return Ok(0);
+    }
+
+    let dry_run = match parse_agent_restore_args(args) {
+        Ok(dry_run) => dry_run,
+        Err(()) => {
+            eprintln!("usage: herdr agent restore [--dry-run]");
+            return Ok(2);
+        }
+    };
+
+    super::print_response(&super::send_request(&Request {
+        id: "cli:agent:restore".into(),
+        method: Method::AgentRestore(AgentRestoreParams { dry_run }),
+    })?)
+}
+
+fn parse_agent_restore_args(args: &[String]) -> Result<bool, ()> {
+    match args {
+        [] => Ok(false),
+        [flag] if flag == "--dry-run" => Ok(true),
+        _ => Err(()),
     }
 }
 
@@ -676,10 +705,37 @@ fn print_agent_help() {
     eprintln!("  herdr agent wait <target> --status <idle|working|blocked|unknown> [--timeout MS]");
     eprintln!("  herdr agent attach <target> [--takeover]");
     eprintln!("  herdr agent start <name> [--cwd PATH] [--workspace ID] [--tab ID] [--split right|down] [--env KEY=VALUE] [--focus|--no-focus] -- <argv...>");
+    eprintln!("  herdr agent restore [--dry-run]");
     eprintln!("  herdr agent explain <target> [--json]");
     eprintln!("  herdr agent explain --file PATH --agent LABEL [--json]");
     eprintln!("  targets accept terminal ids, unique agent names, detected/reported agent labels, and legacy pane ids");
     eprintln!(
         "  agent send writes literal text; use pane run when you want command text plus Enter"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{agent_restore, parse_agent_restore_args};
+
+    #[test]
+    fn agent_restore_accepts_only_optional_dry_run() {
+        assert_eq!(parse_agent_restore_args(&[]), Ok(false));
+        assert_eq!(
+            parse_agent_restore_args(&["--dry-run".to_string()]),
+            Ok(true)
+        );
+        assert_eq!(parse_agent_restore_args(&["--json".to_string()]), Err(()));
+        assert_eq!(
+            parse_agent_restore_args(&["--dry-run".to_string(), "extra".to_string()]),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn agent_restore_help_exits_successfully_without_contacting_the_server() {
+        for flag in ["help", "--help", "-h"] {
+            assert_eq!(agent_restore(&[flag.to_string()]).unwrap(), 0);
+        }
+    }
 }

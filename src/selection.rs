@@ -7,8 +7,6 @@
 //!   MouseUp           → Text extracted, copied via OSC 52, highlight stays
 //!   Next click / key  → Selection cleared
 //!
-//! Double-click copy also briefly highlights the selected word.
-//!
 //! Rows are stored in screen-buffer coordinates instead of viewport-relative
 //! coordinates. That keeps selection stable while the pane scrolls.
 

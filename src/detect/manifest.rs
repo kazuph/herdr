@@ -261,6 +261,14 @@ const BUNDLED_MANIFESTS: &[(&str, &str)] = &[
 static MANIFEST_CACHE: OnceLock<RwLock<ManifestCache>> = OnceLock::new();
 static MANIFEST_RELOAD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+#[cfg(test)]
+fn manifest_reload_lock() -> std::sync::MutexGuard<'static, ()> {
+    MANIFEST_RELOAD_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 const MAX_RULES_PER_MANIFEST: usize = 128;
 const MAX_GATE_DEPTH: usize = 8;
 const MAX_TOTAL_GATES: usize = 512;
@@ -269,6 +277,9 @@ const MAX_TOTAL_MATCHERS: usize = 1024;
 const MAX_MATCHER_CHARS: usize = 512;
 
 pub(crate) fn reload_manifests() -> Vec<AgentManifestSummary> {
+    #[cfg(test)]
+    let _reload_guard = manifest_reload_lock();
+    #[cfg(not(test))]
     let _reload_guard = MANIFEST_RELOAD_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
@@ -552,6 +563,8 @@ fn fallback_explain(
 }
 
 fn load_manifest(agent: Agent) -> Option<LoadedManifest> {
+    #[cfg(test)]
+    let _reload_guard = manifest_reload_lock();
     let lock = manifest_cache();
     let guard = match lock.read() {
         Ok(guard) => guard,
@@ -1084,6 +1097,13 @@ fn validate_region_name(spec: &str) -> Result<(), String> {
 }
 
 fn override_path(agent: Agent) -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(root) = super::manifest_update::test_manifest_config_root() {
+        return Some(
+            root.join("agent-detection")
+                .join(format!("{}.toml", agent_label(agent))),
+        );
+    }
     Some(
         crate::config::config_dir()
             .join("agent-detection")
@@ -1386,7 +1406,7 @@ fn prompt_box_body(content: &str) -> Option<&str> {
     Some(&content[start.min(content.len())..end.min(content.len())])
 }
 
-fn above_prompt_box(content: &str) -> &str {
+pub(crate) fn above_prompt_box(content: &str) -> &str {
     let lines: Vec<&str> = content.lines().collect();
     let Some(top) = prompt_box_top_border_index(&lines) else {
         return content;

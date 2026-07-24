@@ -62,6 +62,21 @@ fn request_uses_dot_method_names() {
 }
 
 #[test]
+fn integration_mutation_methods_are_not_part_of_the_public_api() {
+    for method in ["integration.install", "integration.uninstall"] {
+        let request = serde_json::json!({
+            "id": "req_disabled_integration",
+            "method": method,
+            "params": { "target": "codex" },
+        });
+        assert!(
+            serde_json::from_value::<Request>(request).is_err(),
+            "{method} must not deserialize as a public API request"
+        );
+    }
+}
+
+#[test]
 fn bundled_protocol_schema_refs_resolve_inside_bundle() {
     fn assert_no_standalone_refs(value: &serde_json::Value) {
         match value {
@@ -125,6 +140,19 @@ fn request_round_trips_for_server_stop() {
 
     let json = serde_json::to_value(&request).unwrap();
     assert_eq!(json["method"], "server.stop");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
+fn request_round_trips_for_server_restart() {
+    let request = Request {
+        id: "req_restart".into(),
+        method: Method::ServerRestart(EmptyParams::default()),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "server.restart");
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, request);
 }
@@ -320,12 +348,14 @@ fn pane_current_request_round_trips() {
         id: "req_current".into(),
         method: Method::PaneCurrent(PaneCurrentParams {
             caller_pane_id: Some("w1-1".into()),
+            caller_process_id: Some(123),
         }),
     };
 
     let json = serde_json::to_value(&request).unwrap();
     assert_eq!(json["method"], "pane.current");
     assert_eq!(json["params"]["caller_pane_id"], "w1-1");
+    assert_eq!(json["params"]["caller_process_id"], 123);
     let restored: Request = serde_json::from_value(json).unwrap();
     assert_eq!(restored, request);
 }

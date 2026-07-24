@@ -108,7 +108,10 @@ fn pane_current(args: &[String]) -> std::io::Result<i32> {
 
     super::print_response(&super::send_request(&Request {
         id: "cli:pane:current".into(),
-        method: Method::PaneCurrent(PaneCurrentParams { caller_pane_id }),
+        method: Method::PaneCurrent(PaneCurrentParams {
+            caller_pane_id,
+            caller_process_id: Some(std::process::id()),
+        }),
     })?)
 }
 
@@ -943,7 +946,7 @@ fn pane_run(args: &[String]) -> std::io::Result<i32> {
 
 fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
     let Some(raw_pane_id) = args.first() else {
-        eprintln!("usage: herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
+        eprintln!("usage: herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID] [--agent-session-id ID] [--agent-session-path PATH] [--model NAME]");
         return Ok(2);
     };
 
@@ -952,9 +955,13 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
     let mut agent = None;
     let mut state = None;
     let mut message = None;
+    let mut custom_status = None;
     let mut seq = None;
+    let mut title = None;
+    let mut session_id = None;
     let mut agent_session_id = None;
     let mut agent_session_path = None;
+    let mut model = None;
 
     let mut index = 1;
     while index < args.len() {
@@ -991,12 +998,36 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
                 message = Some(value.clone());
                 index += 2;
             }
+            "--custom-status" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --custom-status");
+                    return Ok(2);
+                };
+                custom_status = Some(value.clone());
+                index += 2;
+            }
             "--seq" => {
                 let Some(value) = args.get(index + 1) else {
                     eprintln!("missing value for --seq");
                     return Ok(2);
                 };
                 seq = Some(super::parse_u64_flag("--seq", value)?);
+                index += 2;
+            }
+            "--title" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --title");
+                    return Ok(2);
+                };
+                title = Some(value.clone());
+                index += 2;
+            }
+            "--session-id" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --session-id");
+                    return Ok(2);
+                };
+                session_id = Some(value.clone());
                 index += 2;
             }
             "--agent-session-id" => {
@@ -1013,6 +1044,14 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
                     return Ok(2);
                 };
                 agent_session_path = Some(value.clone());
+                index += 2;
+            }
+            "--model" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --model");
+                    return Ok(2);
+                };
+                model = Some(value.clone());
                 index += 2;
             }
             other => {
@@ -1044,9 +1083,13 @@ fn pane_report_agent(args: &[String]) -> std::io::Result<i32> {
         agent,
         state,
         message,
+        custom_status,
         seq,
+        title,
         agent_session_id,
+        session_id,
         agent_session_path,
+        model,
     }))
 }
 
@@ -1430,7 +1473,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane close <pane_id>");
     eprintln!("  herdr pane send-text <pane_id> <text>");
     eprintln!("  herdr pane send-keys <pane_id> <key> [key ...]");
-    eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
+    eprintln!("  herdr pane report-agent <pane_id> --source ID --agent LABEL --state idle|working|blocked|unknown [--message TEXT] [--custom-status TEXT] [--seq N] [--title TEXT] [--session-id ID] [--agent-session-id ID] [--agent-session-path PATH] [--model NAME]");
     eprintln!("  herdr pane report-agent-session <pane_id> --source ID --agent LABEL [--seq N] [--agent-session-id ID] [--agent-session-path PATH]");
     eprintln!("  herdr pane release-agent <pane_id> --source ID --agent LABEL [--seq N]");
     eprintln!("  herdr pane report-metadata <pane_id> --source ID [--agent LABEL] [--applies-to-source ID] [--title TEXT|--clear-title] [--display-agent TEXT|--clear-display-agent] [--state-label STATUS=TEXT] [--clear-state-labels] [--token NAME=VALUE] [--clear-token NAME] [--seq N] [--ttl-ms N]");
@@ -1471,7 +1514,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_pane_split_args_current_without_env_keeps_focused_fallback() {
+    fn parse_pane_split_args_current_without_env_leaves_target_for_app_resolution() {
         let params =
             parse_pane_split_args(&args(&["--direction", "down", "--current"]), None).unwrap();
 
@@ -1480,7 +1523,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_pane_split_args_omitted_target_keeps_focused_fallback() {
+    fn parse_pane_split_args_omitted_target_leaves_target_for_app_resolution() {
         let params =
             parse_pane_split_args(&args(&["--direction", "down"]), Some("issue-1")).unwrap();
 
@@ -1521,7 +1564,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_pane_current_args_without_env_falls_back_to_focused_pane() {
+    fn parse_pane_current_args_without_env_uses_process_session_resolution() {
         let pane_id = parse_pane_current_args(&args(&[]), None).unwrap();
 
         assert_eq!(pane_id, None);

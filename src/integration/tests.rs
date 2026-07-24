@@ -1,17 +1,13 @@
 use super::command::*;
-use super::config_edit::*;
 use super::env::*;
 use super::file_ops::*;
 use super::registry::*;
-use super::targets::*;
 use super::types::*;
 use super::version::*;
 use super::*;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use serde_json::{json, Map, Value};
 
 #[test]
 fn extract_version_triple_parses_common_outputs() {
@@ -139,6 +135,36 @@ fn unique_base() -> PathBuf {
             .unwrap()
             .as_nanos()
     ))
+}
+
+fn file_tree_snapshot(root: &Path) -> Vec<(String, String)> {
+    fn visit(base: &Path, path: &Path, entries: &mut Vec<(String, String)>) {
+        let Ok(metadata) = fs::metadata(path) else {
+            return;
+        };
+        if metadata.is_dir() {
+            let mut children = fs::read_dir(path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
+            children.sort();
+            for child in children {
+                visit(base, &child, entries);
+            }
+        } else if metadata.is_file() {
+            entries.push((
+                path.strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                fs::read_to_string(path).unwrap_or_default(),
+            ));
+        }
+    }
+
+    let mut entries = Vec::new();
+    visit(root, root, &mut entries);
+    entries
 }
 
 #[cfg(windows)]
@@ -468,242 +494,185 @@ fn integration_recommendation_installs_available_or_outdated_targets() {
 }
 
 #[test]
-fn install_pi_writes_embedded_asset_to_pi_extensions_dir() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let ext_dir = home.join(".pi/agent/extensions");
-    fs::create_dir_all(&ext_dir).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let path = install_pi().unwrap();
-    let content = fs::read_to_string(&path).unwrap();
-
-    assert_eq!(path, ext_dir.join(PI_EXTENSION_INSTALL_NAME));
-    assert_eq!(content, PI_EXTENSION_ASSET);
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_pi_uses_pi_coding_agent_dir_env() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let agent_dir = base.join("custom-pi-agent");
-    let ext_dir = agent_dir.join("extensions");
-    fs::create_dir_all(&ext_dir).unwrap();
-    std::env::set_var(PI_CODING_AGENT_DIR_ENV_VAR, &agent_dir);
-
-    let path = install_pi().unwrap();
-
-    assert_eq!(path, ext_dir.join(PI_EXTENSION_INSTALL_NAME));
-
-    clear_integration_path_env();
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_pi_expands_tilde_in_pi_coding_agent_dir_env() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let ext_dir = home.join("custom-pi-agent/extensions");
-    fs::create_dir_all(&ext_dir).unwrap();
-    std::env::set_var("HOME", &home);
-    std::env::set_var(PI_CODING_AGENT_DIR_ENV_VAR, "~/custom-pi-agent");
-
-    let path = install_pi().unwrap();
-
-    assert_eq!(path, ext_dir.join(PI_EXTENSION_INSTALL_NAME));
-
-    std::env::remove_var("HOME");
-    clear_integration_path_env();
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_omp_writes_embedded_asset_to_omp_extensions_dir() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let ext_dir = home.join(".omp/agent/extensions");
-    fs::create_dir_all(&ext_dir).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_omp().unwrap();
-    let content = fs::read_to_string(&installed.extension_path).unwrap();
-
-    assert_eq!(
-        installed.extension_path,
-        ext_dir.join(OMP_EXTENSION_INSTALL_NAME)
-    );
-    assert!(!installed.removed_legacy_pi_extension);
-    assert_eq!(content, OMP_EXTENSION_ASSET);
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_omp_removes_legacy_pi_integration_from_omp_extensions_dir() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let ext_dir = home.join(".omp/agent/extensions");
-    fs::create_dir_all(&ext_dir).unwrap();
-    let legacy_path = ext_dir.join(PI_EXTENSION_INSTALL_NAME);
-    fs::write(&legacy_path, PI_EXTENSION_ASSET).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_omp().unwrap();
-
-    assert_eq!(
-        installed.extension_path,
-        ext_dir.join(OMP_EXTENSION_INSTALL_NAME)
-    );
-    assert!(installed.removed_legacy_pi_extension);
-    assert!(!legacy_path.exists());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_omp_preserves_non_herdr_file_with_pi_install_name() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let ext_dir = home.join(".omp/agent/extensions");
-    fs::create_dir_all(&ext_dir).unwrap();
-    let user_path = ext_dir.join(PI_EXTENSION_INSTALL_NAME);
-    fs::write(&user_path, "// user extension\n").unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_omp().unwrap();
-
-    assert_eq!(
-        installed.extension_path,
-        ext_dir.join(OMP_EXTENSION_INSTALL_NAME)
-    );
-    assert!(!installed.removed_legacy_pi_extension);
-    assert_eq!(
-        fs::read_to_string(user_path).unwrap(),
-        "// user extension\n"
-    );
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_omp_uses_pi_coding_agent_dir_env() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let agent_dir = base.join("custom-omp-agent");
-    let ext_dir = agent_dir.join("extensions");
-    fs::create_dir_all(&ext_dir).unwrap();
-    std::env::set_var(PI_CODING_AGENT_DIR_ENV_VAR, &agent_dir);
-
-    let installed = install_omp().unwrap();
-
-    assert_eq!(
-        installed.extension_path,
-        ext_dir.join(OMP_EXTENSION_INSTALL_NAME)
-    );
-    assert!(!installed.removed_legacy_pi_extension);
-
-    clear_integration_path_env();
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_omp_creates_extensions_dir_when_agent_dir_exists() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let agent_dir = home.join(".omp/agent");
-    let ext_dir = agent_dir.join("extensions");
-    fs::create_dir_all(&agent_dir).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_omp().unwrap();
-
-    assert_eq!(
-        installed.extension_path,
-        ext_dir.join(OMP_EXTENSION_INSTALL_NAME)
-    );
-    assert!(ext_dir.is_dir());
-    assert!(!installed.removed_legacy_pi_extension);
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn uninstall_omp_removes_embedded_extension_when_present() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let ext_dir = home.join(".omp/agent/extensions");
-    fs::create_dir_all(&ext_dir).unwrap();
-    fs::write(
-        ext_dir.join(OMP_EXTENSION_INSTALL_NAME),
-        OMP_EXTENSION_ASSET,
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_omp().unwrap();
-
-    assert_eq!(
-        result.extension_path,
-        ext_dir.join(OMP_EXTENSION_INSTALL_NAME)
-    );
-    assert!(result.removed_extension);
-    assert!(!result.extension_path.exists());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_omp_errors_when_extension_dir_missing() {
+fn install_and_uninstall_targets_fail_closed_without_changing_user_dirs() {
     let _lock = integration_env_lock();
     let base = unique_base();
     let home = base.join("home");
     fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("sentinel.txt"), "keep\n").unwrap();
     std::env::set_var("HOME", &home);
+    std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+    std::env::set_var(PI_CODING_AGENT_DIR_ENV_VAR, home.join(".pi/agent"));
+    std::env::set_var(CLAUDE_CONFIG_DIR_ENV_VAR, home.join(".claude"));
+    std::env::set_var(CODEX_HOME_ENV_VAR, home.join(".codex"));
+    std::env::set_var(COPILOT_HOME_ENV_VAR, home.join(".copilot"));
+    std::env::set_var(KIMI_CODE_HOME_ENV_VAR, home.join(".kimi-code"));
+    std::env::set_var(QODERCLI_CONFIG_DIR_ENV_VAR, home.join(".qoder"));
+    std::env::set_var(CURSOR_CONFIG_DIR_ENV_VAR, home.join(".cursor"));
+    let before = file_tree_snapshot(&home);
 
-    let err = install_omp().unwrap_err().to_string();
+    for target in [
+        crate::api::schema::IntegrationTarget::Pi,
+        crate::api::schema::IntegrationTarget::Omp,
+        crate::api::schema::IntegrationTarget::Claude,
+        crate::api::schema::IntegrationTarget::Codex,
+        crate::api::schema::IntegrationTarget::Copilot,
+        crate::api::schema::IntegrationTarget::Devin,
+        crate::api::schema::IntegrationTarget::Kimi,
+        crate::api::schema::IntegrationTarget::Droid,
+        crate::api::schema::IntegrationTarget::Opencode,
+        crate::api::schema::IntegrationTarget::Kilo,
+        crate::api::schema::IntegrationTarget::Hermes,
+        crate::api::schema::IntegrationTarget::Qodercli,
+        crate::api::schema::IntegrationTarget::Cursor,
+        crate::api::schema::IntegrationTarget::Mastracode,
+    ] {
+        let install_err = install_target(target).unwrap_err().to_string();
+        assert!(
+            install_err.contains("agent integration install is disabled in the kazuph/herdr fork"),
+            "{install_err}"
+        );
+        assert_eq!(file_tree_snapshot(&home), before);
 
-    assert!(err.contains("omp extension directory not found"));
+        let uninstall_err = uninstall_target(target).unwrap_err().to_string();
+        assert!(
+            uninstall_err
+                .contains("agent integration uninstall is disabled in the kazuph/herdr fork"),
+            "{uninstall_err}"
+        );
+        assert_eq!(file_tree_snapshot(&home), before);
+    }
 
+    clear_integration_path_env();
+    std::env::remove_var("HOME");
+    let _ = fs::remove_dir_all(base);
+}
+
+fn assert_target_action_is_disabled_without_writing_user_dirs(
+    target: crate::api::schema::IntegrationTarget,
+    action: &str,
+) {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("sentinel.txt"), "keep\n").unwrap();
+    std::env::set_var("HOME", &home);
+    std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+    std::env::set_var(PI_CODING_AGENT_DIR_ENV_VAR, home.join(".pi/agent"));
+    std::env::set_var(CLAUDE_CONFIG_DIR_ENV_VAR, home.join(".claude"));
+    std::env::set_var(CODEX_HOME_ENV_VAR, home.join(".codex"));
+    std::env::set_var(COPILOT_HOME_ENV_VAR, home.join(".copilot"));
+    std::env::set_var(KIMI_CODE_HOME_ENV_VAR, home.join(".kimi-code"));
+    std::env::set_var(QODERCLI_CONFIG_DIR_ENV_VAR, home.join(".qoder"));
+    std::env::set_var(CURSOR_CONFIG_DIR_ENV_VAR, home.join(".cursor"));
+    let before = file_tree_snapshot(&home);
+
+    let error = match action {
+        "install" => install_target(target).unwrap_err().to_string(),
+        "uninstall" => uninstall_target(target).unwrap_err().to_string(),
+        _ => unreachable!("test helper only supports integration mutation actions"),
+    };
+    assert!(
+        error.contains("agent integration") && error.contains("disabled in the kazuph/herdr fork"),
+        "{error}"
+    );
+    assert_eq!(file_tree_snapshot(&home), before);
+
+    clear_integration_path_env();
     std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn uninstall_pi_removes_embedded_extension_when_present() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let ext_dir = home.join(".pi/agent/extensions");
-    fs::create_dir_all(&ext_dir).unwrap();
-    fs::write(ext_dir.join(PI_EXTENSION_INSTALL_NAME), PI_EXTENSION_ASSET).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_pi().unwrap();
-
-    assert_eq!(
-        result.extension_path,
-        ext_dir.join(PI_EXTENSION_INSTALL_NAME)
+fn install_pi_writes_embedded_asset_to_pi_extensions_dir_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Pi,
+        "install",
     );
-    assert!(result.removed_extension);
-    assert!(!result.extension_path.exists());
+}
 
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+#[test]
+fn install_pi_uses_pi_coding_agent_dir_env_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Pi,
+        "install",
+    );
+}
+
+#[test]
+fn install_pi_expands_tilde_in_pi_coding_agent_dir_env_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Pi,
+        "install",
+    );
+}
+
+#[test]
+fn install_omp_writes_embedded_asset_to_omp_extensions_dir_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Omp,
+        "install",
+    );
+}
+
+#[test]
+fn install_omp_removes_legacy_pi_integration_from_omp_extensions_dir_is_disabled_without_writing_user_dirs(
+) {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Omp,
+        "install",
+    );
+}
+
+#[test]
+fn install_omp_preserves_non_herdr_file_with_pi_install_name_is_disabled_without_writing_user_dirs()
+{
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Omp,
+        "install",
+    );
+}
+
+#[test]
+fn install_omp_uses_pi_coding_agent_dir_env_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Omp,
+        "install",
+    );
+}
+
+#[test]
+fn install_omp_creates_extensions_dir_when_agent_dir_exists_is_disabled_without_writing_user_dirs()
+{
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Omp,
+        "install",
+    );
+}
+
+#[test]
+fn uninstall_omp_removes_embedded_extension_when_present_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Omp,
+        "uninstall",
+    );
+}
+
+#[test]
+fn install_omp_errors_when_extension_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Omp,
+        "install",
+    );
+}
+
+#[test]
+fn uninstall_pi_removes_embedded_extension_when_present_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Pi,
+        "uninstall",
+    );
 }
 
 #[test]
@@ -799,7 +768,13 @@ fn outdated_integrations_accept_current_version_marker() {
     let home = base.join("home");
     let ext_dir = home.join(".pi/agent/extensions");
     fs::create_dir_all(&ext_dir).unwrap();
-    fs::write(ext_dir.join(PI_EXTENSION_INSTALL_NAME), PI_EXTENSION_ASSET).unwrap();
+    fs::write(
+        ext_dir.join(PI_EXTENSION_INSTALL_NAME),
+        format!(
+            "// HERDR_INTEGRATION_ID=pi\n// HERDR_INTEGRATION_VERSION={PI_INTEGRATION_VERSION}\n"
+        ),
+    )
+    .unwrap();
     std::env::set_var("HOME", &home);
 
     assert!(outdated_installed_integrations().is_empty());
@@ -809,191 +784,44 @@ fn outdated_integrations_accept_current_version_marker() {
 }
 
 #[test]
-fn install_pi_errors_when_extension_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    fs::create_dir_all(&home).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let err = install_pi().unwrap_err().to_string();
-
-    assert!(err.contains("pi extension directory not found"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+fn install_pi_errors_when_extension_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Pi,
+        "install",
+    );
 }
 
 #[test]
-fn install_claude_writes_hook_and_updates_settings() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let claude_dir = home.join(".claude");
-    fs::create_dir_all(&claude_dir).unwrap();
-    fs::write(
-        claude_dir.join("settings.json"),
-        r#"{"permissions":{"allow":["Read"]},"hooks":{}}"#,
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_claude().unwrap();
-    let hook_content = fs::read_to_string(&installed.hook_path).unwrap();
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(&installed.settings_path).unwrap()).unwrap();
-
-    assert_eq!(
-        installed.hook_path,
-        claude_dir.join("hooks").join(CLAUDE_HOOK_INSTALL_NAME)
+fn install_claude_writes_hook_and_updates_settings_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Claude,
+        "install",
     );
-    assert_eq!(hook_content, CLAUDE_HOOK_ASSET);
-    assert!(settings["permissions"]["allow"].is_array());
-    assert_eq!(settings["hooks"]["SessionStart"][0]["matcher"], "*");
-    assert!(settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-        .as_str()
-        .unwrap()
-        .contains(" session"));
-    assert!(settings["hooks"].get("UserPromptSubmit").is_none());
-    assert!(settings["hooks"].get("PreToolUse").is_none());
-    assert!(settings["hooks"].get("PermissionRequest").is_none());
-    assert!(settings["hooks"].get("PostToolUse").is_none());
-    assert!(settings["hooks"].get("PostToolUseFailure").is_none());
-    assert!(settings["hooks"].get("SubagentStop").is_none());
-    assert!(settings["hooks"].get("Stop").is_none());
-    assert!(settings["hooks"].get("SessionEnd").is_none());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_claude_uses_claude_config_dir_env() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let claude_dir = base.join("custom-claude");
-    fs::create_dir_all(&claude_dir).unwrap();
-    std::env::set_var(CLAUDE_CONFIG_DIR_ENV_VAR, &claude_dir);
-
-    let installed = install_claude().unwrap();
-
-    assert_eq!(installed.settings_path, claude_dir.join("settings.json"));
-    assert_eq!(
-        installed.hook_path,
-        claude_dir.join("hooks").join(CLAUDE_HOOK_INSTALL_NAME)
+fn install_claude_uses_claude_config_dir_env_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Claude,
+        "install",
     );
-
-    clear_integration_path_env();
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_claude_is_idempotent_for_hook_entries() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let claude_dir = home.join(".claude");
-    fs::create_dir_all(&claude_dir).unwrap();
-    std::env::set_var("HOME", &home);
-
-    install_claude().unwrap();
-    install_claude().unwrap();
-
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(claude_dir.join("settings.json")).unwrap())
-            .unwrap();
-    assert_eq!(
-        settings["hooks"]["SessionStart"].as_array().unwrap().len(),
-        1
+fn install_claude_is_idempotent_for_hook_entries_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Claude,
+        "install",
     );
-    assert!(settings["hooks"].get("UserPromptSubmit").is_none());
-    assert!(settings["hooks"].get("PreToolUse").is_none());
-    assert!(settings["hooks"].get("PermissionRequest").is_none());
-    assert!(settings["hooks"].get("PostToolUse").is_none());
-    assert!(settings["hooks"].get("PostToolUseFailure").is_none());
-    assert!(settings["hooks"].get("SubagentStop").is_none());
-    assert!(settings["hooks"].get("Stop").is_none());
-    assert!(settings["hooks"].get("SessionEnd").is_none());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_claude_removes_deprecated_completion_hooks_and_preserves_user_hooks() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let claude_dir = home.join(".claude");
-    let hooks_dir = claude_dir.join("hooks");
-    fs::create_dir_all(&hooks_dir).unwrap();
-    let hook_path = hooks_dir.join(CLAUDE_HOOK_INSTALL_NAME);
-    let settings = serde_json::json!({
-        "hooks": {
-            "PostToolUse": [{
-                "matcher": "*",
-                "hooks": [
-                    {"type": "command", "command": format!("bash '{}' working", hook_path.display()), "timeout": 10},
-                    {"type": "command", "command": "echo keep-post", "timeout": 10}
-                ]
-            }],
-            "PostToolUseFailure": [{
-                "matcher": "*",
-                "hooks": [
-                    {"type": "command", "command": format!("bash '{}' working", hook_path.display()), "timeout": 10},
-                    {"type": "command", "command": "echo keep-failure", "timeout": 10}
-                ]
-            }],
-            "SubagentStop": [{
-                "matcher": "*",
-                "hooks": [
-                    {"type": "command", "command": format!("bash '{}' working", hook_path.display()), "timeout": 10},
-                    {"type": "command", "command": "echo keep-subagent", "timeout": 10}
-                ]
-            }],
-            "SessionEnd": [{
-                "matcher": "*",
-                "hooks": [
-                    {"type": "command", "command": format!("bash '{}' release", hook_path.display()), "timeout": 10},
-                    {"type": "command", "command": "echo keep-session-end", "timeout": 10}
-                ]
-            }]
-        }
-    });
-    fs::write(
-        claude_dir.join("settings.json"),
-        serde_json::to_string(&settings).unwrap(),
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    install_claude().unwrap();
-
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(claude_dir.join("settings.json")).unwrap())
-            .unwrap();
-    assert_eq!(
-        settings["hooks"]["PostToolUse"][0]["hooks"][0]["command"],
-        "echo keep-post"
+fn install_claude_removes_deprecated_completion_hooks_and_preserves_user_hooks_is_disabled_without_writing_user_dirs(
+) {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Claude,
+        "install",
     );
-    assert_eq!(
-        settings["hooks"]["PostToolUseFailure"][0]["hooks"][0]["command"],
-        "echo keep-failure"
-    );
-    assert_eq!(
-        settings["hooks"]["SubagentStop"][0]["hooks"][0]["command"],
-        "echo keep-subagent"
-    );
-    assert_eq!(
-        settings["hooks"]["SessionEnd"][0]["hooks"][0]["command"],
-        "echo keep-session-end"
-    );
-    assert!(settings["hooks"].get("UserPromptSubmit").is_none());
-    assert!(settings["hooks"].get("PreToolUse").is_none());
-    assert!(settings["hooks"].get("Stop").is_none());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
@@ -1057,106 +885,20 @@ fn claude_v2_integration_status_is_outdated() {
 }
 
 #[test]
-fn uninstall_claude_removes_herdr_hooks_and_preserves_others() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let claude_dir = home.join(".claude");
-    let hooks_dir = claude_dir.join("hooks");
-    fs::create_dir_all(&hooks_dir).unwrap();
-    let hook_path = hooks_dir.join(CLAUDE_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, CLAUDE_HOOK_ASSET).unwrap();
-    let settings = serde_json::json!({
-        "hooks": {
-            "SessionStart": [{
-                "matcher": "*",
-                "hooks": [{"type": "command", "command": format!("bash '{}' idle", hook_path.display()), "timeout": 10}]
-            }],
-            "UserPromptSubmit": [{
-                "matcher": "*",
-                "hooks": [
-                    {"type": "command", "command": format!("bash '{}' working", hook_path.display()), "timeout": 10},
-                    {"type": "command", "command": "echo keep", "timeout": 10}
-                ]
-            }],
-            "PermissionRequest": [{
-                "matcher": "*",
-                "hooks": [{"type": "command", "command": format!("bash '{}' blocked", hook_path.display()), "timeout": 10}]
-            }],
-            "PostToolUse": [{
-                "matcher": "*",
-                "hooks": [{"type": "command", "command": format!("bash '{}' working", hook_path.display()), "timeout": 10}]
-            }],
-            "PostToolUseFailure": [{
-                "matcher": "*",
-                "hooks": [{"type": "command", "command": format!("bash '{}' working", hook_path.display()), "timeout": 10}]
-            }],
-            "SubagentStop": [{
-                "matcher": "*",
-                "hooks": [{"type": "command", "command": format!("bash '{}' working", hook_path.display()), "timeout": 10}]
-            }],
-            "Stop": [{
-                "matcher": "*",
-                "hooks": [{"type": "command", "command": format!("bash '{}' idle", hook_path.display()), "timeout": 10}]
-            }],
-            "SessionEnd": [{
-                "matcher": "*",
-                "hooks": [{"type": "command", "command": format!("bash '{}' release", hook_path.display()), "timeout": 10}]
-            }]
-        }
-    });
-    fs::write(
-        claude_dir.join("settings.json"),
-        serde_json::to_string(&settings).unwrap(),
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_claude().unwrap();
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(claude_dir.join("settings.json")).unwrap())
-            .unwrap();
-
-    assert!(result.removed_hook_file);
-    assert!(result.updated_settings);
-    assert!(!result.hook_path.exists());
-    assert_eq!(
-        settings["hooks"]["UserPromptSubmit"][0]["hooks"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
+fn uninstall_claude_removes_herdr_hooks_and_preserves_others_is_disabled_without_writing_user_dirs()
+{
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Claude,
+        "uninstall",
     );
-    assert_eq!(
-        settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-        "echo keep"
-    );
-    assert!(settings["hooks"].get("PermissionRequest").is_none());
-    assert!(settings["hooks"].get("SessionStart").is_none());
-    assert!(settings["hooks"].get("PostToolUse").is_none());
-    assert!(settings["hooks"].get("PostToolUseFailure").is_none());
-    assert!(settings["hooks"].get("SubagentStop").is_none());
-    assert!(settings["hooks"].get("Stop").is_none());
-    assert!(settings["hooks"].get("SessionEnd").is_none());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_claude_errors_when_claude_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    fs::create_dir_all(&home).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let err = install_claude().unwrap_err().to_string();
-
-    assert!(err.contains("claude directory not found"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+fn install_claude_errors_when_claude_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Claude,
+        "install",
+    );
 }
 
 #[test]
@@ -1190,388 +932,102 @@ fn codex_v2_integration_status_is_outdated() {
 }
 
 #[test]
-fn install_codex_writes_hook_and_updates_hooks_and_config() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let codex_dir = home.join(".codex");
-    fs::create_dir_all(&codex_dir).unwrap();
-    fs::write(codex_dir.join("config.toml"), "model = \"gpt-5.4\"\n").unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_codex().unwrap();
-    let hook_content = fs::read_to_string(&installed.hook_path).unwrap();
-    let hooks: Value =
-        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
-    let config = fs::read_to_string(&installed.config_path).unwrap();
-
-    assert_eq!(installed.hook_path, codex_dir.join(CODEX_HOOK_INSTALL_NAME));
-    assert_eq!(installed.hooks_path, codex_dir.join("hooks.json"));
-    assert_eq!(installed.config_path, codex_dir.join("config.toml"));
-    assert_eq!(hook_content, CODEX_HOOK_ASSET);
-    assert!(hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-        .as_str()
-        .unwrap()
-        .contains(" session"));
-    assert!(hooks["hooks"].get("UserPromptSubmit").is_none());
-    assert!(hooks["hooks"].get("PreToolUse").is_none());
-    assert!(hooks["hooks"].get("PermissionRequest").is_none());
-    assert!(hooks["hooks"].get("Stop").is_none());
-    assert!(config.contains("model = \"gpt-5.4\""));
-    assert!(config.contains("[features]"));
-    assert!(config.contains("hooks = true"));
-    assert!(!config.contains("codex_hooks"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_codex_uses_codex_home_env() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let codex_dir = base.join("custom-codex");
-    fs::create_dir_all(&codex_dir).unwrap();
-    fs::write(codex_dir.join("config.toml"), "model = \"gpt-5.4\"\n").unwrap();
-    std::env::set_var(CODEX_HOME_ENV_VAR, &codex_dir);
-
-    let installed = install_codex().unwrap();
-
-    assert_eq!(installed.hook_path, codex_dir.join(CODEX_HOOK_INSTALL_NAME));
-    assert_eq!(installed.hooks_path, codex_dir.join("hooks.json"));
-    assert_eq!(installed.config_path, codex_dir.join("config.toml"));
-
-    clear_integration_path_env();
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_codex_is_idempotent_for_hook_entries_and_feature_flag() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let codex_dir = home.join(".codex");
-    fs::create_dir_all(&codex_dir).unwrap();
-    fs::write(
-        codex_dir.join("config.toml"),
-        "[features]\ncodex_hooks = false\nother = true\n",
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    install_codex().unwrap();
-    install_codex().unwrap();
-
-    let hooks: Value =
-        serde_json::from_str(&fs::read_to_string(codex_dir.join("hooks.json")).unwrap()).unwrap();
-    let config = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
-
-    assert_eq!(hooks["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
-    assert!(hooks["hooks"].get("UserPromptSubmit").is_none());
-    assert!(hooks["hooks"].get("PreToolUse").is_none());
-    assert!(hooks["hooks"].get("PermissionRequest").is_none());
-    assert!(hooks["hooks"].get("Stop").is_none());
-    assert_eq!(config.matches("hooks = true").count(), 1);
-    assert!(!config.contains("codex_hooks"));
-    assert!(config.contains("other = true"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_codex_only_migrates_top_level_feature_flags() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let codex_dir = home.join(".codex");
-    fs::create_dir_all(&codex_dir).unwrap();
-    fs::write(
-            codex_dir.join("config.toml"),
-            "profile = \"work\"\n\n[profiles.work.features]\nhooks = false\ncodex_hooks = false\n\n[features]\ncodex_hooks = true\nother = true\n",
-        )
-        .unwrap();
-    std::env::set_var("HOME", &home);
-
-    install_codex().unwrap();
-
-    let config = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
-
-    assert!(config.contains("[profiles.work.features]\nhooks = false\ncodex_hooks = false"));
-    assert!(config.contains("[features]\nhooks = true\nother = true"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn uninstall_codex_removes_herdr_hooks_and_leaves_config_alone() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let codex_dir = home.join(".codex");
-    fs::create_dir_all(&codex_dir).unwrap();
-    let hook_path = codex_dir.join(CODEX_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, CODEX_HOOK_ASSET).unwrap();
-    let hooks = serde_json::json!({
-        "hooks": {
-            "SessionStart": [{"hooks": [{"type": "command", "command": format!("bash '{}' idle", hook_path.display()), "timeout": 10}]}],
-            "UserPromptSubmit": [{"hooks": [
-                {"type": "command", "command": format!("bash '{}' working", hook_path.display()), "timeout": 10},
-                {"type": "command", "command": "echo keep", "timeout": 10}
-            ]}],
-            "PreToolUse": [{"hooks": [{"type": "command", "command": format!("bash '{}' working", hook_path.display()), "timeout": 10}]}],
-            "PermissionRequest": [{"hooks": [{"type": "command", "command": format!("bash '{}' blocked", hook_path.display()), "timeout": 10}]}],
-            "Stop": [{"hooks": [{"type": "command", "command": format!("bash '{}' idle", hook_path.display()), "timeout": 10}]}]
-        }
-    });
-    fs::write(
-        codex_dir.join("hooks.json"),
-        serde_json::to_string(&hooks).unwrap(),
-    )
-    .unwrap();
-    fs::write(
-        codex_dir.join("config.toml"),
-        "[features]\nhooks = true\nother = true\n",
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_codex().unwrap();
-    let hooks: Value =
-        serde_json::from_str(&fs::read_to_string(codex_dir.join("hooks.json")).unwrap()).unwrap();
-    let config = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
-
-    assert!(result.removed_hook_file);
-    assert!(result.updated_hooks);
-    assert!(!result.hook_path.exists());
-    assert!(hooks["hooks"].get("SessionStart").is_none());
-    assert!(hooks["hooks"].get("PreToolUse").is_none());
-    assert!(hooks["hooks"].get("PermissionRequest").is_none());
-    assert!(hooks["hooks"].get("Stop").is_none());
-    assert_eq!(
-        hooks["hooks"]["UserPromptSubmit"][0]["hooks"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
+fn install_codex_writes_hook_and_updates_hooks_and_config_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Codex,
+        "install",
     );
-    assert_eq!(
-        hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-        "echo keep"
+}
+
+#[test]
+fn install_codex_uses_codex_home_env_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Codex,
+        "install",
     );
-    assert!(config.contains("hooks = true"));
-    assert!(config.contains("other = true"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_codex_errors_when_config_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    fs::create_dir_all(&home).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let err = install_codex().unwrap_err().to_string();
-
-    assert!(err.contains("codex config directory not found"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_kimi_writes_hook_and_updates_config() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let kimi_dir = home.join(".kimi-code");
-    fs::create_dir_all(&kimi_dir).unwrap();
-    fs::write(
-            kimi_dir.join("config.toml"),
-            "default_model = \"moonshot\"\n\n[[hooks]]\nevent = \"Notification\"\nmatcher = \"task.completed\"\ncommand = \"echo keep\"\ntimeout = 3\n",
-        )
-        .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_kimi().unwrap();
-    let hook_content = fs::read_to_string(&installed.hook_path).unwrap();
-    let config = fs::read_to_string(&installed.config_path).unwrap();
-    let hooks = kimi_config_hooks(&config);
-
-    assert_eq!(
-        installed.hook_path,
-        kimi_dir.join("hooks").join(KIMI_HOOK_INSTALL_NAME)
+fn install_codex_is_idempotent_for_hook_entries_and_feature_flag_is_disabled_without_writing_user_dirs(
+) {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Codex,
+        "install",
     );
-    assert_eq!(installed.config_path, kimi_dir.join("config.toml"));
-    assert_eq!(hook_content, KIMI_HOOK_ASSET);
-    assert_eq!(hooks.len(), KIMI_HOOK_EVENTS.len() + 1);
-    assert!(config.contains("default_model = \"moonshot\""));
-    assert!(config.contains("command = \"echo keep\""));
-    assert!(config.contains(KIMI_CONFIG_BLOCK_BEGIN));
-    assert!(config.contains(KIMI_CONFIG_BLOCK_END));
-    for (event, action) in KIMI_HOOK_EVENTS {
-        assert_kimi_hook(&config, &installed.hook_path, event, action);
-    }
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_kimi_uses_kimi_code_home_env() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let kimi_dir = base.join("custom-kimi");
-    fs::create_dir_all(&kimi_dir).unwrap();
-    std::env::set_var(KIMI_CODE_HOME_ENV_VAR, &kimi_dir);
-
-    let installed = install_kimi().unwrap();
-
-    assert_eq!(
-        installed.hook_path,
-        kimi_dir.join("hooks").join(KIMI_HOOK_INSTALL_NAME)
+fn install_codex_only_migrates_top_level_feature_flags_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Codex,
+        "install",
     );
-    assert_eq!(installed.config_path, kimi_dir.join("config.toml"));
-
-    clear_integration_path_env();
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_kimi_is_idempotent_for_config_block() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let kimi_dir = home.join(".kimi-code");
-    fs::create_dir_all(&kimi_dir).unwrap();
-    std::env::set_var("HOME", &home);
-
-    install_kimi().unwrap();
-    install_kimi().unwrap();
-
-    let config = fs::read_to_string(kimi_dir.join("config.toml")).unwrap();
-    let hooks = kimi_config_hooks(&config);
-
-    assert_eq!(config.matches(KIMI_CONFIG_BLOCK_BEGIN).count(), 1);
-    assert_eq!(config.matches(KIMI_CONFIG_BLOCK_END).count(), 1);
-    assert_eq!(hooks.len(), KIMI_HOOK_EVENTS.len());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn uninstall_kimi_removes_hook_and_config_block_preserves_other_hooks() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let kimi_dir = home.join(".kimi-code");
-    fs::create_dir_all(&kimi_dir).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_kimi().unwrap();
-    fs::write(
-            &installed.config_path,
-            format!(
-                "default_model = \"moonshot\"\n\n[[hooks]]\nevent = \"Notification\"\ncommand = \"echo keep\"\n\n{}",
-                fs::read_to_string(&installed.config_path).unwrap()
-            ),
-        )
-        .unwrap();
-
-    let result = uninstall_kimi().unwrap();
-    let config = fs::read_to_string(kimi_dir.join("config.toml")).unwrap();
-    let hooks = kimi_config_hooks(&config);
-
-    assert!(result.removed_hook_file);
-    assert!(result.updated_config);
-    assert!(!result.hook_path.exists());
-    assert!(config.contains("default_model = \"moonshot\""));
-    assert!(config.contains("command = \"echo keep\""));
-    assert!(!config.contains(KIMI_CONFIG_BLOCK_BEGIN));
-    assert!(!config.contains(KIMI_CONFIG_BLOCK_END));
-    assert_eq!(hooks.len(), 1);
-    assert_eq!(
-        hooks[0].get("event").and_then(toml::Value::as_str),
-        Some("Notification")
+fn uninstall_codex_removes_herdr_hooks_and_leaves_config_alone_is_disabled_without_writing_user_dirs(
+) {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Codex,
+        "uninstall",
     );
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_kimi_errors_when_config_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    fs::create_dir_all(&home).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let err = install_kimi().unwrap_err().to_string();
-
-    assert!(err.contains("kimi code config directory not found"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+fn install_codex_errors_when_config_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Codex,
+        "install",
+    );
 }
 
 #[test]
-fn install_copilot_writes_hook_and_updates_settings() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let copilot_dir = home.join(".copilot");
-    fs::create_dir_all(&copilot_dir).unwrap();
-    let hook_path = copilot_dir.join("hooks").join(COPILOT_HOOK_INSTALL_NAME);
-    let stale_session_start_command = format!(
-        "bash {}",
-        shell_single_quote(&hook_path.display().to_string())
+fn install_kimi_writes_hook_and_updates_config_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Kimi,
+        "install",
     );
-    fs::write(
-            copilot_dir.join("settings.json"),
-            format!(
-                r#"{{"theme":"dark","hooks":{{"PreToolUse":[{{"type":"command","command":"echo keep","timeoutSec":10}}],"sessionStart":[{{"type":"command","bash":{},"timeoutSec":10}}]}}}}"#,
-                serde_json::to_string(&stale_session_start_command).unwrap()
-            ),
-        )
-        .unwrap();
-    std::env::set_var("HOME", &home);
+}
 
-    let installed = install_copilot().unwrap();
-    let hook_content = fs::read_to_string(&installed.hook_path).unwrap();
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(&installed.settings_path).unwrap()).unwrap();
-
-    assert_eq!(
-        installed.hook_path,
-        copilot_dir.join("hooks").join(COPILOT_HOOK_INSTALL_NAME)
+#[test]
+fn install_kimi_uses_kimi_code_home_env_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Kimi,
+        "install",
     );
-    assert_eq!(installed.settings_path, copilot_dir.join("settings.json"));
-    assert_eq!(hook_content, COPILOT_HOOK_ASSET);
-    assert_eq!(settings["theme"], "dark");
-    assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
-    assert_eq!(settings["hooks"]["PreToolUse"][0]["command"], "echo keep");
-    assert!(settings["hooks"]["SessionStart"][0][direct_command_field()]
-        .as_str()
-        .unwrap()
-        .contains(COPILOT_HOOK_INSTALL_NAME));
-    for event in COPILOT_REMOVED_LIFECYCLE_HOOK_EVENTS {
-        if let Some(entries) = settings["hooks"].get(event) {
-            assert!(
-                !entries.to_string().contains(COPILOT_HOOK_INSTALL_NAME),
-                "expected herdr hooks.{event} entries to be removed"
-            );
-        }
-    }
-    assert!(settings["hooks"].get("sessionStart").is_none());
+}
 
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+#[test]
+fn install_kimi_is_idempotent_for_config_block_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Kimi,
+        "install",
+    );
+}
+
+#[test]
+fn uninstall_kimi_removes_hook_and_config_block_preserves_other_hooks_is_disabled_without_writing_user_dirs(
+) {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Kimi,
+        "uninstall",
+    );
+}
+
+#[test]
+fn install_kimi_errors_when_config_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Kimi,
+        "install",
+    );
+}
+
+#[test]
+fn install_copilot_writes_hook_and_updates_settings_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Copilot,
+        "install",
+    );
 }
 
 #[test]
@@ -1605,432 +1061,86 @@ fn copilot_v1_integration_status_is_outdated() {
 }
 
 #[test]
-fn install_copilot_uses_copilot_home_env_and_is_idempotent() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let copilot_dir = base.join("custom-copilot");
-    fs::create_dir_all(&copilot_dir).unwrap();
-    std::env::set_var(COPILOT_HOME_ENV_VAR, &copilot_dir);
-
-    let installed = install_copilot().unwrap();
-    install_copilot().unwrap();
-
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(copilot_dir.join("settings.json")).unwrap())
-            .unwrap();
-
-    assert_eq!(
-        installed.hook_path,
-        copilot_dir.join("hooks").join(COPILOT_HOOK_INSTALL_NAME)
+fn install_copilot_uses_copilot_home_env_and_is_idempotent_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Copilot,
+        "install",
     );
-    assert_eq!(
-        settings["hooks"]["SessionStart"].as_array().unwrap().len(),
-        1
+}
+
+#[test]
+fn uninstall_copilot_removes_herdr_hooks_and_preserves_others_is_disabled_without_writing_user_dirs(
+) {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Copilot,
+        "uninstall",
     );
-    for event in COPILOT_REMOVED_LIFECYCLE_HOOK_EVENTS {
-        assert!(
-            settings["hooks"].get(event).is_none(),
-            "expected hooks.{event} to be absent"
-        );
-    }
-    assert!(settings["hooks"].get("sessionStart").is_none());
-
-    clear_integration_path_env();
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn uninstall_copilot_removes_herdr_hooks_and_preserves_others() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let copilot_dir = home.join(".copilot");
-    let hooks_dir = copilot_dir.join("hooks");
-    fs::create_dir_all(&hooks_dir).unwrap();
-    let hook_path = hooks_dir.join(COPILOT_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, COPILOT_HOOK_ASSET).unwrap();
-    let command = format!(
-        "bash {}",
-        shell_single_quote(&hook_path.display().to_string())
+fn install_copilot_errors_when_config_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Copilot,
+        "install",
     );
-    let settings = serde_json::json!({
-        "hooks": {
-            "PreToolUse": [
-                {"type": "command", direct_command_field(): command, "timeoutSec": 10},
-                {"type": "command", "command": "echo keep", "timeoutSec": 10}
-            ],
-            "PostToolUse": [{"type": "command", direct_command_field(): command, "timeoutSec": 10}],
-            "notification": [{
-                "type": "command",
-                "matcher": "permission_prompt|elicitation_dialog|agent_idle",
-                direct_command_field(): command,
-                "timeoutSec": 10
-            }]
-        }
-    });
-    fs::write(
-        copilot_dir.join("settings.json"),
-        serde_json::to_string(&settings).unwrap(),
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_copilot().unwrap();
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(copilot_dir.join("settings.json")).unwrap())
-            .unwrap();
-
-    assert!(result.removed_hook_file);
-    assert!(result.updated_settings);
-    assert!(!result.hook_path.exists());
-    assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
-    assert_eq!(settings["hooks"]["PreToolUse"][0]["command"], "echo keep");
-    assert!(settings["hooks"].get("PostToolUse").is_none());
-    assert!(settings["hooks"].get("notification").is_none());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_copilot_errors_when_config_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    fs::create_dir_all(&home).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let err = install_copilot().unwrap_err().to_string();
-
-    assert!(err.contains("copilot config directory not found"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_devin_writes_hook_and_updates_settings() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let xdg_config = base.join("xdg");
-    let devin_dir = xdg_config.join("devin");
-    fs::create_dir_all(&devin_dir).unwrap();
-    fs::write(
-        devin_dir.join("config.json"),
-        r#"{"theme_mode":"dark","hooks":{}}"#,
-    )
-    .unwrap();
-    std::env::set_var("XDG_CONFIG_HOME", &xdg_config);
-    std::env::set_var("HOME", base.join("home"));
-
-    let installed = install_devin().unwrap();
-    let hook_content = fs::read_to_string(&installed.hook_path).unwrap();
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(&installed.settings_path).unwrap()).unwrap();
-
-    assert_eq!(installed.hook_path, devin_dir.join(DEVIN_HOOK_INSTALL_NAME));
-    assert_eq!(installed.settings_path, devin_dir.join("config.json"));
-    assert_eq!(hook_content, DEVIN_HOOK_ASSET);
-    assert_eq!(settings["theme_mode"], "dark");
-    for (event, action) in DEVIN_HOOK_EVENTS {
-        let command = settings["hooks"][event][0]["hooks"][0]["command"]
-            .as_str()
-            .unwrap();
-        assert!(
-            command.contains(DEVIN_HOOK_INSTALL_NAME) && command.ends_with(action),
-            "expected devin {event} hook command to end with {action}, got {command}"
-        );
-    }
-
-    clear_integration_path_env();
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_devin_is_idempotent_for_hook_entries() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let xdg_config = base.join("xdg");
-    let devin_dir = xdg_config.join("devin");
-    fs::create_dir_all(&devin_dir).unwrap();
-    std::env::set_var("XDG_CONFIG_HOME", &xdg_config);
-    std::env::set_var("HOME", base.join("home"));
-
-    install_devin().unwrap();
-    install_devin().unwrap();
-
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(devin_dir.join("config.json")).unwrap()).unwrap();
-    for (event, _) in DEVIN_HOOK_EVENTS {
-        assert_eq!(
-            settings["hooks"][event].as_array().unwrap().len(),
-            1,
-            "expected hooks.{event} to be idempotent"
-        );
-    }
-
-    clear_integration_path_env();
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_devin_removes_legacy_lifecycle_hook_entries() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let xdg_config = base.join("xdg");
-    let devin_dir = xdg_config.join("devin");
-    fs::create_dir_all(&devin_dir).unwrap();
-    std::env::set_var("XDG_CONFIG_HOME", &xdg_config);
-    std::env::set_var("HOME", base.join("home"));
-
-    let hook_path = devin_dir.join(DEVIN_HOOK_INSTALL_NAME);
-    let mut hooks = Map::new();
-    for (event, action) in DEVIN_REMOVED_LIFECYCLE_HOOK_EVENTS {
-        hooks.insert(
-            event.to_string(),
-            json!([
-                {
-                    "hooks": [{
-                        "type": "command",
-                        "command": hook_command(&hook_path, Some(action)),
-                        "timeout": 10
-                    }]
-                }
-            ]),
-        );
-    }
-    fs::write(
-        devin_dir.join("config.json"),
-        serde_json::to_string_pretty(&json!({ "hooks": hooks })).unwrap(),
-    )
-    .unwrap();
-
-    install_devin().unwrap();
-
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(devin_dir.join("config.json")).unwrap()).unwrap();
-    for (event, action) in DEVIN_REMOVED_LIFECYCLE_HOOK_EVENTS {
-        let legacy_command = hook_command(&hook_path, Some(action));
-        let entries = settings["hooks"][event].as_array();
-        assert!(
-            entries.is_none_or(|entries| {
-                entries.iter().all(|entry| {
-                    entry
-                        .get("hooks")
-                        .and_then(Value::as_array)
-                        .is_none_or(|hooks| {
-                            hooks.iter().all(|hook| {
-                                hook.get("command").and_then(Value::as_str)
-                                    != Some(legacy_command.as_str())
-                            })
-                        })
-                })
-            }),
-            "expected legacy devin {event} -> {action} hook to be removed"
-        );
-
-        if !DEVIN_HOOK_EVENTS
-            .iter()
-            .any(|(installed_event, _)| installed_event == &event)
-        {
-            continue;
-        }
-
-        let session_command = hook_command(&hook_path, Some("session"));
-        let entries = entries.unwrap();
-        assert!(
-            entries.iter().any(|entry| {
-                entry
-                    .get("hooks")
-                    .and_then(Value::as_array)
-                    .is_some_and(|hooks| {
-                        hooks.iter().any(|hook| {
-                            hook.get("command").and_then(Value::as_str)
-                                == Some(session_command.as_str())
-                        })
-                    })
-            }),
-            "expected devin {event} session hook to be installed"
-        );
-    }
-
-    clear_integration_path_env();
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn uninstall_devin_removes_herdr_hooks_and_preserves_others() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let xdg_config = base.join("xdg");
-    let devin_dir = xdg_config.join("devin");
-    fs::create_dir_all(&devin_dir).unwrap();
-    std::env::set_var("XDG_CONFIG_HOME", &xdg_config);
-    std::env::set_var("HOME", base.join("home"));
-
-    install_devin().unwrap();
-
-    let hook_path = devin_dir.join(DEVIN_HOOK_INSTALL_NAME);
-    let mut settings: Value =
-        serde_json::from_str(&fs::read_to_string(devin_dir.join("config.json")).unwrap()).unwrap();
-    settings["hooks"]["UserPromptSubmit"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({
-            "matcher": "*",
-            "hooks": [{
-                "type": "command",
-                "command": "echo keep",
-                "timeout": 10
-            }]
-        }));
-    fs::write(
-        devin_dir.join("config.json"),
-        serde_json::to_string_pretty(&settings).unwrap(),
-    )
-    .unwrap();
-
-    let result = uninstall_devin().unwrap();
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(devin_dir.join("config.json")).unwrap()).unwrap();
-
-    assert!(result.removed_hook_file);
-    assert!(result.updated_settings);
-    assert!(!hook_path.exists());
-    assert_eq!(
-        settings["hooks"]["UserPromptSubmit"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
+fn install_devin_writes_hook_and_updates_settings_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Devin,
+        "install",
     );
-    assert_eq!(
-        settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"],
-        "echo keep"
-    );
-    assert!(settings["hooks"].get("SessionStart").is_none());
-    assert!(settings["hooks"].get("PreToolUse").is_none());
-    assert!(settings["hooks"].get("PermissionRequest").is_none());
-    assert!(settings["hooks"].get("Stop").is_none());
-    assert!(settings["hooks"].get("SessionEnd").is_none());
-
-    clear_integration_path_env();
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_devin_errors_when_config_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let xdg_config = base.join("xdg");
-    fs::create_dir_all(&xdg_config).unwrap();
-    std::env::set_var("XDG_CONFIG_HOME", &xdg_config);
-    std::env::set_var("HOME", base.join("home"));
-
-    let err = install_devin().unwrap_err().to_string();
-    assert!(err.contains("devin config directory not found"));
-
-    clear_integration_path_env();
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+fn install_devin_is_idempotent_for_hook_entries_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Devin,
+        "install",
+    );
 }
 
 #[test]
-fn install_droid_writes_hook_to_settings_and_cleans_legacy_hooks_json() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let droid_dir = home.join(".factory");
-    let legacy_hook_path = droid_dir.join("hooks").join(DROID_HOOK_INSTALL_NAME);
-    fs::create_dir_all(legacy_hook_path.parent().unwrap()).unwrap();
-    fs::create_dir_all(&droid_dir).unwrap();
-    let legacy_command = format!(
-        "bash {}",
-        shell_single_quote(&legacy_hook_path.display().to_string())
+fn install_devin_removes_legacy_lifecycle_hook_entries_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Devin,
+        "install",
     );
-    fs::write(
-            droid_dir.join("hooks.json"),
-            format!(
-                r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"{}","timeout":10}}]}}],"PreToolUse":[{{"matcher":"Read","hooks":[{{"type":"command","command":"echo keep","timeout":10}}]}}]}}}}"#,
-                legacy_command,
-            ),
-        )
-        .unwrap();
-    fs::write(
-        droid_dir.join("settings.json"),
-        r#"{"theme":"factory-dark"}"#,
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_droid().unwrap();
-    let hook_content = fs::read_to_string(&installed.hook_path).unwrap();
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(&installed.settings_path).unwrap()).unwrap();
-    let legacy_hooks: Value =
-        serde_json::from_str(&fs::read_to_string(&installed.hooks_path).unwrap()).unwrap();
-
-    assert_eq!(
-        installed.hook_path,
-        droid_dir.join("hooks").join(DROID_HOOK_INSTALL_NAME)
-    );
-    assert_eq!(installed.hooks_path, droid_dir.join("hooks.json"));
-    assert_eq!(installed.settings_path, droid_dir.join("settings.json"));
-    assert!(installed.updated_legacy_hooks);
-    assert_eq!(hook_content, DROID_HOOK_ASSET);
-    assert_eq!(settings["theme"], "factory-dark");
-    assert!(settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-        .as_str()
-        .unwrap()
-        .contains(DROID_HOOK_INSTALL_NAME));
-    assert!(settings["hooks"]["SessionStart"][0]
-        .get("matcher")
-        .is_none());
-    for (event, action) in DROID_HOOK_EVENTS {
-        let command = settings["hooks"][event][0]["hooks"][0]["command"]
-            .as_str()
-            .unwrap();
-        assert!(
-            command.contains(DROID_HOOK_INSTALL_NAME) && command.ends_with(action),
-            "expected droid {event} hook command to end with {action}, got {command}"
-        );
-    }
-    assert_eq!(legacy_hooks["hooks"]["PreToolUse"][0]["matcher"], "Read");
-    assert!(legacy_hooks["hooks"].get("SessionStart").is_none());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_droid_is_idempotent_for_hook_entries() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let droid_dir = home.join(".factory");
-    fs::create_dir_all(&droid_dir).unwrap();
-    std::env::set_var("HOME", &home);
+fn uninstall_devin_removes_herdr_hooks_and_preserves_others_is_disabled_without_writing_user_dirs()
+{
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Devin,
+        "uninstall",
+    );
+}
 
-    install_droid().unwrap();
-    install_droid().unwrap();
+#[test]
+fn install_devin_errors_when_config_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Devin,
+        "install",
+    );
+}
 
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(droid_dir.join("settings.json")).unwrap())
-            .unwrap();
-    for (event, _) in DROID_HOOK_EVENTS {
-        assert_eq!(
-            settings["hooks"][event].as_array().unwrap().len(),
-            1,
-            "expected hooks.{event} to be idempotent"
-        );
-    }
+#[test]
+fn install_droid_writes_hook_to_settings_and_cleans_legacy_hooks_json_is_disabled_without_writing_user_dirs(
+) {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Droid,
+        "install",
+    );
+}
 
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+#[test]
+fn install_droid_is_idempotent_for_hook_entries_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Droid,
+        "install",
+    );
 }
 
 #[test]
@@ -2064,488 +1174,154 @@ fn droid_v1_integration_status_is_outdated() {
 }
 
 #[test]
-fn uninstall_droid_removes_herdr_hooks_and_preserves_others() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let droid_dir = home.join(".factory");
-    let hooks_dir = droid_dir.join("hooks");
-    fs::create_dir_all(&hooks_dir).unwrap();
-    let hook_path = hooks_dir.join(DROID_HOOK_INSTALL_NAME);
-    fs::write(&hook_path, DROID_HOOK_ASSET).unwrap();
-    let command = format!(
-        "bash {}",
-        shell_single_quote(&hook_path.display().to_string())
+fn uninstall_droid_removes_herdr_hooks_and_preserves_others_is_disabled_without_writing_user_dirs()
+{
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Droid,
+        "uninstall",
     );
-    fs::write(
-            droid_dir.join("hooks.json"),
-            format!(
-                r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"{}","timeout":10}},{{"type":"command","command":"echo keep","timeout":10}}]}}],"PreToolUse":[{{"matcher":"Read","hooks":[{{"type":"command","command":"echo read","timeout":10}}]}}]}}}}"#,
-                command,
-            ),
-        )
-        .unwrap();
-    fs::write(
-            droid_dir.join("settings.json"),
-            format!(
-                r#"{{"hooks":{{"SessionStart":[{{"hooks":[{{"type":"command","command":"{}","timeout":10}}]}}],"PostToolUse":[{{"matcher":"Edit","hooks":[{{"type":"command","command":"echo post","timeout":10}}]}}]}}}}"#,
-                command,
-            ),
-        )
-        .unwrap();
-    std::env::set_var("HOME", &home);
+}
 
-    let result = uninstall_droid().unwrap();
-    let hooks: Value =
-        serde_json::from_str(&fs::read_to_string(droid_dir.join("hooks.json")).unwrap()).unwrap();
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(droid_dir.join("settings.json")).unwrap())
-            .unwrap();
-
-    assert!(result.removed_hook_file);
-    assert!(result.updated_hooks);
-    assert!(result.updated_settings);
-    assert!(!result.hook_path.exists());
-    assert_eq!(
-        hooks["hooks"]["SessionStart"][0]["hooks"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
+#[test]
+fn install_droid_errors_when_config_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Droid,
+        "install",
     );
-    assert_eq!(
-        hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"],
-        "echo keep"
+}
+
+#[test]
+fn install_opencode_writes_plugin_to_plugins_dir_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Opencode,
+        "install",
     );
-    assert_eq!(hooks["hooks"]["PreToolUse"][0]["matcher"], "Read");
-    assert!(settings["hooks"].get("SessionStart").is_none());
-    assert_eq!(settings["hooks"]["PostToolUse"][0]["matcher"], "Edit");
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_droid_errors_when_config_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    fs::create_dir_all(&home).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let err = install_droid().unwrap_err().to_string();
-
-    assert!(err.contains("droid config directory not found"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_opencode_writes_plugin_to_plugins_dir() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let opencode_dir = home.join(".config/opencode");
-    fs::create_dir_all(&opencode_dir).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_opencode().unwrap();
-    let plugin_content = fs::read_to_string(&installed.plugin_path).unwrap();
-
-    assert_eq!(
-        installed.plugin_path,
-        opencode_dir
-            .join("plugins")
-            .join(OPENCODE_PLUGIN_INSTALL_NAME)
+fn uninstall_opencode_removes_plugin_when_present_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Opencode,
+        "uninstall",
     );
-    assert_eq!(plugin_content, OPENCODE_PLUGIN_ASSET);
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn uninstall_opencode_removes_plugin_when_present() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let opencode_dir = home.join(".config/opencode/plugins");
-    fs::create_dir_all(&opencode_dir).unwrap();
-    fs::write(
-        opencode_dir.join(OPENCODE_PLUGIN_INSTALL_NAME),
-        OPENCODE_PLUGIN_ASSET,
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_opencode().unwrap();
-
-    assert!(result.removed_plugin);
-    assert!(!result.plugin_path.exists());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_opencode_errors_when_config_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    fs::create_dir_all(&home).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let err = install_opencode().unwrap_err().to_string();
-
-    assert!(err.contains("opencode config directory not found"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_kilo_writes_plugin_to_plugin_dir() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let kilo_dir = home.join(".config/kilo");
-    fs::create_dir_all(&kilo_dir).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_kilo().unwrap();
-    let plugin_content = fs::read_to_string(&installed.plugin_path).unwrap();
-
-    assert_eq!(
-        installed.plugin_path,
-        kilo_dir.join("plugin").join(KILO_PLUGIN_INSTALL_NAME)
+fn install_opencode_errors_when_config_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Opencode,
+        "install",
     );
-    assert_eq!(plugin_content, KILO_PLUGIN_ASSET);
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn uninstall_kilo_removes_plugin_when_present() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let kilo_plugin_dir = home.join(".config/kilo/plugin");
-    fs::create_dir_all(&kilo_plugin_dir).unwrap();
-    fs::write(
-        kilo_plugin_dir.join(KILO_PLUGIN_INSTALL_NAME),
-        KILO_PLUGIN_ASSET,
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_kilo().unwrap();
-
-    assert!(result.removed_plugin);
-    assert!(!result.plugin_path.exists());
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_kilo_errors_when_config_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    fs::create_dir_all(&home).unwrap();
-    std::env::set_var("HOME", &home);
-
-    let err = install_kilo().unwrap_err().to_string();
-
-    assert!(err.contains("kilo config directory not found"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_hermes_writes_plugin_and_enables_it() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let hermes_dir = home.join(".hermes");
-    fs::create_dir_all(&hermes_dir).unwrap();
-    fs::write(hermes_dir.join("config.yaml"), "model:\n  provider: auto\n").unwrap();
-    std::env::set_var("HOME", &home);
-
-    let installed = install_hermes().unwrap();
-    let manifest = fs::read_to_string(
-        installed
-            .plugin_dir
-            .join(HERMES_PLUGIN_MANIFEST_INSTALL_NAME),
-    )
-    .unwrap();
-    let init =
-        fs::read_to_string(installed.plugin_dir.join(HERMES_PLUGIN_INIT_INSTALL_NAME)).unwrap();
-    let config = fs::read_to_string(&installed.config_path).unwrap();
-
-    assert_eq!(
-        installed.plugin_dir,
-        hermes_dir.join("plugins").join(HERMES_PLUGIN_INSTALL_NAME)
+fn install_kilo_writes_plugin_to_plugin_dir_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Kilo,
+        "install",
     );
-    assert_eq!(manifest, HERMES_PLUGIN_MANIFEST_ASSET);
-    assert_eq!(init, HERMES_PLUGIN_INIT_ASSET);
-    assert!(config.contains("plugins:\n  enabled:\n    - herdr-agent-state"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_hermes_is_idempotent_for_enabled_entry() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let hermes_dir = home.join(".hermes");
-    fs::create_dir_all(&hermes_dir).unwrap();
-    fs::write(
-        hermes_dir.join("config.yaml"),
-        "plugins:\n  enabled:\n    - herdr-agent-state\n",
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    install_hermes().unwrap();
-    install_hermes().unwrap();
-
-    let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
-    assert_eq!(config.matches("herdr-agent-state").count(), 1);
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_hermes_preserves_flat_plugin_list() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let hermes_dir = home.join(".hermes");
-    fs::create_dir_all(&hermes_dir).unwrap();
-    fs::write(
-        hermes_dir.join("config.yaml"),
-        "plugins:\n  - platforms/discord\n",
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    install_hermes().unwrap();
-
-    let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
-    assert_eq!(
-        config,
-        "plugins:\n  - herdr-agent-state\n  - platforms/discord\n"
+fn uninstall_kilo_removes_plugin_when_present_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Kilo,
+        "uninstall",
     );
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_hermes_converts_flow_plugin_list_to_block_list() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let hermes_dir = home.join(".hermes");
-    fs::create_dir_all(&hermes_dir).unwrap();
-    fs::write(
-        hermes_dir.join("config.yaml"),
-        "plugins: [platforms/discord]\n",
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    install_hermes().unwrap();
-
-    let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
-    assert_eq!(
-        config,
-        "plugins:\n  - herdr-agent-state\n  - platforms/discord\n"
+fn install_kilo_errors_when_config_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Kilo,
+        "install",
     );
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_hermes_is_idempotent_for_quoted_flat_plugin_entry() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let hermes_dir = home.join(".hermes");
-    fs::create_dir_all(&hermes_dir).unwrap();
-    fs::write(
-        hermes_dir.join("config.yaml"),
-        "plugins:\n  - \"herdr-agent-state\" # installed by herdr\n",
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    install_hermes().unwrap();
-
-    let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
-    assert_eq!(
-        config,
-        "plugins:\n  - \"herdr-agent-state\" # installed by herdr\n"
+fn install_hermes_writes_plugin_and_enables_it_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Hermes,
+        "install",
     );
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn uninstall_hermes_removes_plugin_and_enabled_entry() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let hermes_dir = home.join(".hermes");
-    let plugin_dir = hermes_dir.join("plugins").join(HERMES_PLUGIN_INSTALL_NAME);
-    fs::create_dir_all(&plugin_dir).unwrap();
-    fs::write(
-        plugin_dir.join(HERMES_PLUGIN_INIT_INSTALL_NAME),
-        HERMES_PLUGIN_INIT_ASSET,
-    )
-    .unwrap();
-    fs::write(
-        hermes_dir.join("config.yaml"),
-        "plugins:\n  enabled:\n    - other-plugin\n    - herdr-agent-state\n",
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_hermes().unwrap();
-    let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
-
-    assert!(result.removed_plugin_dir);
-    assert!(result.updated_config);
-    assert!(!plugin_dir.exists());
-    assert!(config.contains("    - other-plugin"));
-    assert!(!config.contains("herdr-agent-state"));
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+fn install_hermes_is_idempotent_for_enabled_entry_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Hermes,
+        "install",
+    );
 }
 
 #[test]
-fn uninstall_hermes_preserves_flat_plugin_list() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let hermes_dir = home.join(".hermes");
-    let plugin_dir = hermes_dir.join("plugins").join(HERMES_PLUGIN_INSTALL_NAME);
-    fs::create_dir_all(&plugin_dir).unwrap();
-    fs::write(
-        plugin_dir.join(HERMES_PLUGIN_INIT_INSTALL_NAME),
-        HERMES_PLUGIN_INIT_ASSET,
-    )
-    .unwrap();
-    fs::write(
-        hermes_dir.join("config.yaml"),
-        "plugins:\n  - other-plugin\n  - herdr-agent-state\n",
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_hermes().unwrap();
-    let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
-
-    assert!(result.removed_plugin_dir);
-    assert!(result.updated_config);
-    assert_eq!(config, "plugins:\n  - other-plugin\n");
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+fn install_hermes_preserves_flat_plugin_list_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Hermes,
+        "install",
+    );
 }
 
 #[test]
-fn uninstall_hermes_removes_flow_plugin_list_entry() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let hermes_dir = home.join(".hermes");
-    let plugin_dir = hermes_dir.join("plugins").join(HERMES_PLUGIN_INSTALL_NAME);
-    fs::create_dir_all(&plugin_dir).unwrap();
-    fs::write(
-        plugin_dir.join(HERMES_PLUGIN_INIT_INSTALL_NAME),
-        HERMES_PLUGIN_INIT_ASSET,
-    )
-    .unwrap();
-    fs::write(
-        hermes_dir.join("config.yaml"),
-        "plugins: [other-plugin, herdr-agent-state]\n",
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_hermes().unwrap();
-    let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
-
-    assert!(result.removed_plugin_dir);
-    assert!(result.updated_config);
-    assert_eq!(config, "plugins:\n  - other-plugin\n");
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+fn install_hermes_converts_flow_plugin_list_to_block_list_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Hermes,
+        "install",
+    );
 }
 
 #[test]
-fn uninstall_hermes_removes_commented_flat_plugin_entry() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    let hermes_dir = home.join(".hermes");
-    let plugin_dir = hermes_dir.join("plugins").join(HERMES_PLUGIN_INSTALL_NAME);
-    fs::create_dir_all(&plugin_dir).unwrap();
-    fs::write(
-        plugin_dir.join(HERMES_PLUGIN_INIT_INSTALL_NAME),
-        HERMES_PLUGIN_INIT_ASSET,
-    )
-    .unwrap();
-    fs::write(
-        hermes_dir.join("config.yaml"),
-        "plugins:\n  - other-plugin\n  - herdr-agent-state # installed by herdr\n",
-    )
-    .unwrap();
-    std::env::set_var("HOME", &home);
-
-    let result = uninstall_hermes().unwrap();
-    let config = fs::read_to_string(hermes_dir.join("config.yaml")).unwrap();
-
-    assert!(result.removed_plugin_dir);
-    assert!(result.updated_config);
-    assert_eq!(config, "plugins:\n  - other-plugin\n");
-
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+fn install_hermes_is_idempotent_for_quoted_flat_plugin_entry_is_disabled_without_writing_user_dirs()
+{
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Hermes,
+        "install",
+    );
 }
 
 #[test]
-fn install_hermes_errors_when_config_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let home = base.join("home");
-    fs::create_dir_all(&home).unwrap();
-    std::env::set_var("HOME", &home);
+fn uninstall_hermes_removes_plugin_and_enabled_entry_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Hermes,
+        "uninstall",
+    );
+}
 
-    let err = install_hermes().unwrap_err().to_string();
+#[test]
+fn uninstall_hermes_preserves_flat_plugin_list_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Hermes,
+        "uninstall",
+    );
+}
 
-    assert!(err.contains("hermes config directory not found"));
+#[test]
+fn uninstall_hermes_removes_flow_plugin_list_entry_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Hermes,
+        "uninstall",
+    );
+}
 
-    std::env::remove_var("HOME");
-    let _ = fs::remove_dir_all(base);
+#[test]
+fn uninstall_hermes_removes_commented_flat_plugin_entry_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Hermes,
+        "uninstall",
+    );
+}
+
+#[test]
+fn install_hermes_errors_when_config_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Hermes,
+        "install",
+    );
 }
 
 #[test]
 fn bundled_integration_asset_versions_match_expected_versions() {
     for (name, asset, expected_version) in [
-        ("pi", PI_EXTENSION_ASSET, PI_INTEGRATION_VERSION),
         ("omp", OMP_EXTENSION_ASSET, OMP_INTEGRATION_VERSION),
         ("claude", CLAUDE_HOOK_ASSET, CLAUDE_INTEGRATION_VERSION),
         ("codex", CODEX_HOOK_ASSET, CODEX_INTEGRATION_VERSION),
@@ -2576,25 +1352,27 @@ fn bundled_integration_asset_versions_match_expected_versions() {
             MASTRACODE_INTEGRATION_VERSION,
         ),
     ] {
+        if asset.is_empty() {
+            continue;
+        }
         assert_eq!(
             parse_integration_version(asset),
             Some(expected_version),
             "{name} asset version must match its integration version constant"
         );
     }
+    assert!(
+        PI_EXTENSION_ASSET.is_empty(),
+        "kazuph/herdr fork does not bundle a pi hook integration asset"
+    );
 }
 
 #[test]
 fn bundled_integration_assets_report_session_refs() {
-    assert!(PI_EXTENSION_ASSET.contains("agent_session_path"));
-    assert!(PI_EXTENSION_ASSET.contains("agent_session_id"));
-    assert!(PI_EXTENSION_ASSET.contains("ctx?.hasUI !== true"));
-    assert!(PI_EXTENSION_ASSET.contains("pane.report_agent_session"));
-    assert!(PI_EXTENSION_ASSET.contains("pane.report_agent\""));
-    assert!(PI_EXTENSION_ASSET.contains("pi.on(\"agent_start\""));
-    assert!(PI_EXTENSION_ASSET.contains("pi.on(\"agent_end\""));
-    assert!(PI_EXTENSION_ASSET.contains("pane.release_agent"));
-    assert!(PI_EXTENSION_ASSET.contains("pi.on(\"session_shutdown\""));
+    assert!(
+        PI_EXTENSION_ASSET.is_empty(),
+        "kazuph/herdr fork keeps pi hook integration unbundled"
+    );
     assert!(OMP_EXTENSION_ASSET.contains("agent_session_path"));
     assert!(OMP_EXTENSION_ASSET.contains("agent_session_id"));
     assert!(OMP_EXTENSION_ASSET.contains("ctx?.hasUI !== true"));
@@ -2604,43 +1382,47 @@ fn bundled_integration_assets_report_session_refs() {
     assert!(OMP_EXTENSION_ASSET.contains("pi.on(\"agent_end\""));
     assert!(OMP_EXTENSION_ASSET.contains("pane.release_agent"));
     assert!(OMP_EXTENSION_ASSET.contains("pi.on(\"session_shutdown\""));
-    assert!(
-        CLAUDE_HOOK_ASSET.contains("agent_session_id")
-            || CLAUDE_HOOK_ASSET.contains("--agent-session-id")
-    );
-    assert!(
-        CLAUDE_HOOK_ASSET.contains("agent_session_path")
-            || CLAUDE_HOOK_ASSET.contains("--agent-session-path")
-    );
-    assert!(CLAUDE_HOOK_ASSET.contains("agent_id"));
-    assert!(
-        CLAUDE_HOOK_ASSET.contains("session_start_source")
-            || CLAUDE_HOOK_ASSET.contains("--session-start-source")
-    );
-    assert!(
-        CLAUDE_HOOK_ASSET.contains("pane.report_agent_session")
-            || CLAUDE_HOOK_ASSET.contains("report-agent-session")
-    );
-    assert!(!CLAUDE_HOOK_ASSET.contains("\"state\": action"));
-    assert!(!CLAUDE_HOOK_ASSET.contains("pane.release_agent"));
-    assert!(
-        CODEX_HOOK_ASSET.contains("HERDR_HOOK_INPUT_FILE")
-            || CODEX_HOOK_ASSET.contains("In.ReadToEnd")
-    );
-    assert!(
-        CODEX_HOOK_ASSET.contains("agent_session_id")
-            || CODEX_HOOK_ASSET.contains("--agent-session-id")
-    );
-    assert!(
-        CODEX_HOOK_ASSET.contains("session_start_source")
-            || CODEX_HOOK_ASSET.contains("--session-start-source")
-    );
-    assert!(
-        CODEX_HOOK_ASSET.contains("pane.report_agent_session")
-            || CODEX_HOOK_ASSET.contains("report-agent-session")
-    );
-    assert!(!CODEX_HOOK_ASSET.contains("\"state\": action"));
-    assert!(!CODEX_HOOK_ASSET.contains("pane.release_agent"));
+    if !CLAUDE_HOOK_ASSET.is_empty() {
+        assert!(
+            CLAUDE_HOOK_ASSET.contains("agent_session_id")
+                || CLAUDE_HOOK_ASSET.contains("--agent-session-id")
+        );
+        assert!(
+            CLAUDE_HOOK_ASSET.contains("agent_session_path")
+                || CLAUDE_HOOK_ASSET.contains("--agent-session-path")
+        );
+        assert!(CLAUDE_HOOK_ASSET.contains("agent_id"));
+        assert!(
+            CLAUDE_HOOK_ASSET.contains("session_start_source")
+                || CLAUDE_HOOK_ASSET.contains("--session-start-source")
+        );
+        assert!(
+            CLAUDE_HOOK_ASSET.contains("pane.report_agent_session")
+                || CLAUDE_HOOK_ASSET.contains("report-agent-session")
+        );
+        assert!(!CLAUDE_HOOK_ASSET.contains("\"state\": action"));
+        assert!(!CLAUDE_HOOK_ASSET.contains("pane.release_agent"));
+    }
+    if !CODEX_HOOK_ASSET.is_empty() {
+        assert!(
+            CODEX_HOOK_ASSET.contains("HERDR_HOOK_INPUT_FILE")
+                || CODEX_HOOK_ASSET.contains("In.ReadToEnd")
+        );
+        assert!(
+            CODEX_HOOK_ASSET.contains("agent_session_id")
+                || CODEX_HOOK_ASSET.contains("--agent-session-id")
+        );
+        assert!(
+            CODEX_HOOK_ASSET.contains("session_start_source")
+                || CODEX_HOOK_ASSET.contains("--session-start-source")
+        );
+        assert!(
+            CODEX_HOOK_ASSET.contains("pane.report_agent_session")
+                || CODEX_HOOK_ASSET.contains("report-agent-session")
+        );
+        assert!(!CODEX_HOOK_ASSET.contains("\"state\": action"));
+        assert!(!CODEX_HOOK_ASSET.contains("pane.release_agent"));
+    }
     assert!(KIMI_HOOK_ASSET.contains("source = \"herdr:kimi\""));
     assert!(KIMI_HOOK_ASSET.contains("agent_session_id"));
     assert!(KIMI_HOOK_ASSET.contains("pane.report_agent_session"));
@@ -2660,22 +1442,26 @@ fn bundled_integration_assets_report_session_refs() {
     assert!(DROID_HOOK_ASSET.contains("pane.report_agent_session"));
     assert!(!DROID_HOOK_ASSET.contains("\"state\": action"));
     assert!(!DROID_HOOK_ASSET.contains("pane.release_agent"));
-    assert!(OPENCODE_PLUGIN_ASSET.contains("properties?.sessionID"));
-    assert!(OPENCODE_PLUGIN_ASSET.contains("params.agent_session_id = sessionID"));
-    assert!(OPENCODE_PLUGIN_ASSET.contains("pane.report_agent_session"));
-    assert!(OPENCODE_PLUGIN_ASSET.contains("reportState"));
-    assert!(!OPENCODE_PLUGIN_ASSET.contains("pane.release_agent"));
+    if !OPENCODE_PLUGIN_ASSET.is_empty() {
+        assert!(OPENCODE_PLUGIN_ASSET.contains("properties?.sessionID"));
+        assert!(OPENCODE_PLUGIN_ASSET.contains("params.agent_session_id = sessionID"));
+        assert!(OPENCODE_PLUGIN_ASSET.contains("pane.report_agent_session"));
+        assert!(OPENCODE_PLUGIN_ASSET.contains("reportState"));
+        assert!(!OPENCODE_PLUGIN_ASSET.contains("pane.release_agent"));
+    }
     assert!(KILO_PLUGIN_ASSET.contains("SOURCE = \"herdr:kilo\""));
     assert!(KILO_PLUGIN_ASSET.contains("AGENT = \"kilo\""));
     assert!(KILO_PLUGIN_ASSET.contains("pane.report_agent_session"));
     assert!(KILO_PLUGIN_ASSET.contains("reportState"));
     assert!(!KILO_PLUGIN_ASSET.contains("pane.release_agent"));
-    assert!(HERMES_PLUGIN_INIT_ASSET.contains("session_id = _session_id(kwargs)"));
-    assert!(HERMES_PLUGIN_INIT_ASSET.contains("agent_session_id"));
-    assert!(HERMES_PLUGIN_INIT_ASSET.contains("pane.report_agent\","));
-    assert!(HERMES_PLUGIN_INIT_ASSET.contains("on_session_end"));
-    assert!(!HERMES_PLUGIN_INIT_ASSET.contains("on_session_finalize"));
-    assert!(!HERMES_PLUGIN_INIT_ASSET.contains("pane.release_agent"));
+    if !HERMES_PLUGIN_INIT_ASSET.is_empty() {
+        assert!(HERMES_PLUGIN_INIT_ASSET.contains("session_id = _session_id(kwargs)"));
+        assert!(HERMES_PLUGIN_INIT_ASSET.contains("agent_session_id"));
+        assert!(HERMES_PLUGIN_INIT_ASSET.contains("pane.report_agent\","));
+        assert!(HERMES_PLUGIN_INIT_ASSET.contains("on_session_end"));
+        assert!(!HERMES_PLUGIN_INIT_ASSET.contains("on_session_finalize"));
+        assert!(!HERMES_PLUGIN_INIT_ASSET.contains("pane.release_agent"));
+    }
     assert!(QODERCLI_HOOK_ASSET.contains("HERDR_HOOK_INPUT_FILE"));
     assert!(QODERCLI_HOOK_ASSET.contains("agent_session_id"));
     assert!(QODERCLI_HOOK_ASSET.contains("pane.report_agent_session"));
@@ -2703,43 +1489,18 @@ fn bundled_integration_assets_report_session_refs() {
 
 #[test]
 fn pi_extension_releases_only_for_quit_session_shutdown() {
-    let release_policy = PI_EXTENSION_ASSET
-        .find("function shouldReleaseOnSessionShutdown")
-        .expect("pi extension should centralize session shutdown release policy");
-    let quit_check = PI_EXTENSION_ASSET
-        .find("reason === \"quit\"")
-        .expect("pi extension should release only for true quit shutdowns");
-    let shutdown_handler = PI_EXTENSION_ASSET
-        .find("pi.on(\"session_shutdown\", async (event)")
-        .expect("pi extension should inspect the session_shutdown event");
-    let guarded_release = PI_EXTENSION_ASSET[shutdown_handler..]
-        .find("if (shouldReleaseOnSessionShutdown(event))")
-        .expect("pi extension should guard releaseAgent by shutdown reason");
-
-    assert!(release_policy < shutdown_handler);
-    assert!(release_policy < quit_check);
-    assert!(quit_check < shutdown_handler);
-    assert!(guarded_release > 0);
+    assert!(
+        PI_EXTENSION_ASSET.is_empty(),
+        "kazuph/herdr fork does not ship pi lifecycle hook release code"
+    );
 }
 
 #[test]
 fn pi_extension_refreshes_session_ref_before_agent_start_state() {
-    let agent_start = PI_EXTENSION_ASSET
-        .find("pi.on(\"agent_start\", (_event, ctx)")
-        .expect("pi extension should receive agent_start context");
-    let handler = &PI_EXTENSION_ASSET[agent_start..];
-    let update_session = handler
-        .find("updateSessionRef(ctx);")
-        .expect("pi extension should refresh the active session on agent_start");
-    let report_session = handler
-        .find("void reportSession();")
-        .expect("pi extension should report the refreshed session before state");
-    let publish_state = handler
-        .find("publishState();")
-        .expect("pi extension should publish working state after refreshing session");
-
-    assert!(update_session < report_session);
-    assert!(report_session < publish_state);
+    assert!(
+        PI_EXTENSION_ASSET.is_empty(),
+        "kazuph/herdr fork does not ship pi agent_start hook code"
+    );
 }
 
 #[test]
@@ -2914,262 +1675,69 @@ fn omp_ask_and_approval_events_report_blocked_state() {
 }
 
 #[test]
-fn install_qodercli_writes_hook_and_updates_settings() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let qoder_dir = base.join(".qoder");
-    fs::create_dir_all(&qoder_dir).unwrap();
-    fs::write(
-        qoder_dir.join("settings.json"),
-        r#"{"permissions":{"allow":["Read"]},"hooks":{}}"#,
-    )
-    .unwrap();
-    std::env::set_var(QODERCLI_CONFIG_DIR_ENV_VAR, &qoder_dir);
-
-    let installed = install_qodercli().unwrap();
-
-    assert_eq!(
-        installed.hook_path,
-        qoder_dir.join("hooks").join(QODERCLI_HOOK_INSTALL_NAME)
+fn install_qodercli_writes_hook_and_updates_settings_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Qodercli,
+        "install",
     );
-    assert_eq!(installed.settings_path, qoder_dir.join("settings.json"));
-    assert!(installed.hook_path.is_file());
-
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(&installed.settings_path).unwrap()).unwrap();
-    let hooks = settings
-        .get("hooks")
-        .and_then(Value::as_object)
-        .expect("hooks should be present");
-    for (event, action) in QODERCLI_HOOK_EVENTS {
-        assert!(
-            hooks.contains_key(event),
-            "expected hooks.{event} to be registered"
-        );
-        let command = hooks[event][0]["hooks"][0]["command"].as_str().unwrap();
-        assert!(
-            command.contains(QODERCLI_HOOK_INSTALL_NAME) && command.ends_with(action),
-            "expected qodercli {event} hook command to end with {action}, got {command}"
-        );
-    }
-    // Pre-existing settings keys must be preserved.
-    assert!(settings.get("permissions").is_some());
-
-    std::env::remove_var(QODERCLI_CONFIG_DIR_ENV_VAR);
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_qodercli_is_idempotent_for_hook_entries() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let qoder_dir = base.join(".qoder");
-    fs::create_dir_all(&qoder_dir).unwrap();
-    std::env::set_var(QODERCLI_CONFIG_DIR_ENV_VAR, &qoder_dir);
-
-    install_qodercli().unwrap();
-    install_qodercli().unwrap();
-
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(qoder_dir.join("settings.json")).unwrap())
-            .unwrap();
-    let hooks = settings.get("hooks").and_then(Value::as_object).unwrap();
-    for (event, _) in QODERCLI_HOOK_EVENTS {
-        let entries = hooks.get(event).and_then(Value::as_array).unwrap();
-        assert_eq!(
-            entries.len(),
-            1,
-            "expected hooks.{event} to contain exactly one entry, got {entries:?}"
-        );
-    }
-
-    std::env::remove_var(QODERCLI_CONFIG_DIR_ENV_VAR);
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn uninstall_qodercli_removes_herdr_hooks_and_preserves_others() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let qoder_dir = base.join(".qoder");
-    fs::create_dir_all(&qoder_dir).unwrap();
-    std::env::set_var(QODERCLI_CONFIG_DIR_ENV_VAR, &qoder_dir);
-
-    install_qodercli().unwrap();
-    // Inject a foreign hook entry the user might have configured by hand.
-    let mut settings: Value =
-        serde_json::from_str(&fs::read_to_string(qoder_dir.join("settings.json")).unwrap())
-            .unwrap();
-    settings["hooks"]["SessionStart"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({
-            "matcher": "*",
-            "hooks": [{"type": "command", "command": "echo user-defined"}],
-        }));
-    fs::write(
-        qoder_dir.join("settings.json"),
-        serde_json::to_string_pretty(&settings).unwrap(),
-    )
-    .unwrap();
-
-    let result = uninstall_qodercli().unwrap();
-    assert!(result.removed_hook_file);
-    assert!(result.updated_settings);
-
-    let settings: Value =
-        serde_json::from_str(&fs::read_to_string(qoder_dir.join("settings.json")).unwrap())
-            .unwrap();
-    let hooks = settings.get("hooks").and_then(Value::as_object).unwrap();
-    let remaining = hooks.get("SessionStart").and_then(Value::as_array).unwrap();
-    assert_eq!(remaining.len(), 1);
-    let cmd = remaining[0]["hooks"][0]["command"].as_str().unwrap();
-    assert_eq!(cmd, "echo user-defined");
-
-    std::env::remove_var(QODERCLI_CONFIG_DIR_ENV_VAR);
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_qodercli_errors_when_config_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let missing = base.join(".qoder");
-    std::env::set_var(QODERCLI_CONFIG_DIR_ENV_VAR, &missing);
-
-    let err = install_qodercli().unwrap_err().to_string();
-    assert!(
-        err.contains("qodercli config directory not found"),
-        "unexpected error: {err}"
+fn install_qodercli_is_idempotent_for_hook_entries_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Qodercli,
+        "install",
     );
-
-    std::env::remove_var(QODERCLI_CONFIG_DIR_ENV_VAR);
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_cursor_writes_hook_and_updates_hooks_json() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let cursor_dir = base.join(".cursor");
-    fs::create_dir_all(&cursor_dir).unwrap();
-    fs::write(
-        cursor_dir.join("hooks.json"),
-        r#"{"version":1,"hooks":{"stop":[{"command":"echo keep-me"}]}}"#,
-    )
-    .unwrap();
-    std::env::set_var(CURSOR_CONFIG_DIR_ENV_VAR, &cursor_dir);
-
-    let installed = install_cursor().unwrap();
-
-    assert_eq!(
-        installed.hook_path,
-        cursor_dir.join(CURSOR_HOOK_INSTALL_NAME)
+fn uninstall_qodercli_removes_herdr_hooks_and_preserves_others_is_disabled_without_writing_user_dirs(
+) {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Qodercli,
+        "uninstall",
     );
-    assert_eq!(installed.hooks_path, cursor_dir.join("hooks.json"));
-    assert_eq!(
-        fs::read_to_string(&installed.hook_path).unwrap(),
-        CURSOR_HOOK_ASSET
-    );
-
-    let hooks_file: Value =
-        serde_json::from_str(&fs::read_to_string(cursor_dir.join("hooks.json")).unwrap()).unwrap();
-    let hooks = hooks_file.get("hooks").and_then(Value::as_object).unwrap();
-    let session_start = hooks.get("sessionStart").and_then(Value::as_array).unwrap();
-    assert_eq!(session_start.len(), 1);
-    assert!(session_start[0]
-        .get("command")
-        .and_then(Value::as_str)
-        .is_some_and(|command| {
-            command.starts_with("bash ")
-                && command.contains("herdr-agent-state.sh")
-                && command.ends_with(" session")
-        }));
-    assert!(hooks.get("beforeSubmitPrompt").is_none());
-    assert!(hooks.get("beforeShellExecution").is_none());
-    let stop = hooks.get("stop").and_then(Value::as_array).unwrap();
-    assert_eq!(stop.len(), 1);
-    assert_eq!(
-        stop[0].get("command").and_then(Value::as_str),
-        Some("echo keep-me")
-    );
-
-    std::env::remove_var(CURSOR_CONFIG_DIR_ENV_VAR);
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_cursor_is_idempotent_for_hook_entries() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let cursor_dir = base.join(".cursor");
-    fs::create_dir_all(&cursor_dir).unwrap();
-    std::env::set_var(CURSOR_CONFIG_DIR_ENV_VAR, &cursor_dir);
-
-    install_cursor().unwrap();
-    install_cursor().unwrap();
-
-    let hooks_file: Value =
-        serde_json::from_str(&fs::read_to_string(cursor_dir.join("hooks.json")).unwrap()).unwrap();
-    let hooks = hooks_file.get("hooks").and_then(Value::as_object).unwrap();
-    let session_start = hooks.get("sessionStart").and_then(Value::as_array).unwrap();
-    assert_eq!(session_start.len(), 1);
-
-    std::env::remove_var(CURSOR_CONFIG_DIR_ENV_VAR);
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn uninstall_cursor_removes_herdr_hooks_and_preserves_others() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let cursor_dir = base.join(".cursor");
-    fs::create_dir_all(&cursor_dir).unwrap();
-    std::env::set_var(CURSOR_CONFIG_DIR_ENV_VAR, &cursor_dir);
-
-    install_cursor().unwrap();
-    let mut hooks_file: Value =
-        serde_json::from_str(&fs::read_to_string(cursor_dir.join("hooks.json")).unwrap()).unwrap();
-    hooks_file["hooks"]["beforeSubmitPrompt"] = json!([{ "command": "echo user-defined" }]);
-    fs::write(
-        cursor_dir.join("hooks.json"),
-        serde_json::to_string_pretty(&hooks_file).unwrap(),
-    )
-    .unwrap();
-
-    let result = uninstall_cursor().unwrap();
-    assert!(result.removed_hook_file);
-    assert!(result.updated_hooks);
-    assert!(!cursor_dir.join(CURSOR_HOOK_INSTALL_NAME).is_file());
-
-    let hooks_file: Value =
-        serde_json::from_str(&fs::read_to_string(cursor_dir.join("hooks.json")).unwrap()).unwrap();
-    let hooks = hooks_file.get("hooks").and_then(Value::as_object).unwrap();
-    assert!(!hooks.contains_key("sessionStart"));
-    assert!(hooks.contains_key("beforeSubmitPrompt"));
-
-    std::env::remove_var(CURSOR_CONFIG_DIR_ENV_VAR);
-    let _ = fs::remove_dir_all(base);
-}
-
-#[test]
-fn install_cursor_uses_cursor_config_dir_env() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let cursor_dir = base.join("custom-cursor");
-    fs::create_dir_all(&cursor_dir).unwrap();
-    std::env::set_var(CURSOR_CONFIG_DIR_ENV_VAR, &cursor_dir);
-
-    let installed = install_cursor().unwrap();
-
-    assert_eq!(
-        installed.hook_path,
-        cursor_dir.join(CURSOR_HOOK_INSTALL_NAME)
+fn install_qodercli_errors_when_config_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Qodercli,
+        "install",
     );
-    assert_eq!(installed.hooks_path, cursor_dir.join("hooks.json"));
+}
 
-    clear_integration_path_env();
-    let _ = fs::remove_dir_all(base);
+#[test]
+fn install_cursor_writes_hook_and_updates_hooks_json_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Cursor,
+        "install",
+    );
+}
+
+#[test]
+fn install_cursor_is_idempotent_for_hook_entries_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Cursor,
+        "install",
+    );
+}
+
+#[test]
+fn uninstall_cursor_removes_herdr_hooks_and_preserves_others_is_disabled_without_writing_user_dirs()
+{
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Cursor,
+        "uninstall",
+    );
+}
+
+#[test]
+fn install_cursor_uses_cursor_config_dir_env_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Cursor,
+        "install",
+    );
 }
 
 #[test]
@@ -3199,213 +1767,50 @@ fn cursor_v1_integration_status_is_current() {
 }
 
 #[test]
-fn install_cursor_errors_when_config_dir_missing() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let missing = base.join(".cursor");
-    std::env::set_var(CURSOR_CONFIG_DIR_ENV_VAR, &missing);
-
-    let err = install_cursor().unwrap_err().to_string();
-    assert!(
-        err.contains("cursor config directory not found"),
-        "unexpected error: {err}"
+fn install_cursor_errors_when_config_dir_missing_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Cursor,
+        "install",
     );
-
-    std::env::remove_var(CURSOR_CONFIG_DIR_ENV_VAR);
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_mastracode_writes_hook_and_updates_hooks_json() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let original_home = std::env::var_os("HOME");
-    let mastracode_dir = base.join(".mastracode");
-    fs::create_dir_all(&mastracode_dir).unwrap();
-    fs::write(
-        mastracode_dir.join("hooks.json"),
-        r#"{"PostToolUse":[{"type":"command","command":"echo keep-me"}]}"#,
-    )
-    .unwrap();
-    std::env::set_var("HOME", &base);
-
-    let installed = install_mastracode().unwrap();
-
-    assert_eq!(
-        installed.hook_path,
-        mastracode_dir
-            .join("hooks")
-            .join(MASTRACODE_HOOK_INSTALL_NAME)
+fn install_mastracode_writes_hook_and_updates_hooks_json_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Mastracode,
+        "install",
     );
-    assert_eq!(installed.hooks_path, mastracode_dir.join("hooks.json"));
-    assert_eq!(
-        fs::read_to_string(&installed.hook_path).unwrap(),
-        MASTRACODE_HOOK_ASSET
-    );
-
-    let hooks_file: Value =
-        serde_json::from_str(&fs::read_to_string(mastracode_dir.join("hooks.json")).unwrap())
-            .unwrap();
-    let hooks = hooks_file.as_object().unwrap();
-    for (event, action) in MASTRACODE_HOOK_EVENTS {
-        let entries = hooks.get(event).and_then(Value::as_array).unwrap();
-        assert_eq!(entries.len(), 1, "{event} should have one Herdr hook");
-        let command = entries[0].get("command").and_then(Value::as_str).unwrap();
-        assert!(command.starts_with("bash "));
-        assert!(command.contains(MASTRACODE_HOOK_INSTALL_NAME));
-        assert!(command.ends_with(action));
-        assert_eq!(
-            entries[0].get("type").and_then(Value::as_str),
-            Some("command")
-        );
-        assert_eq!(
-            entries[0].get("timeout").and_then(Value::as_u64),
-            Some(MASTRACODE_HOOK_TIMEOUT_MS)
-        );
-    }
-    assert_eq!(
-        hooks["PostToolUse"][0]
-            .get("command")
-            .and_then(Value::as_str),
-        Some("echo keep-me")
-    );
-
-    if let Some(home) = original_home {
-        std::env::set_var("HOME", home);
-    } else {
-        std::env::remove_var("HOME");
-    }
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_mastracode_is_idempotent_for_hook_entries() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let original_home = std::env::var_os("HOME");
-    std::env::set_var("HOME", &base);
-
-    install_mastracode().unwrap();
-    install_mastracode().unwrap();
-
-    let hooks_file: Value = serde_json::from_str(
-        &fs::read_to_string(base.join(".mastracode").join("hooks.json")).unwrap(),
-    )
-    .unwrap();
-    let hooks = hooks_file.as_object().unwrap();
-    for (event, _) in MASTRACODE_HOOK_EVENTS {
-        assert_eq!(hooks.get(event).and_then(Value::as_array).unwrap().len(), 1);
-    }
-
-    if let Some(home) = original_home {
-        std::env::set_var("HOME", home);
-    } else {
-        std::env::remove_var("HOME");
-    }
-    let _ = fs::remove_dir_all(base);
+fn install_mastracode_is_idempotent_for_hook_entries_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Mastracode,
+        "install",
+    );
 }
 
 #[test]
-fn uninstall_mastracode_removes_herdr_hooks_and_preserves_others() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let original_home = std::env::var_os("HOME");
-    std::env::set_var("HOME", &base);
-
-    install_mastracode().unwrap();
-    let hooks_path = base.join(".mastracode").join("hooks.json");
-    let mut hooks_file: Value =
-        serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
-    hooks_file["UserPromptSubmit"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({ "type": "command", "command": "echo user-defined" }));
-    fs::write(
-        &hooks_path,
-        serde_json::to_string_pretty(&hooks_file).unwrap(),
-    )
-    .unwrap();
-
-    let result = uninstall_mastracode().unwrap();
-    assert!(result.removed_hook_file);
-    assert!(result.updated_hooks);
-    assert!(!base
-        .join(".mastracode")
-        .join("hooks")
-        .join(MASTRACODE_HOOK_INSTALL_NAME)
-        .is_file());
-
-    let hooks_file: Value =
-        serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
-    let hooks = hooks_file.as_object().unwrap();
-    for (event, _) in MASTRACODE_HOOK_EVENTS {
-        if event == "UserPromptSubmit" {
-            continue;
-        }
-        assert!(!hooks.contains_key(event), "{event} should be removed");
-    }
-    let user_prompt_submit = hooks
-        .get("UserPromptSubmit")
-        .and_then(Value::as_array)
-        .unwrap();
-    assert_eq!(user_prompt_submit.len(), 1);
-    assert_eq!(
-        user_prompt_submit[0].get("command").and_then(Value::as_str),
-        Some("echo user-defined")
+fn uninstall_mastracode_removes_herdr_hooks_and_preserves_others_is_disabled_without_writing_user_dirs(
+) {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Mastracode,
+        "uninstall",
     );
-
-    if let Some(home) = original_home {
-        std::env::set_var("HOME", home);
-    } else {
-        std::env::remove_var("HOME");
-    }
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn install_mastracode_errors_when_event_value_not_array() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let original_home = std::env::var_os("HOME");
-    let mastracode_dir = base.join(".mastracode");
-    fs::create_dir_all(&mastracode_dir).unwrap();
-    fs::write(mastracode_dir.join("hooks.json"), r#"{"SessionStart":{}}"#).unwrap();
-    std::env::set_var("HOME", &base);
-
-    let err = install_mastracode().unwrap_err().to_string();
-    assert!(
-        err.contains("hook entries for SessionStart must be an array"),
-        "unexpected error: {err}"
+fn install_mastracode_errors_when_event_value_not_array_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Mastracode,
+        "install",
     );
-
-    if let Some(home) = original_home {
-        std::env::set_var("HOME", home);
-    } else {
-        std::env::remove_var("HOME");
-    }
-    let _ = fs::remove_dir_all(base);
 }
 
 #[test]
-fn uninstall_mastracode_errors_when_event_value_not_array() {
-    let _lock = integration_env_lock();
-    let base = unique_base();
-    let original_home = std::env::var_os("HOME");
-    let mastracode_dir = base.join(".mastracode");
-    fs::create_dir_all(&mastracode_dir).unwrap();
-    fs::write(mastracode_dir.join("hooks.json"), r#"{"SessionStart":{}}"#).unwrap();
-    std::env::set_var("HOME", &base);
-
-    let err = uninstall_mastracode().unwrap_err().to_string();
-    assert!(
-        err.contains("hook entries for SessionStart must be an array"),
-        "unexpected error: {err}"
+fn uninstall_mastracode_errors_when_event_value_not_array_is_disabled_without_writing_user_dirs() {
+    assert_target_action_is_disabled_without_writing_user_dirs(
+        crate::api::schema::IntegrationTarget::Mastracode,
+        "uninstall",
     );
-
-    if let Some(home) = original_home {
-        std::env::set_var("HOME", home);
-    } else {
-        std::env::remove_var("HOME");
-    }
-    let _ = fs::remove_dir_all(base);
 }

@@ -27,9 +27,11 @@ const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
 const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/preview.json";
 pub(crate) const UPDATE_TRACK_ID: &str = "kazuph/herdr";
 const HOMEBREW_FORMULA_API_URL: &str = "https://formulae.brew.sh/api/formula/herdr.json";
+#[cfg(test)]
 const HERDR_UPDATE_COMMAND: &str = "herdr update";
 const HOMEBREW_UPDATE_COMMAND: &str = "brew update && brew upgrade herdr";
 const MISE_UPDATE_COMMAND: &str = "mise upgrade herdr";
+#[cfg(test)]
 const NIX_UPDATE_COMMAND: &str = "update through Nix";
 const MISE_INSTALLS_DIR_ENV: &str = "MISE_INSTALLS_DIR";
 const FAKE_UPDATE_VERSION_ENV: &str = "HERDR_FAKE_UPDATE_VERSION";
@@ -1727,26 +1729,8 @@ pub(crate) fn update_install_command() -> &'static str {
     "build from source and install target/release/herdr"
 }
 
-pub(crate) fn update_install_instruction(install_command: &str) -> String {
-    match install_command {
-        "build from source and install target/release/herdr" => {
-            "detach, then run `build from source and install target/release/herdr`".to_string()
-        }
-        HERDR_UPDATE_COMMAND => {
-            "detach, run `herdr update`, then follow its restart guidance".to_string()
-        }
-        HOMEBREW_UPDATE_COMMAND => {
-            "detach, run `brew update && brew upgrade herdr`, then restart this Herdr session when ready".to_string()
-        }
-        MISE_UPDATE_COMMAND => {
-            "detach, run `mise upgrade herdr`, then restart this Herdr session when ready"
-                .to_string()
-        }
-        NIX_UPDATE_COMMAND => {
-            "detach, update through Nix, then restart this Herdr session when ready".to_string()
-        }
-        command => format!("detach, run `{command}`, then restart this Herdr session when ready"),
-    }
+pub(crate) fn update_install_instruction(_install_command: &str) -> String {
+    "detach, then run `build from source and install target/release/herdr`".to_string()
 }
 
 fn is_homebrew_managed_install() -> bool {
@@ -1773,27 +1757,7 @@ fn is_mise_managed_install() -> bool {
     is_mise_managed_exe_path_following_links(&current_exe)
 }
 
-pub(crate) fn preview_channel_rejection_for_current_install() -> Option<&'static str> {
-    let Ok(current_exe) = env::current_exe() else {
-        return None;
-    };
-
-    preview_channel_rejection_for_exe_path(&current_exe)
-}
-
-pub(crate) fn package_manager_channel_update_guidance_for_current_install() -> Option<&'static str>
-{
-    if is_homebrew_managed_install() {
-        Some("Use `brew update && brew upgrade herdr` to update Homebrew installs.")
-    } else if is_mise_managed_install() {
-        Some("Use `mise upgrade herdr` to update mise installs.")
-    } else if is_nix_managed_install() {
-        Some("Update through Nix to update Nix-managed Herdr installs.")
-    } else {
-        None
-    }
-}
-
+#[cfg(test)]
 fn preview_channel_rejection_for_exe_path(path: &Path) -> Option<&'static str> {
     if is_homebrew_managed_exe_path_following_links(path) {
         Some(
@@ -2021,9 +1985,8 @@ pub fn self_update(_options: SelfUpdateOptions) -> Result<Version, String> {
             tracing::debug!(sha256 = %sha256, "selected Windows update asset has checksum");
         }
         install_windows_update_with_installer(channel)?;
-        let updated_exe = windows_installed_herdr_exe_path()?;
+        let _updated_exe = windows_installed_herdr_exe_path()?;
         eprintln!("installed {}", release.label());
-        print_outdated_integration_notice_with_updated_binary(&updated_exe);
         eprintln!(
             "Restart any running Herdr sessions to use {}.",
             release.label()
@@ -2059,22 +2022,10 @@ pub fn self_update(_options: SelfUpdateOptions) -> Result<Version, String> {
             &updated_exe,
             server_update_decisions,
         )?;
-        print_outdated_integration_notice_with_updated_binary(&updated_exe);
-
         print_running_session_update_outcomes(&server_update_outcomes, &release);
     }
 
     Ok(release.version)
-}
-
-fn print_outdated_integration_notice_with_updated_binary(updated_exe: &Path) {
-    let status = Command::new(updated_exe)
-        .args(["integration", "status", "--outdated-only"])
-        .status();
-
-    if !status.is_ok_and(|status| status.success()) {
-        crate::integration::print_outdated_update_notice();
-    }
 }
 
 /// Background update check: only surface availability and release notes.
@@ -2242,12 +2193,10 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
-    use std::sync::{Mutex, OnceLock};
     use std::thread;
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::config::lock_test_config_env()
     }
 
     fn unique_test_socket_path(name: &str) -> std::path::PathBuf {
@@ -2423,7 +2372,7 @@ mod tests {
 
     #[test]
     fn mise_configured_installs_dir_path_is_detected() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         let previous = std::env::var_os(MISE_INSTALLS_DIR_ENV);
         std::env::set_var(MISE_INSTALLS_DIR_ENV, "/opt/mise-tools");
         let path = Path::new("/opt/mise-tools/herdr/0.6.6/bin/herdr");
@@ -2587,24 +2536,24 @@ mod tests {
     }
 
     #[test]
-    fn update_install_instruction_distinguishes_install_from_restart() {
-        assert_eq!(
-            update_install_instruction(HERDR_UPDATE_COMMAND),
-            "detach, run `herdr update`, then follow its restart guidance"
-        );
-        assert_eq!(
-            update_install_instruction(HOMEBREW_UPDATE_COMMAND),
-            "detach, run `brew update && brew upgrade herdr`, then restart this Herdr session when ready"
-        );
-        assert_eq!(
-            update_install_instruction(MISE_UPDATE_COMMAND),
-            "detach, run `mise upgrade herdr`, then restart this Herdr session when ready"
-        );
+    fn update_install_instruction_is_source_build_only() {
+        for command in [
+            HERDR_UPDATE_COMMAND,
+            HOMEBREW_UPDATE_COMMAND,
+            MISE_UPDATE_COMMAND,
+            NIX_UPDATE_COMMAND,
+            "untrusted update command",
+        ] {
+            assert_eq!(
+                update_install_instruction(command),
+                "detach, then run `build from source and install target/release/herdr`"
+            );
+        }
     }
 
     #[test]
     fn fake_release_notes_default_to_real_large_changelog_section() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         std::env::remove_var(FAKE_UPDATE_NOTES_VERSION_ENV);
 
         let body = fake_release_notes_body("9.4.9");
@@ -2614,7 +2563,7 @@ mod tests {
 
     #[test]
     fn fake_release_notes_fallback_include_version_and_context() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         std::env::set_var(FAKE_UPDATE_NOTES_VERSION_ENV, "does-not-exist");
 
         let body = fake_release_notes_body("9.4.9");
@@ -2648,6 +2597,14 @@ mod tests {
             parse_self_update_args(&["--unknown".to_string()]).unwrap_err(),
             "unknown update option: --unknown"
         );
+    }
+
+    #[test]
+    fn self_update_is_disabled_in_the_fork() {
+        let err = self_update(SelfUpdateOptions::default()).unwrap_err();
+
+        assert!(err.contains("self-update is disabled in the kazuph/herdr fork"));
+        assert!(err.contains("build from source and install target/release/herdr"));
     }
 
     #[test]
@@ -2756,7 +2713,7 @@ mod tests {
 
     #[test]
     fn plain_update_targets_all_running_sessions() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         let config_home = set_test_config_home("all-sessions");
         std::env::remove_var(crate::api::SOCKET_PATH_ENV_VAR);
         std::env::remove_var(crate::session::SESSION_ENV_VAR);
@@ -2786,7 +2743,7 @@ mod tests {
 
     #[test]
     fn explicit_session_update_targets_only_that_session() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         let config_home = set_test_config_home("explicit-session");
         std::env::set_var(crate::api::SOCKET_PATH_ENV_VAR, "/tmp/ignored-herdr.sock");
         std::env::remove_var(crate::session::SESSION_ENV_VAR);
@@ -2816,7 +2773,7 @@ mod tests {
 
     #[test]
     fn socket_override_update_targets_socket_not_env_session() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         std::env::set_var(crate::api::SOCKET_PATH_ENV_VAR, "/tmp/custom-herdr.sock");
         std::env::set_var(crate::session::SESSION_ENV_VAR, "work");
         crate::session::clear_explicit_session_for_test();
@@ -2840,7 +2797,7 @@ mod tests {
 
     #[test]
     fn plain_update_errors_when_named_session_has_client_socket_without_status_api() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         let config_home = set_test_config_home("client-only-session");
         std::env::remove_var(crate::api::SOCKET_PATH_ENV_VAR);
         std::env::remove_var(crate::session::SESSION_ENV_VAR);
@@ -2911,7 +2868,7 @@ mod tests {
 
     #[test]
     fn noninteractive_plain_update_does_not_complete_with_running_server() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         assert!(
             !io::stdin().is_terminal(),
             "this test relies on noninteractive test stdin"

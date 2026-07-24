@@ -1244,16 +1244,15 @@ fn run_client_with_mode(
         rt.shutdown_timeout(Duration::from_millis(100));
         crate::logging::shutdown("client");
 
-        if matches!(
-            err,
+        match err {
             ClientError::ServerShutdown {
-                reason: Some(reason)
-            } if reason == "detached"
-        ) {
-            return Ok(());
+                reason: Some(reason),
+            } if reason == "detached" => return Ok(()),
+            ClientError::ServerShutdown {
+                reason: Some(reason),
+            } if reason == "restart" => return crate::session::exec_relaunch(false),
+            _ => std::process::exit(1),
         }
-
-        std::process::exit(1);
     }
 
     rt.shutdown_timeout(Duration::from_millis(100));
@@ -2134,11 +2133,9 @@ fn init_logging() {
 mod tests {
     use super::*;
     use std::ffi::OsString;
-    use std::sync::{Mutex, OnceLock};
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::config::lock_test_config_env()
     }
 
     fn restore_env_var(key: &str, value: Option<OsString>) {
@@ -2209,7 +2206,7 @@ mod tests {
 
     #[test]
     fn host_cursor_policy_native_and_drawn_override_auto_detection() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         let _env = EnvVarGuard::set("TERM_PROGRAM", "WezTerm");
 
         assert!(!should_draw_host_cursor(
@@ -2642,7 +2639,7 @@ mod tests {
 
     #[test]
     fn client_error_display_detached_default_session_reattach_hint() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         let _env = EnvVarsRemovedGuard::new(&[
             crate::remote::REATTACH_COMMAND_ENV_VAR,
             crate::session::SESSION_ENV_VAR,
@@ -2659,7 +2656,7 @@ mod tests {
 
     #[test]
     fn client_error_display_detached_named_session_reattach_hint() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         let _remote_env = EnvVarsRemovedGuard::new(&[crate::remote::REATTACH_COMMAND_ENV_VAR]);
         let _session_env = EnvVarGuard::set(crate::session::SESSION_ENV_VAR, "work");
         let err = ClientError::ServerShutdown {
@@ -2674,7 +2671,7 @@ mod tests {
 
     #[test]
     fn client_error_display_detached_remote_reattach_hint_takes_precedence() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         let _remote_env = EnvVarGuard::set(
             crate::remote::REATTACH_COMMAND_ENV_VAR,
             "herdr --remote host --session work",
@@ -2692,7 +2689,7 @@ mod tests {
 
     #[test]
     fn client_error_display_connection_lost() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         let _env = EnvVarsRemovedGuard::new(&[crate::remote::REATTACH_COMMAND_ENV_VAR]);
         let err =
             ClientError::ConnectionLost(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"));
@@ -2705,7 +2702,7 @@ mod tests {
 
     #[test]
     fn client_error_display_remote_connection_lost_has_reattach_hint() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         let _remote_env = EnvVarGuard::set(
             crate::remote::REATTACH_COMMAND_ENV_VAR,
             "herdr --remote host --session work",
@@ -2750,7 +2747,7 @@ mod tests {
 
     #[test]
     fn reload_local_client_config_refreshes_local_client_presentation_state() {
-        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = std::env::temp_dir().join(format!(
             "herdr-client-config-reload-{}-{}.toml",
             std::process::id(),

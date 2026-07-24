@@ -216,14 +216,23 @@ pub fn detect_agent_with_osc(
             visible_working: false,
         };
     };
-    manifest::detect_with_osc(
+    let mut detection = manifest::detect_with_osc(
         agent,
         manifest::DetectionInput {
             screen: screen_content,
             osc_title,
             osc_progress,
         },
-    )
+    );
+    if agent == Agent::Codex
+        && detection.state == AgentState::Idle
+        && codex_activity_fingerprint(screen_content).is_some()
+    {
+        detection.state = AgentState::Working;
+        detection.visible_idle = false;
+        detection.visible_working = true;
+    }
+    detection
 }
 
 pub fn should_skip_state_update(agent: Option<Agent>, screen_content: &str) -> bool {
@@ -456,6 +465,106 @@ fn argv0_agent_name(argv: Option<&[String]>) -> Option<String> {
 
 fn cmdline_argv0_agent_name(cmdline: &str) -> Option<String> {
     agent_name_from_path_token(cmdline.split_whitespace().next()?)
+}
+
+pub(crate) fn model_from_cmdline(cmdline: &str) -> Option<String> {
+    let mut tokens = cmdline.split_whitespace();
+    while let Some(token) = tokens.next() {
+        let trimmed = token.trim_matches(|c| matches!(c, '"' | '\''));
+        if let Some(model) = trimmed.strip_prefix("--model=") {
+            let model = model.trim_matches(|c| matches!(c, '"' | '\''));
+            if !model.is_empty() {
+                return Some(model.to_string());
+            }
+        }
+        if matches!(trimmed, "--model" | "-m") {
+            let model = tokens.next()?;
+            let model = model.trim_matches(|c| matches!(c, '"' | '\''));
+            if !model.is_empty() {
+                return Some(model.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn is_claude_spinner_line(line: &str) -> bool {
+    const SPINNER_CHARS: &str = "·✱✲✳✴✵✶✷✸✹✺✻✼✽✾✿❀❁❂❃❇❈❉❊❋✢✣✤✥✦✧✨⊛⊕⊙◉◎◍⁂⁕※⍟☼★☆";
+    let trimmed = line.trim();
+    let mut chars = trimmed.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !SPINNER_CHARS.contains(first) {
+        return false;
+    }
+    let rest: String = chars.collect();
+    rest.starts_with(' ') && rest.contains('…') && rest.chars().any(|c| c.is_alphanumeric())
+}
+
+pub(crate) fn claude_activity_fingerprint(content: &str) -> Option<String> {
+    let lines: Vec<&str> = manifest::above_prompt_box(content)
+        .lines()
+        .filter(|line| {
+            let lower = line.to_lowercase();
+            is_claude_spinner_line(line)
+                || lower.contains("esc to interrupt")
+                || lower.contains("ctrl+c to interrupt")
+        })
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+pub(crate) fn codex_activity_fingerprint(content: &str) -> Option<String> {
+    let lines: Vec<&str> = codex_live_region(content)
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            let lower = trimmed.to_lowercase();
+            (trimmed.starts_with('•') && trimmed.contains("Working ("))
+                || lower.contains("esc to interrupt")
+        })
+        .collect();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+fn codex_live_region(content: &str) -> &str {
+    let lines: Vec<&str> = content.lines().collect();
+    let Some(prompt_index) = lines
+        .iter()
+        .rposition(|line| line.trim_start().starts_with('›'))
+    else {
+        return content;
+    };
+    let mut start_index = prompt_index;
+    let mut cursor = prompt_index;
+    let mut saw_live_status = false;
+    while cursor > 0 {
+        let previous = lines[cursor - 1];
+        let trimmed = previous.trim_start();
+        let lower = trimmed.to_lowercase();
+        if trimmed.is_empty() {
+            cursor -= 1;
+            continue;
+        }
+        if (trimmed.starts_with('•') && trimmed.contains("Working ("))
+            || lower.contains("esc to interrupt")
+        {
+            saw_live_status = true;
+            cursor -= 1;
+            continue;
+        }
+        break;
+    }
+    if saw_live_status {
+        start_index = cursor;
+    }
+
+    let byte_offset = lines[..start_index]
+        .iter()
+        .map(|line| line.len() + 1)
+        .sum::<usize>();
+    &content[byte_offset.min(content.len())..]
 }
 
 fn agent_name_from_path_token(token: &str) -> Option<String> {
@@ -1058,6 +1167,73 @@ mod tests {
     #[test]
     fn cmdline_argv0_agent_name_requires_exact_agent_basename() {
         assert_eq!(cmdline_argv0_agent_name("/tmp/my-codex-helper"), None);
+    }
+
+    #[test]
+    fn model_from_cmdline_extracts_long_and_short_flags() {
+        assert_eq!(
+            model_from_cmdline("codex --model sample-model"),
+            Some("sample-model".to_string())
+        );
+        assert_eq!(
+            model_from_cmdline("claude -m sample-model"),
+            Some("sample-model".to_string())
+        );
+        assert_eq!(
+            model_from_cmdline("codex --model=sample-model"),
+            Some("sample-model".to_string())
+        );
+        assert_eq!(model_from_cmdline("codex --model"), None);
+    }
+
+    #[test]
+    fn claude_activity_fingerprint_excludes_completion_summary() {
+        let screen = "✻ Cooked for 13m 55s\n\
+                      ─────────────────────────\n\
+                      ❯\n\
+                      ─────────────────────────";
+
+        assert_eq!(claude_activity_fingerprint(screen), None);
+    }
+
+    #[test]
+    fn claude_activity_fingerprint_tracks_spinner_above_prompt_box() {
+        let screen = "✢ Building… (2s · thinking)\n\
+                      esc to interrupt\n\
+                      ─────────────────────────\n\
+                      ❯\n\
+                      ─────────────────────────";
+
+        let fingerprint = claude_activity_fingerprint(screen).unwrap();
+        assert!(fingerprint.contains("Building…"));
+        assert!(fingerprint.contains("esc to interrupt"));
+    }
+
+    #[test]
+    fn codex_working_status_immediately_before_latest_prompt_is_live() {
+        let screen = "older output\n\n\
+                      • Working (9m 12s • esc to interrupt) · 1 background terminal running\n\n\
+                      › Use /skills to list available skills\n\n\
+                      gpt-5.5 medium · herdr";
+
+        assert_eq!(
+            detect_state(Some(Agent::Codex), screen),
+            AgentState::Working
+        );
+        assert!(codex_activity_fingerprint(screen)
+            .is_some_and(|fingerprint| fingerprint.contains("Working (9m 12s")));
+    }
+
+    #[test]
+    fn codex_ignores_fossilized_working_text_before_latest_prompt() {
+        let screen = "older answer about • Working (0s • esc to interrupt)\n\n\
+                      › hi\n\n\
+                      • hi!\n\n\
+                      › Summarize recent commits\n\n\
+                      gpt-5.5 medium · herdr · master";
+
+        assert_eq!(detect_state(Some(Agent::Codex), screen), AgentState::Idle);
+        assert_eq!(codex_activity_fingerprint(screen), None);
     }
 
     #[cfg(unix)]

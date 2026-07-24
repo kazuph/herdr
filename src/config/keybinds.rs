@@ -349,6 +349,8 @@ pub struct Keybinds {
     pub swap_pane_right: ActionKeybinds,
     pub cycle_pane_next: ActionKeybinds,
     pub cycle_pane_previous: ActionKeybinds,
+    pub focus_history_back: ActionKeybinds,
+    pub focus_history_forward: ActionKeybinds,
     pub last_pane: ActionKeybinds,
     pub split_vertical: ActionKeybinds,
     pub split_horizontal: ActionKeybinds,
@@ -511,6 +513,8 @@ impl Config {
             swap_pane_right: empty_action!(),
             cycle_pane_next: empty_action!(),
             cycle_pane_previous: empty_action!(),
+            focus_history_back: empty_action!(),
+            focus_history_forward: empty_action!(),
             last_pane: empty_action!(),
             split_vertical: empty_action!(),
             split_horizontal: empty_action!(),
@@ -653,6 +657,12 @@ impl Config {
             apply_action!(keybinds.last_pane, last_pane, source);
             apply_action!(keybinds.cycle_pane_next, cycle_pane_next, source);
             apply_action!(keybinds.cycle_pane_previous, cycle_pane_previous, source);
+            apply_action!(keybinds.focus_history_back, focus_history_back, source);
+            apply_action!(
+                keybinds.focus_history_forward,
+                focus_history_forward,
+                source
+            );
             apply_action!(keybinds.split_vertical, split_vertical, source);
             apply_action!(keybinds.split_horizontal, split_horizontal, source);
             apply_action!(keybinds.close_pane, close_pane, source);
@@ -1600,6 +1610,8 @@ next_tab = "prefix+n"
     fn back_and_forth_keybinds_are_unset_by_default() {
         let kb = Config::default().keybinds();
         assert!(kb.last_pane.bindings.is_empty());
+        assert!(kb.focus_history_back.bindings.is_empty());
+        assert!(kb.focus_history_forward.bindings.is_empty());
     }
 
     #[test]

@@ -17,6 +17,36 @@ const DEFAULT_CATALOG_URL: &str = "https://herdr.dev/agent-detection/index.toml"
 const CATALOG_URL_ENV: &str = "HERDR_AGENT_DETECTION_MANIFEST_CATALOG_URL";
 const MAX_FETCH_BYTES: usize = 256 * 1024;
 
+#[cfg(test)]
+thread_local! {
+    static TEST_MANIFEST_ROOTS: std::cell::RefCell<Option<(PathBuf, PathBuf)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_manifest_roots<T>(
+    config_root: PathBuf,
+    state_root: PathBuf,
+    f: impl FnOnce() -> T,
+) -> T {
+    let previous = TEST_MANIFEST_ROOTS.with(|roots| roots.replace(Some((config_root, state_root))));
+    let result = f();
+    TEST_MANIFEST_ROOTS.with(|roots| {
+        roots.replace(previous);
+    });
+    result
+}
+
+#[cfg(test)]
+pub(crate) fn test_manifest_config_root() -> Option<PathBuf> {
+    TEST_MANIFEST_ROOTS.with(|roots| {
+        roots
+            .borrow()
+            .as_ref()
+            .map(|(config_root, _)| config_root.clone())
+    })
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ManifestVersion(String);
 
@@ -457,6 +487,15 @@ fn directory_sync_unsupported(err: &std::io::Error) -> bool {
 }
 
 fn state_root() -> PathBuf {
+    #[cfg(test)]
+    if let Some(root) = TEST_MANIFEST_ROOTS.with(|roots| {
+        roots
+            .borrow()
+            .as_ref()
+            .map(|(_, state_root)| state_root.clone())
+    }) {
+        return root.join("agent-detection");
+    }
     crate::config::state_dir().join("agent-detection")
 }
 
@@ -566,9 +605,7 @@ contains = ["{contains}"]
     }
 
     fn with_state_dir<T>(name: &str, f: impl FnOnce() -> T) -> T {
-        let _guard = crate::config::test_config_env_lock().lock().unwrap();
-        let old_config = std::env::var_os("XDG_CONFIG_HOME");
-        let old_state = std::env::var_os("XDG_STATE_HOME");
+        let _guard = crate::config::lock_test_config_env();
         let dir = std::env::temp_dir().join(format!(
             "herdr-manifest-update-{name}-{}",
             std::process::id()
@@ -576,19 +613,12 @@ contains = ["{contains}"]
         let config_dir = dir.join("config");
         let state_dir = dir.join("state");
         let _ = fs::remove_dir_all(&dir);
-        std::env::set_var("XDG_CONFIG_HOME", &config_dir);
-        std::env::set_var("XDG_STATE_HOME", &state_dir);
-        crate::detect::manifest::reload_manifests();
-        let result = f();
-        match old_config {
-            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
-        }
-        match old_state {
-            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
-            None => std::env::remove_var("XDG_STATE_HOME"),
-        }
-        crate::detect::manifest::reload_manifests();
+        let result = with_test_manifest_roots(config_dir, state_dir, || {
+            crate::detect::manifest::reload_manifests();
+            let result = f();
+            crate::detect::manifest::reload_manifests();
+            result
+        });
         let _ = fs::remove_dir_all(&dir);
         result
     }

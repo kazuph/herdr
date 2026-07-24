@@ -24,10 +24,8 @@ pub(super) fn command() -> Command {
                 .help("Print version and exit"),
         )
         .subcommand(completion_command())
-        .subcommand(update_command())
         .subcommand(status_command())
         .subcommand(config_command())
-        .subcommand(channel_command())
         .subcommand(server_command())
         .subcommand(api_command())
         .subcommand(workspace_command())
@@ -39,7 +37,6 @@ pub(super) fn command() -> Command {
         .subcommand(wait_command())
         .subcommand(terminal_command())
         .subcommand(session_command())
-        .subcommand(integration_command())
         .subcommand(plugin_command());
     disable_auto_help(command)
 }
@@ -63,12 +60,6 @@ fn completion_command() -> Command {
         )
 }
 
-fn update_command() -> Command {
-    Command::new("update")
-        .about("Download and install the latest version")
-        .arg(flag("handoff").help("Try live handoff after installing"))
-}
-
 fn status_command() -> Command {
     Command::new("status")
         .about("Show local client and running server status")
@@ -90,20 +81,6 @@ fn config_command() -> Command {
         .about("Manage local configuration")
         .subcommand(Command::new("check").about("Validate config.toml and print diagnostics"))
         .subcommand(Command::new("reset-keys").about("Reset custom keybindings"))
-}
-
-fn channel_command() -> Command {
-    Command::new("channel")
-        .about("Manage stable and preview update channels")
-        .subcommand(Command::new("show").about("Print the configured update channel"))
-        .subcommand(
-            Command::new("set").about("Choose the update channel").arg(
-                Arg::new("channel")
-                    .value_name("CHANNEL")
-                    .required(true)
-                    .value_parser(["stable", "preview"]),
-            ),
-        )
 }
 
 fn server_command() -> Command {
@@ -477,9 +454,13 @@ fn report_agent_command() -> Command {
         .arg(option("agent", "LABEL"))
         .arg(pane_agent_state_option("state"))
         .arg(option("message", "TEXT"))
+        .arg(option("custom-status", "TEXT"))
         .arg(option("seq", "N"))
+        .arg(option("title", "TEXT"))
+        .arg(option("session-id", "ID"))
         .arg(option("agent-session-id", "ID"))
         .arg(path_option("agent-session-path", "PATH"))
+        .arg(option("model", "NAME"))
 }
 
 fn report_agent_session_command() -> Command {
@@ -600,26 +581,6 @@ fn session_command() -> Command {
         )
 }
 
-fn integration_command() -> Command {
-    Command::new("integration")
-        .about("Manage built-in agent integrations")
-        .subcommand(
-            Command::new("install")
-                .about("Install an integration")
-                .arg(integration_target_arg()),
-        )
-        .subcommand(
-            Command::new("uninstall")
-                .about("Uninstall an integration")
-                .arg(integration_target_arg()),
-        )
-        .subcommand(
-            Command::new("status")
-                .about("Show integration status")
-                .arg(flag("outdated-only")),
-        )
-}
-
 fn plugin_command() -> Command {
     Command::new("plugin")
         .about("Install and run workflow plugins")
@@ -734,16 +695,6 @@ fn plugin_command() -> Command {
 
 fn current_pane_args() -> [Arg; 2] {
     [option("pane", "ID"), flag("current")]
-}
-
-fn integration_target_arg() -> Arg {
-    Arg::new("target")
-        .value_name("TARGET")
-        .required(true)
-        .value_parser([
-            "pi", "omp", "claude", "codex", "copilot", "devin", "droid", "kimi", "opencode",
-            "kilo", "hermes", "qodercli", "cursor",
-        ])
 }
 
 fn id_command(name: &'static str, id: &'static str, about: &'static str) -> Command {
@@ -917,6 +868,22 @@ mod tests {
     }
 
     #[test]
+    fn spec_excludes_disabled_fork_commands() {
+        let command = super::command();
+        let command_names = command
+            .get_subcommands()
+            .map(|command| command.get_name())
+            .collect::<Vec<_>>();
+
+        for disabled in ["update", "channel", "integration"] {
+            assert!(
+                !command_names.contains(&disabled),
+                "{disabled} leaked into completion"
+            );
+        }
+    }
+
+    #[test]
     fn spec_includes_nested_plugin_pane_open_options() {
         let cmd = super::command();
         let open = command_path(&cmd, &["plugin", "pane", "open"]);
@@ -975,5 +942,8 @@ mod tests {
         assert!(script.contains("'pane:Control terminal panes'"));
         assert!(script.contains("idle working blocked done unknown"));
         assert!(!script.contains("live-handoff"));
+        assert!(!script.contains("'update:"));
+        assert!(!script.contains("'channel:"));
+        assert!(!script.contains("'integration:"));
     }
 }

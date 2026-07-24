@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -22,8 +22,11 @@ use super::{
     WorkspaceSnapshot,
 };
 
+const RESTORED_TITLE_METADATA_SOURCE: &str = "herdr:session-restore";
+
 struct AgentRestoreState<'a> {
     enabled: bool,
+    commands: &'a BTreeMap<String, String>,
     resumed_sessions: &'a mut HashSet<String>,
 }
 
@@ -38,6 +41,7 @@ struct RestoreRuntimeContext<'a> {
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'a>,
     resume_agents_on_restore: bool,
+    agent_restore_commands: &'a BTreeMap<String, String>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<AtomicBool>,
@@ -70,7 +74,7 @@ pub fn restore(
     scrollback_limit_bytes: usize,
     default_shell: &str,
     shell_mode: crate::config::ShellModeConfig,
-    resume_agents_on_restore: bool,
+    agent_restore: (bool, &BTreeMap<String, String>),
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<AtomicBool>,
@@ -83,7 +87,7 @@ pub fn restore(
         cols,
         scrollback_limit_bytes,
         crate::pane::PaneShellConfig::new(default_shell, shell_mode),
-        resume_agents_on_restore,
+        agent_restore,
         &mut imported_panes,
         events,
         render_notify,
@@ -109,7 +113,7 @@ pub fn restore_handoff(
         80,
         scrollback_limit_bytes,
         crate::pane::PaneShellConfig::new(default_shell, shell_mode),
-        true,
+        (true, &BTreeMap::new()),
         imports,
         events,
         render_notify,
@@ -160,15 +164,26 @@ fn migrated_public_pane_numbers_by_old_raw(
     next_public_pane_number: &mut usize,
 ) -> HashMap<u32, usize> {
     let mut public_numbers = snap.public_pane_numbers.clone();
+    let mut used_numbers: HashSet<usize> = public_numbers.values().copied().collect();
     for tab in &snap.tabs {
         let mut pane_ids = Vec::new();
         collect_layout_snapshot_pane_ids(&tab.layout, &mut pane_ids);
         for old_raw in pane_ids {
-            public_numbers.entry(old_raw).or_insert_with(|| {
-                let number = *next_public_pane_number;
-                *next_public_pane_number += 1;
-                number
-            });
+            if public_numbers.contains_key(&old_raw) {
+                continue;
+            }
+            let saved_number = old_raw as usize;
+            let number = if saved_number > 0 && !used_numbers.contains(&saved_number) {
+                saved_number
+            } else {
+                while used_numbers.contains(next_public_pane_number) {
+                    *next_public_pane_number += 1;
+                }
+                *next_public_pane_number
+            };
+            used_numbers.insert(number);
+            public_numbers.insert(old_raw, number);
+            *next_public_pane_number = (*next_public_pane_number).max(number + 1);
         }
     }
     public_numbers
@@ -192,7 +207,7 @@ fn restore_with_imports_strict(
     cols: u16,
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'_>,
-    resume_agents_on_restore: bool,
+    agent_restore: (bool, &BTreeMap<String, String>),
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -205,7 +220,7 @@ fn restore_with_imports_strict(
         cols,
         scrollback_limit_bytes,
         shell_config,
-        resume_agents_on_restore,
+        agent_restore,
         imported_panes,
         events,
         render_notify,
@@ -232,7 +247,7 @@ fn restore_with_imports(
     cols: u16,
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'_>,
-    resume_agents_on_restore: bool,
+    agent_restore: (bool, &BTreeMap<String, String>),
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -245,7 +260,7 @@ fn restore_with_imports(
         cols,
         scrollback_limit_bytes,
         shell_config,
-        resume_agents_on_restore,
+        agent_restore,
         imported_panes,
         events,
         render_notify,
@@ -261,12 +276,13 @@ fn restore_with_imports_and_failures(
     cols: u16,
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'_>,
-    resume_agents_on_restore: bool,
+    agent_restore: (bool, &BTreeMap<String, String>),
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<AtomicBool>,
 ) -> RestoreFailures<RestoredSession> {
+    let (resume_agents_on_restore, agent_restore_commands) = agent_restore;
     let mut workspaces = Vec::new();
     let mut terminals = HashMap::new();
     let mut terminal_runtimes = HashMap::new();
@@ -277,6 +293,7 @@ fn restore_with_imports_and_failures(
             scrollback_limit_bytes,
             shell_config,
             resume_agents_on_restore,
+            agent_restore_commands,
             events: events.clone(),
             render_notify: render_notify.clone(),
             render_dirty: render_dirty.clone(),
@@ -408,9 +425,11 @@ fn restore_workspace(
         Some(Workspace {
             id: workspace_id,
             custom_name: snap.custom_name.clone(),
+            section: snap.section,
             identity_cwd: snap.identity_cwd.clone(),
             cached_git_branch: crate::workspace::git_branch(&snap.identity_cwd),
             cached_git_ahead_behind: None,
+            cached_git_diff_stats: None,
             cached_git_space: crate::workspace::git_space_metadata(&snap.identity_cwd),
             worktree_space,
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
@@ -487,6 +506,7 @@ fn restore_tab(
 
         let saved_label = saved_pane.and_then(|p| p.label.clone());
         let saved_agent_name = saved_pane.and_then(|p| p.agent_name.clone());
+        let saved_title = saved_pane.and_then(|p| p.title.clone());
         let saved_launch_argv = saved_pane.and_then(|p| p.launch_argv.clone());
         let saved_agent_session = saved_pane.and_then(|p| p.agent_session.as_ref());
         let saved_history =
@@ -494,6 +514,7 @@ fn restore_tab(
         let startup = {
             let mut agent_restore = AgentRestoreState {
                 enabled: runtime_context.resume_agents_on_restore,
+                commands: runtime_context.agent_restore_commands,
                 resumed_sessions: resumed_agent_sessions,
             };
             pane_restore_startup(saved_agent_session, saved_history, &mut agent_restore)
@@ -533,6 +554,7 @@ fn restore_tab(
             if let Some(agent_name) = saved_agent_name {
                 terminal.set_agent_name(agent_name);
             }
+            restore_saved_title(&mut terminal, saved_title.clone());
             if let Some(agent) = initial_restore_agent {
                 let _ = terminal.set_detected_state_with_screen_signals_at(
                     Some(agent),
@@ -626,6 +648,7 @@ fn restore_tab(
                 if let Some(agent_name) = saved_agent_name {
                     terminal.set_agent_name(agent_name);
                 }
+                restore_saved_title(&mut terminal, saved_title);
                 if let Some(agent) = initial_restore_agent {
                     let _ = terminal.set_detected_state_with_screen_signals_at(
                         Some(agent),
@@ -687,6 +710,12 @@ fn restore_tab(
         return (None, failed_imports);
     };
     let pane_ids = collect_pane_ids(&node);
+    let saved_order: Vec<PaneId> = snap
+        .pane_order
+        .iter()
+        .filter_map(|old_id| id_map.get(old_id).copied())
+        .filter(|pane_id| surviving.contains(pane_id))
+        .collect();
     let Some(focus) = resolve_restored_pane(snap.focused, &id_map, &surviving, &pane_ids) else {
         return (None, failed_imports);
     };
@@ -694,7 +723,7 @@ fn restore_tab(
     else {
         return (None, failed_imports);
     };
-    let layout = TileLayout::from_saved(node, focus);
+    let layout = TileLayout::from_saved_with_order(node, focus, &saved_order);
 
     (
         Some((
@@ -719,6 +748,25 @@ fn restore_tab(
     )
 }
 
+fn restore_saved_title(terminal: &mut TerminalState, title: Option<String>) {
+    let Some(title) = title.filter(|title| !title.trim().is_empty()) else {
+        return;
+    };
+    let _ = terminal.set_agent_metadata(crate::terminal::AgentMetadataReport {
+        source: RESTORED_TITLE_METADATA_SOURCE.into(),
+        agent_label: None,
+        applies_to_source: None,
+        title: Some(title),
+        display_agent: None,
+        state_labels: HashMap::new(),
+        clear_title: false,
+        clear_display_agent: false,
+        clear_state_labels: false,
+        ttl: None,
+        seq: None,
+    });
+}
+
 fn pane_restore_startup<'a>(
     session: Option<&PaneAgentSessionSnapshot>,
     history: Option<&'a PaneHistorySnapshot>,
@@ -728,8 +776,9 @@ fn pane_restore_startup<'a>(
     // resumable agent session and resume is enabled, do not replay saved pane
     // presentation history into that terminal, even when this pane is a
     // duplicate suppressed by session de-duplication.
-    let restore_plan =
-        session.and_then(|session| restore_plan_for_snapshot(session, agent_restore.enabled));
+    let restore_plan = session.and_then(|session| {
+        restore_plan_for_snapshot(session, agent_restore.enabled, agent_restore.commands)
+    });
     let has_native_agent_restore = restore_plan.is_some();
     // Reserve before spawning so later panes in the same restore pass cannot
     // launch the same native agent session. The caller rolls this reservation
@@ -767,12 +816,31 @@ fn pane_restore_startup<'a>(
 fn restore_plan_for_snapshot(
     session: &PaneAgentSessionSnapshot,
     resume_agents_on_restore: bool,
+    agent_restore_commands: &BTreeMap<String, String>,
 ) -> Option<crate::agent_resume::AgentResumePlan> {
     if !resume_agents_on_restore {
         return None;
     }
     let persisted = persisted_agent_session_from_snapshot(session)?;
-    crate::agent_resume::plan(&session.source, &session.agent, &persisted.session_ref)
+    let native_plan =
+        crate::agent_resume::plan(&session.source, &session.agent, &persisted.session_ref)?;
+    if let Some(template) =
+        crate::agent_sessions::restore_template(agent_restore_commands, &persisted.agent)
+    {
+        if persisted.session_ref.kind != crate::agent_resume::AgentSessionRefKind::Id {
+            return None;
+        }
+        let command = crate::agent_sessions::render_restore_command(
+            template,
+            Some(&persisted.session_ref.value),
+        )?;
+        return Some(crate::agent_resume::AgentResumePlan {
+            agent: native_plan.agent,
+            argv: vec!["sh".into(), "-lc".into(), command],
+            dedupe_key: native_plan.dedupe_key,
+        });
+    }
+    Some(native_plan)
 }
 
 fn persisted_agent_session_from_snapshot(
@@ -802,7 +870,7 @@ fn take_restore_plan_for_snapshot(
     resume_agents_on_restore: bool,
     resumed_agent_sessions: &mut HashSet<String>,
 ) -> Option<crate::agent_resume::AgentResumePlan> {
-    restore_plan_for_snapshot(session, resume_agents_on_restore)
+    restore_plan_for_snapshot(session, resume_agents_on_restore, &BTreeMap::new())
         .filter(|plan| resumed_agent_sessions.insert(plan.dedupe_key.clone()))
 }
 
@@ -1002,9 +1070,11 @@ mod tests {
             value: pi_session_path.clone(),
         };
 
-        assert!(restore_plan_for_snapshot(&session, false).is_none());
+        assert!(restore_plan_for_snapshot(&session, false, &BTreeMap::new()).is_none());
         assert_eq!(
-            restore_plan_for_snapshot(&session, true).unwrap().argv,
+            restore_plan_for_snapshot(&session, true, &BTreeMap::new())
+                .unwrap()
+                .argv,
             vec!["pi", "--session", pi_session_path.as_str()]
         );
 
@@ -1014,7 +1084,19 @@ mod tests {
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: test_session_path("claude-session"),
         };
-        assert!(restore_plan_for_snapshot(&unsupported_path, true).is_none());
+        assert!(restore_plan_for_snapshot(&unsupported_path, true, &BTreeMap::new()).is_none());
+    }
+
+    #[test]
+    fn restore_plan_rejects_unsafe_codex_snapshot_id() {
+        let session = super::super::snapshot::PaneAgentSessionSnapshot {
+            source: "herdr:codex".into(),
+            agent: "codex".into(),
+            kind: crate::agent_resume::AgentSessionRefKind::Id,
+            value: "--last".into(),
+        };
+
+        assert!(restore_plan_for_snapshot(&session, true, &BTreeMap::new()).is_none());
     }
 
     #[test]
@@ -1055,6 +1137,7 @@ mod tests {
         let mut resumed = HashSet::new();
         let mut agent_restore = AgentRestoreState {
             enabled: true,
+            commands: &BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
 
@@ -1080,6 +1163,7 @@ mod tests {
         let mut resumed = HashSet::new();
         let mut agent_restore = AgentRestoreState {
             enabled: true,
+            commands: &BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
 
@@ -1108,6 +1192,7 @@ mod tests {
         let mut resumed = HashSet::new();
         let mut agent_restore = AgentRestoreState {
             enabled: false,
+            commands: &BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
 
@@ -1158,6 +1243,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("workspace".into()),
                 custom_name: None,
+                section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
@@ -1166,6 +1252,7 @@ mod tests {
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    pane_order: vec![0],
                     layout: LayoutSnapshot::Pane(0),
                     panes: HashMap::from([(
                         0,
@@ -1173,6 +1260,7 @@ mod tests {
                             cwd,
                             label: None,
                             agent_name: None,
+                            title: None,
                             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
                                 source: "herdr:opencode".into(),
                                 agent: "opencode".into(),
@@ -1193,6 +1281,7 @@ mod tests {
             sidebar_width: None,
             sidebar_section_split: None,
             collapsed_space_keys: Default::default(),
+            collapsed_workspace_sections: Default::default(),
         };
         let (events, _event_rx) = mpsc::channel(4);
 
@@ -1204,7 +1293,7 @@ mod tests {
             0,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            false,
+            (false, &BTreeMap::new()),
             events,
             Arc::new(Notify::new()),
             Arc::new(AtomicBool::new(false)),
@@ -1235,6 +1324,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("w1".into()),
                 custom_name: None,
+                section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(10, 1), (20, 3)]),
@@ -1243,6 +1333,7 @@ mod tests {
                 next_public_tab_number: 6,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    pane_order: vec![20, 10],
                     layout: LayoutSnapshot::Split {
                         direction: super::super::snapshot::DirectionSnapshot::Horizontal,
                         ratio: 0.5,
@@ -1256,6 +1347,7 @@ mod tests {
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
+                                title: None,
                                 agent_session: None,
                                 launch_argv: None,
                             },
@@ -1266,6 +1358,7 @@ mod tests {
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
+                                title: None,
                                 agent_session: None,
                                 launch_argv: None,
                             },
@@ -1282,6 +1375,7 @@ mod tests {
             sidebar_width: None,
             sidebar_section_split: None,
             collapsed_space_keys: Default::default(),
+            collapsed_workspace_sections: Default::default(),
         };
         let (events, _event_rx) = mpsc::channel(4);
 
@@ -1293,7 +1387,7 @@ mod tests {
             0,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            false,
+            (false, &BTreeMap::new()),
             events,
             Arc::new(Notify::new()),
             Arc::new(AtomicBool::new(false)),
@@ -1306,6 +1400,13 @@ mod tests {
         assert_eq!(workspace.next_public_pane_number, 4);
         assert_eq!(workspace.tabs[0].number, 5);
         assert_eq!(workspace.next_public_tab_number, 6);
+        let logical_public_order: Vec<_> = workspace.tabs[0]
+            .layout
+            .pane_ids()
+            .into_iter()
+            .map(|pane_id| workspace.public_pane_number(pane_id).unwrap())
+            .collect();
+        assert_eq!(logical_public_order, vec![3, 1]);
     }
 
     #[tokio::test]
@@ -1318,6 +1419,7 @@ mod tests {
                     cwd: cwd.clone(),
                     label: None,
                     agent_name: None,
+                    title: None,
                     agent_session: None,
                     launch_argv: None,
                 },
@@ -1327,6 +1429,7 @@ mod tests {
             cwd: cwd.clone(),
             label: Some("planner".into()),
             agent_name: Some("planner".into()),
+            title: None,
             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
                 source: "herdr:codex".into(),
                 agent: "codex".into(),
@@ -1340,6 +1443,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("w1".into()),
                 custom_name: None,
+                section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(10, 1), (11, 2), (12, 3), (13, 4)]),
@@ -1349,6 +1453,7 @@ mod tests {
                 tabs: vec![
                     TabSnapshot {
                         custom_name: None,
+                        pane_order: vec![10],
                         layout: LayoutSnapshot::Pane(10),
                         panes: HashMap::from([pane_snap("10")]),
                         zoomed: false,
@@ -1357,6 +1462,7 @@ mod tests {
                     },
                     TabSnapshot {
                         custom_name: None,
+                        pane_order: vec![11],
                         layout: LayoutSnapshot::Pane(11),
                         panes: HashMap::from([pane_snap("11")]),
                         zoomed: false,
@@ -1365,6 +1471,7 @@ mod tests {
                     },
                     TabSnapshot {
                         custom_name: None,
+                        pane_order: vec![12],
                         layout: LayoutSnapshot::Pane(12),
                         panes: HashMap::from([pane_snap("12")]),
                         zoomed: false,
@@ -1373,6 +1480,7 @@ mod tests {
                     },
                     TabSnapshot {
                         custom_name: None,
+                        pane_order: vec![13],
                         layout: LayoutSnapshot::Pane(13),
                         panes: HashMap::from([(13, final_pane)]),
                         zoomed: false,
@@ -1387,6 +1495,7 @@ mod tests {
             sidebar_width: None,
             sidebar_section_split: None,
             collapsed_space_keys: Default::default(),
+            collapsed_workspace_sections: Default::default(),
         };
         let (events, _event_rx) = mpsc::channel(4);
 
@@ -1398,7 +1507,7 @@ mod tests {
             0,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            false,
+            (false, &BTreeMap::new()),
             events,
             Arc::new(Notify::new()),
             Arc::new(AtomicBool::new(false)),
@@ -1419,11 +1528,12 @@ mod tests {
     }
 
     #[test]
-    fn legacy_restore_precomputes_missing_public_pane_numbers() {
+    fn legacy_restore_uses_saved_raw_ids_as_missing_public_pane_numbers() {
         let cwd = std::env::current_dir().unwrap();
         let snapshot = WorkspaceSnapshot {
             id: Some("w1".into()),
             custom_name: None,
+            section: crate::workspace::WorkspaceSection::None,
             identity_cwd: cwd,
             worktree_space: None,
             public_pane_numbers: HashMap::new(),
@@ -1432,6 +1542,7 @@ mod tests {
             next_public_tab_number: 0,
             tabs: vec![TabSnapshot {
                 custom_name: None,
+                pane_order: vec![10, 20],
                 layout: LayoutSnapshot::Split {
                     direction: super::super::snapshot::DirectionSnapshot::Horizontal,
                     ratio: 0.5,
@@ -1450,8 +1561,8 @@ mod tests {
         let public_numbers =
             migrated_public_pane_numbers_by_old_raw(&snapshot, &mut next_public_pane_number);
 
-        assert_eq!(public_numbers, HashMap::from([(10, 1), (20, 2)]));
-        assert_eq!(next_public_pane_number, 3);
+        assert_eq!(public_numbers, HashMap::from([(10, 10), (20, 20)]));
+        assert_eq!(next_public_pane_number, 21);
     }
 
     #[tokio::test]
@@ -1463,6 +1574,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("workspace".into()),
                 custom_name: None,
+                section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
@@ -1471,6 +1583,7 @@ mod tests {
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    pane_order: vec![0],
                     layout: LayoutSnapshot::Pane(0),
                     panes: HashMap::from([(
                         0,
@@ -1478,6 +1591,7 @@ mod tests {
                             cwd,
                             label: None,
                             agent_name: None,
+                            title: Some("restore pane sessions".into()),
                             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
                                 source: "herdr:codex".into(),
                                 agent: "codex".into(),
@@ -1498,6 +1612,7 @@ mod tests {
             sidebar_width: None,
             sidebar_section_split: None,
             collapsed_space_keys: Default::default(),
+            collapsed_workspace_sections: Default::default(),
         };
         let (events, _event_rx) = mpsc::channel(4);
 
@@ -1509,7 +1624,7 @@ mod tests {
             0,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            true,
+            (true, &BTreeMap::new()),
             events,
             Arc::new(Notify::new()),
             Arc::new(AtomicBool::new(false)),
@@ -1522,6 +1637,10 @@ mod tests {
         assert!(
             terminal.pending_agent_resume_plan.is_some(),
             "restored native agent panes should defer resume until client terminal context is known"
+        );
+        assert_eq!(
+            terminal.effective_title().as_deref(),
+            Some("restore pane sessions")
         );
         assert!(
             !terminal.respawn_shell_on_exit,
@@ -1572,7 +1691,7 @@ mod tests {
             4096,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            false,
+            (false, &BTreeMap::new()),
             events,
             render_notify,
             render_dirty,
@@ -1611,7 +1730,7 @@ mod tests {
             4096,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
-            false,
+            (false, &BTreeMap::new()),
             events,
             render_notify,
             render_dirty,
@@ -1644,6 +1763,7 @@ mod tests {
                 cwd: cwd.clone(),
                 label: None,
                 agent_name: None,
+                title: None,
                 agent_session: None,
                 launch_argv: None,
             },
@@ -1667,6 +1787,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("workspace".into()),
                 custom_name: None,
+                section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: cwd,
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
@@ -1675,6 +1796,7 @@ mod tests {
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    pane_order: vec![0],
                     layout: LayoutSnapshot::Pane(0),
                     panes,
                     zoomed: false,
@@ -1688,6 +1810,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: Default::default(),
+            collapsed_workspace_sections: Default::default(),
         };
         (snapshot, history)
     }

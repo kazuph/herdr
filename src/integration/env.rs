@@ -19,6 +19,7 @@ pub(crate) const CURSOR_CONFIG_DIR_ENV_VAR: &str = "CURSOR_CONFIG_DIR";
 
 pub(crate) fn apply_pane_base_env(cmd: &mut CommandBuilder) {
     cmd.env(crate::api::SOCKET_PATH_ENV_VAR, crate::api::socket_path());
+    cmd.env(crate::api::SOCKET_PATH_EXPLICIT_ENV_VAR, "1");
 }
 
 pub(crate) fn pi_extension_dir() -> io::Result<PathBuf> {
@@ -156,5 +157,27 @@ pub(crate) fn home_dir() -> io::Result<PathBuf> {
 #[cfg(test)]
 pub(crate) fn integration_env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pane_base_env_marks_parent_socket_as_explicit() {
+        let mut command = CommandBuilder::new("/bin/sh");
+
+        apply_pane_base_env(&mut command);
+
+        assert!(command.get_env(crate::api::SOCKET_PATH_ENV_VAR).is_some());
+        assert_eq!(
+            command
+                .get_env(crate::api::SOCKET_PATH_EXPLICIT_ENV_VAR)
+                .and_then(std::ffi::OsStr::to_str),
+            Some("1")
+        );
+    }
 }
