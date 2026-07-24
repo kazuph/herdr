@@ -552,6 +552,14 @@ pub fn show_desktop_notification(_title: &str, _body: Option<&str>) -> std::io::
     Ok(false)
 }
 
+pub fn show_desktop_notification_with_action(
+    title: &str,
+    body: Option<&str>,
+    _click_command: Option<&str>,
+) -> std::io::Result<bool> {
+    show_desktop_notification(title, body)
+}
+
 fn wide_null(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }

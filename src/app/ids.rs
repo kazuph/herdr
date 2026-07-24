@@ -24,7 +24,7 @@ impl App {
         ))
     }
 
-    pub(super) fn public_pane_id(
+    pub(crate) fn public_pane_id(
         &self,
         ws_idx: usize,
         pane_id: crate::layout::PaneId,

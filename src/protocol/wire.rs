@@ -634,6 +634,8 @@ pub enum ServerMessage {
         message: String,
         /// Optional human-readable notification body.
         body: Option<String>,
+        /// Public pane identifier to focus when the system notification is clicked.
+        target_pane_id: Option<String>,
     },
 
     /// OSC 52 clipboard data forwarded from a PTY through the server.
@@ -1338,6 +1340,7 @@ mod tests {
                 kind,
                 message: "agent done".to_owned(),
                 body: None,
+                target_pane_id: Some("w_1-1".to_owned()),
             };
             let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
             let (decoded, _): (ServerMessage, _) =

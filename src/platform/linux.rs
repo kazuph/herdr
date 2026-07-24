@@ -442,6 +442,14 @@ pub fn show_desktop_notification(title: &str, body: Option<&str>) -> std::io::Re
     show_desktop_notification_with_command(title, body, |program| Command::new(program))
 }
 
+pub fn show_desktop_notification_with_action(
+    title: &str,
+    body: Option<&str>,
+    _click_command: Option<&str>,
+) -> std::io::Result<bool> {
+    show_desktop_notification(title, body)
+}
+
 fn show_desktop_notification_with_command(
     title: &str,
     body: Option<&str>,

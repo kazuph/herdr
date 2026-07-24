@@ -303,15 +303,18 @@ impl App {
                 crate::config::ToastDelivery::Terminal | crate::config::ToastDelivery::System
             )
         {
-            let notify = match self.state.toast_config.delivery {
-                crate::config::ToastDelivery::Terminal => crate::terminal_notify::show_notification,
-                crate::config::ToastDelivery::System => crate::platform::show_desktop_notification,
-                _ => unreachable!("toast delivery was checked above"),
-            };
-
             if let Some((version, install_command)) = update_ready {
                 let instruction = crate::update::update_install_instruction(&install_command);
-                let _ = notify(&format!("v{version} available"), Some(&instruction));
+                let title = format!("v{version} available");
+                let _ = match self.state.toast_config.delivery {
+                    crate::config::ToastDelivery::Terminal => {
+                        crate::terminal_notify::show_notification(&title, Some(&instruction))
+                    }
+                    crate::config::ToastDelivery::System => {
+                        crate::platform::show_desktop_notification(&title, Some(&instruction))
+                    }
+                    _ => unreachable!("toast delivery was checked above"),
+                };
             } else if self.state.toast_config.delay_seconds == 0 {
                 self.emit_terminal_or_system_agent_notifications(&pane_updates);
             }
@@ -638,12 +641,6 @@ impl App {
             return;
         }
 
-        let notify = match self.state.toast_config.delivery {
-            crate::config::ToastDelivery::Terminal => crate::terminal_notify::show_notification,
-            crate::config::ToastDelivery::System => crate::platform::show_desktop_notification,
-            _ => return,
-        };
-
         for update in pane_updates {
             let is_active_tab = self
                 .state
@@ -674,7 +671,17 @@ impl App {
             else {
                 continue;
             };
-            let _ = notify(&title, Some(&context));
+            let _ = match self.state.toast_config.delivery {
+                crate::config::ToastDelivery::Terminal => {
+                    crate::terminal_notify::show_notification(&title, Some(&context))
+                }
+                crate::config::ToastDelivery::System => self.show_system_notification_for_pane(
+                    &title,
+                    Some(&context),
+                    Some((update.ws_idx, update.pane_id)),
+                ),
+                _ => return,
+            };
         }
     }
 
@@ -707,18 +714,44 @@ impl App {
             return;
         }
 
-        let notify = match self.state.toast_config.delivery {
-            crate::config::ToastDelivery::Terminal => crate::terminal_notify::show_notification,
-            crate::config::ToastDelivery::System => crate::platform::show_desktop_notification,
-            _ => unreachable!("toast delivery was checked above"),
-        };
-
         for delivery in deliveries {
             let Some(toast) = &delivery.client_notification else {
                 continue;
             };
-            let _ = notify(&toast.title, Some(&toast.context));
+            let target = self
+                .state
+                .workspaces
+                .iter()
+                .position(|workspace| workspace.id == delivery.workspace_id)
+                .map(|ws_idx| (ws_idx, delivery.pane_id));
+            let _ = match self.state.toast_config.delivery {
+                crate::config::ToastDelivery::Terminal => {
+                    crate::terminal_notify::show_notification(&toast.title, Some(&toast.context))
+                }
+                crate::config::ToastDelivery::System => self.show_system_notification_for_pane(
+                    &toast.title,
+                    Some(&toast.context),
+                    target,
+                ),
+                _ => unreachable!("toast delivery was checked above"),
+            };
         }
+    }
+
+    fn show_system_notification_for_pane(
+        &self,
+        title: &str,
+        body: Option<&str>,
+        target: Option<(usize, crate::layout::PaneId)>,
+    ) -> std::io::Result<bool> {
+        let click_command = target
+            .and_then(|(ws_idx, pane_id)| self.public_pane_id(ws_idx, pane_id))
+            .and_then(|pane_id| pane_focus_command(&pane_id));
+        crate::platform::show_desktop_notification_with_action(
+            title,
+            body,
+            click_command.as_deref(),
+        )
     }
 
     pub(crate) fn refresh_agent_notification_delivery_contexts(
@@ -1245,6 +1278,19 @@ impl App {
     pub(crate) fn mark_api_notification_shown(&mut self, now: Instant) {
         self.last_api_notification_at = Some(now);
     }
+}
+
+fn pane_focus_command(pane_id: &str) -> Option<String> {
+    let executable = std::env::current_exe().ok()?;
+    Some(format!(
+        "{} pane focus {} >/dev/null 2>&1",
+        shell_quote(&executable.to_string_lossy()),
+        shell_quote(pane_id),
+    ))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn sanitized_notification_text(value: &str, max_chars: usize) -> Option<String> {

@@ -1,11 +1,10 @@
 use crate::api::schema::{
-    Method, PaneCurrentParams, PaneDirection, PaneEdgesParams, PaneFocusDirectionParams,
-    PaneLayoutParams, PaneListParams, PaneMoveDestination, PaneMoveParams, PaneNeighborParams,
-    PaneProcessInfoParams, PaneReadParams, PaneReleaseAgentParams, PaneRenameParams,
-    PaneReportAgentParams, PaneReportAgentSessionParams, PaneReportMetadataParams,
-    PaneResizeParams, PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams,
-    PaneSwapParams, PaneTarget, PaneZoomMode, PaneZoomParams, ReadFormat, ReadSource, Request,
-    SplitDirection,
+    Method, PaneCurrentParams, PaneDirection, PaneEdgesParams, PaneLayoutParams, PaneListParams,
+    PaneMoveDestination, PaneMoveParams, PaneNeighborParams, PaneProcessInfoParams, PaneReadParams,
+    PaneReleaseAgentParams, PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
+    PaneReportMetadataParams, PaneResizeParams, PaneSendInputParams, PaneSendKeysParams,
+    PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneTarget, PaneZoomMode, PaneZoomParams,
+    ReadFormat, ReadSource, Request, SplitDirection,
 };
 
 pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
@@ -201,15 +200,18 @@ fn pane_neighbor(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn pane_focus(args: &[String]) -> std::io::Result<i32> {
-    let params = match parse_pane_focus_args(args) {
-        Ok(params) => params,
+    let target = match parse_pane_focus_target(args) {
+        Ok(target) => target,
         Err(message) => {
             eprintln!("{message}");
             return Ok(2);
         }
     };
 
-    super::runtime::pane_focus(params)
+    super::print_response(&super::send_request(&Request {
+        id: "cli:pane:focus".into(),
+        method: Method::PaneFocus(target),
+    })?)
 }
 
 fn pane_resize(args: &[String]) -> std::io::Result<i32> {
@@ -285,13 +287,12 @@ fn parse_pane_neighbor_args(args: &[String]) -> Result<PaneNeighborParams, Strin
     Ok(PaneNeighborParams { pane_id, direction })
 }
 
-fn parse_pane_focus_args(args: &[String]) -> Result<PaneFocusDirectionParams, String> {
-    let params = parse_pane_neighbor_args(args).map_err(|_| {
-        "usage: herdr pane focus --direction left|right|up|down [--pane ID|--current]".to_string()
-    })?;
-    Ok(PaneFocusDirectionParams {
-        pane_id: params.pane_id,
-        direction: params.direction,
+fn parse_pane_focus_target(args: &[String]) -> Result<PaneTarget, String> {
+    let [pane_id] = args else {
+        return Err("usage: herdr pane focus <pane_id>".into());
+    };
+    Ok(PaneTarget {
+        pane_id: super::normalize_pane_id(pane_id),
     })
 }
 
@@ -1455,7 +1456,7 @@ fn print_pane_help() {
     eprintln!("  herdr pane process-info [--pane ID|--current]");
     eprintln!("  herdr pane neighbor --direction left|right|up|down [--pane ID|--current]");
     eprintln!("  herdr pane edges [--pane ID|--current]");
-    eprintln!("  herdr pane focus --direction left|right|up|down [--pane ID|--current]");
+    eprintln!("  herdr pane focus <pane_id>");
     eprintln!(
         "  herdr pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]"
     );
@@ -1707,11 +1708,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_pane_focus_args_accepts_directional_current() {
-        let params = parse_pane_focus_args(&args(&["--direction", "up"])).unwrap();
-
-        assert_eq!(params.pane_id, None);
-        assert_eq!(params.direction, PaneDirection::Up);
+    fn parse_pane_focus_target_requires_exactly_one_pane_id() {
+        assert_eq!(
+            parse_pane_focus_target(&args(&["issue-2"]))
+                .unwrap()
+                .pane_id,
+            "issue-2"
+        );
+        assert_eq!(
+            parse_pane_focus_target(&args(&[])).unwrap_err(),
+            "usage: herdr pane focus <pane_id>"
+        );
+        assert_eq!(
+            parse_pane_focus_target(&args(&["issue-2", "extra"])).unwrap_err(),
+            "usage: herdr pane focus <pane_id>"
+        );
     }
 
     #[test]
