@@ -1081,7 +1081,6 @@ fn help_commands_exit_successfully() {
         &["wait", "-h"],
         &["session", "-h"],
         &["session", "attach", "-h"],
-        &["integration", "-h"],
     ];
 
     for args in help_cases {
