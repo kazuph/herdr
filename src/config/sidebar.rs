@@ -124,6 +124,7 @@ pub enum SpaceSidebarToken {
     Workspace,
     Branch,
     GitStatus,
+    GitDiff,
     Custom(String),
     Styled {
         token: Box<SpaceSidebarToken>,
@@ -252,6 +253,7 @@ fn space_token_name(token: &SpaceSidebarToken) -> String {
         SpaceSidebarToken::Workspace => "workspace".into(),
         SpaceSidebarToken::Branch => "branch".into(),
         SpaceSidebarToken::GitStatus => "git_status".into(),
+        SpaceSidebarToken::GitDiff => "git_diff".into(),
         SpaceSidebarToken::Custom(name) => format!("${name}"),
         SpaceSidebarToken::Styled { token, .. } => space_token_name(token),
     }
@@ -338,6 +340,7 @@ impl<'de> Deserialize<'de> for SpaceSidebarToken {
                 ("workspace", Self::Workspace),
                 ("branch", Self::Branch),
                 ("git_status", Self::GitStatus),
+                ("git_diff", Self::GitDiff),
             ],
         )
         .map_err(serde::de::Error::custom)?;
@@ -417,7 +420,11 @@ impl Default for SpacesSidebarConfig {
         Self {
             rows: vec![
                 vec![SpaceSidebarToken::StateIcon, SpaceSidebarToken::Workspace],
-                vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
+                vec![
+                    SpaceSidebarToken::Branch,
+                    SpaceSidebarToken::GitStatus,
+                    SpaceSidebarToken::GitDiff,
+                ],
             ],
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
         }
@@ -455,7 +462,11 @@ mod tests {
             config.spaces.rows,
             vec![
                 vec![SpaceSidebarToken::StateIcon, SpaceSidebarToken::Workspace],
-                vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
+                vec![
+                    SpaceSidebarToken::Branch,
+                    SpaceSidebarToken::GitStatus,
+                    SpaceSidebarToken::GitDiff,
+                ],
             ]
         );
         assert_eq!(config.spaces.row_gap, 0);

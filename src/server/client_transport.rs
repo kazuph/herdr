@@ -588,11 +588,11 @@ fn client_writer_loop(
                 }
             }
             ClientWriteItem::Render(data) => {
-                let _ =
-                    server_event_tx.blocking_send(ServerEvent::ClientWriterDrained { client_id });
                 if !write_framed_bytes(&mut stream, &data) {
                     break;
                 }
+                let _ =
+                    server_event_tx.blocking_send(ServerEvent::ClientWriterDrained { client_id });
             }
         }
     }

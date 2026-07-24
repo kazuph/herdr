@@ -610,6 +610,24 @@ mod tests {
         assert!(owner.starts_with("pane.graphics.stream:"));
     }
 
+    fn wait_for_registered_stream(owner: &str) {
+        let deadline = Instant::now() + APP_RESPONSE_TIMEOUT;
+        loop {
+            let registered = stream_registry()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .contains_key(owner);
+            if registered {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "stream owner {owner} was not registered"
+            );
+            std::thread::yield_now();
+        }
+    }
+
     #[test]
     fn timed_read_skips_reset_after_stream_ends() {
         let mut reset_called = false;
@@ -982,12 +1000,13 @@ mod tests {
         let ack: SuccessResponse = serde_json::from_str(&read_response_line(&mut client)).unwrap();
         assert_eq!(ack.id, "stream-cancel");
 
+        wait_for_registered_stream(&owner);
         cancel_inactive_streams(|registered| registered != owner);
 
         let (close_tx, close_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || close_tx.send(api_rx.blocking_recv()).unwrap());
         let close = close_rx
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(Duration::from_secs(5))
             .expect("canceled idle stream should dispatch a close")
             .expect("API request channel should remain open");
         match &close.request.method {

@@ -59,17 +59,20 @@ pub fn git_status_snapshot_for_cwd(
             WorkspaceGitStatusSnapshot {
                 branch: git_branch(cwd),
                 ahead_behind: None,
+                diff_stats: None,
                 space,
             },
             None,
         );
     };
     let branch = fingerprint.branch_name().map(str::to_string);
+    let diff_stats = git_diff_stats(cwd);
 
     if let Some(cached) = cached.filter(|entry| entry.fingerprint == fingerprint) {
         let snapshot = WorkspaceGitStatusSnapshot {
             branch,
             ahead_behind: cached.snapshot.ahead_behind,
+            diff_stats,
             space,
         };
         return (
@@ -88,6 +91,7 @@ pub fn git_status_snapshot_for_cwd(
     let snapshot = WorkspaceGitStatusSnapshot {
         branch,
         ahead_behind,
+        diff_stats,
         space,
     };
     (
@@ -233,6 +237,36 @@ fn git_ahead_behind_between(
     parse_git_ahead_behind_output(&stdout)
 }
 
+pub fn git_diff_stats(cwd: &Path) -> Option<(usize, usize)> {
+    super::discovery::git_repo_root(cwd)?;
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["diff", "--numstat", "HEAD", "--"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    Some(parse_git_diff_numstat_output(&stdout))
+}
+
+fn parse_git_diff_numstat_output(stdout: &str) -> (usize, usize) {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            Some((
+                parts.next()?.parse::<usize>().ok()?,
+                parts.next()?.parse::<usize>().ok()?,
+            ))
+        })
+        .fold((0, 0), |(added_total, deleted_total), (added, deleted)| {
+            (added_total + added, deleted_total + deleted)
+        })
+}
+
 fn parse_git_ahead_behind_output(stdout: &str) -> Option<(usize, usize)> {
     let mut parts = stdout.split_whitespace();
     let ahead = parts.next()?.parse().ok()?;
@@ -244,6 +278,14 @@ fn parse_git_ahead_behind_output(stdout: &str) -> Option<(usize, usize)> {
 mod tests {
     use super::*;
     use crate::workspace::git::test_support::{run_git, temp_test_dir, write_fake_tracked_repo};
+
+    #[test]
+    fn parse_git_diff_numstat_sums_text_changes_and_skips_binary_files() {
+        assert_eq!(
+            parse_git_diff_numstat_output("10\t2\tsrc/a.rs\n-\t-\timage.png\n3\t4\tREADME.md\n"),
+            (13, 6)
+        );
+    }
 
     #[test]
     fn git_status_cache_key_ignores_invalid_git_marker() {
@@ -267,6 +309,7 @@ mod tests {
             snapshot: WorkspaceGitStatusSnapshot {
                 branch: Some("main".into()),
                 ahead_behind: Some((2, 1)),
+                diff_stats: None,
                 space: git_space_metadata(&root),
             },
         };
@@ -290,6 +333,7 @@ mod tests {
             snapshot: WorkspaceGitStatusSnapshot {
                 branch: Some("main".into()),
                 ahead_behind: Some((4, 0)),
+                diff_stats: None,
                 space: git_space_metadata(&root),
             },
         };
@@ -323,6 +367,7 @@ mod tests {
             snapshot: WorkspaceGitStatusSnapshot {
                 branch: Some("main".into()),
                 ahead_behind: Some((0, 3)),
+                diff_stats: None,
                 space: git_space_metadata(&root),
             },
         };

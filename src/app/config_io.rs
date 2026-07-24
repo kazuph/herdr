@@ -122,11 +122,49 @@ impl App {
                 crate::config::AgentPanelSortConfig::Priority.as_str()
             }
         };
+        let legacy_value = match sort {
+            crate::app::state::AgentPanelSort::Spaces => {
+                crate::config::AgentPanelScopeConfig::All.as_str()
+            }
+            crate::app::state::AgentPanelSort::Priority => {
+                crate::config::AgentPanelScopeConfig::Sort.as_str()
+            }
+        };
         if self.update_config_file("agent panel sort", |content| {
-            crate::config::upsert_section_value(
+            let content = crate::config::upsert_section_value(
                 content,
                 "ui",
                 "agent_panel_sort",
+                &format!("\"{value}\""),
+            );
+            crate::config::upsert_section_value(
+                &content,
+                "ui",
+                "agent_panel_scope",
+                &format!("\"{legacy_value}\""),
+            )
+        }) {
+            self.apply_config_from_disk(false);
+        }
+    }
+
+    pub(super) fn save_workspace_panel_density(
+        &mut self,
+        density: crate::app::state::WorkspacePanelDensity,
+    ) {
+        let value = match density {
+            crate::app::state::WorkspacePanelDensity::Full => {
+                crate::config::WorkspacePanelDensityConfig::Full.as_str()
+            }
+            crate::app::state::WorkspacePanelDensity::Slim => {
+                crate::config::WorkspacePanelDensityConfig::Slim.as_str()
+            }
+        };
+        if self.update_config_file("workspace panel density", |content| {
+            crate::config::upsert_section_value(
+                content,
+                "ui",
+                "workspace_panel_density",
                 &format!("\"{value}\""),
             )
         }) {

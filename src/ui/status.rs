@@ -6,13 +6,116 @@ use ratatui::{
     Frame,
 };
 
-use super::text::display_width_u16;
 use super::widgets::panel_contrast_fg;
 use crate::{
-    app::state::{CopyFeedback, Palette, ToastKind, ToastNotification},
+    app::{
+        state::{CopyFeedback, Palette, ToastKind, ToastNotification},
+        AppState, Mode,
+    },
     config::{ToastClipboardPosition, ToastHerdrPosition},
     detect::AgentState,
 };
+
+const PANE_ACTION_COPY_LABEL: &str = " COPY ";
+const PANE_ACTION_PHONE_COPY_LABEL: &str = " PHONE COPY ";
+const PANE_ACTION_EXIT_COPY_LABEL: &str = " EXIT COPY ";
+const PANE_ACTION_CYCLE_LAYOUT_LABEL: &str = " CYCLE LAYOUT ";
+const PANE_ACTION_ROTATE_LABEL: &str = " ROTATE PANES ";
+const PANE_ACTION_EQUALIZE_LABEL: &str = " EQUALIZE ";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PaneActionBarRects {
+    pub copy: Rect,
+    pub cycle_layout: Rect,
+    pub rotate: Rect,
+    pub equalize: Rect,
+}
+
+pub(crate) fn pane_action_bar_rects(area: Rect, copy_label_width: u16) -> PaneActionBarRects {
+    if area.width == 0 || area.height == 0 {
+        return PaneActionBarRects::default();
+    }
+
+    let copy = Rect::new(area.x, area.y, area.width.min(copy_label_width), 1);
+    let cycle_width = PANE_ACTION_CYCLE_LAYOUT_LABEL.len() as u16;
+    let rotate_width = PANE_ACTION_ROTATE_LABEL.len() as u16;
+    let equalize_width = PANE_ACTION_EQUALIZE_LABEL.len() as u16;
+    let gap = 1;
+    let total = cycle_width + rotate_width + equalize_width + gap * 2;
+    let right_margin = 1;
+    let mut x = if area.width > total + right_margin {
+        area.x + area.width - total - right_margin
+    } else {
+        area.x
+    };
+    let right = area.x + area.width;
+
+    let cycle_layout = button_rect(area, &mut x, cycle_width, right, gap);
+    let rotate = button_rect(area, &mut x, rotate_width, right, gap);
+    let equalize = button_rect(area, &mut x, equalize_width, right, 0);
+
+    PaneActionBarRects {
+        copy,
+        cycle_layout,
+        rotate,
+        equalize,
+    }
+}
+
+fn copy_button_label(app: &AppState) -> &'static str {
+    if app.copy_mode_fullscreen_pane.is_some() {
+        PANE_ACTION_EXIT_COPY_LABEL
+    } else if app.mode == Mode::Copy {
+        PANE_ACTION_PHONE_COPY_LABEL
+    } else {
+        PANE_ACTION_COPY_LABEL
+    }
+}
+
+pub(crate) fn pane_action_copy_label_width(app: &AppState) -> u16 {
+    copy_button_label(app).len() as u16
+}
+
+pub(super) fn render_pane_action_bar(frame: &mut Frame, area: Rect, app: &AppState) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let p = &app.palette;
+    let bar_style = Style::default().fg(p.overlay0).bg(Color::Reset);
+    frame.render_widget(Paragraph::new("").style(bar_style), area);
+
+    let rects = pane_action_bar_rects(area, pane_action_copy_label_width(app));
+    render_action_button(frame, rects.copy, copy_button_label(app), p);
+    render_action_button(frame, rects.cycle_layout, PANE_ACTION_CYCLE_LAYOUT_LABEL, p);
+    render_action_button(frame, rects.rotate, PANE_ACTION_ROTATE_LABEL, p);
+    render_action_button(frame, rects.equalize, PANE_ACTION_EQUALIZE_LABEL, p);
+}
+
+fn button_rect(area: Rect, x: &mut u16, width: u16, right: u16, gap: u16) -> Rect {
+    if *x >= right || width == 0 || *x + width > right {
+        return Rect::default();
+    }
+    let rect = Rect::new(*x, area.y, width, 1);
+    *x = x.saturating_add(width + gap);
+    rect
+}
+
+fn render_action_button(frame: &mut Frame, rect: Rect, label: &'static str, p: &Palette) {
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            label,
+            Style::default()
+                .fg(p.accent)
+                .bg(Color::Reset)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        )),
+        rect,
+    );
+}
 
 pub(crate) fn copy_feedback_rect(
     area: Rect,
@@ -55,8 +158,8 @@ pub(crate) fn toast_notification_rect(
     offset_for_warning: bool,
     position: ToastHerdrPosition,
 ) -> Rect {
-    let content_width = display_width_u16(&toast.title)
-        .max(display_width_u16(&toast.context))
+    let content_width = (toast.title.len() as u16)
+        .max(toast.context.len() as u16)
         .saturating_add(4);
     let width = content_width.saturating_add(2).min(area.width);
     let content_height = if toast.context.is_empty() { 1 } else { 2 };
@@ -203,6 +306,18 @@ pub(super) fn state_dot(state: AgentState, seen: bool, p: &Palette) -> (&'static
     }
 }
 
+pub(super) fn state_summary_icon(
+    state: AgentState,
+    seen: bool,
+    tick: u32,
+    p: &Palette,
+) -> (&'static str, Style) {
+    match (state, seen) {
+        (AgentState::Working, _) => (super::spinner_frame(tick), Style::default().fg(p.yellow)),
+        _ => state_dot(state, seen, p),
+    }
+}
+
 pub(super) fn agent_icon(
     state: AgentState,
     seen: bool,
@@ -260,6 +375,16 @@ mod tests {
     }
 
     #[test]
+    fn state_summary_icon_animates_working_state() {
+        let palette = Palette::catppuccin();
+
+        let (icon, style) = state_summary_icon(AgentState::Working, true, 0, &palette);
+
+        assert_eq!(icon, super::super::spinner_frame(0));
+        assert_eq!(style, Style::default().fg(palette.yellow));
+    }
+
+    #[test]
     fn toast_rect_uses_configured_corner() {
         let area = Rect::new(10, 20, 100, 40);
         let toast = toast();
@@ -284,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn toast_rect_uses_display_width_for_cjk_labels() {
+    fn toast_rect_uses_byte_length_for_cjk_labels() {
         let area = Rect::new(0, 0, 100, 20);
         let toast = ToastNotification {
             kind: ToastKind::NeedsAttention,
@@ -296,8 +421,7 @@ mod tests {
 
         let rect = toast_notification_rect(area, &toast, false, ToastHerdrPosition::TopRight);
 
-        let expected_content_width =
-            display_width_u16(&toast.title).max(display_width_u16(&toast.context)) + 6;
+        let expected_content_width = (toast.title.len() as u16).max(toast.context.len() as u16) + 6;
         assert_eq!(rect.width, expected_content_width);
         assert_eq!(rect.x + rect.width, area.x + area.width);
     }

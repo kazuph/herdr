@@ -40,9 +40,7 @@ id = "codex"
 }
 
 fn with_manifest_dirs<T>(name: &str, f: impl FnOnce() -> T) -> T {
-    let _guard = crate::config::test_config_env_lock().lock().unwrap();
-    let old_config = std::env::var_os("XDG_CONFIG_HOME");
-    let old_state = std::env::var_os("XDG_STATE_HOME");
+    let _guard = crate::config::lock_test_config_env();
     let base = std::env::temp_dir().join(format!(
         "herdr-manifest-loader-{name}-{}",
         std::process::id()
@@ -50,19 +48,13 @@ fn with_manifest_dirs<T>(name: &str, f: impl FnOnce() -> T) -> T {
     let config_dir = base.join("config");
     let state_dir = base.join("state");
     let _ = std::fs::remove_dir_all(&base);
-    std::env::set_var("XDG_CONFIG_HOME", &config_dir);
-    std::env::set_var("XDG_STATE_HOME", &state_dir);
-    reload_manifests();
-    let result = f();
-    match old_config {
-        Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
-        None => std::env::remove_var("XDG_CONFIG_HOME"),
-    }
-    match old_state {
-        Some(value) => std::env::set_var("XDG_STATE_HOME", value),
-        None => std::env::remove_var("XDG_STATE_HOME"),
-    }
-    reload_manifests();
+    let result =
+        crate::detect::manifest_update::with_test_manifest_roots(config_dir, state_dir, || {
+            reload_manifests();
+            let result = f();
+            reload_manifests();
+            result
+        });
     let _ = std::fs::remove_dir_all(&base);
     result
 }
@@ -298,6 +290,29 @@ fn all_bundled_manifests_parse_and_validate() {
             agent_label(agent)
         );
     }
+}
+
+#[test]
+fn github_copilot_manifest_preserves_fork_status_footer_contracts() {
+    with_manifest_dirs("github-copilot-fork-contracts", || {
+        let thinking = explain(Agent::GithubCopilot, "● Thinking esc cancel");
+        assert_eq!(thinking.state, AgentState::Working);
+        assert!(thinking.visible_working);
+
+        let loading = explain(
+            Agent::GithubCopilot,
+            "◉ Loading: 1 instruction, 5 hooks, 62 skills",
+        );
+        assert_eq!(loading.state, AgentState::Working);
+        assert!(loading.visible_working);
+
+        let blocked = explain(
+            Agent::GithubCopilot,
+            "Proceed with change?\nesc cancel  enter accept",
+        );
+        assert_eq!(blocked.state, AgentState::Blocked);
+        assert!(blocked.visible_blocker);
+    });
 }
 
 #[test]
@@ -650,65 +665,94 @@ fn claude_empty_osc_empty_screen_is_idle_fallback() {
     assert!(!result.visible_idle);
 }
 
+#[test]
+fn claude_spinner_activity_screen_fallback_is_working() {
+    with_manifest_dirs("claude-spinner-screen-working", || {
+        let screen = "✢ Building… (2s · thinking)\n\
+                      esc to interrupt\n\
+                      ─────────────────────────\n\
+                      ❯\n\
+                      ─────────────────────────";
+        let result = osc_explain(Agent::Claude, screen, "", "");
+
+        assert_eq!(result.state, AgentState::Working);
+        assert_eq!(
+            result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+            Some("spinner_activity_working")
+        );
+        assert!(result.visible_working);
+    });
+}
+
 // --- Codex OSC rules ---
 
 #[test]
 fn codex_osc_title_braille_spinner_is_working() {
-    // "⠋" is U+280B, in the braille block
-    let result = osc_explain(Agent::Codex, "", "⠋ llm-proxy", "");
-    assert_eq!(result.state, AgentState::Working);
-    assert_eq!(
-        result.matched_rule.as_ref().map(|r| r.id.as_str()),
-        Some("osc_title_working")
-    );
-    assert!(result.visible_working);
+    with_manifest_dirs("codex-osc-working", || {
+        // "⠋" is U+280B, in the braille block
+        let result = osc_explain(Agent::Codex, "", "⠋ llm-proxy", "");
+        assert_eq!(result.state, AgentState::Working);
+        assert_eq!(
+            result.matched_rule.as_ref().map(|r| r.id.as_str()),
+            Some("osc_title_working")
+        );
+        assert!(result.visible_working);
+    });
 }
 
 #[test]
 fn codex_osc_title_action_required_is_blocked() {
-    let result = osc_explain(Agent::Codex, "", "[ . ] Action Required | llm-proxy", "");
-    assert_eq!(result.state, AgentState::Blocked);
-    assert_eq!(
-        result.matched_rule.as_ref().map(|r| r.id.as_str()),
-        Some("osc_title_blocked")
-    );
-    assert!(result.visible_blocker);
+    with_manifest_dirs("codex-osc-blocked", || {
+        let result = osc_explain(Agent::Codex, "", "[ . ] Action Required | llm-proxy", "");
+        assert_eq!(result.state, AgentState::Blocked);
+        assert_eq!(
+            result.matched_rule.as_ref().map(|r| r.id.as_str()),
+            Some("osc_title_blocked")
+        );
+        assert!(result.visible_blocker);
+    });
 }
 
 #[test]
 fn codex_osc_title_plain_is_idle() {
-    let result = osc_explain(Agent::Codex, "", "llm-proxy", "");
-    assert_eq!(result.state, AgentState::Idle);
-    assert_eq!(
-        result.matched_rule.as_ref().map(|r| r.id.as_str()),
-        Some("osc_title_idle")
-    );
-    assert!(result.visible_idle);
+    with_manifest_dirs("codex-osc-idle", || {
+        let result = osc_explain(Agent::Codex, "", "llm-proxy", "");
+        assert_eq!(result.state, AgentState::Idle);
+        assert_eq!(
+            result.matched_rule.as_ref().map(|r| r.id.as_str()),
+            Some("osc_title_idle")
+        );
+        assert!(result.visible_idle);
+    });
 }
 
 #[test]
 fn codex_background_terminal_screen_does_not_override_osc_idle() {
-    // Background terminal tasks can be long-lived helpers such as dev servers.
-    // They should not make Codex look busy once the foreground turn is idle.
-    let screen = "background terminal running · /ps to view · /stop to close\n";
-    let result = osc_explain(Agent::Codex, screen, "llm-proxy", "");
-    assert_eq!(result.state, AgentState::Idle);
-    assert_eq!(
-        result.matched_rule.as_ref().map(|r| r.id.as_str()),
-        Some("osc_title_idle")
-    );
-    assert!(result.visible_idle);
+    with_manifest_dirs("codex-osc-idle-background", || {
+        // Background terminal tasks can be long-lived helpers such as dev servers.
+        // They should not make Codex look busy once the foreground turn is idle.
+        let screen = "background terminal running · /ps to view · /stop to close\n";
+        let result = osc_explain(Agent::Codex, screen, "llm-proxy", "");
+        assert_eq!(result.state, AgentState::Idle);
+        assert_eq!(
+            result.matched_rule.as_ref().map(|r| r.id.as_str()),
+            Some("osc_title_idle")
+        );
+        assert!(result.visible_idle);
+    });
 }
 
 #[test]
 fn codex_osc_working_beats_weak_blocker_screen() {
-    // A stale [y/n] on screen triggers weak_blocker at priority 600, but an
-    // active braille spinner in the OSC title is priority 1050 — OSC wins.
-    let screen = "do you want to continue? [y/n]\n";
-    let result = osc_explain(Agent::Codex, screen, "⠋ llm-proxy", "");
-    assert_eq!(result.state, AgentState::Working);
-    assert_eq!(
-        result.matched_rule.as_ref().map(|r| r.id.as_str()),
-        Some("osc_title_working")
-    );
+    with_manifest_dirs("codex-osc-working-beats-weak-blocker", || {
+        // A stale [y/n] on screen triggers weak_blocker at priority 600, but an
+        // active braille spinner in the OSC title is priority 1050 — OSC wins.
+        let screen = "do you want to continue? [y/n]\n";
+        let result = osc_explain(Agent::Codex, screen, "⠋ llm-proxy", "");
+        assert_eq!(result.state, AgentState::Working);
+        assert_eq!(
+            result.matched_rule.as_ref().map(|r| r.id.as_str()),
+            Some("osc_title_working")
+        );
+    });
 }

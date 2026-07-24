@@ -106,6 +106,42 @@ impl AgentPanelSortConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentPanelScopeConfig {
+    Current,
+    #[default]
+    All,
+    Sort,
+}
+
+impl AgentPanelScopeConfig {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::All => "all",
+            Self::Sort => "sort",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkspacePanelDensityConfig {
+    #[default]
+    Full,
+    Slim,
+}
+
+impl WorkspacePanelDensityConfig {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Slim => "slim",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HostCursorModeConfig {
@@ -257,6 +293,35 @@ impl Default for SessionConfig {
     }
 }
 
+/// `[agent_restore]` relaunches agent CLIs in restored panes after a server
+/// restart, but only from explicit recorded session ids.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AgentRestoreConfig {
+    pub enabled: bool,
+    pub restore_delay_ms: u64,
+    pub commands: std::collections::BTreeMap<String, String>,
+}
+
+impl Default for AgentRestoreConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            restore_delay_ms: 3000,
+            commands: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+/// `[agent_start]` configures the argv used by the workspace and pane
+/// "New ... agent" context-menu actions.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct AgentStartConfig {
+    /// Agent name -> argv used when starting that agent from the UI.
+    pub commands: std::collections::BTreeMap<String, Vec<String>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigReloadStatus {
@@ -291,6 +356,8 @@ pub struct Config {
     pub theme: ThemeConfig,
     pub terminal: TerminalConfig,
     pub session: SessionConfig,
+    pub agent_restore: AgentRestoreConfig,
+    pub agent_start: AgentStartConfig,
     pub update: UpdateConfig,
     pub keys: KeysConfig,
     pub ui: UiConfig,
@@ -401,6 +468,10 @@ pub struct KeysConfig {
     pub cycle_pane_next: BindingConfig,
     /// Cycle to the previous pane. Default: "prefix+shift+tab".
     pub cycle_pane_previous: BindingConfig,
+    /// Move back through pane focus history. Unset by default.
+    pub focus_history_back: BindingConfig,
+    /// Move forward through pane focus history. Unset by default.
+    pub focus_history_forward: BindingConfig,
     /// Focus the last focused pane across workspaces and tabs. Unset by default.
     pub last_pane: BindingConfig,
     /// Split pane vertically (side by side). Default: "prefix+v"
@@ -521,6 +592,10 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     cycle_pane_previous: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    focus_history_back: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    focus_history_forward: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     last_pane: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     split_vertical: Option<BindingConfig>,
@@ -603,6 +678,8 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(swap_pane_right);
         apply_field!(cycle_pane_next);
         apply_field!(cycle_pane_previous);
+        apply_field!(focus_history_back);
+        apply_field!(focus_history_forward);
         apply_field!(last_pane);
         apply_field!(split_vertical);
         apply_field!(split_horizontal);
@@ -778,7 +855,7 @@ pub struct UiConfig {
     pub sidebar_width: u16,
     /// Minimum sidebar width (columns) when expanded. Default: 18.
     pub sidebar_min_width: u16,
-    /// Maximum sidebar width (columns) when expanded. Default: 36.
+    /// Maximum sidebar width (columns) when expanded. Default: 72.
     pub sidebar_max_width: u16,
     /// Start with the sidebar collapsed. Default: false.
     pub sidebar_start_collapsed: bool,
@@ -808,10 +885,16 @@ pub struct UiConfig {
     pub pane_gaps: bool,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
+    /// Show the top tab bar in the main content area. Default: true.
+    pub show_tab_bar: bool,
     /// Hide the tab row when the workspace has one tab. Default: false.
     pub hide_tab_bar_when_single_tab: bool,
     /// Agent sidebar ordering. Saved values are "spaces" or "priority". Default: "spaces".
     pub agent_panel_sort: AgentPanelSortConfig,
+    /// Legacy fork agent ordering. Saved values are "all" or "sort".
+    pub agent_panel_scope: AgentPanelScopeConfig,
+    /// Workspace sidebar density. Saved values are "full" or "slim". Default: "full".
+    pub workspace_panel_density: WorkspacePanelDensityConfig,
     /// Expanded sidebar row composition.
     pub sidebar: SidebarConfig,
     /// Accent color for highlights, borders, and navigation UI.
@@ -964,6 +1047,8 @@ impl Default for KeysConfig {
             swap_pane_right: BindingConfig::one("prefix+shift+l"),
             cycle_pane_next: BindingConfig::one("prefix+tab"),
             cycle_pane_previous: BindingConfig::one("prefix+shift+tab"),
+            focus_history_back: BindingConfig::empty(),
+            focus_history_forward: BindingConfig::empty(),
             last_pane: BindingConfig::empty(),
             split_vertical: BindingConfig::one("prefix+v"),
             split_horizontal: BindingConfig::one("prefix+minus"),
@@ -991,7 +1076,7 @@ impl Default for UiConfig {
         Self {
             sidebar_width: 26,
             sidebar_min_width: 18,
-            sidebar_max_width: 36,
+            sidebar_max_width: 72,
             sidebar_start_collapsed: false,
             sidebar_collapsed_mode: SidebarCollapsedModeConfig::Compact,
             mobile_width_threshold: DEFAULT_MOBILE_WIDTH_THRESHOLD,
@@ -1006,8 +1091,11 @@ impl Default for UiConfig {
             pane_borders: true,
             pane_gaps: true,
             show_agent_labels_on_pane_borders: false,
+            show_tab_bar: true,
             hide_tab_bar_when_single_tab: false,
             agent_panel_sort: AgentPanelSortConfig::Spaces,
+            agent_panel_scope: AgentPanelScopeConfig::All,
+            workspace_panel_density: WorkspacePanelDensityConfig::Full,
             sidebar: SidebarConfig::default(),
             accent: "cyan".into(),
             toast: ToastConfig::default(),
@@ -1042,7 +1130,7 @@ impl Default for ToastConfig {
 impl Default for HerdrToastConfig {
     fn default() -> Self {
         Self {
-            position: ToastHerdrPosition::BottomRight,
+            position: ToastHerdrPosition::TopRight,
         }
     }
 }
@@ -1104,6 +1192,29 @@ impl Default for AdvancedConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_start_config_parses_command_argv() {
+        let config: Config = toml::from_str(
+            r#"
+[agent_start.commands]
+codex = ["codex", "--sandbox", "workspace-write"]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.agent_start.commands.get("codex").map(Vec::as_slice),
+            Some(
+                [
+                    "codex".to_string(),
+                    "--sandbox".to_string(),
+                    "workspace-write".to_string(),
+                ]
+                .as_slice()
+            )
+        );
+    }
 
     #[test]
     fn update_config_defaults_and_parses() {
@@ -1203,6 +1314,15 @@ resume_agents_on_restore = false
     }
 
     #[test]
+    fn agent_restore_config_defaults_to_disabled() {
+        let config = Config::default();
+
+        assert!(!config.agent_restore.enabled);
+        assert_eq!(config.agent_restore.restore_delay_ms, 3000);
+        assert!(config.agent_restore.commands.is_empty());
+    }
+
+    #[test]
     fn agent_panel_sort_config_parses_alias_and_defaults() {
         assert_eq!(
             Config::default().ui.agent_panel_sort,
@@ -1229,6 +1349,33 @@ agent_panel_scope = "current"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.agent_panel_sort, AgentPanelSortConfig::Spaces);
+        assert_eq!(config.ui.agent_panel_scope, AgentPanelScopeConfig::Current);
+
+        let toml = r#"
+[ui]
+agent_panel_scope = "sort"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.ui.agent_panel_scope, AgentPanelScopeConfig::Sort);
+    }
+
+    #[test]
+    fn workspace_panel_density_config_defaults_and_parses() {
+        assert_eq!(
+            Config::default().ui.workspace_panel_density,
+            WorkspacePanelDensityConfig::Full
+        );
+        let config: Config = toml::from_str(
+            r#"
+[ui]
+workspace_panel_density = "slim"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.ui.workspace_panel_density,
+            WorkspacePanelDensityConfig::Slim
+        );
     }
 
     #[test]
@@ -1237,6 +1384,7 @@ agent_panel_scope = "current"
         assert!(default_config.ui.pane_borders);
         assert!(default_config.ui.pane_gaps);
         assert!(!default_config.ui.show_agent_labels_on_pane_borders);
+        assert!(default_config.ui.show_tab_bar);
         assert!(!default_config.ui.hide_tab_bar_when_single_tab);
 
         let toml = r#"
@@ -1244,12 +1392,14 @@ agent_panel_scope = "current"
 pane_borders = false
 pane_gaps = true
 show_agent_labels_on_pane_borders = true
+show_tab_bar = false
 hide_tab_bar_when_single_tab = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.ui.pane_borders);
         assert!(config.ui.pane_gaps);
         assert!(config.ui.show_agent_labels_on_pane_borders);
+        assert!(!config.ui.show_tab_bar);
         assert!(config.ui.hide_tab_bar_when_single_tab);
     }
 
@@ -1348,7 +1498,7 @@ cjk_ime_agents = ["claude", "codex"]
     fn sidebar_bounds_default_and_parse() {
         let default_config = Config::default();
         assert_eq!(default_config.ui.sidebar_min_width, 18);
-        assert_eq!(default_config.ui.sidebar_max_width, 36);
+        assert_eq!(default_config.ui.sidebar_max_width, 72);
         assert_eq!(
             default_config.ui.mobile_width_threshold,
             DEFAULT_MOBILE_WIDTH_THRESHOLD
@@ -1573,10 +1723,7 @@ position = "top-center"
         let config = Config::default();
         assert_eq!(config.ui.toast.delivery, ToastDelivery::Off);
         assert_eq!(config.ui.toast.delay_seconds, 1);
-        assert_eq!(
-            config.ui.toast.herdr.position,
-            ToastHerdrPosition::BottomRight
-        );
+        assert_eq!(config.ui.toast.herdr.position, ToastHerdrPosition::TopRight);
         assert!(config.ui.toast.clipboard.enabled);
         assert_eq!(
             config.ui.toast.clipboard.position,

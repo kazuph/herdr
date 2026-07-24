@@ -1,8 +1,9 @@
 use bytes::Bytes;
 
 use crate::api::schema::{
-    AgentRenameParams, AgentSendParams, AgentStartParams, AgentTarget, PaneReadResult, ReadFormat,
-    ReadSource, ResponseResult,
+    AgentRenameParams, AgentRestoreActionInfo, AgentRestoreActionStatus, AgentRestoreParams,
+    AgentSendParams, AgentStartParams, AgentTarget, PaneReadResult, ReadFormat, ReadSource,
+    ResponseResult,
 };
 use crate::app::App;
 
@@ -54,8 +55,111 @@ impl App {
             Ok(started) => started,
             Err(err) => return encode_error_body(id, self.agent_start_error_body(err)),
         };
+        if let Some(model) = crate::detect::model_from_cmdline(&argv.join(" ")) {
+            if let Some(actor_name) = agent.name.as_deref().or(agent.agent.as_deref()) {
+                if let Ok(store) = crate::dispatch::DispatchStore::open_active() {
+                    let _ = store.upsert_actor(
+                        "agent",
+                        actor_name,
+                        agent.agent.as_deref(),
+                        Some(&model),
+                        None,
+                        Some(&agent.pane_id),
+                    );
+                }
+            }
+        }
 
         encode_success(id, ResponseResult::AgentStarted { agent, argv })
+    }
+
+    pub(super) fn handle_agent_restore(
+        &mut self,
+        id: String,
+        params: AgentRestoreParams,
+    ) -> String {
+        let mut actions = self.collect_agent_restore_actions(if params.dry_run {
+            AgentRestoreActionStatus::WouldLaunch
+        } else {
+            AgentRestoreActionStatus::Launched
+        });
+        if !params.dry_run {
+            let now = std::time::Instant::now();
+            self.sync_pending_agent_resume_deadline(now);
+            let _ = self.start_pending_agent_resumes(true);
+            for (terminal_id, action) in &mut actions {
+                if action.status == AgentRestoreActionStatus::Launched
+                    && self
+                        .state
+                        .terminals
+                        .get(terminal_id)
+                        .is_some_and(|terminal| terminal.pending_agent_resume_plan.is_some())
+                {
+                    action.status = AgentRestoreActionStatus::Skipped;
+                    action.reason = Some("failed to start resume shell".into());
+                }
+            }
+        }
+        encode_success(
+            id,
+            ResponseResult::AgentRestore {
+                actions: actions.into_iter().map(|(_, action)| action).collect(),
+            },
+        )
+    }
+
+    fn collect_agent_restore_actions(
+        &self,
+        status: AgentRestoreActionStatus,
+    ) -> Vec<(crate::terminal::TerminalId, AgentRestoreActionInfo)> {
+        let mut actions = Vec::new();
+        for (ws_idx, workspace) in self.state.workspaces.iter().enumerate() {
+            for tab in &workspace.tabs {
+                for pane_id in tab.layout.pane_ids() {
+                    let Some(pane) = tab.panes.get(&pane_id) else {
+                        continue;
+                    };
+                    let Some(terminal) = self.state.terminals.get(&pane.attached_terminal_id)
+                    else {
+                        continue;
+                    };
+                    let Some(plan) = terminal.pending_agent_resume_plan.as_ref() else {
+                        continue;
+                    };
+                    let command = crate::app::agent_resume::shell_command_from_argv(&plan.argv);
+                    let (status, reason) = if command.is_none() {
+                        (
+                            AgentRestoreActionStatus::Skipped,
+                            Some("no resumable session found".into()),
+                        )
+                    } else if self
+                        .terminal_runtimes
+                        .get(&pane.attached_terminal_id)
+                        .is_some()
+                    {
+                        (
+                            AgentRestoreActionStatus::Skipped,
+                            Some("agent already running".into()),
+                        )
+                    } else {
+                        (status.clone(), None)
+                    };
+                    actions.push((
+                        pane.attached_terminal_id.clone(),
+                        AgentRestoreActionInfo {
+                            pane_id: self
+                                .public_pane_id(ws_idx, pane_id)
+                                .unwrap_or_else(|| format!("p_{}", pane_id.raw())),
+                            agent: plan.agent.clone(),
+                            status,
+                            command,
+                            reason,
+                        },
+                    ));
+                }
+            }
+        }
+        actions
     }
 
     pub(super) fn handle_agent_read(

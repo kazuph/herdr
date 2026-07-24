@@ -1,11 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use super::agents::AgentInfo;
+use super::agents::{AgentInfo, AgentRestoreActionInfo};
 use super::common::{ClientWindowTitleReason, NotificationShowReason};
 use super::events::EventEnvelope;
-use super::integrations::{
-    IntegrationInstallResult, IntegrationTarget, IntegrationUninstallResult,
-};
+use super::messages::MsgMessage;
 use super::panes::{
     LayoutDescription, PaneEdgesResult, PaneFocusDirectionResult, PaneInfo, PaneLayoutSnapshot,
     PaneMoveResult, PaneNeighborResult, PaneProcessInfo, PaneReadResult, PaneResizeResult,
@@ -101,6 +99,22 @@ pub enum ResponseResult {
         agent: AgentInfo,
         argv: Vec<String>,
     },
+    AgentRestore {
+        actions: Vec<AgentRestoreActionInfo>,
+    },
+    MsgSend {
+        messages: Vec<MsgMessage>,
+        nudged: Vec<String>,
+    },
+    MsgInbox {
+        messages: Vec<MsgMessage>,
+    },
+    MsgHistory {
+        messages: Vec<MsgMessage>,
+    },
+    MsgRooms {
+        rooms: Vec<String>,
+    },
     AgentList {
         agents: Vec<AgentInfo>,
     },
@@ -176,14 +190,6 @@ pub enum ResponseResult {
     ClientWindowTitle {
         changed: bool,
         reason: ClientWindowTitleReason,
-    },
-    IntegrationInstall {
-        target: IntegrationTarget,
-        details: IntegrationInstallResult,
-    },
-    IntegrationUninstall {
-        target: IntegrationTarget,
-        details: IntegrationUninstallResult,
     },
     AgentManifestReload {
         manifests: Vec<AgentManifestInfo>,

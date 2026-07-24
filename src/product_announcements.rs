@@ -242,9 +242,8 @@ fn normalize_body(body: &str) -> String {
 mod tests {
     use super::*;
 
-    fn env_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::config::lock_test_config_env()
     }
 
     fn temp_path(name: &str) -> PathBuf {
@@ -333,7 +332,7 @@ mod tests {
 
     #[test]
     fn fake_announcement_body_env_creates_preview() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         unsafe {
             std::env::set_var(FAKE_ANNOUNCEMENT_BODY_ENV, "### Preview\n- Local body");
             std::env::set_var(FAKE_ANNOUNCEMENT_TITLE_ENV, "Local title");

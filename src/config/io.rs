@@ -8,6 +8,8 @@ use super::{model::LoadedConfig, Config, CONFIG_PATH_ENV_VAR};
 
 const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "advanced",
+    "agent_restore",
+    "agent_start",
     "experimental",
     "keys",
     "onboarding",
@@ -399,6 +401,22 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut invalid_sections,
         |section| config.remote = section,
     );
+    load_live_section(
+        table,
+        "agent_restore",
+        "agent restore config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.agent_restore = section,
+    );
+    load_live_section(
+        table,
+        "agent_start",
+        "agent start config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.agent_start = section,
+    );
 
     Ok(LoadedConfig {
         config,
@@ -685,6 +703,8 @@ mod tests {
 
     #[test]
     fn config_diagnostic_summary_uses_compact_actionable_banner() {
+        let _guard = crate::config::lock_test_config_env();
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
         let diagnostics = vec![
             "one".to_string(),
             "two".to_string(),
@@ -701,6 +721,8 @@ mod tests {
 
     #[test]
     fn config_diagnostic_summary_reports_default_fallback() {
+        let _guard = crate::config::lock_test_config_env();
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
         let diagnostics = vec![
             "config parse error: TOML parse error at line 33, column 8\n   |\n33 | type = \"popup\"\n   |        ^^^^^^^\nunknown variant `popup`; using defaults"
                 .to_string(),
@@ -714,6 +736,8 @@ mod tests {
 
     #[test]
     fn config_diagnostic_summary_reports_unreadable_config_impact() {
+        let _guard = crate::config::lock_test_config_env();
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
         let startup = vec!["config read error: permission denied; using defaults".to_string()];
         assert_eq!(
             config_diagnostic_summary(&startup).as_deref(),
@@ -730,6 +754,8 @@ mod tests {
 
     #[test]
     fn config_diagnostic_summary_reports_retained_live_config() {
+        let _guard = crate::config::lock_test_config_env();
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
         let diagnostics = vec![
             "config parse error: TOML parse error at line 7, column 4; keeping current config"
                 .to_string(),
@@ -743,7 +769,7 @@ mod tests {
 
     #[test]
     fn config_loaders_report_unreadable_path() {
-        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path =
             std::env::temp_dir().join(format!("herdr-config-unreadable-{}", std::process::id()));
         std::fs::create_dir_all(&path).unwrap();
@@ -777,6 +803,48 @@ resume_agents_on_restore = true
         .unwrap();
 
         assert!(loaded.config.session.resume_agents_on_restore);
+        assert!(loaded.diagnostics.is_empty());
+        assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_accepts_agent_start_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[agent_start.commands]
+agy = ["agy", "--dangerously-skip-permissions"]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            loaded.config.agent_start.commands.get("agy"),
+            Some(&vec!["agy".into(), "--dangerously-skip-permissions".into()])
+        );
+        assert!(loaded.diagnostics.is_empty());
+        assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_accepts_legacy_agent_restore_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[agent_restore]
+enabled = true
+restore_delay_ms = 3000
+
+[agent_restore.commands]
+codex = "codex resume {session_id}"
+"#,
+        )
+        .unwrap();
+
+        assert!(loaded.config.agent_restore.enabled);
+        assert_eq!(loaded.config.agent_restore.restore_delay_ms, 3000);
+        assert_eq!(
+            loaded.config.agent_restore.commands.get("codex"),
+            Some(&"codex resume {session_id}".to_string())
+        );
         assert!(loaded.diagnostics.is_empty());
         assert!(loaded.invalid_sections.is_empty());
     }
@@ -826,7 +894,7 @@ delivery = "herdr"
 
     #[test]
     fn startup_config_load_warns_about_unknown_top_level_sections() {
-        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = std::env::temp_dir().join(format!(
             "herdr-config-unknown-section-{}.toml",
             std::process::id()

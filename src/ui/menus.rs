@@ -224,6 +224,16 @@ pub(super) fn render_global_launcher_menu(app: &AppState, frame: &mut Frame) {
         if y >= inner.y + inner.height {
             break;
         }
+        if *item == "--" {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "─".repeat(inner.width as usize),
+                    Style::default().fg(app.palette.surface_dim),
+                ))),
+                rect,
+            );
+            continue;
+        }
         let selected = idx == app.global_menu.highlighted;
         let rect = Rect::new(inner.x, y, inner.width, 1);
 

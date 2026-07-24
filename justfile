@@ -11,6 +11,79 @@ test:
 test-one filter:
     cargo nextest run --locked "{{filter}}" --status-level fail --final-status-level fail --failure-output final --success-output never
 
+# Verify fork-specific contracts after an upstream import.
+fork-spec-contracts:
+    # Footer, tab bar, and agent status presentation.
+    just test-one non_mobile_workspace_footer
+    just test-one pane_context_menu_matches_legacy_fork_order_and_separators
+    just test-one same_cell_double_click_opens_legacy_pane_menu
+    just test-one pane_menu_double_click_requires_same_pane_cell_within_500ms
+    just test-one mouse_reporting_double_click_is_forwarded_without_opening_pane_menu
+    just test-one pane_right_click_focuses_target_and_opens_legacy_menu
+    just test-one tapping_active_workspace
+    just test-one tapping_active_git_workspace
+    just test-one releasing_active_workspace_outside
+    just test-one workspace_context_menu
+    just test-one worktree_context_menu
+    just test-one section_new_button
+    just test-one clicking_existing_section_new_button
+    just test-one headless_deferred_workspace_create_preserves_requested_section
+    just test-one slim_workspace_keeps_one_row
+    just test-one default_space_rows_render_nogit
+    just test-one space_row_gap_preserves_compact_worktree_children
+    just test-one packed_workspace_drag_indicator
+    just test-one show_tab_bar_false_hides_multiple_tabs_but_keeps_action_bar
+    just test-one state_summary_icon_animates_working_state
+    just test-one onboarding_keys_persist_completion_without_opening_settings
+    just test-one onboarding_click_continue_requests_completion
+    just test-one startup_workspace_preserves_onboarding_mode
+    just test-one github_copilot_manifest_preserves_fork_status_footer_contracts
+    just test-one claude_spinner_activity_screen_fallback_is_working
+    just test-one codex_working_status_immediately_before_latest_prompt_is_live
+    just test-one codex_ignores_fossilized_working_text_before_latest_prompt
+    just test-one frozen_claude_activity_fingerprint_expires_to_idle
+    just test-one frozen_codex_working_header_expires_to_idle
+    just test-one stale_activity_filter_does_not_expire_other_agents_or_untracked_working
+
+    # Exact restore identity and legacy config migration.
+    just test-one session_ids_follow_the_fork_fail_closed_contract
+    just test-one restore_plan_rejects_unsafe_codex_snapshot_id
+    just test-one legacy_pane_restore_fields_migrate_to_native_agent_session
+    just test-one legacy_pane_restore_without_session_id_stays_fail_closed
+    just test-one legacy_restore_uses_saved_raw_ids_as_missing_public_pane_numbers
+    just test-one native_agent_restore_defers_runtime_launch
+    just test-one pending_agent_resume_deadline_uses_configured_restore_delay
+    just test-one manual_restore_without_pending_resumes_distinguishes_running_agents
+    just test-one legacy_report_agent_fields_feed_native_session_and_metadata
+    just test-one legacy_state_report_preserves_restored_native_session
+    just test-one accepted_hook_report_without_session_ref_clears_previous_ref
+    just test-one clearing_hook_authority_clears_session_ref
+    just test-one agent_restore_config_defaults_to_disabled
+    just test-one load_live_config_accepts_agent_start_section
+    just test-one load_live_config_accepts_legacy_agent_restore_section
+    just test-one agent_panel_sort_config_parses_alias_and_defaults
+    just test-one pane_appearance_defaults_and_parse
+
+    # Alternate binary isolation, child routing, and dispatch metadata.
+    just test-one configure_from_args_sets_alternate_binary_namespace
+    just test-one alternate_binary_ignores_inherited_socket_override_from_default_namespace
+    just test-one alternate_binary_honors_socket_override_when_marked_explicit
+    just test-one pane_base_env_marks_parent_socket_as_explicit
+    just test-one model_from_cmdline_extracts_long_and_short_flags
+    just test-one generated_protocol_schema_artifact_is_current
+    just test-one cancelled_job_is_durable
+    just test-one terminal_transition_has_single_owner
+    @if [ "$(uname -s)" != "Darwin" ]; then just test-one herdr_job_cancel_kills_term_ignoring_process_tree_before_marking_cancelled; fi
+
+    # G8 update, channel, integration, download, and documentation fail-closed.
+    just test-one spec_excludes_disabled_fork_commands
+    just test-one integration_mutation_methods_are_not_part_of_the_public_api
+    just test-one self_update_is_disabled_in_the_fork
+    just test-one startup_ignores_preview_update_available_from_saved_notes
+    just test-one resolve_install_source_rejects_release_download_without_explicit_binary
+    @! rg -n 'herdr integration (install|uninstall|status)' docs/next/website/src/content/docs
+    @! rg -n 'https://herdr.dev/install.sh|ogulcancelik/herdr/releases' README.md docs/next/README.md docs/next/website/src/content/docs
+
 # Run fast local lint checks
 lint:
     cargo fmt --check

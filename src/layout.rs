@@ -69,6 +69,12 @@ pub enum NavDirection {
     Down,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootSplitSide {
+    First,
+    Second,
+}
+
 /// A node in the BSP tree. Public for serialization.
 pub enum Node {
     Pane(PaneId),
@@ -84,6 +90,7 @@ pub enum Node {
 pub struct TileLayout {
     root: Node,
     focus: PaneId,
+    order: Vec<PaneId>,
 }
 
 impl TileLayout {
@@ -95,6 +102,7 @@ impl TileLayout {
             Self {
                 root: Node::Pane(root_id),
                 focus: root_id,
+                order: vec![root_id],
             },
             root_id,
         )
@@ -133,6 +141,12 @@ impl TileLayout {
         let placeholder = PaneId::from_raw(0);
         let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
         self.root = split_at(old, self.focus, direction, new_id, valid_split_ratio(ratio));
+        let insert_at = self
+            .order
+            .iter()
+            .position(|id| *id == self.focus)
+            .map_or(self.order.len(), |index| index + 1);
+        self.order.insert(insert_at, new_id);
         self.focus = new_id;
         new_id
     }
@@ -157,6 +171,12 @@ impl TileLayout {
         let placeholder = PaneId::from_raw(0);
         let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
         self.root = split_at(old, target, direction, moved, valid_split_ratio(ratio));
+        let insert_at = self
+            .order
+            .iter()
+            .position(|id| *id == target)
+            .map_or(self.order.len(), |index| index + 1);
+        self.order.insert(insert_at, moved);
         self.focus = moved;
         true
     }
@@ -178,6 +198,7 @@ impl TileLayout {
         let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
         if let Some(new_root) = remove_pane(old, target) {
             self.root = new_root;
+            self.order.retain(|id| *id != target);
             self.focus = new_focus;
             true
         } else {
@@ -189,6 +210,49 @@ impl TileLayout {
         if self.pane_ids().contains(&id) {
             self.focus = id;
         }
+    }
+
+    /// Move the focused pane to a specific side of a root split.
+    pub fn move_focused_to_root_split_side(
+        &mut self,
+        direction: Direction,
+        side: RootSplitSide,
+    ) -> bool {
+        if self.pane_count() <= 1 {
+            return false;
+        }
+
+        let target = self.focus;
+        let placeholder = PaneId::from_raw(0);
+        let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
+        let Some(remaining) = remove_pane(old, target) else {
+            self.root = Node::Pane(target);
+            return false;
+        };
+        let total = count_panes(&remaining) + 1;
+        let target_ratio = 1.0 / total as f32;
+        let remaining_ratio = (total - 1) as f32 / total as f32;
+        let (ratio, first, second) = match side {
+            RootSplitSide::First => (
+                target_ratio,
+                Box::new(Node::Pane(target)),
+                Box::new(remaining),
+            ),
+            RootSplitSide::Second => (
+                remaining_ratio,
+                Box::new(remaining),
+                Box::new(Node::Pane(target)),
+            ),
+        };
+        self.root = Node::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        };
+        self.order = collect_node_ids(&self.root);
+        self.focus = target;
+        true
     }
 
     /// Swap two pane ids in the layout tree while preserving split shape and
@@ -203,6 +267,75 @@ impl TileLayout {
         }
         swap_pane_ids(&mut self.root, first, second);
         true
+    }
+
+    /// Cycle through broad pane layout presets while preserving user order.
+    pub fn cycle_layout(&mut self) -> bool {
+        let ids = self.pane_ids();
+        if ids.len() <= 1 {
+            return false;
+        }
+
+        if ids.len() == 2 {
+            let direction = if is_uniform_split(&self.root, Direction::Horizontal) {
+                Direction::Vertical
+            } else {
+                Direction::Horizontal
+            };
+            self.root = build_even_split(&ids, direction);
+            return true;
+        }
+
+        if is_uniform_split(&self.root, Direction::Horizontal) {
+            self.root = build_even_split(&ids, Direction::Vertical);
+        } else if is_uniform_split(&self.root, Direction::Vertical) {
+            self.root = build_two_row_grid(&ids);
+        } else if is_balanced_two_row_grid(&self.root, &ids) {
+            self.root = build_main_split(&ids, Direction::Horizontal, build_two_row_grid);
+        } else if is_main_first_split(&self.root, Direction::Horizontal, is_two_row_grid, ids[0]) {
+            self.root = build_main_split_reversed(&ids, Direction::Horizontal, build_two_row_grid);
+        } else if is_main_second_split(&self.root, Direction::Horizontal, is_two_row_grid, ids[0]) {
+            self.root = build_main_split(&ids, Direction::Vertical, |ids| {
+                build_even_split(ids, Direction::Horizontal)
+            });
+        } else if is_main_first_split(
+            &self.root,
+            Direction::Vertical,
+            |node| is_uniform_split(node, Direction::Horizontal),
+            ids[0],
+        ) {
+            self.root = build_main_split_reversed(&ids, Direction::Vertical, |ids| {
+                build_even_split(ids, Direction::Horizontal)
+            });
+        } else {
+            self.root = build_even_split(&ids, Direction::Horizontal);
+        }
+        if !ids.contains(&self.focus) {
+            self.focus = ids[0];
+        }
+        true
+    }
+
+    /// Rotate pane identities through the existing leaf positions.
+    pub fn rotate_panes(&mut self, reverse: bool) -> bool {
+        let mut ids = self.pane_ids();
+        if ids.len() <= 1 {
+            return false;
+        }
+        if reverse {
+            ids.rotate_left(1);
+        } else {
+            ids.rotate_right(1);
+        }
+        self.order.clone_from(&ids);
+        let mut rotated = ids.into_iter();
+        replace_leaf_ids(&mut self.root, &mut rotated);
+        true
+    }
+
+    /// Equalize split ratios while preserving the current split directions.
+    pub fn equalize(&mut self) {
+        equalize_ratios(&mut self.root);
     }
 
     /// Set the ratio of a split node at the given path.
@@ -257,9 +390,14 @@ impl TileLayout {
     }
 
     pub fn pane_ids(&self) -> Vec<PaneId> {
-        let mut ids = Vec::new();
-        collect_ids(&self.root, &mut ids);
-        ids
+        let tree_order = collect_node_ids(&self.root);
+        let mut order = Vec::with_capacity(tree_order.len());
+        for id in self.order.iter().chain(&tree_order) {
+            if tree_order.contains(id) && !order.contains(id) {
+                order.push(*id);
+            }
+        }
+        order
     }
 
     /// Access the tree root for serialization.
@@ -268,9 +406,20 @@ impl TileLayout {
     }
 
     /// Reconstruct a layout from a saved tree.
-    /// Reconstruct a layout from a saved tree.
     pub fn from_saved(root: Node, focus: PaneId) -> Self {
-        Self { root, focus }
+        let order = collect_node_ids(&root);
+        Self { root, focus, order }
+    }
+
+    pub fn from_saved_with_order(root: Node, focus: PaneId, saved_order: &[PaneId]) -> Self {
+        let tree_order = collect_node_ids(&root);
+        let mut order = Vec::with_capacity(tree_order.len());
+        for id in saved_order.iter().chain(&tree_order) {
+            if tree_order.contains(id) && !order.contains(id) {
+                order.push(*id);
+            }
+        }
+        Self { root, focus, order }
     }
 }
 
@@ -475,6 +624,26 @@ fn collect_ids(node: &Node, ids: &mut Vec<PaneId>) {
     }
 }
 
+fn collect_node_ids(node: &Node) -> Vec<PaneId> {
+    let mut ids = Vec::new();
+    collect_ids(node, &mut ids);
+    ids
+}
+
+fn replace_leaf_ids(node: &mut Node, ids: &mut impl Iterator<Item = PaneId>) {
+    match node {
+        Node::Pane(id) => {
+            if let Some(next) = ids.next() {
+                *id = next;
+            }
+        }
+        Node::Split { first, second, .. } => {
+            replace_leaf_ids(first, ids);
+            replace_leaf_ids(second, ids);
+        }
+    }
+}
+
 fn split_ratios(node: &Node) -> Vec<(Vec<bool>, f32)> {
     fn collect(node: &Node, path: &mut Vec<bool>, out: &mut Vec<(Vec<bool>, f32)>) {
         match node {
@@ -499,6 +668,177 @@ fn split_ratios(node: &Node) -> Vec<(Vec<bool>, f32)> {
     let mut out = Vec::new();
     collect(node, &mut Vec::new(), &mut out);
     out
+}
+
+fn build_even_split(ids: &[PaneId], direction: Direction) -> Node {
+    match ids {
+        [] => Node::Pane(PaneId::from_raw(0)),
+        [id] => Node::Pane(*id),
+        [first, rest @ ..] => Node::Split {
+            direction,
+            ratio: 1.0 / ids.len() as f32,
+            first: Box::new(Node::Pane(*first)),
+            second: Box::new(build_even_split(rest, direction)),
+        },
+    }
+}
+
+fn build_main_split(
+    ids: &[PaneId],
+    root_direction: Direction,
+    build_rest: impl Fn(&[PaneId]) -> Node,
+) -> Node {
+    match ids {
+        [] => Node::Pane(PaneId::from_raw(0)),
+        [id] => Node::Pane(*id),
+        [first, rest @ ..] => Node::Split {
+            direction: root_direction,
+            ratio: 0.5,
+            first: Box::new(Node::Pane(*first)),
+            second: Box::new(build_rest(rest)),
+        },
+    }
+}
+
+fn build_main_split_reversed(
+    ids: &[PaneId],
+    root_direction: Direction,
+    build_rest: impl Fn(&[PaneId]) -> Node,
+) -> Node {
+    match ids {
+        [] => Node::Pane(PaneId::from_raw(0)),
+        [id] => Node::Pane(*id),
+        [first, rest @ ..] => Node::Split {
+            direction: root_direction,
+            ratio: 0.5,
+            first: Box::new(build_rest(rest)),
+            second: Box::new(Node::Pane(*first)),
+        },
+    }
+}
+
+fn build_two_row_grid(ids: &[PaneId]) -> Node {
+    match ids {
+        [] => Node::Pane(PaneId::from_raw(0)),
+        [id] => Node::Pane(*id),
+        _ => {
+            let top_count = ids.len().div_ceil(2);
+            let (top, bottom) = ids.split_at(top_count);
+            Node::Split {
+                direction: Direction::Vertical,
+                ratio: 0.5,
+                first: Box::new(build_even_split(top, Direction::Horizontal)),
+                second: Box::new(build_even_split(bottom, Direction::Horizontal)),
+            }
+        }
+    }
+}
+
+fn is_uniform_split(node: &Node, expected: Direction) -> bool {
+    match node {
+        Node::Pane(_) => true,
+        Node::Split {
+            direction,
+            first,
+            second,
+            ..
+        } => {
+            *direction == expected
+                && is_uniform_split(first, expected)
+                && is_uniform_split(second, expected)
+        }
+    }
+}
+
+fn is_two_row_grid(node: &Node) -> bool {
+    match node {
+        Node::Pane(_) => true,
+        Node::Split {
+            direction,
+            first,
+            second,
+            ..
+        } if *direction == Direction::Vertical => {
+            is_uniform_split(first, Direction::Horizontal)
+                && is_uniform_split(second, Direction::Horizontal)
+        }
+        _ => false,
+    }
+}
+
+fn is_balanced_two_row_grid(node: &Node, order: &[PaneId]) -> bool {
+    let Node::Split {
+        direction,
+        first,
+        second,
+        ..
+    } = node
+    else {
+        return false;
+    };
+    *direction == Direction::Vertical
+        && is_uniform_split(first, Direction::Horizontal)
+        && is_uniform_split(second, Direction::Horizontal)
+        && count_panes(first) == order.len().div_ceil(2)
+        && count_panes(second) == order.len() / 2
+        && collect_node_ids(node) == order
+}
+
+fn is_main_first_split(
+    node: &Node,
+    root_direction: Direction,
+    rest_matches: impl Fn(&Node) -> bool,
+    first_pane: PaneId,
+) -> bool {
+    match node {
+        Node::Split {
+            direction,
+            first,
+            second,
+            ..
+        } if *direction == root_direction => {
+            matches!(first.as_ref(), Node::Pane(id) if *id == first_pane) && rest_matches(second)
+        }
+        _ => false,
+    }
+}
+
+fn is_main_second_split(
+    node: &Node,
+    root_direction: Direction,
+    rest_matches: impl Fn(&Node) -> bool,
+    first_pane: PaneId,
+) -> bool {
+    match node {
+        Node::Split {
+            direction,
+            first,
+            second,
+            ..
+        } if *direction == root_direction => {
+            rest_matches(first) && matches!(second.as_ref(), Node::Pane(id) if *id == first_pane)
+        }
+        _ => false,
+    }
+}
+
+fn equalize_ratios(node: &mut Node) {
+    if let Node::Split {
+        ratio,
+        first,
+        second,
+        ..
+    } = node
+    {
+        let first_count = count_panes(first) as f32;
+        let second_count = count_panes(second) as f32;
+        let total = first_count + second_count;
+        if total > 0.0 {
+            *ratio = first_count / total;
+        }
+        equalize_ratios(first);
+        equalize_ratios(second);
+    }
 }
 
 fn swap_pane_ids(node: &mut Node, first: PaneId, second: PaneId) {
@@ -919,6 +1259,109 @@ mod tests {
         assert_eq!(splits[1], (Direction::Horizontal, 0.5));
         assert_eq!(splits[2].0, Direction::Horizontal);
         assert!((splits[2].1 - 0.55).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn move_focused_to_root_split_side_keeps_other_panes_and_order() {
+        let (mut layout, root) = TileLayout::new();
+        let second = layout.split_focused(Direction::Horizontal);
+        let third = layout.split_focused(Direction::Horizontal);
+
+        layout.focus_pane(second);
+        assert!(layout.move_focused_to_root_split_side(Direction::Vertical, RootSplitSide::Second));
+
+        assert_eq!(layout.focused(), second);
+        assert_eq!(layout.pane_ids(), vec![root, third, second]);
+        assert_eq!(pane_rect(&layout, root), Rect::new(0, 0, 50, 27));
+        assert_eq!(pane_rect(&layout, third), Rect::new(50, 0, 50, 27));
+        assert_eq!(pane_rect(&layout, second), Rect::new(0, 27, 100, 13));
+    }
+
+    #[test]
+    fn cycle_layout_keeps_logical_order_across_presets() {
+        let (mut layout, first) = TileLayout::new();
+        let second = layout.split_focused(Direction::Horizontal);
+        let third = layout.split_focused(Direction::Horizontal);
+        let fourth = layout.split_focused(Direction::Horizontal);
+
+        layout.focus_pane(fourth);
+        assert!(layout.move_focused_to_root_split_side(Direction::Horizontal, RootSplitSide::First));
+        let order = vec![fourth, first, second, third];
+        assert_eq!(layout.pane_ids(), order);
+
+        for _ in 0..7 {
+            assert!(layout.cycle_layout());
+            assert_eq!(layout.pane_ids(), order);
+        }
+    }
+
+    #[test]
+    fn saved_logical_order_survives_layout_restore() {
+        let first = PaneId::from_raw(41);
+        let second = PaneId::from_raw(42);
+        let third = PaneId::from_raw(43);
+        let root = build_even_split(&[first, second, third], Direction::Horizontal);
+
+        let layout = TileLayout::from_saved_with_order(root, third, &[third, first, second]);
+
+        assert_eq!(layout.pane_ids(), vec![third, first, second]);
+        assert_eq!(layout.focused(), third);
+    }
+
+    #[test]
+    fn rotate_panes_rotates_ids_through_existing_leaf_positions() {
+        let (mut layout, root) = TileLayout::new();
+        let second = layout.split_focused(Direction::Horizontal);
+        let third = layout.split_focused(Direction::Vertical);
+        let before = layout.panes(Rect::new(0, 0, 90, 30));
+        let rect_of = |panes: &[PaneInfo], id: PaneId| -> Rect {
+            panes.iter().find(|pane| pane.id == id).unwrap().rect
+        };
+        let root_rect = rect_of(&before, root);
+        let second_rect = rect_of(&before, second);
+        let third_rect = rect_of(&before, third);
+
+        assert!(layout.rotate_panes(false));
+
+        assert_eq!(layout.pane_ids(), vec![third, root, second]);
+        let after = layout.panes(Rect::new(0, 0, 90, 30));
+        assert_eq!(rect_of(&after, third), root_rect);
+        assert_eq!(rect_of(&after, root), second_rect);
+        assert_eq!(rect_of(&after, second), third_rect);
+
+        assert!(layout.rotate_panes(true));
+        assert_eq!(layout.pane_ids(), vec![root, second, third]);
+    }
+
+    #[test]
+    fn equalize_preserves_split_directions_and_balances_leaf_sizes() {
+        let mut layout = TileLayout::from_saved(
+            Node::Split {
+                direction: Direction::Horizontal,
+                ratio: 0.8,
+                first: Box::new(Node::Pane(pane(1))),
+                second: Box::new(Node::Split {
+                    direction: Direction::Horizontal,
+                    ratio: 0.8,
+                    first: Box::new(Node::Pane(pane(2))),
+                    second: Box::new(Node::Pane(pane(3))),
+                }),
+            },
+            pane(1),
+        );
+
+        layout.equalize();
+
+        assert_eq!(
+            split_snapshot(&layout)
+                .into_iter()
+                .map(|(direction, _)| direction)
+                .collect::<Vec<_>>(),
+            vec![Direction::Horizontal, Direction::Horizontal]
+        );
+        assert_eq!(pane_rect(&layout, pane(1)), Rect::new(0, 0, 33, 40));
+        assert_eq!(pane_rect(&layout, pane(2)), Rect::new(33, 0, 34, 40));
+        assert_eq!(pane_rect(&layout, pane(3)), Rect::new(67, 0, 33, 40));
     }
 
     #[test]

@@ -155,6 +155,11 @@ pub(super) fn keybind_help_groups(app: &AppState) -> Vec<HelpGroup> {
             keybind_label(&kb.cycle_pane_previous),
             "cycle pane previous",
         ),
+        help_entry(keybind_label(&kb.focus_history_back), "focus history back"),
+        help_entry(
+            keybind_label(&kb.focus_history_forward),
+            "focus history forward",
+        ),
         help_entry(keybind_label(&kb.last_pane), "last pane"),
     ];
     groups.push(("panes", panes));

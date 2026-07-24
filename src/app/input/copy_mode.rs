@@ -36,6 +36,21 @@ impl App {
 }
 
 impl AppState {
+    pub(crate) fn toggle_pane_action_copy_mode(
+        &mut self,
+        terminal_runtimes: &TerminalRuntimeRegistry,
+    ) {
+        if self.copy_mode_fullscreen_pane.is_some() {
+            self.exit_copy_mode(terminal_runtimes, false);
+        } else if self.mode == Mode::Copy {
+            if let Some(copy_mode) = self.copy_mode.as_ref() {
+                self.copy_mode_fullscreen_pane = Some(copy_mode.pane_id);
+            }
+        } else {
+            self.enter_copy_mode(terminal_runtimes);
+        }
+    }
+
     pub(crate) fn enter_copy_mode(&mut self, terminal_runtimes: &TerminalRuntimeRegistry) {
         let Some(ws_idx) = self.active else {
             return;
@@ -70,6 +85,7 @@ impl AppState {
             .map_or(0, |metrics| metrics.offset_from_bottom);
 
         self.clear_selection();
+        self.copy_mode_fullscreen_pane = None;
         self.copy_mode = Some(CopyModeState {
             pane_id,
             cursor_row: cursor.0.min(info.inner_rect.height.saturating_sub(1)),
@@ -400,6 +416,7 @@ impl AppState {
             self.set_pane_scroll_offset(terminal_runtimes, pane_id, offset_from_bottom);
         }
         self.copy_mode = None;
+        self.copy_mode_fullscreen_pane = None;
         self.mode = if self.active.is_some() {
             Mode::Terminal
         } else {

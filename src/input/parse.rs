@@ -184,7 +184,7 @@ fn parse_xterm_modified_special_sequence(data: &str) -> Option<TerminalKey> {
 
     if let Some(body) = body.strip_prefix("1;") {
         let suffix_char = body.chars().last()?;
-        if suffix_char.is_ascii_alphabetic() {
+        if suffix_char.is_ascii_alphabetic() || matches!(suffix_char, '[' | ']') {
             let modifier_and_event = body.strip_suffix(suffix_char)?;
             let (modifier_text, event_type) = split_modifier_and_event(modifier_and_event);
             let mod_value = modifier_text.parse::<u8>().ok()?.checked_sub(1)?;
@@ -199,6 +199,7 @@ fn parse_xterm_modified_special_sequence(data: &str) -> Option<TerminalKey> {
                 'Q' => KeyCode::F(2),
                 'R' => KeyCode::F(3),
                 'S' => KeyCode::F(4),
+                '[' | ']' => KeyCode::Char(suffix_char),
                 _ => return None,
             };
             return Some(

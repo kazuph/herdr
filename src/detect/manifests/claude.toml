@@ -24,6 +24,18 @@ line_regex = [
 ]
 
 [[rules]]
+id = "spinner_activity_working"
+state = "working"
+priority = 975
+region = "above_prompt_box"
+visible_working = true
+any = [
+  { line_regex = ['^\s*[·✱✲✳✴✵✶✷✸✹✺✻✼✽✾✿❀❁❂❃❇❈❉❊❋✢✣✤✥✦✧✨⊛⊕⊙◉◎◍⁂⁕※⍟☼★☆]\s+.*….*[[:alnum:]]'] },
+  { contains = ["esc to interrupt"] },
+  { contains = ["ctrl+c to interrupt"] },
+]
+
+[[rules]]
 id = "transcript_viewer"
 state = "unknown"
 priority = 1000

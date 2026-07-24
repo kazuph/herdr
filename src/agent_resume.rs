@@ -2,7 +2,6 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-const MAX_SESSION_ID_LEN: usize = 512;
 const MAX_SESSION_PATH_LEN: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +202,7 @@ pub fn dedupe_key(source: &str, agent: &str, session_ref: &AgentSessionRef) -> S
     )
 }
 
-fn is_official_agent_source(source: &str, agent: &str) -> bool {
+pub(crate) fn is_official_agent_source(source: &str, agent: &str) -> bool {
     matches!(
         (source, agent),
         ("herdr:claude", "claude")
@@ -224,7 +223,7 @@ fn is_official_agent_source(source: &str, agent: &str) -> bool {
 }
 
 fn valid_session_id(value: &str) -> bool {
-    !value.is_empty() && value.len() <= MAX_SESSION_ID_LEN && !value.chars().any(char::is_control)
+    crate::agent_sessions::is_safe_session_id(value)
 }
 
 fn valid_session_path(value: &str) -> bool {
@@ -565,21 +564,18 @@ mod tests {
     }
 
     #[test]
-    fn ids_are_data_not_shell_text() {
-        let id = "abc; rm -rf /";
-        let codex_plan = plan("herdr:codex", "codex", &AgentSessionRef::id(id).unwrap()).unwrap();
-        assert_eq!(codex_plan.argv, vec!["codex", "resume", id]);
+    fn session_ids_follow_the_fork_fail_closed_contract() {
+        for unsafe_id in [
+            "--last",
+            "last",
+            "-session",
+            "abc; rm -rf /",
+            &"a".repeat(129),
+        ] {
+            assert!(AgentSessionRef::id(unsafe_id).is_none(), "{unsafe_id:?}");
+        }
 
-        let copilot_plan = plan(
-            "herdr:copilot",
-            "copilot",
-            &AgentSessionRef::id(id).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(copilot_plan.argv, vec!["copilot", "--resume=abc; rm -rf /"]);
-
-        let devin_plan = plan("herdr:devin", "devin", &AgentSessionRef::id(id).unwrap()).unwrap();
-        assert_eq!(devin_plan.argv, vec!["devin", "--resume", id]);
+        assert!(AgentSessionRef::id("019ef3a2-749c-7b52-b324-2c20cb0b2379").is_some());
     }
 
     #[test]

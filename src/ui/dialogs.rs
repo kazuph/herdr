@@ -71,7 +71,7 @@ pub(super) fn render_rename_overlay(app: &AppState, frame: &mut Frame, area: Rec
     let input_rect = Rect::new(rows[2].x, rows[2].y, rows[2].width, 1);
     frame.render_widget(Clear, input_rect);
     frame.render_widget(
-        Paragraph::new(format!(" {}█", app.name_input)).style(
+        Paragraph::new(format!(" {}", app.name_input)).style(
             Style::default()
                 .fg(app.palette.text)
                 .bg(app.palette.surface0),
@@ -731,6 +731,100 @@ pub(super) fn render_confirm_close_overlay(app: &AppState, frame: &mut Frame, ar
     }
 }
 
+pub(super) fn render_confirm_danger_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    let Some(action) = app.dangerous_action else {
+        return;
+    };
+    let missing_sessions = if action == crate::app::state::DangerousAction::Restart {
+        app.restart_missing_agent_sessions()
+    } else {
+        Vec::new()
+    };
+    let visible_count = missing_sessions.len().min(10);
+
+    super::dim_background(frame, area);
+
+    let Some(popup) = confirm_danger_popup_rect(area, visible_count) else {
+        return;
+    };
+    let Some(inner) = render_panel_shell(frame, popup, app.palette.red, app.palette.panel_bg)
+    else {
+        return;
+    };
+
+    let warn = Style::default()
+        .fg(app.palette.red)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(app.palette.overlay0);
+    let title = if missing_sessions.is_empty() {
+        action.title()
+    } else {
+        "Restart with missing agent sessions?"
+    };
+    let detail = if missing_sessions.is_empty() {
+        action.detail().to_string()
+    } else {
+        "These AI panes do not have a recorded session id:".to_string()
+    };
+
+    let rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(visible_count as u16),
+        Constraint::Length(1),
+    ])
+    .areas::<4>(inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(format!(" {title}"), warn))),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(format!(" {detail}"), dim))),
+        rows[1],
+    );
+    for (idx, info) in missing_sessions.iter().take(visible_count).enumerate() {
+        let row = Rect::new(rows[2].x, rows[2].y + idx as u16, rows[2].width, 1);
+        let title = info.title.as_deref().unwrap_or("-");
+        let text = format!(
+            " space {} {} pane {} {} title={} cwd={} reason={}",
+            info.workspace_number,
+            info.workspace_label,
+            info.pane_label,
+            info.agent,
+            title,
+            info.cwd.display(),
+            info.reason
+        );
+        frame.render_widget(
+            Paragraph::new(truncate_end(&text, row.width as usize))
+                .style(Style::default().fg(app.palette.text)),
+            row,
+        );
+    }
+
+    let (confirm_rect, cancel_rect) = confirm_danger_button_rects(inner);
+    render_action_button(
+        frame,
+        confirm_rect,
+        Some("↵"),
+        action.confirm_label(),
+        Style::default()
+            .fg(panel_contrast_fg(&app.palette))
+            .bg(app.palette.red)
+            .add_modifier(Modifier::BOLD),
+    );
+    render_action_button(
+        frame,
+        cancel_rect,
+        Some("esc"),
+        "cancel",
+        Style::default()
+            .fg(app.palette.text)
+            .bg(app.palette.surface0)
+            .add_modifier(Modifier::BOLD),
+    );
+}
+
 pub(crate) fn confirm_close_popup_rect(area: Rect) -> Option<Rect> {
     centered_popup_rect(area, 64, 6)
 }
@@ -750,6 +844,33 @@ pub(crate) fn confirm_close_button_rects(inner: Rect) -> (Rect, Rect) {
         ],
         2,
         3,
+    );
+    (rects[0], rects[1])
+}
+
+pub(crate) fn confirm_danger_popup_rect(area: Rect, missing_session_count: usize) -> Option<Rect> {
+    centered_popup_rect(
+        area,
+        76,
+        5u16.saturating_add(missing_session_count.min(10) as u16),
+    )
+}
+
+pub(crate) fn confirm_danger_button_rects(inner: Rect) -> (Rect, Rect) {
+    let rects = action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: Some("↵"),
+                label: "confirm",
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "cancel",
+            },
+        ],
+        2,
+        inner.height.saturating_sub(1),
     );
     (rects[0], rects[1])
 }
