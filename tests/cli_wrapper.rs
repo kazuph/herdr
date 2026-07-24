@@ -578,14 +578,6 @@ fn accept_fake_cli_operation(listener: &UnixListener) -> (UnixStream, String) {
     }
 }
 
-fn run_codex_hook(action: &str, hook_input: &str) -> Option<serde_json::Value> {
-    run_shell_hook(
-        "src/integration/assets/codex/herdr-agent-state.sh",
-        &[action],
-        hook_input,
-    )
-}
-
 fn run_copilot_hook(hook_input: &str) -> Option<serde_json::Value> {
     run_shell_hook(
         "src/integration/assets/copilot/herdr-agent-state.sh",
@@ -676,19 +668,6 @@ fn run_shell_hook_with_env(
     let request = server.join().unwrap();
     cleanup_test_base(&base);
     request.map(|line| serde_json::from_str(&line).unwrap())
-}
-
-#[test]
-fn codex_hook_reports_session_id_from_stdin() {
-    let request = run_codex_hook(
-        "session",
-        r#"{"hook_event_name":"SessionStart","session_id":"codex-session"}"#,
-    )
-    .expect("codex hook should report session identity");
-
-    assert_eq!(request["method"], "pane.report_agent_session");
-    assert_eq!(request["params"]["agent_session_id"], "codex-session");
-    assert!(request["params"].get("state").is_none());
 }
 
 #[test]

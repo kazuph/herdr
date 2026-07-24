@@ -393,7 +393,6 @@ fn shell_quote(value: &str) -> String {
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     fn test_app() -> App {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         App::new(
