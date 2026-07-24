@@ -709,9 +709,7 @@ fn print_agent_help() {
     eprintln!("  herdr agent explain <target> [--json]");
     eprintln!("  herdr agent explain --file PATH --agent LABEL [--json]");
     eprintln!("  targets accept terminal ids, unique agent names, detected/reported agent labels, and legacy pane ids");
-    eprintln!(
-        "  agent send writes literal text; use pane run when you want command text plus Enter"
-    );
+    eprintln!("  agent send writes text and submits it with Enter");
 }
 
 #[cfg(test)]

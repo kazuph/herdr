@@ -182,7 +182,8 @@
 - **status: fork独自・保持 (C)** — pane frame、title、restore表示、copy fullscreen、overlay、close reflowとmouse hit-testの観測可能な境界を保持する。
 - **受け入れ条件**:
   - border titleは左右1 space付きで、pane幅4以下では非表示、超過時はUnicode文字数基準で最大`pane_width - 4`文字へ切り詰め末尾を単一の`…`にする（`fe693f6`, `80da299`）。
-  - `width > 2 && height > 2`だけframeを描き、閾値以下ではframe/titleなしでpane rect全体をterminalへ渡す。single paneもTerminal modeではaccent色THICK、非Terminal modeのfocus時はaccent色PLAINのframeを持つ（`80da299`）。
+  - `width > 2 && height > 2`だけframeを描き、閾値以下ではframe/titleなしでpane rect全体をterminalへ渡す。`pane_borders=true`ではpane数にかかわらず外周4辺を描画し、single paneのterminal inner rectも上下左右1 cellずつ控除する。`pane_borders=false`ではframeを描画しない（`80da299`）。
+  - single paneの上枠にも複数paneと同じ`%<pane id> <label>`を表示し、pane IDを画面上で確認できる。幅4以下では既存どおりtitleを省略する。
   - pane titleのbranchはruntimeの現在cwdを優先し、取得できない場合だけterminal stateの保存cwdを使う（`047c240`）。
   - safeなsession IDとagent種別が揃うrecorded/pending restoreはtop border右端に` saved session `、agent根拠はあるがsafeな復元情報がない時は` no saved session `を表示する。非agentと幅34未満では表示せず、左titleと重なる時は右labelを優先する（`2911498`, `b038d78`）。
   - single/zoom paneもframeで上下左右1 cellを控除し、frame内幅5以上ではscrollback有無によらず右端1列をgutterとして予約する。幅4以下ではgutterを作らない（`80da299`）。
@@ -918,13 +919,14 @@
   - CLI `herdr pane current` を追加する。
   - 引数付きで呼ばれた場合はstderrに `usage: herdr pane current` を出してexit code 2。
   - `HERDR_PANE_ID` が空でない場合は、その値をpane targetとしてserverに検証させ、存在すれば標準出力に正規化済みpane idを1行で出す。
-  - `HERDR_PANE_ID` がない場合は、CLI自身のprocess idをserverへ送り、serverが同じprocess sessionに属するpaneを解決する。
+  - `HERDR_PANE_ID` がない場合は、CLI自身のprocess idをserverへ送り、serverが同じprocess sessionを先に照合し、見つからなければCLI processの親process treeとpane runtimeのshell PIDを照合する。いずれも候補が1件の時だけ成功する。
   - 解決できない場合はexit code 1で失敗する。focused pane、active tab、pane list、UI selectionへfallbackしてはならない。
   - 古いserverが `pane.current` を知らない場合は `running herdr server does not support \`pane.current\`; restart the server so the installed herdr binary takes effect` をstderrに出して失敗する。
-  - docs/helpでは `pane current uses HERDR_PANE_ID first, then resolves the calling process session` と説明する。
+  - docs/helpでは `pane current uses HERDR_PANE_ID first, then the calling process session, then its parent process tree` と説明する。
 - **受け入れ条件**:
   - Herdr pane内で `HERDR_PANE_ID=1-2 herdr pane current` を実行すると、server検証後にそのpane idだけがstdoutへ出る。
   - `HERDR_PANE_ID` なしでHerdr pane内のshellから実行すると、そのshell process sessionに対応するpane idだけがstdoutへ出る。
+  - Codexなどのcommand runnerがpane shellと別process sessionで一時shellを起動しても、その親process treeにpane runtimeのshell PIDが1件だけ含まれれば、所有pane idだけがstdoutへ出る。
   - Herdr外や対応pane不明のprocessから実行すると失敗し、focused pane idを返さない。
   - `herdr pane current extra` はexit code 2でusageを出す。
   - 古いserver相手ではrestartを促す専用messageになる。
@@ -1328,13 +1330,13 @@
 - **status: 本家基盤＋fork差分保持 (B)** — 本家 `fbd20ad`, `c71c6c1` のcaller context/APIを採用し、focused pane・cwd最新・`--last`へfallbackしない説明とhard stopを残す。
 - **目的**: `herdr pane current` は「今 UI で focus されている pane」ではなく「呼び出し元プロセスが属する pane」を返す command であることを docs 上も明確にし、automation が focused pane / active tab / pane list に fallback しないようにする。
 - **UI挙動**:
-  - changelog には `Added `herdr pane current` to safely print the calling pane from `HERDR_PANE_ID` or the calling process session without falling back to UI focus.` と記載する。
-  - CLI reference の pane section には、`pane current` が running server で検証した calling pane を出力し、優先順は `HERDR_PANE_ID`、次に calling process session 解決であると記載する。
+  - changelog には `Added `herdr pane current` to safely print the calling pane from `HERDR_PANE_ID`, the calling process session, or its parent process tree without falling back to UI focus.` と記載する。
+  - CLI reference の pane section には、`pane current` が running server で検証した calling pane を出力し、優先順は `HERDR_PANE_ID`、calling process session、calling processの親process treeであると記載する。
   - 同じ説明で、focused pane、active tab、pane list へ fallback しないことを明記する。
 - **受け入れ条件**:
   - docs を読んだ AI が `herdr pane current` を focus lookup command と誤解しない。
   - `HERDR_PANE_ID` がある場合はその値を server validation した pane が返る。
-  - `HERDR_PANE_ID` がない場合は server が呼び出し元 process session から pane を解決できる時だけ返る。
+  - `HERDR_PANE_ID` がない場合は server が呼び出し元 process sessionまたは親process treeから所有paneを一意に解決できる時だけ返る。
   - どちらも解決できない場合は focused pane / active tab / first pane を返さず失敗する。
 - **実装方針**: 本家には `pane current` や current pane lookup が部分的に存在するが、focused fallback が残る場合は fork spec と衝突する。API は本家の pane lookup / process session resolution に乗せ、fallback policy を fail-closed にする。
 - **デグレ判定**: `HERDR_PANE_ID` 不在時に focused pane、active tab、pane list の先頭、最近使った pane を返す。docs が `HERDR_PANE_ID` だけに限定して process session 解決を説明しない、または focus fallback 可能に読める。
@@ -1349,10 +1351,15 @@
 - **挙動**:
   - `msg.send` / `msg.inbox` / `msg.history` / `msg.rooms` と対応CLIを提供し、messageはroom、project、sender、recipient、本文、created/delivered/read時刻を持つ。
   - direct sendとroom broadcastを扱い、busy中はqueue、idle時はnudgeする。nudgeにはshell quote済みの正確な `herdr msg inbox --room <room>` を含める。
+  - 全idle agentの未読確認はserver起動時に1回だけ行う。message送信時はそのrecipientとroom、agentがidleへ遷移した時はそのpaneのmailboxだけを確認し、無関係な通常API requestを全agent走査の起点にしない。
+  - agentが持つqueued messageはrecipientのactor IDとstatusのindexを使う1回のqueryで取得し、取得結果をroom単位にgroup化する。agentごとに全roomを列挙してqueryしない。
 - **受け入れ条件**:
   - server再起動後も未読messageと履歴が残り、inbox取得で既読化できる。
   - room名に空白やquoteがあってもnudgeのinbox commandが安全に実行できる。
   - busy agentの現在の入力へ割り込まず、idle時だけnudgeする。
+  - queued messageがない状態でagent/pane一覧等の通常API requestを反復しても、requestごとの全idle agent走査とagent数×room数のmessage queryを実行しない。
+  - server起動時の未読配送、message送信先への即時配送、blockedからidleへ変わったagentへの配送は、通常API request後の全agent走査を削除しても維持される。
+- **デグレ判定**: 各API requestの完了時に全idle agentのmailboxを走査する。各agentについてroom一覧を取得してroomごとに未読queryする。recipient/status indexを使わずmessage全体を走査する。
 
 ### pane-less background jobs
 - **該当コミット**: 92f6bd6, 287c32d, 9255326, 03fc5eb, 8b3ae29

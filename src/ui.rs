@@ -904,8 +904,28 @@ mod tests {
         let one_tab_size = app.workspaces[0].tabs[0].runtimes[&one_tab_pane].current_size();
         let two_tab_size =
             app.workspaces[1].tabs[background_tab].runtimes[&two_tab_pane].current_size();
-        assert_eq!(one_tab_size, (19, 53));
-        assert_eq!(two_tab_size, (18, 53));
+        let one_tab_inner = app
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == one_tab_pane)
+            .expect("active one-tab pane layout")
+            .inner_rect;
+
+        app.active = Some(1);
+        app.selected = 1;
+        app.workspaces[1].switch_tab(background_tab);
+        compute_view(&mut app, Rect::new(0, 0, 80, 20));
+        let two_tab_inner = app
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == two_tab_pane)
+            .expect("active two-tab pane layout")
+            .inner_rect;
+
+        assert_eq!(one_tab_size, (one_tab_inner.height, one_tab_inner.width));
+        assert_eq!(two_tab_size, (two_tab_inner.height, two_tab_inner.width));
     }
 
     #[tokio::test]
@@ -929,9 +949,21 @@ mod tests {
 
         assert_eq!(app.view.layout, ViewLayout::Mobile);
         assert_eq!(app.view.terminal_area, Rect::new(0, 2, 44, 18));
+        let background_size =
+            app.workspaces[0].tabs[background_tab].runtimes[&background_pane].current_size();
+
+        app.workspaces[0].switch_tab(background_tab);
+        compute_view(&mut app, Rect::new(0, 0, 44, 20));
+        let background_inner = app
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == background_pane)
+            .expect("active mobile background pane layout")
+            .inner_rect;
         assert_eq!(
-            app.workspaces[0].tabs[background_tab].runtimes[&background_pane].current_size(),
-            (18, 43)
+            background_size,
+            (background_inner.height, background_inner.width)
         );
     }
 
@@ -1282,7 +1314,8 @@ mod tests {
         compute_view(&mut app, Rect::new(0, 0, 40, 12));
 
         let info = app.view.pane_infos.first().expect("pane info");
-        assert_eq!(info.inner_rect.width + 1, app.view.terminal_area.width);
+        let bordered_inner = crate::ui::panes::pane_inner_rect(info.rect, info.borders);
+        assert_eq!(info.inner_rect.width + 1, bordered_inner.width);
         assert_eq!(
             info.scrollbar_rect,
             Some(Rect::new(

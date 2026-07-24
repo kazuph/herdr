@@ -124,12 +124,20 @@ impl MsgStore {
         &self,
         to_agent: &str,
     ) -> rusqlite::Result<Vec<PendingNudge>> {
+        let messages = self.store.pending_messages_for_agent(to_agent)?;
         let mut nudges = Vec::new();
-        for room in self.rooms()? {
-            let messages = self.store.pending_messages(&room, to_agent)?;
-            if let Some(nudge) = pending_nudge_from_messages(&room, to_agent, &messages) {
+        let mut start = 0;
+        while start < messages.len() {
+            let room = &messages[start].room;
+            let end = messages[start..]
+                .iter()
+                .position(|message| message.room != *room)
+                .map_or(messages.len(), |offset| start + offset);
+            if let Some(nudge) = pending_nudge_from_messages(room, to_agent, &messages[start..end])
+            {
                 nudges.push(nudge);
             }
+            start = end;
         }
         Ok(nudges)
     }
@@ -241,6 +249,43 @@ mod tests {
             .pending_nudge_for(DEFAULT_ROOM, "bob")
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn pending_nudges_for_agent_groups_only_that_agents_queued_messages_by_room() {
+        let mut store = test_store("pending-nudges-for-agent");
+        store
+            .insert_messages("room-b", "", "alice", &["bob".to_string()], "b1")
+            .unwrap();
+        store
+            .insert_messages("room-a", "", "alice", &["bob".to_string()], "a1")
+            .unwrap();
+        store
+            .insert_messages("room-b", "", "carol", &["bob".to_string()], "b2")
+            .unwrap();
+        store
+            .insert_messages("room-a", "", "alice", &["carol".to_string()], "ignored")
+            .unwrap();
+
+        let nudges = store.pending_nudges_for_agent("bob").unwrap();
+
+        assert_eq!(
+            nudges,
+            vec![
+                PendingNudge {
+                    room: "room-a".into(),
+                    to_agent: "bob".into(),
+                    count: 1,
+                    latest_from: "alice".into(),
+                },
+                PendingNudge {
+                    room: "room-b".into(),
+                    to_agent: "bob".into(),
+                    count: 2,
+                    latest_from: "carol".into(),
+                },
+            ]
+        );
     }
 
     #[test]

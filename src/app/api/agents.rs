@@ -5,7 +5,11 @@ use crate::api::schema::{
     AgentSendParams, AgentStartParams, AgentTarget, PaneReadResult, ReadFormat, ReadSource,
     ResponseResult,
 };
-use crate::app::App;
+use crate::app::{
+    api::AGENT_SEND_SUBMIT_DELAY,
+    api_helpers::{encode_api_keys, encode_api_text},
+    App,
+};
 
 use super::responses::{encode_error, encode_error_body, encode_success};
 
@@ -288,10 +292,25 @@ impl App {
             Ok(resolved) => resolved,
             Err(err) => return encode_error_body(id, self.agent_target_error_body(err)),
         };
+        if self.agent_info(resolved.ws_idx, resolved.pane_id).is_none() {
+            return agent_not_found(id, &params.target);
+        }
         let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id) else {
             return agent_not_found(id, &params.target);
         };
-        if let Err(err) = runtime.try_send_bytes(Bytes::from(params.text)) {
+        let text = params.text.trim_end_matches(&['\r', '\n'][..]);
+        let text_bytes = encode_api_text(runtime, text);
+        let enter = match encode_api_keys(runtime, &["enter".to_string()]) {
+            Ok(mut encoded_keys) => encoded_keys.pop().unwrap_or_default(),
+            Err(key) => {
+                return encode_error(id, "invalid_key", format!("unsupported key {key}"));
+            }
+        };
+        if let Err(err) = runtime.try_send_bytes(Bytes::from(text_bytes)) {
+            return encode_error(id, "agent_send_failed", err.to_string());
+        }
+        std::thread::sleep(AGENT_SEND_SUBMIT_DELAY);
+        if let Err(err) = runtime.try_send_bytes(Bytes::from(enter)) {
             return encode_error(id, "agent_send_failed", err.to_string());
         }
 
@@ -311,7 +330,7 @@ fn agent_not_found(id: String, target: &str) -> String {
 mod tests {
     use super::*;
     use crate::{
-        api::schema::{AgentStatus, SuccessResponse},
+        api::schema::{AgentStatus, ErrorResponse, SuccessResponse},
         app::Mode,
         config::Config,
         detect::{Agent, AgentState},
@@ -333,6 +352,23 @@ mod tests {
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
         app
+    }
+
+    fn app_with_pi_runtime(capacity: usize) -> (App, tokio::sync::mpsc::Receiver<bytes::Bytes>) {
+        let mut app = app_with_agent();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_detected_state(Some(Agent::Pi), AgentState::Idle);
+        let (runtime, rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, capacity);
+        app.state.insert_test_runtime(pane_id, runtime);
+        (app, rx)
     }
 
     #[test]
@@ -368,5 +404,78 @@ mod tests {
             panic!("expected agent info response");
         };
         assert_eq!(agent.agent_status, AgentStatus::Idle);
+    }
+
+    #[tokio::test]
+    async fn agent_send_writes_text_then_submits_with_enter() {
+        let (mut app, mut rx) = app_with_pi_runtime(2);
+
+        let response = app.handle_agent_send(
+            "req".into(),
+            AgentSendParams {
+                target: "pi".into(),
+                text: "hello agent".into(),
+            },
+        );
+
+        assert_eq!(
+            AGENT_SEND_SUBMIT_DELAY,
+            std::time::Duration::from_millis(500)
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.id, "req");
+        assert_eq!(success.result, ResponseResult::Ok {});
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"hello agent")
+        );
+        assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"\r"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn agent_send_normalizes_trailing_newlines_to_one_enter() {
+        let (mut app, mut rx) = app_with_pi_runtime(2);
+
+        let response = app.handle_agent_send(
+            "req".into(),
+            AgentSendParams {
+                target: "pi".into(),
+                text: "hello agent\r\n\n".into(),
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(success.result, ResponseResult::Ok {});
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"hello agent")
+        );
+        assert_eq!(rx.try_recv().unwrap(), bytes::Bytes::from_static(b"\r"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn agent_send_rejects_a_normal_shell_target() {
+        let mut app = app_with_agent();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .to_string();
+        let (runtime, mut rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, 1);
+        app.state.insert_test_runtime(pane_id, runtime);
+
+        let response = app.handle_agent_send(
+            "req".into(),
+            AgentSendParams {
+                target: terminal_id,
+                text: "must not run".into(),
+            },
+        );
+
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "agent_not_found");
+        assert!(rx.try_recv().is_err());
     }
 }

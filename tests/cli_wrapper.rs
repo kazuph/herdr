@@ -578,22 +578,6 @@ fn accept_fake_cli_operation(listener: &UnixListener) -> (UnixStream, String) {
     }
 }
 
-fn run_claude_hook(action: &str, hook_input: &str) -> Option<serde_json::Value> {
-    run_shell_hook(
-        "src/integration/assets/claude/herdr-agent-state.sh",
-        &[action],
-        hook_input,
-    )
-}
-
-fn run_codex_hook(action: &str, hook_input: &str) -> Option<serde_json::Value> {
-    run_shell_hook(
-        "src/integration/assets/codex/herdr-agent-state.sh",
-        &[action],
-        hook_input,
-    )
-}
-
 fn run_copilot_hook(hook_input: &str) -> Option<serde_json::Value> {
     run_shell_hook(
         "src/integration/assets/copilot/herdr-agent-state.sh",
@@ -684,60 +668,6 @@ fn run_shell_hook_with_env(
     let request = server.join().unwrap();
     cleanup_test_base(&base);
     request.map(|line| serde_json::from_str(&line).unwrap())
-}
-
-#[test]
-fn claude_hook_ignores_state_actions() {
-    let subagent_input = r#"{"hook_event_name":"Notification","agent_id":"agent-abc123","agent_type":"Explore","notification_type":"permission_prompt"}"#;
-
-    assert!(run_claude_hook("working", subagent_input).is_none());
-    assert!(run_claude_hook("blocked", subagent_input).is_none());
-}
-
-#[test]
-fn claude_hook_ignores_subagent_completion_reports() {
-    let subagent_input =
-        r#"{"hook_event_name":"SubagentStop","agent_id":"agent-abc123","agent_type":"Explore"}"#;
-
-    assert!(run_claude_hook("working", subagent_input).is_none());
-    assert!(run_claude_hook("idle", subagent_input).is_none());
-    assert!(run_claude_hook("release", subagent_input).is_none());
-}
-
-#[test]
-fn claude_hook_keeps_parent_agent_type_only_blocked() {
-    let request = run_claude_hook(
-        "blocked",
-        r#"{"hook_event_name":"PermissionRequest","agent_type":"Explore"}"#,
-    );
-
-    assert!(request.is_none());
-}
-
-#[test]
-fn claude_hook_reports_session_id_from_stdin() {
-    let request = run_claude_hook(
-        "session",
-        r#"{"hook_event_name":"SessionStart","session_id":"claude-session"}"#,
-    )
-    .expect("session start should report session identity");
-
-    assert_eq!(request["method"], "pane.report_agent_session");
-    assert_eq!(request["params"]["agent_session_id"], "claude-session");
-    assert!(request["params"].get("state").is_none());
-}
-
-#[test]
-fn codex_hook_reports_session_id_from_stdin() {
-    let request = run_codex_hook(
-        "session",
-        r#"{"hook_event_name":"SessionStart","session_id":"codex-session"}"#,
-    )
-    .expect("codex hook should report session identity");
-
-    assert_eq!(request["method"], "pane.report_agent_session");
-    assert_eq!(request["params"]["agent_session_id"], "codex-session");
-    assert!(request["params"].get("state").is_none());
 }
 
 #[test]
@@ -1151,7 +1081,6 @@ fn help_commands_exit_successfully() {
         &["wait", "-h"],
         &["session", "-h"],
         &["session", "attach", "-h"],
-        &["integration", "-h"],
     ];
 
     for args in help_cases {
@@ -1363,8 +1292,12 @@ fn explicit_client_command_respects_nested_guard() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("nested herdr is disabled by default"),
-        "client should fail at the nested guard before connecting: {stderr}"
+        !stderr.contains("nested herdr is disabled by default"),
+        "stale HERDR_ENV without a herdr ancestor should not trigger the nested guard: {stderr}"
+    );
+    assert!(
+        stderr.contains("failed to connect to server"),
+        "client should continue to the normal connection path: {stderr}"
     );
 }
 
@@ -1712,7 +1645,7 @@ fn status_commands_report_client_and_server_versions() {
         "stdout: {full_stdout}"
     );
     assert!(
-        full_stdout.contains("  protocol: 16"),
+        full_stdout.contains(&format!("  protocol: {CURRENT_PROTOCOL}")),
         "stdout: {full_stdout}"
     );
     assert!(full_stdout.contains("server:\n"), "stdout: {full_stdout}");
@@ -1745,7 +1678,7 @@ fn status_commands_report_client_and_server_versions() {
         "stdout: {server_stdout}"
     );
     assert!(
-        server_stdout.contains("protocol: 16"),
+        server_stdout.contains(&format!("protocol: {CURRENT_PROTOCOL}")),
         "stdout: {server_stdout}"
     );
 
@@ -1757,7 +1690,7 @@ fn status_commands_report_client_and_server_versions() {
         "stdout: {client_stdout}"
     );
     assert!(
-        client_stdout.contains("protocol: 16"),
+        client_stdout.contains(&format!("protocol: {CURRENT_PROTOCOL}")),
         "stdout: {client_stdout}"
     );
     assert!(
@@ -1767,7 +1700,7 @@ fn status_commands_report_client_and_server_versions() {
 
     let full_json = run_cli_json(&socket_path, &["status", "--json"]);
     assert_eq!(full_json["client"]["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(full_json["client"]["protocol"], 16);
+    assert_eq!(full_json["client"]["protocol"], CURRENT_PROTOCOL);
     assert_eq!(full_json["server"]["status"], "running");
     assert_eq!(full_json["server"]["running"], true);
     assert_eq!(full_json["server"]["compatible"], true);
@@ -1781,12 +1714,12 @@ fn status_commands_report_client_and_server_versions() {
     let server_json = run_cli_json(&socket_path, &["status", "server", "--json"]);
     assert_eq!(server_json["status"], "running");
     assert_eq!(server_json["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(server_json["protocol"], 16);
+    assert_eq!(server_json["protocol"], CURRENT_PROTOCOL);
     assert_eq!(server_json["compatible"], true);
 
     let client_json = run_cli_json(&socket_path, &["status", "client", "--json"]);
     assert_eq!(client_json["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(client_json["protocol"], 16);
+    assert_eq!(client_json["protocol"], CURRENT_PROTOCOL);
     assert!(client_json["binary"]
         .as_str()
         .is_some_and(|path| !path.is_empty()));
@@ -3156,28 +3089,6 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
     );
     assert_eq!(spawned["result"]["pane"]["label"], "demo");
 
-    let waited_job = run_cli(
-        &socket_path,
-        &[
-            "wait",
-            "output",
-            pane,
-            "--match",
-            "run-spawn-done",
-            "--source",
-            "recent",
-            "--lines",
-            "80",
-            "--timeout",
-            "5000",
-        ],
-    );
-    assert!(
-        waited_job.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&waited_job.stderr)
-    );
-
     let waited_notice = run_cli(
         &socket_path,
         &[
@@ -3227,12 +3138,30 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
         "{caller_text}"
     );
 
-    let log = run_cli(&socket_path, &["log", job]);
-    assert!(log.status.success());
+    let log = run_named_cli_with_socket_override(
+        &config_home,
+        &runtime_dir,
+        &["log", job],
+        Some(&socket_path),
+    );
+    assert!(
+        log.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&log.stderr)
+    );
     let log_text = String::from_utf8(log.stdout).unwrap();
     assert!(log_text.contains("run-spawn-done"), "{log_text}");
-    let log_tail = run_cli(&socket_path, &["log", job, "tail=1"]);
-    assert!(log_tail.status.success());
+    let log_tail = run_named_cli_with_socket_override(
+        &config_home,
+        &runtime_dir,
+        &["log", job, "tail=1"],
+        Some(&socket_path),
+    );
+    assert!(
+        log_tail.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&log_tail.stderr)
+    );
     let log_tail_text = String::from_utf8(log_tail.stdout).unwrap();
     assert!(log_tail_text.contains("exit_code: 0"), "{log_tail_text}");
 

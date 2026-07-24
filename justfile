@@ -3,7 +3,8 @@
 # Run tests
 test:
     cargo nextest run --locked --status-level fail --final-status-level fail --failure-output final --success-output never
-    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_preview scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
+    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_preview scripts.test_spec_contract_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
+    python3 scripts/fork_distribution_docs_check.py
     just integration-assets-test
     just plugin-marketplace-test
 
@@ -44,6 +45,11 @@ fork-spec-contracts:
     just test-one frozen_claude_activity_fingerprint_expires_to_idle
     just test-one frozen_codex_working_header_expires_to_idle
     just test-one stale_activity_filter_does_not_expire_other_agents_or_untracked_working
+    just test-one agent_send_writes_text_then_submits_with_enter
+    just test-one agent_send_normalizes_trailing_newlines_to_one_enter
+    just test-one agent_send_rejects_a_normal_shell_target
+    just test-one api_pane_send_input_delivers_text_then_enter_as_separate_chunks
+    just test-one pane_help_distinguishes_literal_text_from_submitted_commands
 
     # Exact restore identity and legacy config migration.
     just test-one session_ids_follow_the_fork_fail_closed_contract
@@ -63,6 +69,11 @@ fork-spec-contracts:
     just test-one load_live_config_accepts_legacy_agent_restore_section
     just test-one agent_panel_sort_config_parses_alias_and_defaults
     just test-one pane_appearance_defaults_and_parse
+    just test-one api_pane_current_resolves_one
+    just test-one single_pane_
+    just test-one pane_scrollbar_
+    just test-one tiny_pane_does_not_reserve_scrollbar_gutter
+    just test-one resize_shared_runtime_resizes_background_tabs
 
     # Alternate binary isolation, child routing, and dispatch metadata.
     just test-one configure_from_args_sets_alternate_binary_namespace
@@ -73,6 +84,9 @@ fork-spec-contracts:
     just test-one generated_protocol_schema_artifact_is_current
     just test-one cancelled_job_is_durable
     just test-one terminal_transition_has_single_owner
+    just test-one pending_nudges_for_agent_groups_only_that_agents_queued_messages_by_room
+    just test-one blocked_then_idle_flushes_multiple_pending_messages_as_direct_push
+    just test-one startup_flush_walk_delivers_pending_messages_after_server_restart
     @if [ "$(uname -s)" != "Darwin" ]; then just test-one herdr_job_cancel_kills_term_ignoring_process_tree_before_marking_cancelled; fi
 
     # G8 update, channel, integration, download, and documentation fail-closed.
@@ -81,8 +95,9 @@ fork-spec-contracts:
     just test-one self_update_is_disabled_in_the_fork
     just test-one startup_ignores_preview_update_available_from_saved_notes
     just test-one resolve_install_source_rejects_release_download_without_explicit_binary
+    python3 scripts/fork_distribution_docs_check.py
+    python3 -m unittest scripts.test_spec_contract_inventory
     @! rg -n 'herdr integration (install|uninstall|status)' docs/next/website/src/content/docs
-    @! rg -n 'https://herdr.dev/install.sh|ogulcancelik/herdr/releases' README.md docs/next/README.md docs/next/website/src/content/docs
 
 # Run fast local lint checks
 lint:
@@ -91,7 +106,7 @@ lint:
 
 # Run PR CI checks
 ci filter='all()': lint
-    cargo nextest run --locked -E "{{filter}}" --status-level fail --final-status-level slow --failure-output final --success-output never
+    cargo nextest run --locked -E "{{filter}}" --no-fail-fast --status-level fail --final-status-level slow --failure-output final --success-output never
     just integration-assets-test
     just plugin-marketplace-test
 
@@ -102,7 +117,8 @@ windows-lint:
 
 # Check formatting + run unit tests + Windows target lint + maintenance script tests
 check: ci windows-lint
-    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_preview scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
+    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_preview scripts.test_spec_contract_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
+    python3 scripts/fork_distribution_docs_check.py
     @echo "docs reminder: if this changes user-facing behavior, make sure the relevant release docs are updated or called out before release."
 
 # Install repo-local git hooks

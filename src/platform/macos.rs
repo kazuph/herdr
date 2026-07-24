@@ -825,7 +825,7 @@ fn process_bsdinfo(pid: u32) -> Option<libc::proc_bsdinfo> {
 
 pub fn parent_process_id(pid: u32) -> Option<u32> {
     let ppid = process_bsdinfo(pid)?.pbi_ppid;
-    (ppid > 0).then_some(ppid as u32)
+    (ppid > 0).then_some(ppid)
 }
 
 pub fn process_name(pid: u32) -> Option<String> {

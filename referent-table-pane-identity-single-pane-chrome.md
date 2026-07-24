@@ -1,0 +1,5 @@
+| 出典 | 目的 | 具体対象 | 役割 | 前後関係 | 初出定義 | 候補語 |
+|---|---|---|---|---|---|---|
+| ユーザーの `pane current` 失敗報告と旧fork commit `5d1fd2c` | Codex runnerが起動する一時shellから、そのCodex processを所有するpaneだけを特定する | `HERDR_PANE_ID`がないCLI processのsessionでpaneを特定できない時に、CLI processから親processを辿り、pane runtimeのshell PIDと一致する候補が1件だけならそのpaneを返す | 手段 | 環境変数検証、process session照合の後に行い、0件または複数件ならfocused paneへfallbackせず失敗する | 親process tree照合とは、CLI processから親PIDを辿ってpane runtimeのshell PIDと一意に一致する所有paneを探す処理を指す | 親process tree照合 |
+| ユーザーの単一pane表示報告 | paneが1つでもpane境界と識別情報を常時確認できるようにする | `pane_borders=true`の通常terminal表示で、active tabのpane数が1件でも幅と高さがともに3 cell以上ならpane外周4辺を描画し、terminal inner rectを枠の内側に保つ。幅または高さが2 cell以下なら枠を描かず全rectをterminalへ渡す | 状態 | pane数と寸法の判定後、terminal resizeとrenderの前に決まり、popup/fullscreen copyとは分離する | 単一pane枠表示とは、active tabに通常paneが1件だけある時も、内容領域を残せる寸法なら外周4辺を描画する状態を指す | 単一pane枠表示 |
+| ユーザーのpane ID確認要求と既存`render_pane_border_titles` | 単一paneでも画面上からpane IDを確認できるようにする | 単一paneの上枠に、複数paneと同じ `%<raw pane id> <label>` titleを表示する | 記録 | 単一pane枠表示が有効な時に上枠へ描画し、幅4以下では既存どおり省略する | pane上枠識別表示とは、上枠にpane IDと既存labelを表示する記録を指す | pane上枠識別表示 |

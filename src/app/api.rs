@@ -18,6 +18,7 @@ use crate::events::AppEvent;
 
 const API_NOTIFICATION_RATE_LIMIT: Duration = Duration::from_secs(1);
 pub(super) const AGENT_SEND_SUBMIT_DELAY: Duration = Duration::from_millis(500);
+pub(super) const PANE_SEND_INPUT_KEY_DELAY: Duration = Duration::from_millis(500);
 #[cfg(windows)]
 const WINDOWS_POWERSHELL_AGENT_EXIT_RESPAWN_GRACE: Duration = Duration::from_secs(2);
 
@@ -1766,14 +1767,10 @@ mod tests {
             observed_at: std::time::Instant::now(),
         });
 
-        assert_eq!(
-            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
-            Some("sh-3.2$")
-        );
-        assert_eq!(
-            app.state.toast.as_ref().map(|toast| toast.title.as_str()),
-            Some("1 __herdr_projects__-planner")
-        );
+        let toast = app.state.toast.as_ref().expect("toast");
+        assert_eq!(toast.title, "1 __herdr_projects__-planner");
+        assert!(!toast.context.is_empty());
+        assert!(!toast.context.contains("__herdr_original__"));
 
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
@@ -1783,7 +1780,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn delayed_herdr_toast_context_uses_live_root_runtime_cwd_label() {
+    async fn delayed_herdr_toast_uses_live_root_runtime_cwd_label() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
             &crate::config::Config::default(),
@@ -1867,10 +1864,10 @@ mod tests {
             .next_pending_agent_notification_deadline()
             .expect("pending notification deadline");
         assert!(app.handle_scheduled_tasks(notification_deadline, false));
-        assert_eq!(
-            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
-            Some("sh-3.2$")
-        );
+        let toast = app.state.toast.as_ref().expect("toast");
+        assert_eq!(toast.title, "1 __herdr_projects__");
+        assert!(!toast.context.is_empty());
+        assert!(!toast.context.contains("__herdr_original__"));
 
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();

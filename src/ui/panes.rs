@@ -31,6 +31,10 @@ fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<Str
     Some(format!(" {} ", truncate_end(label, max_label_width)))
 }
 
+fn pane_should_frame(area: Rect) -> bool {
+    area.width > 2 && area.height > 2
+}
+
 fn stable_terminal_inner_rect(pane_inner: Rect) -> Rect {
     if pane_inner.width <= 4 {
         return pane_inner;
@@ -109,11 +113,11 @@ pub(crate) fn apply_pane_chrome(
                 }
             }
 
-            info.borders = if !multi_pane || !pane_borders {
+            info.borders = if !pane_borders || !pane_should_frame(info.rect) {
                 Borders::NONE
             } else {
                 let mut borders = Borders::ALL;
-                if !pane_gaps {
+                if multi_pane && !pane_gaps {
                     if right_neighbor.is_some() {
                         borders.remove(Borders::RIGHT);
                     }
@@ -170,12 +174,10 @@ pub(super) fn resize_tab_panes(
     area: Rect,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
-    let multi_pane = tab.layout.pane_count() > 1;
-
     if tab.zoomed {
         let focused_id = tab.layout.focused();
         if let Some((terminal_id, rt)) = runtime_for_tab_pane(terminal_runtimes, tab, focused_id) {
-            let borders = if multi_pane && app.pane_borders {
+            let borders = if app.pane_borders && pane_should_frame(area) {
                 Borders::ALL
             } else {
                 Borders::NONE
@@ -226,8 +228,6 @@ pub(super) fn compute_pane_infos(
         return Vec::new();
     };
 
-    let multi_pane = ws.layout.pane_count() > 1;
-
     if let Some(fullscreen_pane) = app.copy_mode_fullscreen_pane {
         if ws
             .active_tab()
@@ -262,7 +262,7 @@ pub(super) fn compute_pane_infos(
 
     if ws.zoomed {
         let focused_id = ws.layout.focused();
-        let borders = if multi_pane && app.pane_borders {
+        let borders = if app.pane_borders && pane_should_frame(area) {
             Borders::ALL
         } else {
             Borders::NONE
@@ -1154,6 +1154,97 @@ mod tests {
     }
 
     #[test]
+    fn single_pane_keeps_all_borders_and_reserves_the_inner_rect() {
+        let workspace = Workspace::test_new("test");
+        let infos = apply_pane_chrome(
+            workspace.tabs[0].layout.panes(Rect::new(0, 0, 80, 20)),
+            true,
+            false,
+        );
+
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].borders, Borders::ALL);
+        assert_eq!(
+            pane_inner_rect(infos[0].rect, infos[0].borders),
+            Rect::new(1, 1, 78, 18)
+        );
+
+        let borderless = apply_pane_chrome(
+            workspace.tabs[0].layout.panes(Rect::new(0, 0, 80, 20)),
+            false,
+            false,
+        );
+        assert_eq!(borderless[0].borders, Borders::NONE);
+        assert_eq!(
+            pane_inner_rect(borderless[0].rect, borderless[0].borders),
+            Rect::new(0, 0, 80, 20)
+        );
+    }
+
+    #[test]
+    fn single_pane_below_frame_threshold_keeps_the_full_terminal_rect() {
+        let workspace = Workspace::test_new("test");
+        for area in [Rect::new(0, 0, 2, 8), Rect::new(0, 0, 8, 2)] {
+            let infos = apply_pane_chrome(workspace.tabs[0].layout.panes(area), true, false);
+
+            assert_eq!(infos[0].borders, Borders::NONE);
+            assert_eq!(pane_inner_rect(infos[0].rect, infos[0].borders), area);
+        }
+    }
+
+    #[tokio::test]
+    async fn zoomed_single_pane_below_frame_threshold_keeps_the_full_terminal_rect() {
+        let mut app = AppState::test_new();
+        let mut workspace = Workspace::test_new("test");
+        workspace.zoomed = true;
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        let terminal_runtimes = TerminalRuntimeRegistry::new();
+
+        for area in [Rect::new(0, 0, 2, 8), Rect::new(0, 0, 8, 2)] {
+            let infos = compute_pane_infos(
+                &app,
+                &terminal_runtimes,
+                area,
+                false,
+                crate::kitty_graphics::HostCellSize::default(),
+            );
+
+            assert_eq!(infos[0].borders, Borders::NONE);
+            assert_eq!(infos[0].inner_rect, area);
+        }
+    }
+
+    #[test]
+    fn single_pane_top_border_shows_the_pane_id() {
+        let mut app = AppState::test_new();
+        app.mode = Mode::Terminal;
+        let ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        app.view.pane_infos =
+            apply_pane_chrome(ws.tabs[0].layout.panes(Rect::new(0, 0, 80, 3)), true, false);
+
+        let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
+        let mut terminal_state = TerminalState::new(terminal_id.clone(), "/tmp".into());
+        terminal_state.set_manual_label("terminal".into());
+        app.terminals.insert(terminal_id, terminal_state);
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 3)).unwrap();
+        terminal
+            .draw(|frame| render_pane_borders(&app, &ws, frame))
+            .unwrap();
+        let row = (0..80)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+
+        assert!(
+            row.contains(&format!("%{} terminal", pane_id.raw())),
+            "rendered row: {row:?}"
+        );
+    }
+
+    #[test]
     fn default_horizontal_split_uses_one_shared_divider_column() {
         let mut workspace = Workspace::test_new("test");
         let root = workspace.tabs[0].root_pane;
@@ -1383,7 +1474,7 @@ mod tests {
 
         assert_eq!(info.rect, area);
         assert_eq!(info.scrollbar_rect, None);
-        assert_eq!(info.inner_rect, Rect::new(10, 3, 39, 8));
+        assert_eq!(info.inner_rect, Rect::new(11, 4, 37, 6));
     }
 
     #[tokio::test]
@@ -1412,7 +1503,7 @@ mod tests {
 
         assert_eq!(info.rect, area);
         assert_eq!(info.scrollbar_rect, None);
-        assert_eq!(info.inner_rect, Rect::new(10, 3, 39, 8));
+        assert_eq!(info.inner_rect, Rect::new(11, 4, 37, 6));
     }
 
     #[tokio::test]
@@ -1470,7 +1561,7 @@ mod tests {
 
         assert_eq!(info.rect, area);
         assert_eq!(info.scrollbar_rect, None);
-        assert_eq!(info.inner_rect, area);
+        assert_eq!(info.inner_rect, Rect::new(11, 4, 2, 6));
     }
 
     #[tokio::test]
@@ -1502,8 +1593,8 @@ mod tests {
         let info = &infos[0];
 
         assert_eq!(info.rect, area);
-        assert_eq!(info.scrollbar_rect, Some(Rect::new(49, 3, 1, 8)));
-        assert_eq!(info.inner_rect, Rect::new(10, 3, 39, 8));
+        assert_eq!(info.scrollbar_rect, Some(Rect::new(48, 4, 1, 6)));
+        assert_eq!(info.inner_rect, Rect::new(11, 4, 37, 6));
     }
 
     #[test]

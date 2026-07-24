@@ -3305,8 +3305,6 @@ impl HeadlessServer {
             }
         }
 
-        self.app.flush_msg_nudges_for_all_idle_agents();
-
         if !skip_default_workspace && latest_app_client(&self.clients).is_some() {
             changed |= self.app.ensure_default_workspace();
         }
@@ -7322,8 +7320,16 @@ next_tab = ""
         server.sync_foreground_client_state();
         server.resize_shared_runtime_to_effective_size();
 
-        let terminal_area = server.app.state.view.terminal_area;
-        let expected = (terminal_area.height, terminal_area.width.saturating_sub(1));
+        let active_inner = server
+            .app
+            .state
+            .view
+            .pane_infos
+            .iter()
+            .find(|info| info.id == active_pane)
+            .expect("active pane layout")
+            .inner_rect;
+        let expected = (active_inner.height, active_inner.width);
         assert_eq!(
             server
                 .app

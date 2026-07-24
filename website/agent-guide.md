@@ -2,7 +2,7 @@
 
 You are reading this because a human asked you to help them understand, set up, or troubleshoot Herdr. This file gives you the concept model, the setup path, and the diagnosis recipes so you can guide them accurately. Canonical documentation lives at https://herdr.dev/docs/ — link the human there for depth, and verify any command you are unsure about against those pages instead of guessing.
 
-If you are running *inside* a Herdr pane (the environment variable `HERDR_ENV=1` is set), Herdr also ships a skill file that teaches you to control Herdr yourself through the `herdr` CLI: https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md. That file is about you operating Herdr; this file is about you teaching a human.
+If you are running *inside* a Herdr pane (the environment variable `HERDR_ENV=1` is set), Herdr also ships a skill file that teaches you to control Herdr yourself through the `herdr` CLI: https://raw.githubusercontent.com/kazuph/herdr/main/SKILL.md. That file is about you operating Herdr; this file is about you teaching a human.
 
 ## What Herdr is
 
@@ -28,18 +28,13 @@ Full concepts page: https://herdr.dev/docs/concepts/
 Linux and macOS:
 
 ```bash
-curl -fsSL https://herdr.dev/install.sh | sh
+git clone https://github.com/kazuph/herdr
+cd herdr
+just install-local
 herdr
 ```
 
-Windows preview beta:
-
-```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
-herdr
-```
-
-Homebrew, mise, and Nix installs, verification, and manual downloads: https://herdr.dev/docs/install/. Updating later is `herdr update`. Check the version with `herdr --version`.
+The fork source build is the primary install path. Manual binaries come only from https://github.com/kazuph/herdr/releases. Do not use upstream binaries, hosted installers, package-manager packages, or `herdr update` for this fork. Update by pulling the fork checkout and running `just install-local` explicitly. Check the version with `herdr --version`.
 
 ## First-run walkthrough
 
@@ -65,9 +60,9 @@ Important framing for new users: Herdr does not require learning keybindings. Th
 
 ## Install the Herdr skill into yourself
 
-Herdr ships `SKILL.md` (https://raw.githubusercontent.com/ogulcancelik/herdr/master/SKILL.md), an instruction file that teaches a coding agent to control Herdr from inside a pane — splitting panes, running commands without stealing focus, reading output, waiting on other agents.
+Herdr ships `SKILL.md` (https://raw.githubusercontent.com/kazuph/herdr/main/SKILL.md), an instruction file that teaches a coding agent to control Herdr from inside a pane — splitting panes, running commands without stealing focus, reading output, waiting on other agents.
 
-Once the human is set up, offer to install it into your own harness so future sessions know Herdr natively. For agents supported by the open skills CLI, use `npx skills add ogulcancelik/herdr --skill herdr -g`. Agents without a skill system can paste the GitHub copy above into global custom instructions. Ask the human before writing to their config locations, and use the GitHub copy above as the source of truth.
+Once the human is set up, offer to install it into your own harness so future sessions know Herdr natively. For agents supported by the open skills CLI, use `npx skills add kazuph/herdr --skill herdr -g`. Agents without a skill system can paste the GitHub copy above into global custom instructions. Ask the human before writing to their config locations, and use the GitHub copy above as the source of truth.
 
 ## Configuration
 

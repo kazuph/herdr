@@ -249,7 +249,10 @@ impl DispatchStore {
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             JOIN actors ta ON ta.id=d.to_actor
-            WHERE d.kind='message' AND d.room=?1 AND ta.name=?2 AND d.status='queued'
+            WHERE d.kind='message'
+              AND d.room=?1
+              AND d.to_actor=(SELECT id FROM actors WHERE kind='agent' AND name=?2)
+              AND d.status='queued'
             ORDER BY d.id ASC
             "#,
             params![room, to_agent],
@@ -271,10 +274,32 @@ impl DispatchStore {
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             JOIN actors ta ON ta.id=d.to_actor
-            WHERE d.kind='message' AND d.room=?1 AND ta.name=?2 AND d.status='queued'
+            WHERE d.kind='message'
+              AND d.room=?1
+              AND d.to_actor=(SELECT id FROM actors WHERE kind='agent' AND name=?2)
+              AND d.status='queued'
             ORDER BY d.id ASC
             "#,
             params![room, to_agent],
+        )
+    }
+
+    pub(crate) fn pending_messages_for_agent(
+        &self,
+        to_agent: &str,
+    ) -> rusqlite::Result<Vec<MessageRecord>> {
+        self.select_messages(
+            r#"
+            SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.delivered_at
+            FROM dispatches d
+            JOIN actors fa ON fa.id=d.from_actor
+            JOIN actors ta ON ta.id=d.to_actor
+            WHERE d.kind='message'
+              AND d.to_actor=(SELECT id FROM actors WHERE kind='agent' AND name=?1)
+              AND d.status='queued'
+            ORDER BY d.room ASC, d.id ASC
+            "#,
+            params![to_agent],
         )
     }
 
@@ -453,6 +478,7 @@ impl DispatchStore {
         Ok(changed == 1)
     }
 
+    #[cfg(any(unix, test))]
     pub(crate) fn mark_command_cancelled(&self, id: &str) -> rusqlite::Result<bool> {
         let changed = self.conn.execute(
             r#"
@@ -465,6 +491,7 @@ impl DispatchStore {
         Ok(changed == 1)
     }
 
+    #[cfg(any(unix, test))]
     pub(crate) fn mark_command_cancelling(&self, id: &str) -> rusqlite::Result<bool> {
         let changed = self.conn.execute(
             r#"
