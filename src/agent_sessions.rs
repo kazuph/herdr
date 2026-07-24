@@ -365,7 +365,7 @@ mod tests {
         let root = test_temp_dir("claude-process-record");
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("47341.json");
-        let cwd = Path::new("/Users/kazuph");
+        let cwd = Path::new("/home/example/project");
         let id = "5c9b2148-f225-4422-a524-cd0565cbc625";
         std::fs::write(
             &path,

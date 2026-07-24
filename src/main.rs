@@ -1,10 +1,11 @@
-use std::io::{self, IsTerminal};
+use std::io;
 
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
-    EnableFocusChange, EnableMouseCapture, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    EnableFocusChange, EnableMouseCapture,
 };
+#[cfg(not(windows))]
+use crossterm::event::{PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
 use crossterm::execute;
 
 pub(crate) const HERDR_ENV_VAR: &str = "HERDR_ENV";
@@ -18,9 +19,50 @@ const NESTED_HERDR_MESSAGES: [&str; 6] = [
     "recursion detected. base case not found. aborting.",
 ];
 
+#[cfg(not(windows))]
+fn push_keyboard_enhancement_flags() -> io::Result<()> {
+    execute!(
+        io::stdout(),
+        PushKeyboardEnhancementFlags(crate::input::ime_compatible_keyboard_enhancement_flags())
+    )
+}
+
+#[cfg(windows)]
+fn push_keyboard_enhancement_flags() -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn pop_keyboard_enhancement_flags() -> io::Result<()> {
+    execute!(io::stdout(), PopKeyboardEnhancementFlags)
+}
+
+#[cfg(windows)]
+fn pop_keyboard_enhancement_flags() -> io::Result<()> {
+    Ok(())
+}
+
+fn set_host_color_scheme_reports(enabled: bool) -> io::Result<()> {
+    use std::io::Write;
+
+    let sequence = if enabled {
+        crate::terminal_theme::HOST_COLOR_SCHEME_REPORT_ENABLE_SEQUENCE
+    } else {
+        crate::terminal_theme::HOST_COLOR_SCHEME_REPORT_DISABLE_SEQUENCE
+    };
+    io::stdout().write_all(sequence.as_bytes())?;
+    io::stdout().flush()
+}
+
+mod agent_resume;
+#[allow(dead_code)]
+// Fork keeps fail-closed session discovery helpers; restore currently uses command rendering only.
 mod agent_sessions;
 mod api;
 mod app;
+mod build_info;
+#[cfg(not(windows))]
+mod checksum;
 mod cli;
 mod client;
 mod config;
@@ -28,26 +70,36 @@ mod detect;
 mod dispatch;
 mod events;
 mod ghostty;
+mod handoff_runtime;
 mod input;
+#[allow(dead_code)]
 mod integration;
 mod ipc;
 mod job;
 mod kitty_graphics;
 mod layout;
 mod logging;
+mod metadata_tokens;
 mod msg;
 mod pane;
 mod persist;
 mod platform;
+mod plugin_command;
+mod plugin_paths;
+mod popup_size;
 mod product_announcements;
+mod protocol;
+mod pty;
 mod raw_input;
 mod release_notes;
 mod remote;
+mod render_prof;
 mod selection;
 mod server;
 mod session;
 mod sound;
 mod terminal;
+mod terminal_modes;
 mod terminal_notify;
 mod terminal_theme;
 mod ui;
@@ -55,147 +107,8 @@ mod update;
 mod workspace;
 mod worktree;
 
-fn print_root_help() {
-    println!(
-        r#"---
-name: herdr
-description: Terminal workspace manager for AI coding agents. Use this CLI to control Herdr sessions, workspaces, tabs, panes, agents, waits, and local server state.
----
-
-# herdr
-
-## When To Use
-- Launch or attach to a persistent Herdr workspace.
-- Control Herdr from scripts, hooks, and AI agents through the local socket API.
-- Split panes, run commands, start helper agents, read pane output, and wait for agent or command state.
-
-## Agent Rules
-- If HERDR_ENV=1 is set, prefer the herdr CLI over terminal keystroke automation.
-- Use `herdr pane current` to identify the calling pane. It first trusts HERDR_PANE_ID, then resolves the calling process session, then checks the parent process tree.
-- Do not infer the requester pane from the focused pane, active window, pane list order, or UI selection.
-- If `pane current` still cannot identify the pane, inspect `herdr pane list`, `herdr pane get <pane_id>`, and `herdr pane read <pane_id> --source recent --lines 40`; continue only when one candidate is proven.
-- Treat `p_...`, workspace-local ids like `1-2`, global ids like `23`, and tmux-style ids like `%23` as Herdr pane targets when they are accepted by Herdr commands.
-- Four-word agent workflow: send=talk, run=execute, log=inspect, inbox=pull fallback.
-- Use `herdr run -- <command...>` for non-interactive background work with durable completion. Add `--pane` for interactive/TTY work in a visible same-space pane.
-- Use `herdr agent ...` only for AI agent terminals. Use `herdr pane ...` for shells, tests, servers, and ordinary commands.
-
-## Usage
-```sh
-herdr
-herdr help
-herdr --help
-herdr --session <name>
-herdr --remote <ssh-target> [--session <name>]
-herdr session attach <name>
-herdr server stop
-herdr server reload-config
-herdr config <subcommand> ...
-herdr workspace <subcommand> ...
-herdr tab <subcommand> ...
-herdr agent <subcommand> ...
-herdr send <agent_target> <message>
-herdr run [--label TEXT] [--cwd PATH] [--caller <pane>] [--completion summary|full|none] [--pane [--split right|down] [--close-on-success]] -- <command...>
-herdr log [--room R] [--project P] [--limit N]
-herdr inbox [--room R]
-herdr msg <subcommand> ...
-herdr job <subcommand> ...
-herdr pane <subcommand> ...
-herdr wait <subcommand> ...
-herdr session <subcommand> ...
-```
-
-## Commands
-| Command | Purpose |
-| --- | --- |
-| `herdr` | Launch or attach to the persistent session. |
-| `herdr status [server|client]` | Show local client and running server status. |
-| `herdr server stop` | Stop the running server via the API socket. |
-| `herdr server reload-config` | Reload config.toml in the running server. |
-| `herdr config reset-keys` | Back up config.toml and remove custom keybindings. |
-| `herdr workspace <subcommand>` | Create, list, rename, or focus workspaces. |
-| `herdr tab <subcommand>` | Create, list, rename, or focus tabs. |
-| `herdr agent <subcommand>` | List, start, read, send to, focus, attach to, rename, restore, or wait on AI agents. |
-| `herdr send <target> <text>` | Talk to another Herdr agent with recorded delivery. |
-| `herdr run -- <command...>` | Execute a pane-less background job with durable completion; add `--pane` for visible interactive execution. |
-| `herdr log <subcommand>` | Inspect message and command dispatch history, DB path, schema, stats, and job logs. |
-| `herdr inbox` | Pull queued fallback messages for the current agent. |
-| `herdr msg <subcommand>` | Alias namespace for old message commands. |
-| `herdr job <subcommand>` | Alias namespace for old job commands. |
-| `herdr pane <subcommand>` | List, split, read, run, notify, focus, rename, or close panes. |
-| `herdr wait <subcommand>` | Block until pane output or agent status matches. |
-| `herdr session <subcommand>` | Manage named persistent sessions. |
-| `herdr server` | Run as the headless server. Advanced users normally do not need this directly. |
-
-## Essential Agent Recipes
-```sh
-herdr pane current
-herdr pane list
-herdr pane split <pane_id> right
-herdr pane run <pane_id> <command>
-herdr run --label tests -- cargo test
-herdr run --pane --label dev-server -- npm run dev
-herdr run list
-herdr log --db
-herdr log stats
-herdr pane read <pane_id>
-herdr agent start --kind codex --cwd <path>
-herdr send <agent_target> <message>
-herdr wait agent-status <agent_target> --status done
-```
-
-## Options
-| Option | Meaning |
-| --- | --- |
-| `--no-session` | Run monolithically without server/client mode. Escape hatch. |
-| `--session <name>` | Use or create a named persistent session. |
-| `--remote <target>` | Attach through SSH to a remote Herdr server. |
-| `--default-config` | Print default configuration and exit. |
-| `--version`, `-V` | Print version and exit. |
-| `--help`, `-h` | Show this help. |
-
-## More Help
-Run subcommand help for exact arguments:
-
-```sh
-herdr server --help
-herdr status --help
-herdr config --help
-herdr workspace --help
-herdr tab --help
-herdr agent --help
-herdr send --help
-herdr run --help
-herdr log --help
-herdr inbox --help
-herdr pane --help
-herdr wait --help
-herdr session --help
-```
-
-Config: {config_path}
-Data: ~/.config/herdr/herdr.db (per-session: ~/.config/herdr/sessions/<name>/herdr.db; WAL mode; safe to query while running)
-Lowest-level API: sqlite3 "$(herdr log --db)" — schema: herdr log --schema
-Logs: {log_paths}
-Env: HERDR_CONFIG_PATH overrides config file path. HERDR_SESSION selects a session. HERDR_PANE_ID identifies the current pane when set.
-Home: https://herdr.dev"#,
-        config_path = config::config_path().display(),
-        log_paths = logging::help_log_paths_summary()
-    );
-}
-
 fn init_logging() {
     crate::logging::init_file_logging("herdr.log");
-}
-
-pub(crate) fn ensure_interactive_terminal() -> io::Result<()> {
-    if io::stdin().is_terminal() && io::stdout().is_terminal() {
-        return Ok(());
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "herdr requires an interactive terminal",
-    ))
 }
 
 const DEFAULT_CONFIG: &str = r##"# herdr configuration
@@ -211,6 +124,12 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 #                  vesper
 # name = "catppuccin"
 
+# Follow host terminal light/dark appearance and switch Herdr UI themes.
+# Existing manual behavior is unchanged unless this is true.
+# auto_switch = false
+# dark_name = "catppuccin"
+# light_name = "catppuccin-latte"
+
 # Override individual color tokens on top of the base theme.
 # Accepts: hex (#rrggbb), named colors, rgb(r,g,b), or panel_bg = "reset"
 # [theme.custom]
@@ -223,6 +142,24 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Executable used for new interactive panes.
 # Empty means $SHELL, then /bin/sh.
 # default_shell = ""
+
+# Startup mode for new interactive pane shells: "auto", "login", or "non_login".
+# "auto" uses login shells on macOS and keeps the current behavior elsewhere.
+# shell_mode = "auto"
+
+# CWD policy for new panes, tabs, and workspaces when no explicit --cwd is provided.
+# Use "follow" to inherit the source pane/workspace, "home" for $HOME,
+# "current" for Herdr's process directory, or a fixed path such as "~/Projects".
+# new_cwd = "follow"
+
+[update]
+# Source-built fork binaries never self-update or check release services.
+# These legacy settings are ignored by this build.
+# channel = "stable"
+
+# version_check = false
+
+# manifest_check = false
 
 [keys]
 # Prefix key to enter prefix mode (default: "ctrl+b")
@@ -242,10 +179,11 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # reload_config = "prefix+shift+r"
 # open_notification_target = "prefix+o"
 # workspace_picker = "prefix+w"
+# goto = "prefix+g"
 # new_workspace = "prefix+shift+n"
 # new_worktree = "prefix+shift+g"
-# open_worktree = ""     # optional
-# remove_worktree = ""   # optional
+# open_worktree = ""    # optional, unset by default
+# remove_worktree = ""  # optional, unset by default; opens confirmation
 # rename_workspace = "prefix+shift+w"
 # close_workspace = "prefix+shift+d"
 # previous_workspace = "" # optional, unset by default
@@ -253,6 +191,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # previous_agent = ""     # optional, unset by default
 # next_agent = ""         # optional, unset by default
 # focus_agent = ""        # optional indexed binding, e.g. "prefix+alt+1..9"
+# remote_image_paste = "ctrl+v" # only active in herdr --remote; empty disables raw-key image paste
 # new_tab = "prefix+c"
 # rename_tab = "prefix+shift+t"
 # previous_tab = "prefix+p"
@@ -268,20 +207,35 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # focus_pane_right = "prefix+l"
 # cycle_pane_next = "prefix+tab"
 # cycle_pane_previous = "prefix+shift+tab"
-# split_vertical = ["prefix+percent", "prefix+v"]
-# split_horizontal = ["prefix+double_quote", "prefix+minus"]
+# last_pane = ""          # optional, unset by default; bind e.g. "prefix+tab" for global back-and-forth
+# split_vertical = "prefix+v"
+# split_horizontal = "prefix+minus"
 # close_pane = "prefix+x"
 # zoom = "prefix+z"       # legacy alias: fullscreen
 # resize_mode = "prefix+r"
 # toggle_sidebar = "prefix+b"
 
+# Navigate-mode movement. These local shortcuts win while navigate mode is open.
+# They are independent from focus_pane_*. Do not include prefix+, esc, enter, tab, or 1..9 here.
+# navigate_workspace_up = "up"
+# navigate_workspace_down = "down"
+# navigate_pane_left = "h"      # left arrow always focuses the pane to the left
+# navigate_pane_down = "j"
+# navigate_pane_up = "k"
+# navigate_pane_right = "l"     # right arrow always focuses the pane to the right
+
 # Custom commands use the same binding syntax.
 # type = "shell" runs detached in the background.
 # type = "pane" opens a temporary pane and closes it when the command exits.
+# type = "popup" opens a session-modal terminal without changing the tab layout.
+# Popup width and height accept terminal cells or percentages such as "80%".
+# On Windows, command strings run through cmd.exe /d /c.
 # [[keys.command]]
-# key = "prefix+g"
-# type = "pane"
+# key = "prefix+alt+g"
+# type = "popup"
 # command = "lazygit"
+# width = "80%"
+# height = "80%"
 
 # Legacy indexed shortcut config is still parsed for compatibility.
 # Prefer switch_tab, switch_workspace, and focus_agent for new configs.
@@ -290,8 +244,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # workspaces = "" # e.g. "ctrl+shift" makes ctrl+shift+1..9 switch workspaces directly
 # agents = ""     # e.g. "alt" makes alt+1..9 focus agent rows directly
 
-[worktrees]
-# Root directory for worktree checkouts created from the workspace sidebar.
+# [worktrees]
 # directory = "~/.herdr/worktrees"
 
 [ui]
@@ -304,10 +257,41 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Maximum sidebar width when expanded (columns)
 # sidebar_max_width = 72
 
+# Start with the sidebar collapsed. Changes take effect on the next launch.
+# sidebar_start_collapsed = false
+
+# Collapsed sidebar presentation: "compact" keeps the narrow status rail, "hidden" uses zero width.
+# sidebar_collapsed_mode = "compact"
+
+# Terminal width at or below which Herdr uses the mobile single-column layout.
+# Increase this for foldables, tablets, or wide phone terminals.
+# mobile_width_threshold = 64
+
 # Capture mouse input for Herdr's mouse UI.
 # Set false to let the terminal handle normal clicks, such as Cmd-clicking URLs.
 # Pane apps like lazygit and btop can still receive mouse when they request it.
 # mouse_capture = true
+
+# Copy text selected by mouse drag or double-click.
+# Set false to disable mouse text selection and copying.
+# copy_on_select = true
+
+# Host cursor policy: "auto", "native", or "drawn".
+# "auto" draws Herdr's own cursor on native Windows builds and WSL to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
+# "native" always uses the outer terminal cursor. "drawn" always draws Herdr's cursor as terminal cell content.
+# host_cursor = "auto"
+
+# Optional modifier that forwards right-click hold/drag gestures to pane apps instead of opening Herdr's pane menu.
+# Empty/off disables this. Shift is intentionally unsupported because terminals commonly reserve Shift+mouse.
+# right_click_passthrough_modifier = ""
+
+# Force a full redraw when the outer terminal regains focus.
+# Set false to reduce visible flashing when switching back to Herdr.
+# Trade-off: rare host terminal surface corruption may persist until the next full redraw.
+# redraw_on_focus_gained = true
+
+# Pane scrollback lines to scroll per mouse wheel notch.
+# mouse_scroll_lines = 3
 
 # Ask for confirmation before closing a workspace
 # confirm_close = true
@@ -316,11 +300,43 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Set false to create tabs immediately with generated names.
 # prompt_new_tab_name = true
 
-# Agent panel view: "all" or "sort". Sort groups attention first, then working, then seen idle.
-# agent_panel_scope = "all"
+# Draw borders around split panes.
+# pane_borders = true
 
-# Workspace panel density: "full" or "slim". Slim keeps workspace rows to one line.
-# workspace_panel_density = "full"
+# Keep split panes visually separated instead of sharing divider borders.
+# pane_gaps = true
+
+# Show detected/reported agent labels in split pane borders when no manual pane name is set.
+# show_agent_labels_on_pane_borders = false
+
+# Hide the tab row when a workspace has exactly one tab.
+# New tabs can still be created with the configured keybinding.
+# hide_tab_bar_when_single_tab = false
+
+# Agent panel ordering: "spaces" (grouped by space) or "priority" (attention queue).
+# "workspaces" is accepted as an alias for "spaces".
+# agent_panel_sort = "spaces"
+
+# Expanded agent rows. Built-ins are state_icon, state_text, workspace, tab, pane, agent,
+# terminal_title, and terminal_title_stripped.
+# Custom values reported through pane metadata use a $name token.
+# A token occurrence may be styled with { token = "workspace", fg = "#89b4fa", bold = true, dim = false }.
+# Omitted style fields preserve the contextual default.
+# [ui.sidebar.agents]
+# Blank rows between agent entries. Set to 1 to restore the previous spacing.
+# row_gap = 0
+# rows = [["state_icon", "workspace", "tab"], ["agent"]]
+# Optional canonical agent IDs replace the default rows for matching agents.
+# [ui.sidebar.agents.rows_by_agent]
+# claude = [["state_icon", "workspace", "tab"], ["terminal_title_stripped"], ["agent"]]
+
+# Expanded space rows. Built-ins are state_icon, state_text, workspace, branch, and git_status.
+# Custom values reported through workspace metadata use a $name token, for example $jj_status.
+# Inline token styles accept strict #RGB/#RRGGBB foregrounds plus bold and dim booleans.
+# [ui.sidebar.spaces]
+# Blank rows between space entries. Set to 1 to restore the previous spacing.
+# row_gap = 0
+# rows = [["state_icon", "workspace"], ["branch", "git_status"]]
 
 # Accent color for highlights, borders, and navigation UI.
 # Accepts: hex (#89b4fa), named colors (cyan, blue, magenta), or rgb(r,g,b)
@@ -329,10 +345,18 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Background notification popup delivery
 [ui.toast]
 # off = disable pop-up notifications
-# herdr = show top-right in-app toasts
+# herdr = show in-app toasts
 # terminal = ask the outer terminal to show a desktop notification
 # system = ask the OS notification service directly
 # delivery = "off"
+# delay_seconds = 1
+
+[ui.toast.herdr]
+# position = "bottom-right"
+
+[ui.toast.clipboard]
+# enabled = true
+# position = "bottom-center"
 
 # Play sounds when agents change state in background workspaces
 [ui.sound]
@@ -347,69 +371,75 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # [ui.sound.agents]
 # droid = "off"
 
+[session]
+# Resume supported AI-agent panes into their native conversation sessions after
+# a Herdr server restart. Trusted local tools may report exact session refs.
+# resume_agents_on_restore = true
+
+[remote]
+# Whether herdr manages the ssh config used for `herdr --remote`.
+# When true (default), herdr runs remote ssh through a generated config that
+# includes your ~/.ssh/config first and adds ServerAliveInterval/
+# ServerAliveCountMax as fallbacks (so any keepalive values you set yourself
+# still win) to survive idle network/NAT timeouts. Herdr also uses a private
+# per-attach OpenSSH control socket to reuse the first authenticated connection.
+# Set false to run plain ssh against your ssh config unchanged — this does not
+# force keepalive or multiplexing off, it only stops herdr from adding its own.
+# manage_ssh_config = true
+
 [experimental]
 # Allow launching herdr from inside a herdr-managed pane.
 # allow_nested = false
 # Experimental local Kitty graphics rendering for attached clients.
 # Requires a Kitty graphics-compatible outer terminal.
 # kitty_graphics = false
+# Save recent pane screen history across full server restarts.
+pane_history = false
+# While prefix mode is active, temporarily switch the macOS host input
+# source to an ASCII-capable keyboard layout so prefix commands register
+# even when a CJK IME is active, then restore the previous input source
+# when prefix mode exits. macOS only; best-effort. Default: false.
+# switch_ascii_input_source_in_prefix = false
+# Expose the focused pane's cursor to the outer terminal so macOS input
+# methods keep tracking the candidate window when TUIs paint their own
+# cursor (Claude Code, pi, codex). Trade-off: extra cursor visible for
+# apps that hide it without painting a replacement (vim normal mode, etc.).
+# reveal_hidden_cursor_for_cjk_ime = false
+# Optional allow-list: only reveal for focused panes whose detected agent
+# matches one of these names. Empty means apply to any focused pane.
+# If the list contains no valid names, the reveal does not apply.
+# Accepted: pi, claude, codex, gemini, cursor, devin, cline, opencode,
+# copilot, kimi, kiro, droid, amp, grok, hermes, kilo, qodercli, qoder.
+# cjk_ime_agents = []
+# Cursor shape rendered when reveal_hidden_cursor_for_cjk_ime is true.
+# Values: block, steady_block (default), underline, steady_underline, bar, steady_bar.
+# cjk_ime_cursor_shape = "steady_block"
 
 [advanced]
 # Maximum scrollback buffer size in bytes retained per pane terminal.
 # Matches Ghostty's default scrollback-limit behavior.
 # scrollback_limit_bytes = 10000000
-
-[agent_restore]
-# Relaunch agent CLIs (claude, codex, ...) in restored panes after a server
-# restart. Disabled by default; `herdr agent restore [--dry-run]` always works.
-# enabled = false
-# Delay before typing restore commands, letting pane shells finish init.
-# restore_delay_ms = 3000
-
-# Command templates per agent. {session_id} is replaced with the exact session
-# id recorded for that pane. Templates without {session_id} are rejected.
-# Entries overlay the built-in defaults:
-#   claude = "claude --resume {session_id}"
-#   codex  = "codex resume {session_id}"
-# [agent_restore.commands]
-# claude = "claude --permission-mode acceptEdits --resume {session_id}"
-# pi = "pi"
-
-[agent_start]
-# Commands used by the workspace/pane context menu "New ... agent" entries.
-# Values are argv arrays; no shell or alias expansion is applied.
-
-# [agent_start.commands]
-# claude = ["claude", "--permission-mode", "acceptEdits"]
-# codex = ["codex", "--sandbox", "workspace-write"]
 "##;
 
 fn should_block_nested(config: &config::Config) -> bool {
-    should_block_nested_for_context(
+    should_block_nested_for_env_and_ancestor(
         config,
         std::env::var(HERDR_ENV_VAR).ok().as_deref(),
         crate::platform::process_has_ancestor_named(std::process::id(), "herdr"),
-        inherited_herdr_context_matches_current(),
     )
 }
 
-fn should_block_nested_for_context(
+#[cfg(test)]
+fn should_block_nested_for_env(config: &config::Config, herdr_env: Option<&str>) -> bool {
+    should_block_nested_for_env_and_ancestor(config, herdr_env, true)
+}
+
+fn should_block_nested_for_env_and_ancestor(
     config: &config::Config,
     herdr_env: Option<&str>,
     has_herdr_ancestor: bool,
-    same_herdr_context: bool,
 ) -> bool {
-    !config.experimental.allow_nested
-        && herdr_env == Some(HERDR_ENV_VALUE)
-        && has_herdr_ancestor
-        && same_herdr_context
-}
-
-fn inherited_herdr_context_matches_current() -> bool {
-    let Ok(inherited_socket_path) = std::env::var(api::SOCKET_PATH_ENV_VAR) else {
-        return true;
-    };
-    std::path::Path::new(&inherited_socket_path) == session::active_api_socket_path()
+    !config.experimental.allow_nested && herdr_env == Some(HERDR_ENV_VALUE) && has_herdr_ancestor
 }
 
 fn random_nested_message() -> &'static str {
@@ -434,16 +464,75 @@ fn exit_if_nested_disabled(config: &config::Config) {
     }
 }
 
-fn main() -> io::Result<()> {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Err(err) = platform::refresh_ad_hoc_code_signature(&exe) {
-            eprintln!(
-                "warning: failed to refresh code signature for {}: {err}",
-                exe.display()
-            );
-        }
-    }
+pub(crate) fn print_root_help() {
+    println!(
+        r#"---
+name: herdr
+description: Terminal workspace manager for AI coding agents. Use this help as an operational contract, not just a command list.
+---
 
+# herdr
+
+## When To Use
+
+Use `herdr` to run terminal-based coding agents, address panes by stable targets, send durable messages, and run long commands without blocking the requester.
+
+## Agent Rules
+
+- Prefer `herdr pane current` to resolve your own pane.
+- `HERDR_PANE_ID` is authoritative when present; otherwise pane current resolves the calling process session.
+- Do not infer the requester pane from the focused pane, active window, pane list order, or UI selection.
+- If pane identity cannot be resolved, fail closed and ask for `--caller <pane>`.
+- For communication commands, remember: send=talk, run=execute, log=inspect, inbox=pull fallback.
+
+## Usage
+
+herdr [options]
+herdr help
+herdr --help
+herdr send <agent_target> <message>
+herdr inbox [--room <room>]
+herdr log [job_id|--db]
+herdr run --label tests -- cargo test
+
+## Commands
+
+- `herdr send <agent_target> <message>` sends a durable message to an agent or pane target.
+- `herdr inbox [--room <room>]` reads queued messages for the current agent.
+- `herdr log [job_id|--db]` inspects dispatch and job history; `sqlite3 "$(herdr log --db)"` opens the raw audit DB.
+- `herdr run --label tests -- cargo test` starts a pane-less background job by default.
+- `herdr run list` lists background jobs.
+- `herdr pane current` resolves the exact caller pane.
+- `herdr pane get <target>` accepts stable ids, workspace-local short ids, global numbers, and `%N` pane targets.
+- `herdr agent <subcommand>` controls agent identity, reads, sends, and restore actions.
+- `herdr workspace`, `herdr tab`, and `herdr pane` manage session layout through the socket API.
+
+## Essential Agent Recipes
+
+- Report your pane: `herdr pane report-agent "$(herdr pane current)" --source codex --agent codex --state working --title "<task>" --session-id "$CODEX_THREAD_ID"`.
+- Run long work: `herdr run --label tests -- cargo test`.
+- Read job output after completion: `herdr log <job_id>`.
+- Pull queued room mail: `herdr inbox --room <room>`.
+
+## Options
+
+- `--no-session` runs monolithically without server/client.
+- `--session <name>` uses or creates a named persistent session.
+- `--remote <target>` attaches through SSH to a remote Herdr server.
+- `--default-config` prints the default configuration.
+- `--version`, `-V` prints the version.
+- `--help`, `-h` shows this help.
+
+## More Help
+
+Run `herdr <command> help` for command-specific usage. Config: {config_path}. Logs: {log_paths}.
+"#,
+        config_path = config::config_path().display(),
+        log_paths = logging::help_log_paths_summary()
+    );
+}
+
+fn main() -> io::Result<()> {
     let raw_args: Vec<String> = std::env::args().collect();
     let args = match session::configure_from_args(&raw_args) {
         Ok(args) => args,
@@ -476,8 +565,11 @@ fn main() -> io::Result<()> {
         std::process::exit(2);
     }
 
-    if let cli::CommandOutcome::Handled(code) = cli::maybe_run(&args)? {
-        std::process::exit(code);
+    match cli::maybe_run(&args) {
+        Ok(cli::CommandOutcome::Handled(code)) => std::process::exit(code),
+        Ok(cli::CommandOutcome::NotCli) => {}
+        Err(err) if cli::protocol_mismatch_was_reported(&err) => std::process::exit(1),
+        Err(err) => return Err(err),
     }
 
     // Subcommands and flags (no TUI, no logging needed)
@@ -497,7 +589,19 @@ fn main() -> io::Result<()> {
     }
 
     if args.get(1).map(|s| s.as_str()) == Some("update") {
-        match update::self_update() {
+        let options = match update::parse_self_update_args(&args[2..]) {
+            Ok(options) => options,
+            Err(err) if err.starts_with("usage:") => {
+                eprintln!("{err}");
+                std::process::exit(0);
+            }
+            Err(err) => {
+                eprintln!("{err}");
+                eprintln!("usage: herdr update [--handoff]");
+                std::process::exit(2);
+            }
+        };
+        match update::self_update(options) {
             Ok(_) => return Ok(()),
             Err(e) => {
                 if e.starts_with("self-update is disabled") {
@@ -510,15 +614,13 @@ fn main() -> io::Result<()> {
         }
     }
 
-    if args.get(1).map(|arg| arg.as_str()) == Some("help")
-        || args.iter().any(|a| a == "--help" || a == "-h")
-    {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
         print_root_help();
         return Ok(());
     }
 
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("herdr {}", env!("CARGO_PKG_VERSION"));
+        println!("herdr {}", crate::build_info::version());
         return Ok(());
     }
 
@@ -532,6 +634,7 @@ fn main() -> io::Result<()> {
         "--no-session",
         "--session",
         "--remote",
+        "--remote-keybindings",
         "--version",
         "-V",
         "--default-config",
@@ -539,7 +642,8 @@ fn main() -> io::Result<()> {
         "-h",
     ];
     for arg in &args[1..] {
-        if arg.starts_with('-') && !known_flags.contains(&arg.as_str()) {
+        let arg_name = arg.split_once('=').map(|(name, _)| name).unwrap_or(arg);
+        if arg.starts_with('-') && !known_flags.contains(&arg_name) {
             eprintln!("unknown option: {arg}");
             eprintln!("run 'herdr --help' for usage");
             std::process::exit(1);
@@ -550,13 +654,15 @@ fn main() -> io::Result<()> {
                 "client",
                 "remote-client-bridge",
                 "update",
-                "help",
                 "status",
                 "config",
+                "channel",
                 "workspace",
+                "worktree",
                 "pane",
                 "wait",
                 "session",
+                "integration",
             ]
             .contains(&arg.as_str())
         {
@@ -567,7 +673,13 @@ fn main() -> io::Result<()> {
     }
 
     if let Some(remote_launch) = remote_launch {
-        return remote::run_remote(remote_launch);
+        let remote_target = remote_launch.target.clone();
+        if let Err(err) = remote::run_remote(remote_launch) {
+            eprintln!("error: {err}");
+            remote::print_remote_error_hint(&err, &remote_target);
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     let loaded_config = config::Config::load();
@@ -592,7 +704,7 @@ fn main() -> io::Result<()> {
 
     let (api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
     let event_hub = api::EventHub::default();
-    let _api_server = match api::start_server(api_tx, event_hub.clone()) {
+    let _api_server = match api::start_server_with_capabilities(api_tx, event_hub.clone(), None) {
         Ok(server) => server,
         Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
             eprintln!("error: herdr is already running");
@@ -602,11 +714,7 @@ fn main() -> io::Result<()> {
         Err(err) => return Err(err),
     };
 
-    let modify_other_keys_mode = crate::input::host_modify_other_keys_mode(
-        std::env::var("TMUX").is_ok(),
-        std::env::var("TERM_PROGRAM").ok().as_deref(),
-        std::env::var_os("WEZTERM_PANE").is_some(),
-    );
+    let modify_other_keys_mode = crate::input::host_modify_other_keys_mode();
 
     let original_hook = std::panic::take_hook();
     let panic_resets_modify_other_keys = modify_other_keys_mode.is_some();
@@ -620,11 +728,13 @@ fn main() -> io::Result<()> {
         }
         let _ = execute!(
             io::stdout(),
-            PopKeyboardEnhancementFlags,
             DisableFocusChange,
             DisableBracketedPaste,
             DisableMouseCapture
         );
+        let _ = crate::terminal_modes::clear_host_mouse_reporting(&mut io::stdout());
+        let _ = set_host_color_scheme_reports(false);
+        let _ = pop_keyboard_enhancement_flags();
         ratatui::restore();
         original_hook(info);
     }));
@@ -633,25 +743,26 @@ fn main() -> io::Result<()> {
     let config_diagnostic = config::config_diagnostic_summary(&loaded_config.diagnostics);
     logging::startup("app");
 
+    // Background update check (non-blocking, best-effort)
+    // Only checks for newer versions and notifies the TUI.
+    // Skipped in --no-session mode (testing).
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("failed to create tokio runtime");
 
     let result = rt.block_on(async {
-        ensure_interactive_terminal()?;
         let mut terminal = ratatui::init();
+        crate::terminal_modes::clear_host_mouse_reporting(&mut io::stdout())?;
         if config.ui.mouse_capture {
             execute!(io::stdout(), EnableMouseCapture)?;
         } else {
             execute!(io::stdout(), DisableMouseCapture)?;
         }
-        execute!(
-            io::stdout(),
-            EnableBracketedPaste,
-            EnableFocusChange,
-            PushKeyboardEnhancementFlags(crate::input::ime_compatible_keyboard_enhancement_flags())
-        )?;
+        execute!(io::stdout(), EnableBracketedPaste, EnableFocusChange)?;
+        set_host_color_scheme_reports(true)?;
+        push_keyboard_enhancement_flags()?;
 
         // Some hosts do not honor Kitty keyboard enhancement pushes for
         // Shift+Enter. Enable xterm modifyOtherKeys only on hosts where we
@@ -670,7 +781,6 @@ fn main() -> io::Result<()> {
             event_hub,
         );
         let result = app.run(&mut terminal).await;
-        let request_restart = app.state.request_restart;
 
         // Reset modifyOtherKeys if we enabled it.
         if modify_other_keys_mode.is_some() {
@@ -682,21 +792,19 @@ fn main() -> io::Result<()> {
         if crate::kitty_graphics::is_enabled() {
             crate::kitty_graphics::clear_all_host_graphics()?;
         }
+        pop_keyboard_enhancement_flags()?;
         execute!(
             io::stdout(),
-            PopKeyboardEnhancementFlags,
             DisableFocusChange,
             DisableBracketedPaste,
             DisableMouseCapture
         )?;
+        crate::terminal_modes::clear_host_mouse_reporting(&mut io::stdout())?;
+        set_host_color_scheme_reports(false)?;
         ratatui::restore();
 
         // Drop app (and all workspaces/panes) before runtime shuts down
         drop(app);
-
-        if request_restart {
-            return crate::session::exec_relaunch(true);
-        }
 
         result
     });
@@ -715,11 +823,16 @@ mod tests {
     #[test]
     fn nested_herdr_blocks_when_env_is_set() {
         let config = config::Config::default();
-        assert!(should_block_nested_for_context(
+        assert!(should_block_nested_for_env(&config, Some(HERDR_ENV_VALUE)));
+    }
+
+    #[test]
+    fn nested_herdr_does_not_block_stale_env_without_herdr_ancestor() {
+        let config = config::Config::default();
+        assert!(!should_block_nested_for_env_and_ancestor(
             &config,
             Some(HERDR_ENV_VALUE),
-            true,
-            true
+            false
         ));
     }
 
@@ -727,40 +840,13 @@ mod tests {
     fn nested_herdr_does_not_block_when_allowed() {
         let config: config::Config =
             toml::from_str("[experimental]\nallow_nested = true\n").unwrap();
-        assert!(!should_block_nested_for_context(
-            &config,
-            Some(HERDR_ENV_VALUE),
-            true,
-            true
-        ));
+        assert!(!should_block_nested_for_env(&config, Some(HERDR_ENV_VALUE)));
     }
 
     #[test]
     fn nested_herdr_does_not_block_without_env() {
         let config = config::Config::default();
-        assert!(!should_block_nested_for_context(&config, None, true, true));
-    }
-
-    #[test]
-    fn leaked_herdr_env_does_not_block_without_herdr_parent() {
-        let config = config::Config::default();
-        assert!(!should_block_nested_for_context(
-            &config,
-            Some(HERDR_ENV_VALUE),
-            false,
-            true
-        ));
-    }
-
-    #[test]
-    fn nested_herdr_next_context_does_not_block_parent_herdr_env() {
-        let config = config::Config::default();
-        assert!(!should_block_nested_for_context(
-            &config,
-            Some(HERDR_ENV_VALUE),
-            true,
-            false
-        ));
+        assert!(!should_block_nested_for_env(&config, None));
     }
 
     #[test]

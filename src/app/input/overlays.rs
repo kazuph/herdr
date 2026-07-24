@@ -5,7 +5,7 @@ use ratatui::{
 };
 
 use crate::app::{
-    state::{AppState, DragState, DragTarget, Mode},
+    state::{AppState, DragState, DragTarget, Mode, NavigatorTarget},
     App,
 };
 
@@ -14,124 +14,12 @@ use super::{
     ScrollbarClickTarget,
 };
 
+fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
+    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+}
+
 impl App {
     pub(super) fn handle_overlay_mouse(&mut self, mouse: MouseEvent) -> bool {
-        if self.state.mode == Mode::NewLinkedWorktree {
-            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-                let area = self.state.view.terminal_area;
-                let action = crate::ui::new_linked_worktree_inner(area)
-                    .map(crate::ui::new_linked_worktree_button_rects)
-                    .and_then(|(create, cancel)| {
-                        modal_action_from_buttons(
-                            mouse.column,
-                            mouse.row,
-                            &[
-                                (create, ModalAction::Confirm),
-                                (cancel, ModalAction::Cancel),
-                            ],
-                        )
-                    });
-                match action {
-                    Some(ModalAction::Confirm) => self.start_worktree_add(),
-                    Some(ModalAction::Cancel) => self.close_worktree_create_dialog(),
-                    _ => {}
-                }
-            }
-            return true;
-        }
-
-        if self.state.mode == Mode::OpenExistingWorktree {
-            match mouse.kind {
-                MouseEventKind::Down(MouseButton::Left) => {
-                    let area = self.state.view.terminal_area;
-                    if let Some(open) = self.state.worktree_open.as_mut() {
-                        if let Some(inner) =
-                            crate::ui::open_existing_worktree_inner(area, open.entries.len())
-                        {
-                            let action = modal_action_from_buttons(
-                                mouse.column,
-                                mouse.row,
-                                &[
-                                    (
-                                        crate::ui::open_existing_worktree_button_rects(inner).0,
-                                        ModalAction::Confirm,
-                                    ),
-                                    (
-                                        crate::ui::open_existing_worktree_button_rects(inner).1,
-                                        ModalAction::Cancel,
-                                    ),
-                                ],
-                            );
-                            match action {
-                                Some(ModalAction::Confirm) => {
-                                    self.open_selected_existing_worktree()
-                                }
-                                Some(ModalAction::Cancel) => self.close_worktree_open_dialog(),
-                                None => {
-                                    if let Some(idx) = crate::ui::open_existing_worktree_entry_at(
-                                        inner,
-                                        open.entries.len(),
-                                        open.selected,
-                                        mouse.column,
-                                        mouse.row,
-                                    ) {
-                                        open.selected = idx;
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                MouseEventKind::ScrollUp => {
-                    if let Some(open) = &mut self.state.worktree_open {
-                        open.selected = open.selected.saturating_sub(1);
-                    }
-                }
-                MouseEventKind::ScrollDown => {
-                    if let Some(open) = &mut self.state.worktree_open {
-                        open.selected = open
-                            .selected
-                            .saturating_add(1)
-                            .min(open.entries.len().saturating_sub(1));
-                    }
-                }
-                _ => {}
-            }
-            return true;
-        }
-
-        if self.state.mode == Mode::ConfirmRemoveWorktree {
-            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-                let area = self.state.view.terminal_area;
-                if let Some(remove) = self.state.worktree_remove.as_ref() {
-                    let action = crate::ui::remove_worktree_inner(area)
-                        .map(|inner| {
-                            crate::ui::remove_worktree_button_rects(
-                                inner,
-                                remove.force_confirmation,
-                            )
-                        })
-                        .and_then(|(remove_rect, cancel_rect)| {
-                            modal_action_from_buttons(
-                                mouse.column,
-                                mouse.row,
-                                &[
-                                    (remove_rect, ModalAction::Confirm),
-                                    (cancel_rect, ModalAction::Cancel),
-                                ],
-                            )
-                        });
-                    match action {
-                        Some(ModalAction::Confirm) => self.start_worktree_remove(),
-                        Some(ModalAction::Cancel) => self.close_worktree_remove_dialog(),
-                        _ => {}
-                    }
-                }
-            }
-            return true;
-        }
-
         if self.state.mode == Mode::ReleaseNotes {
             match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left)
@@ -235,6 +123,75 @@ impl App {
             return true;
         }
 
+        if self.state.mode == Mode::Navigator {
+            match mouse.kind {
+                MouseEventKind::Moved => {
+                    if let Some(idx) = self.state.navigator_row_index_at_from(
+                        &self.terminal_runtimes,
+                        mouse.column,
+                        mouse.row,
+                    ) {
+                        self.state.navigator.selected = idx;
+                        self.state
+                            .ensure_navigator_selection_visible_from(&self.terminal_runtimes);
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if self
+                        .state
+                        .navigator_search_contains(mouse.column, mouse.row)
+                    {
+                        self.state.navigator.search_focused = true;
+                    } else if let Some(idx) = self.state.navigator_row_index_at_from(
+                        &self.terminal_runtimes,
+                        mouse.column,
+                        mouse.row,
+                    ) {
+                        self.state.navigator.selected = idx;
+                        let target = self
+                            .state
+                            .navigator_rows_from(&self.terminal_runtimes)
+                            .get(idx)
+                            .map(|row| (row.target.clone(), row.is_workspace));
+                        if let Some((NavigatorTarget::Workspace { .. }, true)) = target {
+                            if self.state.navigator_row_caret_at(mouse.column) {
+                                self.state.toggle_selected_navigator_workspace_from(
+                                    &self.terminal_runtimes,
+                                );
+                            } else {
+                                self.state
+                                    .accept_navigator_selection_from(&self.terminal_runtimes);
+                            }
+                        } else {
+                            self.state
+                                .accept_navigator_selection_from(&self.terminal_runtimes);
+                        }
+                    } else if !self.state.navigator_popup_contains(mouse.column, mouse.row) {
+                        leave_modal(&mut self.state);
+                    }
+                }
+                MouseEventKind::ScrollUp => {
+                    self.state.navigator.scroll = self.state.navigator.scroll.saturating_sub(3);
+                    self.state.navigator.selected = self.state.navigator.scroll;
+                    self.state
+                        .clamp_navigator_selection_from(&self.terminal_runtimes);
+                }
+                MouseEventKind::ScrollDown => {
+                    let viewport = self.state.navigator_body_rect().height as usize;
+                    let max = self
+                        .state
+                        .navigator_max_scroll_from(&self.terminal_runtimes, viewport);
+                    self.state.navigator.scroll =
+                        self.state.navigator.scroll.saturating_add(3).min(max);
+                    self.state.navigator.selected = self.state.navigator.scroll;
+                    self.state
+                        .clamp_navigator_selection_from(&self.terminal_runtimes);
+                }
+                _ => {}
+            }
+            return true;
+        }
+
         if self.state.mode == Mode::KeybindHelp {
             match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left)
@@ -304,6 +261,94 @@ impl AppState {
         self.view.sidebar_rect.union(self.view.terminal_area)
     }
 
+    pub(crate) fn navigator_popup_rect(&self) -> Rect {
+        let area = self.onboarding_full_area();
+        let margin_x = (area.width / 16).max(2);
+        let margin_y = (area.height / 10).max(1);
+        let width = area.width.saturating_sub(margin_x.saturating_mul(2));
+        let height = area.height.saturating_sub(margin_y.saturating_mul(2));
+        Rect::new(
+            area.x + margin_x,
+            area.y + margin_y,
+            width.max(4),
+            height.max(4),
+        )
+    }
+
+    pub(crate) fn navigator_inner_rect(&self) -> Rect {
+        Block::default()
+            .borders(Borders::ALL)
+            .inner(self.navigator_popup_rect())
+    }
+
+    pub(crate) fn navigator_search_rect(&self) -> Rect {
+        let inner = self.navigator_inner_rect();
+        Rect::new(inner.x, inner.y, inner.width, inner.height.min(1))
+    }
+
+    pub(crate) fn navigator_body_rect(&self) -> Rect {
+        let inner = self.navigator_inner_rect();
+        if inner.height <= 4 {
+            return Rect::default();
+        }
+        Rect::new(
+            inner.x,
+            inner.y + 2,
+            inner.width,
+            inner.height.saturating_sub(4),
+        )
+    }
+
+    pub(crate) fn navigator_detail_rect(&self) -> Rect {
+        let inner = self.navigator_inner_rect();
+        Rect::new(
+            inner.x,
+            inner.y + inner.height.saturating_sub(2),
+            inner.width,
+            inner.height.min(1),
+        )
+    }
+
+    pub(crate) fn navigator_footer_rect(&self) -> Rect {
+        let inner = self.navigator_inner_rect();
+        Rect::new(
+            inner.x,
+            inner.y + inner.height.saturating_sub(1),
+            inner.width,
+            inner.height.min(1),
+        )
+    }
+
+    pub(crate) fn navigator_popup_contains(&self, col: u16, row: u16) -> bool {
+        rect_contains(self.navigator_popup_rect(), col, row)
+    }
+
+    pub(crate) fn navigator_search_contains(&self, col: u16, row: u16) -> bool {
+        rect_contains(self.navigator_search_rect(), col, row)
+    }
+
+    pub(crate) fn navigator_row_index_at_from(
+        &self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+        col: u16,
+        row: u16,
+    ) -> Option<usize> {
+        let body = self.navigator_body_rect();
+        if !rect_contains(body, col, row) {
+            return None;
+        }
+        let idx = self
+            .navigator
+            .scroll
+            .saturating_add(row.saturating_sub(body.y) as usize);
+        (idx < self.navigator_rows_from(terminal_runtimes).len()).then_some(idx)
+    }
+
+    pub(crate) fn navigator_row_caret_at(&self, col: u16) -> bool {
+        let body = self.navigator_body_rect();
+        col <= body.x.saturating_add(3)
+    }
+
     pub(super) fn onboarding_modal_inner(&self, popup_w: u16, popup_h: u16) -> Option<Rect> {
         let area = self.onboarding_full_area();
         let popup_w = popup_w.min(area.width.saturating_sub(4));
@@ -355,31 +400,27 @@ impl AppState {
         if inner.height < 8 || inner.width < 4 {
             return None;
         }
-        let body = crate::ui::modal_stack_areas(inner, 2, 1, 0, 1).content;
-        let preview = self
-            .release_notes
-            .as_ref()
-            .is_some_and(|notes| notes.preview);
-        Some(crate::ui::release_notes_sections(body, preview).notes_body)
+        Some(crate::ui::modal_stack_areas(inner, 2, 1, 0, 1).content)
     }
 
     fn release_notes_scroll_metrics(&self) -> Option<crate::pane::ScrollMetrics> {
         let notes = self.release_notes.as_ref()?;
         let body = self.release_notes_body_rect()?;
         let viewport_rows = body.height.max(1) as usize;
-        let lines = crate::ui::release_notes_display_lines(notes, &self.palette);
+        let lines = crate::ui::release_notes_display_lines(
+            notes,
+            &self.update_install_command,
+            &self.palette,
+        );
 
-        let rows_for_width = |wrap_width: usize| {
-            lines
-                .iter()
-                .map(|(width, _)| width.max(&1).div_ceil(wrap_width.max(1)))
-                .sum::<usize>()
+        let rows_for_width = |wrap_width: u16| {
+            crate::ui::release_notes_wrapped_line_count(&lines, wrap_width.max(1))
         };
 
-        let full_width = body.width.max(1) as usize;
+        let full_width = body.width.max(1);
         let mut total_rows = rows_for_width(full_width);
         let wrap_width = if total_rows > viewport_rows && full_width > 1 {
-            body.width.saturating_sub(1).max(1) as usize
+            body.width.saturating_sub(1).max(1)
         } else {
             full_width
         };
@@ -471,17 +512,14 @@ impl AppState {
         let viewport_rows = body.height.max(1) as usize;
         let lines = crate::ui::product_announcement_display_lines(announcement, &self.palette);
 
-        let rows_for_width = |wrap_width: usize| {
-            lines
-                .iter()
-                .map(|(width, _)| width.max(&1).div_ceil(wrap_width.max(1)))
-                .sum::<usize>()
+        let rows_for_width = |wrap_width: u16| {
+            crate::ui::release_notes_wrapped_line_count(&lines, wrap_width.max(1))
         };
 
-        let full_width = body.width.max(1) as usize;
+        let full_width = body.width.max(1);
         let mut total_rows = rows_for_width(full_width);
         let wrap_width = if total_rows > viewport_rows && full_width > 1 {
-            body.width.saturating_sub(1).max(1) as usize
+            body.width.saturating_sub(1).max(1)
         } else {
             full_width
         };
@@ -725,5 +763,38 @@ mod tests {
         ));
 
         assert!(app.state.request_complete_onboarding);
+    }
+
+    #[test]
+    fn release_notes_preview_scrollbar_uses_full_content_body() {
+        let mut app = app_for_mouse_test();
+        app.state.view.sidebar_rect = Rect::new(0, 0, 24, 16);
+        app.state.view.terminal_area = Rect::new(24, 0, 96, 16);
+        app.state.release_notes = Some(crate::app::state::ReleaseNotesState {
+            version: "9.9.9".into(),
+            body: "### Added\n- Custom command keybindings now accept an optional description field.\n\n### Fixed\n- Sidebar Git status refresh now deduplicates workspaces.\n- Large restored sessions no longer leave panes without shells after startup.\n- Pane shutdown no longer warns after the direct child has already exited.\n- Closing the last pane or tab in a parent worktree workspace now shows the existing confirmation before closing the whole worktree group.\n- Update prompts, toasts, and docs now distinguish installing a new binary from stopping or reattaching a running Herdr session to use it."
+                .into(),
+            scroll: 0,
+            preview: true,
+        });
+        app.state.update_install_command = "brew update && brew upgrade herdr".into();
+
+        let inner = app.state.release_notes_modal_inner().unwrap();
+        let expected_body = crate::ui::modal_stack_areas(inner, 2, 1, 0, 1).content;
+        let body = app.state.release_notes_body_rect().unwrap();
+
+        assert_eq!(body, expected_body);
+
+        let metrics = app.state.release_notes_scroll_metrics().unwrap();
+        assert_eq!(metrics.viewport_rows, body.height as usize);
+        assert!(metrics.max_offset_from_bottom > 0);
+
+        let track = crate::ui::release_notes_scrollbar_rect(body, metrics).unwrap();
+        assert_eq!(track.y, body.y);
+        assert!(matches!(
+            app.state
+                .release_notes_scrollbar_target_at(track.x, track.y),
+            Some(ScrollbarClickTarget::Thumb { .. } | ScrollbarClickTarget::Track { .. })
+        ));
     }
 }

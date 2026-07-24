@@ -111,6 +111,8 @@ fn is_routine_api_method(method: &str) -> bool {
             | "workspace.list"
             | "tab.list"
             | "pane.report_agent"
+            | "pane.report_agent_session"
+            | "pane.report_metadata"
     )
 }
 
@@ -211,6 +213,50 @@ pub(crate) fn pane_exit_failed(pane_id: u32, err: &str) {
     );
 }
 
+pub(crate) fn update_check_started() {
+    tracing::info!(
+        event = "update.check.start",
+        subsystem = "update",
+        outcome = "started",
+        "checking for updates"
+    );
+}
+
+pub(crate) fn update_check_failed(err: &str) {
+    tracing::warn!(
+        event = "update.check.complete",
+        subsystem = "update",
+        outcome = "error",
+        err,
+        "update check failed"
+    );
+}
+
+pub(crate) fn update_available(version: &str) {
+    tracing::info!(
+        event = "update.available",
+        subsystem = "update",
+        outcome = "ok",
+        version,
+        "update available"
+    );
+}
+
+pub(crate) fn integration_action(
+    action: &'static str,
+    target: &'static str,
+    outcome: &'static str,
+) {
+    tracing::info!(
+        event = "integration.action",
+        subsystem = "integration",
+        outcome,
+        action,
+        target,
+        "integration action finished"
+    );
+}
+
 pub(crate) fn workspace_created(workspace_id: &str, root_pane_id: u32) {
     tracing::info!(
         event = "workspace.create",
@@ -252,6 +298,7 @@ pub(crate) fn workspace_renamed(workspace_id: &str) {
     );
 }
 
+#[cfg(test)]
 pub(crate) fn tab_created(workspace_id: &str, tab_id: &str, root_pane_id: u32) {
     tracing::info!(
         event = "tab.create",
@@ -275,6 +322,7 @@ pub(crate) fn tab_focused(workspace_id: &str, tab_id: &str) {
     );
 }
 
+#[cfg(test)]
 pub(crate) fn tab_closed(workspace_id: &str, tab_id: &str) {
     tracing::info!(
         event = "tab.close",

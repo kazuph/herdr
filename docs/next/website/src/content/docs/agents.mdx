@@ -1,39 +1,82 @@
 ---
 title: Agents
-description: See what Herdr can detect, how agent state works, custom labels, and direct attach.
+description: See what Herdr can detect and how process and screen evidence determine agent state.
 ---
 
 Herdr is built for running more than one coding agent at a time. Each agent stays in a real terminal pane with its shell, logs, prompts, and running processes intact. Herdr tracks which panes contain agents, rolls their state up to tabs and workspaces, and lets you jump straight to the pane that needs attention instead of polling every terminal by hand.
 
 ## Supported agents
 
-Automatic detection works out of the box for common coding agents.
+Automatic detection works out of the box for common coding agents. Herdr determines `idle`, `working`, and `blocked` from the foreground process and the live terminal screen.
 
-| Agent | Idle / done | Working | Blocked |
-| --- | --- | --- | --- |
-| Pi | yes | yes | partial |
-| Claude Code | yes | yes | yes |
-| Codex | yes | yes | yes |
-| Droid | yes | yes | yes |
-| Amp | yes | yes | yes |
-| OpenCode | yes | yes | yes |
-| Grok CLI | yes | yes | yes |
-| Hermes Agent | yes | yes | yes |
-| Kiro CLI | yes | yes | no |
-| GitHub Copilot CLI | yes | yes | yes |
+| Agent | Built-in evidence |
+| --- | --- | --- |
+| Pi | foreground process and screen manifest |
+| OMP | foreground process and screen manifest |
+| GitHub Copilot CLI | foreground process and screen manifest |
+| Devin CLI | foreground process and screen manifest |
+| Kimi Code CLI | foreground process and screen manifest |
+| Hermes Agent | foreground process and screen manifest |
+| Qoder CLI | foreground process and screen manifest |
+| Droid | foreground process and screen manifest |
+| OpenCode | foreground process and screen manifest |
+| Kilo Code CLI | foreground process and screen manifest |
+| MastraCode | foreground process and screen manifest |
+| Claude Code | foreground process and screen manifest |
+| Codex | foreground process and screen manifest |
+| Cursor Agent CLI | foreground process and screen manifest |
+| Amp | foreground process and screen manifest |
+| Grok CLI | foreground process and screen manifest |
+| Antigravity CLI | foreground process and screen manifest |
+| Kiro CLI | foreground process and screen manifest |
+| Maki | foreground process and screen manifest |
 
-Detected but less thoroughly tested: Gemini CLI, Cursor Agent, Cline, and Kimi.
+Detected but less thoroughly tested: Gemini CLI and Cline. Unsupported agents still run normally as terminal processes. Trusted local tools can report state through the socket API when needed.
 
-Unsupported agents still run normally as terminal processes. They just may not get rich state unless a tool reports state over the socket API.
+## Status authority
 
-## How detection works
+Herdr identifies the foreground process in each pane and reads the live bottom-buffer screen snapshot. It evaluates bundled TOML manifests against that snapshot to classify `idle`, `working`, and `blocked`. For agents that emit them, manifests can also match terminal title and progress (OSC) sequences as evidence.
 
-Herdr combines two built-in signals:
+The screen snapshot comes from the recent bottom of the pane buffer, not the scrolled viewport. If you scroll back in Herdr, detection still follows the live agent UI at the bottom.
 
-1. foreground process detection
-2. terminal output heuristics
+Herdr leaves agent configuration directories unchanged. Trusted local tools can report state and exact session IDs through `pane.report_agent`; built-in process and screen detection remains available for every pane.
 
-Process detection tells Herdr which pane owns an agent. Heuristics infer state without installing hooks or plugins into agent config directories.
+## VMs and sandbox wrappers
+
+On Linux and macOS, a host-visible wrapper can hide the real agent process from Herdr. Set `HERDR_AGENT=<agent>` on the wrapper command to tell Herdr which existing agent screen manifest to use. For example, run `HERDR_AGENT=claude fence -- claude` on Linux or `HERDR_AGENT=claude nono run --profile claude-code -- claude` on macOS. The hint is scoped to that foreground process; setting it only inside a VM or container is not visible to Herdr, and you should avoid exporting it globally unless every inherited foreground process should be treated as that agent.
+
+## Blocked state
+
+Blocked detection is deliberately strict for screen-manifest agents. Herdr only marks `blocked` when the live bottom-buffer snapshot matches known visible approval, question, or permission UI. If no manifest rule matches for a known agent, Herdr falls back to `idle` and labels that fallback as `default_known_agent_idle_fallback` in explain output.
+
+This means unusual new agent prompts may initially show as `idle` instead of `blocked` until Herdr learns that screen shape. Those interactions should not make Herdr send input or take destructive action; they only affect the visible status and waits.
+
+## Detection manifests
+
+Bundled manifests live inside Herdr. Herdr also checks herdr.dev for remote manifest updates and applies valid per-agent rule updates automatically without requiring a Herdr restart. Remote manifests are stored in Herdr's state directory. Set `[update] manifest_check = false` to disable background remote manifest checks.
+
+Local overrides can replace a remote or bundled manifest from the platform config directory:
+
+```text
+~/.config/herdr/agent-detection/<agent>.toml
+```
+
+Local overrides always win. Without a local override, Herdr uses the newer compatible manifest between the cached remote manifest and the bundled manifest in the running binary. On debug builds, the same config helper may use a development directory such as `herdr-dev`. Invalid override files are ignored with a warning and Herdr falls back to the cached remote or bundled manifest for that agent.
+
+Remote manifests patch detection rules for agents Herdr already knows how to identify. Adding a completely new agent still requires a Herdr binary update for process detection and labels.
+
+The running server loads active manifests into memory on startup. Automatic remote manifest updates reload that in-memory cache after new rules are written. Run `herdr server update-agent-manifests` to fetch remote manifest updates immediately and reload the running server. After editing a local override manually, restart Herdr or run `herdr server reload-agent-manifests` to apply the file to the running server.
+
+Use `herdr agent explain` when a pane shows the wrong state:
+
+```bash
+herdr agent explain <target>
+herdr agent explain --file screen.txt --agent codex --json
+```
+
+Live explain is evaluated by the running server, so it reflects the active manifest cache. The explain output shows the agent, final state, whether screen detection was skipped by a full lifecycle authority, manifest source and version, cached remote version, local override shadowing, remote update status, matched rule, visible evidence flags, matcher and region evidence for evaluated rules, skipped-update reason for transcript viewers, and the idle fallback reason when no rule matched.
+
+Herdr can run inside tmux as the outer terminal environment. Agent detection does not inspect tmux sessions launched inside a Herdr pane. If a shell framework auto-enters tmux inside Herdr, Herdr sees `tmux` as the pane process instead of the agent behind it.
 
 ## State rollups
 
@@ -43,12 +86,22 @@ A blocked agent makes its pane, tab, and workspace look blocked. A working agent
 
 This is the main Herdr workflow: start several agents, let them work in parallel, and use the sidebar to see which project needs a decision, which one is still running, and which one is ready to review.
 
+## Direct state reports
+
+Use trusted local tools to report pane state and exact session ids:
+
+```bash
+herdr pane report-agent <pane_id> --source custom:tool --agent claude --state working --session-id <id>
+```
+
+Herdr can still detect agents from screen/process/session evidence, and local tools can add stronger state through the socket API.
+
 ## Custom agent labels
 
 You can rename an agent target for display:
 
 ```bash
-herdr agent rename 1-1 reviewer
+herdr agent rename w1:p1 reviewer
 herdr agent rename reviewer --clear
 ```
 
@@ -56,17 +109,22 @@ Targets accept terminal IDs, unique agent names, detected or reported agent labe
 
 ## Custom status labels
 
-Tools can report a visual status label without changing semantic state.
+Trusted local tools report semantic state only. Add display customization separately with pane metadata tokens.
 
 ```bash
-herdr pane report-agent 1-1 \
+herdr pane report-agent w1:p1 \
   --source custom:indexer \
   --agent docs-bot \
-  --state working \
-  --custom-status indexing
+  --state working
+
+herdr pane report-metadata w1:p1 \
+  --source custom:indexer-display \
+  --token summary=indexing
 ```
 
-`state` controls waits, notifications, and rollups. `custom-status` is only display text.
+`state` controls waits, notifications, and rollups. The `summary` token is display-only and can be used as `$summary` in an Agent sidebar row.
+
+Agent sidebar rows can also opt into `terminal_title` or `terminal_title_stripped`; neither appears in the default rows. The first shows the latest safety-normalized OSC 0/2 terminal title. The second removes one recognized leading activity or spinner glyph and following whitespace. Herdr owns these values on the server; they are ephemeral across a cold restart and remain independent of metadata titles and semantic agent state. Spinner animation can therefore update the raw title without producing a pane update when the stripped text stays the same.
 
 ## Start agents from the CLI
 
@@ -81,12 +139,8 @@ herdr agent start reviewer --cwd ~/project --split right -- pi
 You can place that agent in a specific workspace or tab:
 
 ```bash
-herdr agent start docs --workspace 1 --tab 1-1 -- claude
+herdr agent start docs --workspace w1 --tab w1:t1 -- claude
 ```
-
-You can also start common agents from the UI. Right-click a workspace or pane
-and choose Claude Code, Codex, or agy; Herdr creates a new split pane and
-marks it as an agent target immediately.
 
 Use `herdr pane ...` commands for ordinary terminals, servers, tests, shells, and low-level terminal input. For example, use `pane split` and `pane run` for `cargo test`, not `agent start`, unless that terminal is intentionally being treated as an agent target.
 
@@ -99,6 +153,8 @@ herdr agent attach reviewer
 ```
 
 Detach with `ctrl+b q`. Send a literal `ctrl+b` with `ctrl+b ctrl+b`.
+
+Scroll with the mouse wheel or plain page up/page down. Normal input jumps back to the bottom.
 
 Use `--takeover` if another direct attach client already owns input:
 

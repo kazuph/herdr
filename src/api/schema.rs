@@ -1,21 +1,72 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub mod agents;
+pub mod common;
+pub mod events;
+pub mod integrations;
+pub mod messages;
+pub mod panes;
+pub mod plugins;
+pub mod response;
+pub mod server;
+pub mod session;
+pub mod tabs;
+pub mod workspaces;
+pub mod worktrees;
+
+pub use agents::*;
+pub use common::*;
+pub use events::*;
+pub use integrations::*;
+pub use messages::*;
+pub use panes::*;
+pub use plugins::*;
+pub use response::*;
+pub use server::*;
+pub use session::*;
+pub use tabs::*;
+pub use workspaces::*;
+pub use worktrees::*;
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Request {
     pub id: String,
     #[serde(flatten)]
     pub method: Method,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "method", content = "params")]
+// Request enums are short-lived wire values; keeping variants direct preserves
+// the simple serde shape and avoids boxing churn across every caller.
+#[allow(clippy::large_enum_variant)]
 pub enum Method {
     #[serde(rename = "ping")]
     Ping(PingParams),
     #[serde(rename = "server.stop")]
     ServerStop(EmptyParams),
+    #[serde(rename = "server.restart")]
+    ServerRestart(EmptyParams),
+    #[serde(rename = "server.live_handoff")]
+    ServerLiveHandoff(ServerLiveHandoffParams),
     #[serde(rename = "server.reload_config")]
     ServerReloadConfig(EmptyParams),
+    #[serde(rename = "server.agent_manifests")]
+    ServerAgentManifests(EmptyParams),
+    #[serde(rename = "server.reload_agent_manifests")]
+    ServerReloadAgentManifests(EmptyParams),
+    #[serde(rename = "notification.show")]
+    NotificationShow(NotificationShowParams),
+    #[serde(rename = "client.window_title.set")]
+    ClientWindowTitleSet(ClientWindowTitleSetParams),
+    #[serde(rename = "client.window_title.clear")]
+    ClientWindowTitleClear(EmptyParams),
+    #[serde(rename = "session.snapshot")]
+    SessionSnapshot(EmptyParams),
     #[serde(rename = "workspace.create")]
     WorkspaceCreate(WorkspaceCreateParams),
     #[serde(rename = "workspace.list")]
@@ -26,8 +77,20 @@ pub enum Method {
     WorkspaceFocus(WorkspaceTarget),
     #[serde(rename = "workspace.rename")]
     WorkspaceRename(WorkspaceRenameParams),
+    #[serde(rename = "workspace.move")]
+    WorkspaceMove(WorkspaceMoveParams),
+    #[serde(rename = "workspace.report_metadata")]
+    WorkspaceReportMetadata(WorkspaceReportMetadataParams),
     #[serde(rename = "workspace.close")]
     WorkspaceClose(WorkspaceTarget),
+    #[serde(rename = "worktree.list")]
+    WorktreeList(WorktreeListParams),
+    #[serde(rename = "worktree.create")]
+    WorktreeCreate(WorktreeCreateParams),
+    #[serde(rename = "worktree.open")]
+    WorktreeOpen(WorktreeOpenParams),
+    #[serde(rename = "worktree.remove")]
+    WorktreeRemove(WorktreeRemoveParams),
     #[serde(rename = "tab.create")]
     TabCreate(TabCreateParams),
     #[serde(rename = "tab.list")]
@@ -38,6 +101,8 @@ pub enum Method {
     TabFocus(TabTarget),
     #[serde(rename = "tab.rename")]
     TabRename(TabRenameParams),
+    #[serde(rename = "tab.move")]
+    TabMove(TabMoveParams),
     #[serde(rename = "tab.close")]
     TabClose(TabTarget),
     #[serde(rename = "agent.list")]
@@ -46,6 +111,8 @@ pub enum Method {
     AgentGet(AgentTarget),
     #[serde(rename = "agent.read")]
     AgentRead(AgentReadParams),
+    #[serde(rename = "agent.explain")]
+    AgentExplain(AgentTarget),
     #[serde(rename = "agent.send")]
     AgentSend(AgentSendParams),
     #[serde(rename = "agent.rename")]
@@ -66,8 +133,30 @@ pub enum Method {
     MsgRooms(EmptyParams),
     #[serde(rename = "pane.split")]
     PaneSplit(PaneSplitParams),
+    #[serde(rename = "pane.swap")]
+    PaneSwap(PaneSwapParams),
     #[serde(rename = "pane.move")]
     PaneMove(PaneMoveParams),
+    #[serde(rename = "pane.zoom")]
+    PaneZoom(PaneZoomParams),
+    #[serde(rename = "pane.layout")]
+    PaneLayout(PaneLayoutParams),
+    #[serde(rename = "pane.process_info")]
+    PaneProcessInfo(PaneProcessInfoParams),
+    #[serde(rename = "layout.export")]
+    LayoutExport(LayoutExportParams),
+    #[serde(rename = "layout.apply")]
+    LayoutApply(LayoutApplyParams),
+    #[serde(rename = "layout.set_split_ratio")]
+    LayoutSetSplitRatio(LayoutSetSplitRatioParams),
+    #[serde(rename = "pane.neighbor")]
+    PaneNeighbor(PaneNeighborParams),
+    #[serde(rename = "pane.edges")]
+    PaneEdges(PaneEdgesParams),
+    #[serde(rename = "pane.focus_direction")]
+    PaneFocusDirection(PaneFocusDirectionParams),
+    #[serde(rename = "pane.resize")]
+    PaneResize(PaneResizeParams),
     #[serde(rename = "pane.list")]
     PaneList(PaneListParams),
     #[serde(rename = "pane.current")]
@@ -86,1212 +175,67 @@ pub enum Method {
     PaneSendInput(PaneSendInputParams),
     #[serde(rename = "pane.read")]
     PaneRead(PaneReadParams),
+    #[serde(rename = "pane.graphics.set")]
+    PaneGraphicsSet(PaneGraphicsSetParams),
+    #[serde(rename = "pane.graphics.clear")]
+    PaneGraphicsClear(PaneGraphicsClearParams),
+    #[serde(rename = "pane.graphics.info")]
+    PaneGraphicsInfo(PaneTarget),
+    #[serde(rename = "pane.graphics.stream")]
+    #[schemars(skip)]
+    PaneGraphicsStream(PaneGraphicsStreamParams),
+    #[serde(skip)]
+    #[schemars(skip)]
+    PaneGraphicsStreamSet(PaneGraphicsSetParams),
+    #[serde(skip)]
+    #[schemars(skip)]
+    PaneGraphicsStreamOpen(PaneGraphicsStreamParams),
+    #[serde(skip)]
+    #[schemars(skip)]
+    PaneGraphicsStreamClose(PaneGraphicsStreamParams),
     #[serde(rename = "pane.report_agent")]
     PaneReportAgent(PaneReportAgentParams),
-    #[serde(rename = "pane.notify")]
-    PaneNotify(PaneNotifyParams),
+    #[serde(rename = "pane.report_agent_session")]
+    PaneReportAgentSession(PaneReportAgentSessionParams),
+    #[serde(rename = "pane.report_metadata")]
+    PaneReportMetadata(PaneReportMetadataParams),
     #[serde(rename = "pane.clear_agent_authority")]
     PaneClearAgentAuthority(PaneClearAgentAuthorityParams),
     #[serde(rename = "pane.release_agent")]
     PaneReleaseAgent(PaneReleaseAgentParams),
     #[serde(rename = "pane.close")]
     PaneClose(PaneTarget),
+    #[serde(rename = "popup.close")]
+    PopupClose(EmptyParams),
     #[serde(rename = "events.subscribe")]
     EventsSubscribe(EventsSubscribeParams),
     #[serde(rename = "events.wait")]
     EventsWait(EventsWaitParams),
     #[serde(rename = "pane.wait_for_output")]
     PaneWaitForOutput(PaneWaitForOutputParams),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct EmptyParams {}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct PingParams {}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkspaceTarget {
-    pub workspace_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneTarget {
-    pub pane_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneCurrentParams {
-    pub process_id: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TabTarget {
-    pub tab_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkspaceCreateParams {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub focus: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkspaceRenameParams {
-    pub workspace_id: String,
-    pub label: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TabCreateParams {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub focus: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct TabListParams {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TabRenameParams {
-    pub tab_id: String,
-    pub label: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentTarget {
-    pub target: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentReadParams {
-    pub target: String,
-    pub source: ReadSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lines: Option<u32>,
-    #[serde(default)]
-    pub format: ReadFormat,
-    #[serde(default = "default_true")]
-    pub strip_ansi: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentSendParams {
-    pub target: String,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentRenameParams {
-    pub target: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentStartParams {
-    pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tab_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub split: Option<SplitDirection>,
-    #[serde(default)]
-    pub focus: bool,
-    pub argv: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MsgSendParams {
-    pub room: String,
-    pub project: String,
-    pub from_agent: String,
-    pub to: String,
-    pub body: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reply_to: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MsgInboxParams {
-    pub room: String,
-    pub to_agent: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MsgHistoryParams {
-    pub room: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
-    pub limit: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneSplitParams {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
-    pub target_pane_id: String,
-    pub direction: SplitDirection,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub focus: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneMoveParams {
-    pub pane_id: String,
-    pub destination: PaneMoveDestination,
-    #[serde(default)]
-    pub focus: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum PaneMoveDestination {
-    Tab {
-        tab_id: String,
-        split: SplitDirection,
-    },
-    NewTab {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        label: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SplitDirection {
-    Right,
-    Down,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct PaneListParams {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneRenameParams {
-    pub pane_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneSendTextParams {
-    pub pane_id: String,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneSendKeysParams {
-    pub pane_id: String,
-    pub keys: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneSendInputParams {
-    pub pane_id: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub text: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub keys: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneReadParams {
-    pub pane_id: String,
-    pub source: ReadSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lines: Option<u32>,
-    #[serde(default)]
-    pub format: ReadFormat,
-    #[serde(default = "default_true")]
-    pub strip_ansi: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneReportAgentParams {
-    pub pane_id: String,
-    pub source: String,
-    pub agent: String,
-    pub state: PaneAgentState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom_status: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seq: Option<u64>,
-    /// Short task title shown in pane/workspace names.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// Resumable CLI session id (e.g. Claude Code's session uuid), used by
-    /// `[agent_restore]` to relaunch the agent after a server restart.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    /// Explicit model name for analysis; omitted means unknown.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneNotifyParams {
-    pub pane_id: String,
-    pub title: String,
-    pub context: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct AgentRestoreParams {
-    #[serde(default)]
-    pub dry_run: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentRestoreActionInfo {
-    pub pane_id: String,
-    pub agent: String,
-    /// `launched`, `would_launch`, or `skipped`.
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneClearAgentAuthorityParams {
-    pub pane_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seq: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneReleaseAgentParams {
-    pub pane_id: String,
-    pub source: String,
-    pub agent: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seq: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReadSource {
-    Visible,
-    Recent,
-    RecentUnwrapped,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ReadFormat {
-    #[default]
-    Text,
-    Ansi,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EventsSubscribeParams {
-    pub subscriptions: Vec<Subscription>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum Subscription {
-    #[serde(rename = "workspace.created")]
-    WorkspaceCreated {},
-    #[serde(rename = "workspace.closed")]
-    WorkspaceClosed {},
-    #[serde(rename = "workspace.focused")]
-    WorkspaceFocused {},
-    #[serde(rename = "tab.created")]
-    TabCreated {},
-    #[serde(rename = "tab.closed")]
-    TabClosed {},
-    #[serde(rename = "tab.focused")]
-    TabFocused {},
-    #[serde(rename = "tab.renamed")]
-    TabRenamed {},
-    #[serde(rename = "pane.created")]
-    PaneCreated {},
-    #[serde(rename = "pane.closed")]
-    PaneClosed {},
-    #[serde(rename = "pane.focused")]
-    PaneFocused {},
-    #[serde(rename = "pane.exited")]
-    PaneExited {},
-    #[serde(rename = "pane.agent_detected")]
-    PaneAgentDetected {},
-    #[serde(rename = "pane.output_matched")]
-    PaneOutputMatched {
-        pane_id: String,
-        source: ReadSource,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        lines: Option<u32>,
-        r#match: OutputMatch,
-        #[serde(default = "default_true")]
-        strip_ansi: bool,
-    },
-    #[serde(rename = "pane.agent_status_changed")]
-    PaneAgentStatusChanged {
-        pane_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        agent_status: Option<AgentStatus>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EventsWaitParams {
-    pub match_event: EventMatch,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneWaitForOutputParams {
-    pub pane_id: String,
-    pub source: ReadSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lines: Option<u32>,
-    pub r#match: OutputMatch,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
-    #[serde(default = "default_true")]
-    pub strip_ansi: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum OutputMatch {
-    Substring { value: String },
-    Regex { value: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "event", rename_all = "snake_case")]
-pub enum EventMatch {
-    WorkspaceCreated {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        workspace_id: Option<String>,
-    },
-    WorkspaceClosed {
-        workspace_id: String,
-    },
-    WorkspaceRenamed {
-        workspace_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        label: Option<String>,
-    },
-    WorkspaceFocused {
-        workspace_id: String,
-    },
-    TabCreated {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        tab_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        workspace_id: Option<String>,
-    },
-    TabClosed {
-        tab_id: String,
-    },
-    TabRenamed {
-        tab_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        label: Option<String>,
-    },
-    TabFocused {
-        tab_id: String,
-    },
-    PaneCreated {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pane_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        workspace_id: Option<String>,
-    },
-    PaneClosed {
-        pane_id: String,
-    },
-    PaneFocused {
-        pane_id: String,
-    },
-    PaneOutputChanged {
-        pane_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        min_revision: Option<u64>,
-    },
-    PaneExited {
-        pane_id: String,
-    },
-    PaneAgentDetected {
-        pane_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        agent: Option<String>,
-    },
-    PaneAgentStatusChanged {
-        pane_id: String,
-        agent_status: AgentStatus,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EventKind {
-    WorkspaceCreated,
-    WorkspaceClosed,
-    WorkspaceRenamed,
-    WorkspaceFocused,
-    TabCreated,
-    TabClosed,
-    TabRenamed,
-    TabFocused,
-    PaneCreated,
-    PaneClosed,
-    PaneFocused,
-    PaneOutputChanged,
-    PaneExited,
-    PaneAgentDetected,
-    PaneAgentStatusChanged,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SuccessResponse {
-    pub id: String,
-    pub result: ResponseResult,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ErrorResponse {
-    pub id: String,
-    pub error: ErrorBody,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ErrorBody {
-    pub code: String,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ResponseResult {
-    Pong {
-        version: String,
-        protocol: u32,
-    },
-    WorkspaceInfo {
-        workspace: WorkspaceInfo,
-    },
-    WorkspaceCreated {
-        workspace: WorkspaceInfo,
-        tab: TabInfo,
-        root_pane: PaneInfo,
-    },
-    WorkspaceList {
-        workspaces: Vec<WorkspaceInfo>,
-    },
-    TabInfo {
-        tab: TabInfo,
-    },
-    TabCreated {
-        tab: TabInfo,
-        root_pane: PaneInfo,
-    },
-    TabList {
-        tabs: Vec<TabInfo>,
-    },
-    AgentInfo {
-        agent: AgentInfo,
-    },
-    AgentStarted {
-        agent: AgentInfo,
-        argv: Vec<String>,
-    },
-    AgentList {
-        agents: Vec<AgentInfo>,
-    },
-    PaneInfo {
-        pane: PaneInfo,
-    },
-    PaneList {
-        panes: Vec<PaneInfo>,
-    },
-    PaneRead {
-        read: PaneReadResult,
-    },
-    SubscriptionStarted {},
-    WaitMatched {
-        event: EventEnvelope,
-    },
-    OutputMatched {
-        pane_id: String,
-        revision: u64,
-        matched_line: Option<String>,
-        read: PaneReadResult,
-    },
-    ConfigReload {
-        status: crate::config::ConfigReloadStatus,
-        diagnostics: Vec<String>,
-    },
-    AgentRestore {
-        actions: Vec<AgentRestoreActionInfo>,
-    },
-    MsgSend {
-        messages: Vec<MsgMessage>,
-        nudged: Vec<String>,
-    },
-    MsgInbox {
-        messages: Vec<MsgMessage>,
-    },
-    MsgHistory {
-        messages: Vec<MsgMessage>,
-    },
-    MsgRooms {
-        rooms: Vec<String>,
-    },
-    Ok {},
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MsgMessage {
-    pub id: i64,
-    pub room: String,
-    pub project: String,
-    pub from_agent: String,
-    pub to_agent: String,
-    pub body: String,
-    pub created_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delivered_at: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub read_at: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkspaceInfo {
-    pub workspace_id: String,
-    pub number: usize,
-    pub label: String,
-    pub focused: bool,
-    pub pane_count: usize,
-    pub tab_count: usize,
-    pub active_tab_id: String,
-    pub agent_status: AgentStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TabInfo {
-    pub tab_id: String,
-    pub workspace_id: String,
-    pub number: usize,
-    pub label: String,
-    pub focused: bool,
-    pub pane_count: usize,
-    pub agent_status: AgentStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentInfo {
-    pub terminal_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<String>,
-    pub agent_status: AgentStatus,
-    pub workspace_id: String,
-    pub tab_id: String,
-    pub pane_id: String,
-    pub short_pane_id: String,
-    pub global_pane_id: String,
-    pub global_pane_number: u32,
-    pub focused: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    pub revision: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneInfo {
-    pub pane_id: String,
-    pub short_id: String,
-    pub global_id: String,
-    pub global_number: u32,
-    pub workspace_number: usize,
-    pub pane_number: usize,
-    pub terminal_id: String,
-    pub workspace_id: String,
-    pub tab_id: String,
-    pub focused: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root_process_id: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<String>,
-    pub agent_status: AgentStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom_status: Option<String>,
-    pub revision: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneReadResult {
-    pub pane_id: String,
-    pub workspace_id: String,
-    pub tab_id: String,
-    pub source: ReadSource,
-    pub format: ReadFormat,
-    pub text: String,
-    pub revision: u64,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EventEnvelope {
-    pub event: EventKind,
-    pub data: EventData,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SubscriptionEventKind {
-    #[serde(rename = "pane.output_matched")]
-    PaneOutputMatched,
-    #[serde(rename = "pane.agent_status_changed")]
-    PaneAgentStatusChanged,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SubscriptionEventEnvelope {
-    pub event: SubscriptionEventKind,
-    pub data: SubscriptionEventData,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum SubscriptionEventData {
-    PaneOutputMatched(PaneOutputMatchedEvent),
-    PaneAgentStatusChanged(PaneAgentStatusChangedEvent),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneOutputMatchedEvent {
-    pub pane_id: String,
-    pub matched_line: String,
-    pub read: PaneReadResult,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaneAgentStatusChangedEvent {
-    pub pane_id: String,
-    pub workspace_id: String,
-    pub agent_status: AgentStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom_status: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum EventData {
-    WorkspaceCreated {
-        workspace: WorkspaceInfo,
-    },
-    WorkspaceClosed {
-        workspace_id: String,
-    },
-    WorkspaceRenamed {
-        workspace_id: String,
-        label: String,
-    },
-    WorkspaceFocused {
-        workspace_id: String,
-    },
-    TabCreated {
-        tab: TabInfo,
-    },
-    TabClosed {
-        tab_id: String,
-        workspace_id: String,
-    },
-    TabRenamed {
-        tab_id: String,
-        workspace_id: String,
-        label: String,
-    },
-    TabFocused {
-        tab_id: String,
-        workspace_id: String,
-    },
-    PaneCreated {
-        pane: PaneInfo,
-    },
-    PaneClosed {
-        pane_id: String,
-        workspace_id: String,
-    },
-    PaneFocused {
-        pane_id: String,
-        workspace_id: String,
-    },
-    PaneOutputChanged {
-        pane_id: String,
-        workspace_id: String,
-        revision: u64,
-    },
-    PaneExited {
-        pane_id: String,
-        workspace_id: String,
-    },
-    PaneAgentDetected {
-        pane_id: String,
-        workspace_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        agent: Option<String>,
-    },
-    PaneAgentStatusChanged {
-        pane_id: String,
-        workspace_id: String,
-        agent_status: AgentStatus,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        custom_status: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PaneAgentState {
-    Idle,
-    Working,
-    Blocked,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentStatus {
-    Idle,
-    Working,
-    Blocked,
-    Done,
-    Unknown,
-}
-
-fn default_true() -> bool {
-    true
+    #[serde(rename = "plugin.link")]
+    PluginLink(PluginLinkParams),
+    #[serde(rename = "plugin.list")]
+    PluginList(PluginListParams),
+    #[serde(rename = "plugin.unlink")]
+    PluginUnlink(PluginUnlinkParams),
+    #[serde(rename = "plugin.enable")]
+    PluginEnable(PluginSetEnabledParams),
+    #[serde(rename = "plugin.disable")]
+    PluginDisable(PluginSetEnabledParams),
+    #[serde(rename = "plugin.action.list")]
+    PluginActionList(PluginActionListParams),
+    #[serde(rename = "plugin.action.invoke")]
+    PluginActionInvoke(PluginActionInvokeParams),
+    #[serde(rename = "plugin.log.list")]
+    PluginLogList(PluginLogListParams),
+    #[serde(rename = "plugin.pane.open")]
+    PluginPaneOpen(PluginPaneOpenParams),
+    #[serde(rename = "plugin.pane.focus")]
+    PluginPaneFocus(PluginPaneFocusParams),
+    #[serde(rename = "plugin.pane.close")]
+    PluginPaneClose(PluginPaneCloseParams),
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn request_round_trips_for_pane_read() {
-        let request = Request {
-            id: "req_1".into(),
-            method: Method::PaneRead(PaneReadParams {
-                pane_id: "p_1".into(),
-                source: ReadSource::Recent,
-                lines: Some(80),
-                format: ReadFormat::Text,
-                strip_ansi: true,
-            }),
-        };
-
-        let json = serde_json::to_string(&request).unwrap();
-        let restored: Request = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored, request);
-    }
-
-    #[test]
-    fn request_round_trips_for_pane_report_agent() {
-        let request = Request {
-            id: "req_hook".into(),
-            method: Method::PaneReportAgent(PaneReportAgentParams {
-                pane_id: "1-1".into(),
-                source: "herdr:pi".into(),
-                agent: "pi".into(),
-                state: PaneAgentState::Working,
-                message: Some("thinking".into()),
-                custom_status: Some("indexing".into()),
-                seq: Some(42),
-                title: Some("implement search".into()),
-                session_id: Some("0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9".into()),
-                model: Some("gpt-5.5".into()),
-            }),
-        };
-
-        let json = serde_json::to_string(&request).unwrap();
-        let restored: Request = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored, request);
-    }
-
-    #[test]
-    fn request_round_trips_for_pane_clear_agent_authority() {
-        let request = Request {
-            id: "req_clear".into(),
-            method: Method::PaneClearAgentAuthority(PaneClearAgentAuthorityParams {
-                pane_id: "1-1".into(),
-                source: Some("herdr:pi".into()),
-                seq: Some(42),
-            }),
-        };
-
-        let json = serde_json::to_string(&request).unwrap();
-        let restored: Request = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored, request);
-    }
-
-    #[test]
-    fn request_round_trips_for_pane_release_agent() {
-        let request = Request {
-            id: "req_release".into(),
-            method: Method::PaneReleaseAgent(PaneReleaseAgentParams {
-                pane_id: "1-1".into(),
-                source: "herdr:pi".into(),
-                agent: "pi".into(),
-                seq: Some(42),
-            }),
-        };
-
-        let json = serde_json::to_string(&request).unwrap();
-        let restored: Request = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored, request);
-    }
-
-    #[test]
-    fn request_uses_dot_method_names() {
-        let request = Request {
-            id: "req_1".into(),
-            method: Method::WorkspaceCreate(WorkspaceCreateParams {
-                cwd: Some("/tmp".into()),
-                focus: true,
-                label: Some("api".into()),
-            }),
-        };
-
-        let json = serde_json::to_value(&request).unwrap();
-        assert_eq!(json["method"], "workspace.create");
-    }
-
-    #[test]
-    fn request_round_trips_for_server_stop() {
-        let request = Request {
-            id: "req_stop".into(),
-            method: Method::ServerStop(EmptyParams::default()),
-        };
-
-        let json = serde_json::to_value(&request).unwrap();
-        assert_eq!(json["method"], "server.stop");
-        let restored: Request = serde_json::from_value(json).unwrap();
-        assert_eq!(restored, request);
-    }
-
-    #[test]
-    fn request_round_trips_for_server_reload_config() {
-        let request = Request {
-            id: "req_reload".into(),
-            method: Method::ServerReloadConfig(EmptyParams::default()),
-        };
-
-        let json = serde_json::to_value(&request).unwrap();
-        assert_eq!(json["method"], "server.reload_config");
-        let restored: Request = serde_json::from_value(json).unwrap();
-        assert_eq!(restored, request);
-    }
-
-    #[test]
-    fn unknown_method_is_rejected() {
-        let json = r#"{"id":"req_1","method":"nope","params":{}}"#;
-        let err = serde_json::from_str::<Request>(json)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("unknown variant"));
-    }
-
-    #[test]
-    fn missing_required_params_are_rejected() {
-        let json = r#"{"id":"req_1","method":"pane.send_text","params":{"pane_id":"p_1"}}"#;
-        let err = serde_json::from_str::<Request>(json)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("text"));
-    }
-
-    #[test]
-    fn pane_send_input_defaults_to_empty_text_and_keys() {
-        let json = r#"
-        {
-            "id": "req_1",
-            "method": "pane.send_input",
-            "params": {
-                "pane_id": "p_1"
-            }
-        }
-        "#;
-
-        let request: Request = serde_json::from_str(json).unwrap();
-        let Method::PaneSendInput(params) = request.method else {
-            panic!("wrong method parsed");
-        };
-        assert_eq!(params.pane_id, "p_1");
-        assert!(params.text.is_empty());
-        assert!(params.keys.is_empty());
-    }
-
-    #[test]
-    fn pane_wait_for_output_defaults_strip_ansi_to_true() {
-        let json = r#"
-        {
-            "id": "req_1",
-            "method": "pane.wait_for_output",
-            "params": {
-                "pane_id": "p_1",
-                "source": "recent",
-                "match": { "type": "substring", "value": "ready" }
-            }
-        }
-        "#;
-
-        let request: Request = serde_json::from_str(json).unwrap();
-        let Method::PaneWaitForOutput(params) = request.method else {
-            panic!("wrong method parsed");
-        };
-        assert!(params.strip_ansi);
-    }
-
-    #[test]
-    fn pane_read_defaults_to_text_format() {
-        let json = r#"
-        {
-            "id": "req_1",
-            "method": "pane.read",
-            "params": {
-                "pane_id": "p_1",
-                "source": "visible"
-            }
-        }
-        "#;
-
-        let request: Request = serde_json::from_str(json).unwrap();
-        let Method::PaneRead(params) = request.method else {
-            panic!("wrong method parsed");
-        };
-        assert_eq!(params.format, ReadFormat::Text);
-    }
-
-    #[test]
-    fn event_envelope_round_trips() {
-        let event = EventEnvelope {
-            event: EventKind::PaneOutputChanged,
-            data: EventData::PaneOutputChanged {
-                pane_id: "p_1".into(),
-                workspace_id: "w_1".into(),
-                revision: 42,
-            },
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        let restored: EventEnvelope = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored, event);
-    }
-
-    #[test]
-    fn subscribe_request_parses_parameterized_subscriptions() {
-        let json = r#"
-        {
-            "id": "sub_1",
-            "method": "events.subscribe",
-            "params": {
-                "subscriptions": [
-                    {
-                        "type": "pane.output_matched",
-                        "pane_id": "p_1_1",
-                        "source": "recent",
-                        "lines": 200,
-                        "match": { "type": "substring", "value": "auth: received" }
-                    },
-                    {
-                        "type": "pane.agent_status_changed",
-                        "pane_id": "p_1_1",
-                        "agent_status": "done"
-                    }
-                ]
-            }
-        }
-        "#;
-
-        let request: Request = serde_json::from_str(json).unwrap();
-        let Method::EventsSubscribe(params) = request.method else {
-            panic!("wrong method parsed");
-        };
-        assert_eq!(params.subscriptions.len(), 2);
-        assert!(matches!(
-            &params.subscriptions[0],
-            Subscription::PaneOutputMatched {
-                pane_id,
-                source: ReadSource::Recent,
-                lines: Some(200),
-                r#match: OutputMatch::Substring { value },
-                strip_ansi: true,
-            } if pane_id == "p_1_1" && value == "auth: received"
-        ));
-        assert!(matches!(
-            &params.subscriptions[1],
-            Subscription::PaneAgentStatusChanged {
-                pane_id,
-                agent_status: Some(AgentStatus::Done),
-            } if pane_id == "p_1_1"
-        ));
-    }
-
-    #[test]
-    fn subscription_event_envelope_round_trips() {
-        let event = SubscriptionEventEnvelope {
-            event: SubscriptionEventKind::PaneOutputMatched,
-            data: SubscriptionEventData::PaneOutputMatched(PaneOutputMatchedEvent {
-                pane_id: "p_1_1".into(),
-                matched_line: "auth: received".into(),
-                read: PaneReadResult {
-                    pane_id: "p_1_1".into(),
-                    workspace_id: "w_1".into(),
-                    tab_id: "t_1_1".into(),
-                    source: ReadSource::Recent,
-                    format: ReadFormat::Text,
-                    text: "auth: received\n".into(),
-                    revision: 0,
-                    truncated: false,
-                },
-            }),
-        };
-
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"event\":\"pane.output_matched\""));
-        let restored: SubscriptionEventEnvelope = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored, event);
-    }
-
-    #[test]
-    fn success_response_round_trips() {
-        let response = SuccessResponse {
-            id: "req_1".into(),
-            result: ResponseResult::Pong {
-                version: "0.1.2".into(),
-                protocol: 6,
-            },
-        };
-
-        let json = serde_json::to_string(&response).unwrap();
-        let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored, response);
-    }
-
-    #[test]
-    fn create_response_round_trips_with_root_pane() {
-        let response = SuccessResponse {
-            id: "req_2".into(),
-            result: ResponseResult::TabCreated {
-                tab: TabInfo {
-                    tab_id: "w_1:2".into(),
-                    workspace_id: "w_1".into(),
-                    number: 2,
-                    label: "review".into(),
-                    focused: false,
-                    pane_count: 1,
-                    agent_status: AgentStatus::Unknown,
-                },
-                root_pane: PaneInfo {
-                    pane_id: "w_1-3".into(),
-                    short_id: "1-3".into(),
-                    global_id: "p_3".into(),
-                    global_number: 3,
-                    workspace_number: 1,
-                    pane_number: 3,
-                    terminal_id: "term_example".into(),
-                    workspace_id: "w_1".into(),
-                    tab_id: "w_1:2".into(),
-                    focused: false,
-                    root_process_id: Some(12345),
-                    cwd: Some("/tmp/review".into()),
-                    label: None,
-                    agent: None,
-                    agent_status: AgentStatus::Unknown,
-                    custom_status: None,
-                    revision: 0,
-                },
-            },
-        };
-
-        let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("\"type\":\"tab_created\""));
-        assert!(json.contains("\"root_pane\""));
-        let restored: SuccessResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored, response);
-    }
-
-    #[test]
-    fn error_response_round_trips() {
-        let response = ErrorResponse {
-            id: "req_1".into(),
-            error: ErrorBody {
-                code: "pane_not_found".into(),
-                message: "pane p_1 not found".into(),
-            },
-        };
-
-        let json = serde_json::to_string(&response).unwrap();
-        let restored: ErrorResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored, response);
-    }
-
-    #[test]
-    fn event_wait_parses_typed_match() {
-        let json = r#"
-        {
-            "id": "req_9",
-            "method": "events.wait",
-            "params": {
-                "match_event": {
-                    "event": "pane_agent_status_changed",
-                    "pane_id": "p_1",
-                    "agent_status": "done"
-                },
-                "timeout_ms": 30000
-            }
-        }
-        "#;
-
-        let request: Request = serde_json::from_str(json).unwrap();
-        let Method::EventsWait(params) = request.method else {
-            panic!("wrong method parsed");
-        };
-        assert_eq!(
-            params.match_event,
-            EventMatch::PaneAgentStatusChanged {
-                pane_id: "p_1".into(),
-                agent_status: AgentStatus::Done,
-            }
-        );
-    }
-}
+mod tests;

@@ -13,100 +13,94 @@ struct PreparedPaneInput {
     bytes: Bytes,
 }
 
+enum PreparedPopupInput {
+    NotOpen,
+    Consumed,
+    Bytes(Bytes),
+}
+
 fn is_modifier_only_key(code: &KeyCode) -> bool {
     matches!(code, KeyCode::Modifier(_))
 }
 
 impl App {
-    pub(crate) async fn handle_terminal_key_headless(&mut self, key: TerminalKey) {
-        let Some(input) = self.prepare_terminal_key_for_terminal_mode(key) else {
+    pub(crate) fn handle_terminal_key_headless(&mut self, key: TerminalKey) {
+        match self.prepare_popup_key_forward(key) {
+            PreparedPopupInput::NotOpen => {}
+            PreparedPopupInput::Consumed => return,
+            PreparedPopupInput::Bytes(bytes) => {
+                let Some(runtime) = self.popup_runtime() else {
+                    self.close_popup_pane();
+                    return;
+                };
+                let _ = runtime.try_send_bytes(bytes);
+                return;
+            }
+        }
+
+        let Some(input) = self.prepare_terminal_key_forward(key) else {
             return;
         };
         if let Some(runtime) = self.lookup_runtime_sender(input.ws_idx, input.pane_id) {
-            let _ = runtime.send_bytes(input.bytes).await;
+            let _ = runtime.try_send_bytes(input.bytes);
         }
     }
 
-    pub(crate) async fn send_literal_terminal_bytes(&mut self, bytes: Bytes) -> bool {
-        if self.state.mode != Mode::Terminal {
-            return false;
-        }
-
-        self.state.clear_selection();
-        self.selection_autoscroll_deadline = None;
-        self.state.update_dismissed = true;
-
-        let Some(ws_idx) = self.state.active else {
-            return false;
-        };
-        let Some(runtime) = self.state.focused_runtime_in_workspace(ws_idx) else {
-            return false;
-        };
-
-        runtime.scroll_reset();
-        let _ = runtime.send_bytes(bytes).await;
-        true
-    }
-
-    fn prepare_terminal_key_for_terminal_mode(
-        &mut self,
-        key: TerminalKey,
-    ) -> Option<PreparedPaneInput> {
-        self.prepare_terminal_key_forward(key, true)
-    }
-
-    fn prepare_terminal_key_forward(
-        &mut self,
-        key: TerminalKey,
-        intercept_herdr_bindings: bool,
-    ) -> Option<PreparedPaneInput> {
+    fn prepare_terminal_key_forward(&mut self, key: TerminalKey) -> Option<PreparedPaneInput> {
         self.state.clear_selection();
         self.selection_autoscroll_deadline = None;
         self.state.update_dismissed = true;
 
         let key_event = key.as_key_event();
 
-        if intercept_herdr_bindings {
-            if let Some(action) = super::terminal_direct_navigation_action(&self.state, key) {
-                debug!(
-                    code = ?key_event.code,
-                    modifiers = ?key_event.modifiers,
-                    kind = ?key_event.kind,
-                    action = ?action,
-                    "intercepted terminal direct keybinding before forwarding to pane"
-                );
-                if action == super::navigate::NavigateAction::EditScrollback {
-                    self.launch_focused_scrollback_editor();
-                } else {
-                    super::navigate::execute_navigate_action_in_context(
-                        &mut self.state,
-                        action,
-                        super::navigate::ActionContext::Direct,
-                    );
-                }
-                return None;
+        if let Some(action) = super::terminal_direct_non_indexed_navigation_action(&self.state, key)
+        {
+            debug!(
+                code = ?key_event.code,
+                modifiers = ?key_event.modifiers,
+                kind = ?key_event.kind,
+                action = ?action,
+                "intercepted terminal direct keybinding before forwarding to pane"
+            );
+            if action == super::navigate::NavigateAction::EditScrollback {
+                self.launch_focused_scrollback_editor();
+            } else {
+                self.execute_tui_navigate_action(action, super::navigate::ActionContext::Direct);
             }
+            return None;
+        }
 
-            if let Some(binding) = super::navigate::command_for_key(
-                &self.state,
-                key,
-                super::navigate::BindingDispatch::Direct,
-            ) {
-                debug!(
-                    code = ?key_event.code,
-                    modifiers = ?key_event.modifiers,
-                    kind = ?key_event.kind,
-                    command = %binding.label,
-                    "intercepted terminal direct custom command before forwarding to pane"
-                );
-                self.launch_custom_command(binding, super::navigate::ActionContext::Direct);
-                return None;
-            }
+        if let Some(binding) = super::navigate::command_for_key(
+            &self.state,
+            key,
+            super::navigate::BindingDispatch::Direct,
+        ) {
+            debug!(
+                code = ?key_event.code,
+                modifiers = ?key_event.modifiers,
+                kind = ?key_event.kind,
+                command = %binding.label,
+                "intercepted terminal direct custom command before forwarding to pane"
+            );
+            self.launch_custom_command(binding, super::navigate::ActionContext::Direct);
+            return None;
+        }
 
-            if self.state.is_prefix_key(key) {
-                self.state.mode = Mode::Prefix;
-                return None;
-            }
+        if let Some(action) = super::terminal_direct_indexed_navigation_action(&self.state, key) {
+            debug!(
+                code = ?key_event.code,
+                modifiers = ?key_event.modifiers,
+                kind = ?key_event.kind,
+                action = ?action,
+                "intercepted terminal direct indexed keybinding before forwarding to pane"
+            );
+            self.execute_tui_navigate_action(action, super::navigate::ActionContext::Direct);
+            return None;
+        }
+
+        if self.state.is_prefix_key(key) {
+            self.state.mode = Mode::Prefix;
+            return None;
         }
 
         if is_modifier_only_key(&key_event.code) {
@@ -120,20 +114,25 @@ impl App {
         }
 
         let ws_idx = self.state.active?;
-        let pane_id = self.state.terminal_input_pane_id(ws_idx)?;
-        let rt = self.state.runtime_for_pane_in_workspace(ws_idx, pane_id)?;
+        let ws = self.state.workspaces.get(ws_idx)?;
+        let pane_id = ws.focused_pane_id()?;
+        let rt =
+            self.state
+                .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)?;
 
-        // Intercept plain PageUp/PageDown presses for pane scrollback when the
-        // focused pane doesn't handle its own scrolling (e.g., a plain shell
-        // with mouse off). Modified page keys are pane shortcuts, and release
-        // events should not produce a second host-scroll action.
+        // Intercept plain PageUp/PageDown presses for pane scrollback only
+        // when the focused pane looks like a shell transcript. Normal-screen
+        // pagers such as `less -X` keep the primary screen but enter
+        // application cursor mode while they own special keys.
+        // Modified page keys are pane shortcuts, and release events should not
+        // produce a second host-scroll action.
         // Only intercept when we know the pane state; if input_state is unknown,
         // fail-open and forward the key to the pane.
         if matches!(key_event.code, KeyCode::PageUp | KeyCode::PageDown)
             && key_event.modifiers.is_empty()
         {
             if let Some(input_state) = rt.input_state() {
-                if !input_state.alternate_screen && !input_state.mouse_reporting_enabled() {
+                if input_state.plain_page_keys_use_host_scrollback() {
                     if key_event.kind == crossterm::event::KeyEventKind::Release {
                         return None;
                     }
@@ -149,9 +148,11 @@ impl App {
                             .unwrap_or(10)
                             .max(1);
                         if key_event.code == KeyCode::PageUp {
-                            self.state.scroll_pane_up(pane_id, lines);
+                            self.state
+                                .scroll_pane_up(&self.terminal_runtimes, pane_id, lines);
                         } else {
-                            self.state.scroll_pane_down(pane_id, lines);
+                            self.state
+                                .scroll_pane_down(&self.terminal_runtimes, pane_id, lines);
                         }
                         debug!(
                             code = ?key_event.code,
@@ -210,8 +211,39 @@ impl App {
         })
     }
 
+    fn prepare_popup_key_forward(&mut self, key: TerminalKey) -> PreparedPopupInput {
+        if self.state.popup_pane.is_none() {
+            return PreparedPopupInput::NotOpen;
+        }
+        let Some(rt) = self.popup_runtime() else {
+            self.close_popup_pane();
+            return PreparedPopupInput::Consumed;
+        };
+        rt.scroll_reset();
+        let bytes = rt.encode_terminal_key(key);
+        self.state.mode = Mode::Terminal;
+        if bytes.is_empty() {
+            PreparedPopupInput::Consumed
+        } else {
+            PreparedPopupInput::Bytes(Bytes::from(bytes))
+        }
+    }
+
     pub(super) async fn handle_terminal_key(&mut self, key: TerminalKey) {
-        let Some(input) = self.prepare_terminal_key_for_terminal_mode(key) else {
+        match self.prepare_popup_key_forward(key) {
+            PreparedPopupInput::NotOpen => {}
+            PreparedPopupInput::Consumed => return,
+            PreparedPopupInput::Bytes(bytes) => {
+                let Some(runtime) = self.popup_runtime() else {
+                    self.close_popup_pane();
+                    return;
+                };
+                let _ = runtime.send_bytes(bytes).await;
+                return;
+            }
+        }
+
+        let Some(input) = self.prepare_terminal_key_forward(key) else {
             return;
         };
         if let Some(runtime) = self.lookup_runtime_sender(input.ws_idx, input.pane_id) {
@@ -225,11 +257,140 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
     use ratatui::layout::Rect;
 
-    use super::super::{
-        app_for_mouse_test, mouse, numbered_lines_bytes, unique_temp_path, wait_for_file,
-    };
+    use super::super::{app_for_mouse_test, mouse, numbered_lines_bytes};
+    #[cfg(unix)]
+    use super::super::{unique_temp_path, wait_for_file};
     use super::*;
-    use crate::{config::Config, workspace::Workspace};
+    use crate::{config::Config, events::AppEvent, workspace::Workspace};
+
+    #[cfg(unix)]
+    fn app_with_spawned_workspace() -> App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.default_shell = "/bin/sh".into();
+        let (workspace, terminal, runtime) = Workspace::new(
+            std::env::current_dir().unwrap_or_else(|_| "/".into()),
+            24,
+            80,
+            app.state.pane_scrollback_limit_bytes,
+            app.state.host_terminal_theme,
+            crate::pane::PaneShellConfig::new(&app.state.default_shell, app.state.shell_mode),
+            app.event_tx.clone(),
+            app.render_notify.clone(),
+            app.render_dirty.clone(),
+        )
+        .expect("workspace should spawn");
+        app.state.workspaces = vec![workspace];
+        app.terminal_runtimes.insert(terminal.id.clone(), runtime);
+        app.state.terminals.insert(terminal.id.clone(), terminal);
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app
+    }
+
+    #[cfg(unix)]
+    fn shutdown_test_runtimes(app: &mut App) {
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    fn app_with_screen_bytes(bytes: &[u8]) -> (App, crate::layout::PaneInfo) {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        ws.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                bytes,
+            ),
+        );
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+        (app, info)
+    }
+
+    fn double_click(app: &mut App, col: u16, row: u16) {
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
+    }
+
+    fn modified_mouse(
+        kind: MouseEventKind,
+        col: u16,
+        row: u16,
+        modifiers: KeyModifiers,
+    ) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers,
+        }
+    }
+
+    fn clipboard_write_content(app: &mut App) -> Vec<u8> {
+        match app.event_rx.try_recv().expect("clipboard write event") {
+            AppEvent::ClipboardWrite { content } => content,
+            event => panic!("unexpected event: {event:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    fn install_test_link_handler(app: &mut App) {
+        let plugin_root = std::env::temp_dir();
+        app.state.installed_plugins = std::collections::HashMap::from([(
+            "example.links".to_string(),
+            crate::api::schema::InstalledPluginInfo {
+                plugin_id: "example.links".into(),
+                name: "Links".into(),
+                version: "0.1.0".into(),
+                min_herdr_version: "0.6.10".into(),
+                description: None,
+                manifest_path: plugin_root.join("herdr-plugin.toml").display().to_string(),
+                plugin_root: plugin_root.display().to_string(),
+                enabled: true,
+                platforms: None,
+                build: Vec::new(),
+                actions: vec![crate::api::schema::PluginManifestAction {
+                    id: "open".into(),
+                    title: "Open link".into(),
+                    description: None,
+                    contexts: Vec::new(),
+                    platforms: None,
+                    command: vec!["sh".into(), "-c".into(), ":".into()],
+                }],
+                events: Vec::new(),
+                panes: Vec::new(),
+                link_handlers: vec![crate::api::schema::PluginManifestLinkHandler {
+                    id: "github-issue".into(),
+                    title: "Open GitHub issue".into(),
+                    pattern: "^https://github\\.com/[^/]+/[^/]+/(issues|pull)/[0-9]+$".into(),
+                    action: "open".into(),
+                    platforms: None,
+                }],
+                source: crate::api::schema::PluginSourceInfo::default(),
+                warnings: Vec::new(),
+            },
+        )]);
+    }
 
     #[tokio::test]
     async fn dragging_selection_above_pane_autoscrolls_and_extends_into_scrollback() {
@@ -256,7 +417,7 @@ mod tests {
 
         let start_metrics = app
             .state
-            .runtime_for_pane(pane_id)
+            .runtime_for_pane(&app.terminal_runtimes, pane_id)
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("initial scroll metrics");
         let start_row = info.inner_rect.y;
@@ -275,7 +436,7 @@ mod tests {
 
         let end_metrics = app
             .state
-            .runtime_for_pane(pane_id)
+            .runtime_for_pane(&app.terminal_runtimes, pane_id)
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after drag");
         assert_eq!(
@@ -335,11 +496,436 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
 
         assert!(app.state.selection.is_none());
+    }
+
+    #[tokio::test]
+    async fn drag_copy_then_click_does_not_reuse_double_click_candidate() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta");
+        let row = info.inner_rect.y;
+        let start_col = info.inner_rect.x;
+        let end_col = info.inner_rect.x + 4;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            start_col,
+            row,
+        ));
+        assert!(app.last_pane_click.is_none());
+
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
+        assert!(app.last_pane_click.is_none());
+
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
+        assert!(app.last_pane_click.is_none());
+        assert_eq!(clipboard_write_content(&mut app), b"alpha");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            start_col,
+            row,
+        ));
+        assert!(app.last_pane_click.is_none());
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), start_col, row));
+
+        assert!(app.last_pane_click.is_some());
+        assert!(app.event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn same_cell_double_click_opens_legacy_pane_menu() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta-gamma_delta@omega");
+        let col = info.inner_rect.x + 13;
+        let row = info.inner_rect.y;
+        double_click(&mut app, col, row);
+
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+        let menu = app.state.context_menu.as_ref().expect("pane context menu");
+        assert_eq!((menu.x, menu.y), (col, row));
+        assert_eq!(menu.items()[0], "Split vertical");
+        assert_eq!(menu.items()[1], "Split horizontal");
+        assert!(menu.items().contains(&"New Claude Code agent"));
+        assert!(menu.items().contains(&"--"));
+        assert!(!menu.items().contains(&"Swap with focused pane"));
+
+        let double_click_items = menu.items();
+        let (mut right_click_app, right_click_info) = app_with_screen_bytes(b"alpha");
+        right_click_app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            right_click_info.inner_rect.x,
+            right_click_info.inner_rect.y,
+        ));
         assert_eq!(
-            app.state.selection_copy_status,
-            Some(crate::app::state::SelectionCopyStatus { line_count: 1 })
+            right_click_app
+                .state
+                .context_menu
+                .as_ref()
+                .expect("right-click pane menu")
+                .items(),
+            double_click_items
         );
-        assert!(app.selection_copy_status_deadline.is_some());
+    }
+
+    #[tokio::test]
+    async fn different_cell_second_click_does_not_open_pane_menu() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta");
+        let col = info.inner_rect.x + 2;
+        let row = info.inner_rect.y;
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col + 1, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col + 1, row));
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.context_menu.is_none());
+        assert!(app.last_pane_click.is_some());
+    }
+
+    #[tokio::test]
+    async fn copy_on_select_disabled_does_not_open_pane_menu_on_double_click() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta");
+        app.state.copy_on_select = false;
+        let row = info.inner_rect.y;
+        let start_col = info.inner_rect.x;
+        let end_col = info.inner_rect.x + 4;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            start_col,
+            row,
+        ));
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
+
+        assert!(app.state.selection.is_none());
+        assert!(app.state.selection_autoscroll.is_none());
+        assert!(app.event_rx.try_recv().is_err());
+
+        double_click(&mut app, start_col, row);
+
+        assert!(app.state.selection.is_none());
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.context_menu.is_none());
+        assert!(app.last_pane_click.is_none());
+        assert!(app.selection_highlight_clear_deadline.is_none());
+        assert!(app.event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn modified_pane_click_does_not_seed_pane_menu_double_click() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta");
+        let col = info.inner_rect.x + 7;
+        let row = info.inner_rect.y;
+
+        app.handle_mouse(modified_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            col,
+            row,
+            KeyModifiers::CONTROL,
+        ));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
+
+        assert!(app.event_rx.try_recv().is_err());
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.context_menu.is_none());
+        assert!(app.last_pane_click.is_some());
+        assert!(app.selection_highlight_clear_deadline.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ctrl_click_url_invokes_plugin_link_handler_but_super_click_does_not() {
+        let line = "see https://github.com/ogulcancelik/herdr/issues/398";
+        let col = line.find("github").expect("url host") as u16;
+
+        let (mut ctrl_app, ctrl_info) = app_with_screen_bytes(line.as_bytes());
+        install_test_link_handler(&mut ctrl_app);
+        ctrl_app.handle_mouse(modified_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            ctrl_info.inner_rect.x + col,
+            ctrl_info.inner_rect.y,
+            KeyModifiers::CONTROL,
+        ));
+
+        let ctrl_log = ctrl_app
+            .state
+            .plugin_command_logs
+            .last()
+            .expect("ctrl-click should start plugin link handler");
+        assert_eq!(ctrl_log.plugin_id, "example.links");
+        assert_eq!(ctrl_log.action_id.as_deref(), Some("open"));
+
+        let (mut super_app, super_info) = app_with_screen_bytes(line.as_bytes());
+        install_test_link_handler(&mut super_app);
+        super_app.handle_mouse(modified_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            super_info.inner_rect.x + col,
+            super_info.inner_rect.y,
+            KeyModifiers::SUPER,
+        ));
+
+        assert!(super_app.state.plugin_command_logs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pane_cell_url_resolver_finds_visible_url() {
+        let line = "see https://example.com/pr/307.";
+        let (app, info) = app_with_screen_bytes(line.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let col = line.find("example").expect("url host") as u16;
+
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 0, col)
+                .as_deref(),
+            Some("https://example.com/pr/307")
+        );
+        assert_eq!(
+            app.state.url_at_pane_cell(
+                &app.terminal_runtimes,
+                pane_id,
+                0,
+                info.inner_rect.width - 1
+            ),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn pane_cell_url_resolver_finds_soft_wrapped_url() {
+        let (_app, info) = app_with_screen_bytes(b"");
+        let prefix = "https://example.com/";
+        let padding = "a".repeat(info.inner_rect.width as usize - prefix.len());
+        let url = format!("{prefix}{padding}tail");
+        let (app, _info) = app_with_screen_bytes(url.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 1, 1)
+                .as_deref(),
+            Some(url.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn pane_cell_url_resolver_does_not_shift_after_zero_width_mark() {
+        let url = "https://example.com/mark";
+        let screen = format!("e\u{301} {url}");
+        let (app, _info) = app_with_screen_bytes(screen.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 0, 2)
+                .as_deref(),
+            Some(url)
+        );
+    }
+
+    #[tokio::test]
+    async fn pane_cell_url_resolver_handles_hard_newline_after_full_row() {
+        let (_app, info) = app_with_screen_bytes(b"");
+        let full_row = "x".repeat(info.inner_rect.width as usize);
+        let url = "https://example.com/next";
+        let screen = format!("{full_row}\n{url}");
+        let (app, _info) = app_with_screen_bytes(screen.as_bytes());
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 1, 1)
+                .as_deref(),
+            None
+        );
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 2, 1)
+                .as_deref(),
+            Some(url)
+        );
+    }
+
+    #[tokio::test]
+    async fn render_stream_does_not_synthesize_soft_wrapped_url_hyperlinks() {
+        let (_app, info) = app_with_screen_bytes(b"");
+        let prefix = "https://example.com/";
+        let padding = "b".repeat(info.inner_rect.width as usize - prefix.len());
+        let url = format!("{prefix}{padding}tail");
+        let (app, _info) = app_with_screen_bytes(url.as_bytes());
+
+        let links =
+            crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
+
+        assert!(links.is_empty());
+    }
+
+    #[tokio::test]
+    async fn render_stream_does_not_synthesize_url_hyperlinks_after_zero_width_mark() {
+        let url = "https://example.com/mark";
+        let screen = format!("e\u{301} {url}");
+        let (app, _info) = app_with_screen_bytes(screen.as_bytes());
+
+        let links =
+            crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
+
+        assert!(links.is_empty());
+    }
+
+    #[tokio::test]
+    async fn render_stream_does_not_synthesize_hard_newline_plain_url_hyperlinks() {
+        let (_app, info) = app_with_screen_bytes(b"");
+        let full_row = "x".repeat(info.inner_rect.width as usize);
+        let url = "https://example.com/next";
+        let screen = format!("{full_row}\n{url}");
+        let (app, _info) = app_with_screen_bytes(screen.as_bytes());
+        let links =
+            crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
+
+        assert!(links.is_empty());
+    }
+
+    #[tokio::test]
+    async fn render_stream_exports_osc8_hyperlink_metadata() {
+        let uri = "https://example.com/target";
+        let (mut app, _info) =
+            app_with_screen_bytes(format!("\x1b]8;;{uri}\x1b\\label\x1b]8;;\x1b\\").as_bytes());
+        let (buffer, cursor) = crate::server::render_stream::render_virtual_with_runtime_registry(
+            &mut app.state,
+            &app.terminal_runtimes,
+            ratatui::layout::Rect::new(0, 0, 106, 20),
+            false,
+            crate::kitty_graphics::HostCellSize::default(),
+        );
+        let links =
+            crate::server::render_stream::visible_hyperlinks(&app.state, &app.terminal_runtimes);
+        let frame = crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(
+            &buffer, cursor, &links,
+        );
+        let ((x, y), symbol, _) = links
+            .iter()
+            .find(|(_, symbol, link_uri)| symbol == "l" && link_uri == uri)
+            .expect("OSC 8 link cell");
+        let linked_cell_index = usize::from(*y) * usize::from(frame.width) + usize::from(*x);
+
+        assert_eq!(frame.hyperlinks, vec![uri.to_owned()]);
+        assert_eq!(symbol, "l");
+        assert_eq!(frame.cells[linked_cell_index].hyperlink, Some(0));
+    }
+
+    #[tokio::test]
+    async fn pane_cell_url_resolver_prefers_osc8_hyperlink() {
+        let (app, _info) = app_with_screen_bytes(
+            b"\x1b]8;;https://example.com/hidden-target\x1b\\label\x1b]8;;\x1b\\",
+        );
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+
+        assert_eq!(
+            app.state
+                .url_at_pane_cell(&app.terminal_runtimes, pane_id, 0, 1)
+                .as_deref(),
+            Some("https://example.com/hidden-target")
+        );
+    }
+
+    #[tokio::test]
+    async fn copy_on_select_disabled_still_forwards_mouse_reporting_gestures() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                0,
+                b"\x1b[?1002h\x1b[?1006h",
+                4,
+            );
+        ws.insert_test_runtime(pane_id, runtime);
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+        app.state.copy_on_select = false;
+
+        let col = info.inner_rect.x + 2;
+        let row = info.inner_rect.y + 3;
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            col + 1,
+            row + 1,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            col + 1,
+            row + 1,
+        ));
+
+        assert!(app.event_rx.try_recv().is_err());
+        assert!(app.state.selection.is_none());
+        assert!(app.selection_highlight_clear_deadline.is_none());
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded left mouse down"),
+            Bytes::from_static(b"\x1b[<0;3;4M")
+        );
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded left mouse drag"),
+            Bytes::from_static(b"\x1b[<32;4;5M")
+        );
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded left mouse up"),
+            Bytes::from_static(b"\x1b[<0;4;5m")
+        );
+        assert!(input_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn mouse_reporting_double_click_is_forwarded_without_opening_pane_menu() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                0,
+                b"\x1b[?1002h\x1b[?1006h",
+                4,
+            );
+        ws.insert_test_runtime(pane_id, runtime);
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+
+        let col = info.inner_rect.x + 2;
+        let row = info.inner_rect.y + 3;
+        double_click(&mut app, col, row);
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.context_menu.is_none());
+        assert!(app.last_pane_click.is_none());
+        for expected in [
+            Bytes::from_static(b"\x1b[<0;3;4M"),
+            Bytes::from_static(b"\x1b[<0;3;4m"),
+            Bytes::from_static(b"\x1b[<0;3;4M"),
+            Bytes::from_static(b"\x1b[<0;3;4m"),
+        ] {
+            assert_eq!(
+                input_rx.try_recv().expect("forwarded double-click event"),
+                expected
+            );
+        }
+        assert!(input_rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -367,7 +953,7 @@ mod tests {
 
         let start_metrics = app
             .state
-            .runtime_for_pane(pane_id)
+            .runtime_for_pane(&app.terminal_runtimes, pane_id)
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("initial scroll metrics");
         let top_row = info.inner_rect.y;
@@ -378,7 +964,7 @@ mod tests {
 
         let end_metrics = app
             .state
-            .runtime_for_pane(pane_id)
+            .runtime_for_pane(&app.terminal_runtimes, pane_id)
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after wheel");
         assert_eq!(
@@ -459,7 +1045,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn clicking_unfocused_pane_with_mouse_reporting_focuses_it_via_right_button() {
+    async fn right_clicking_unfocused_mouse_reporting_pane_focuses_menu_target() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
         let first_pane = ws.tabs[0].root_pane;
@@ -514,7 +1100,9 @@ mod tests {
             second_pane
         );
         assert_eq!(app.state.mode, Mode::ContextMenu);
-        assert!(app.state.context_menu.is_some());
+        let menu = app.state.context_menu.as_ref().expect("pane context menu");
+        assert_eq!(menu.items()[0], "Split vertical");
+        assert!(!menu.items().contains(&"Swap with focused pane"));
     }
 
     #[tokio::test]
@@ -547,41 +1135,7 @@ mod tests {
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 
-    #[tokio::test]
-    async fn terminal_direct_focus_history_shortcuts_walk_back_and_forward() {
-        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut app = App::new(
-            &Config::default(),
-            true,
-            None,
-            api_rx,
-            crate::api::EventHub::default(),
-        );
-        app.state.workspaces = vec![Workspace::test_new("test")];
-        app.state.active = Some(0);
-        app.state.selected = 0;
-        app.state.mode = Mode::Terminal;
-        app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
-        let first_pane = app.state.workspaces[0].layout.focused();
-        app.state.keybinds.cycle_pane_next = crate::config::ActionKeybinds::direct("alt+tab");
-        app.state.keybinds.focus_history_back = crate::config::ActionKeybinds::direct("cmd+[");
-        app.state.keybinds.focus_history_forward = crate::config::ActionKeybinds::direct("cmd+]");
-
-        app.handle_terminal_key(TerminalKey::new(KeyCode::Tab, KeyModifiers::ALT))
-            .await;
-        let second_pane = app.state.workspaces[0].layout.focused();
-        assert_ne!(second_pane, first_pane);
-
-        app.handle_terminal_key(TerminalKey::new(KeyCode::Char('['), KeyModifiers::SUPER))
-            .await;
-        assert_eq!(app.state.workspaces[0].layout.focused(), first_pane);
-
-        app.handle_terminal_key(TerminalKey::new(KeyCode::Char(']'), KeyModifiers::SUPER))
-            .await;
-        assert_eq!(app.state.workspaces[0].layout.focused(), second_pane);
-        assert_eq!(app.state.mode, Mode::Terminal);
-    }
-
+    #[cfg(unix)]
     #[tokio::test]
     async fn terminal_direct_edit_scrollback_opens_editor_pane() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -596,7 +1150,12 @@ mod tests {
         let root_pane = workspace.tabs[0].root_pane;
         workspace.tabs[0].runtimes.insert(
             root_pane,
-            crate::pane::PaneRuntime::test_with_scrollback_bytes(20, 5, 4096, b"alpha\nbeta\n"),
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
+                20,
+                5,
+                4096,
+                b"alpha\nbeta\n",
+            ),
         );
         app.state.workspaces = vec![workspace];
         app.state.active = Some(0);
@@ -630,6 +1189,7 @@ mod tests {
         let _ = std::fs::remove_file(output_path);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn direct_custom_command_runs_before_forwarding_to_pane() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -652,6 +1212,9 @@ mod tests {
             label: "ctrl+alt+g".into(),
             command,
             action: crate::config::CustomCommandAction::Shell,
+            description: None,
+            width: None,
+            height: None,
         }];
 
         app.handle_terminal_key(TerminalKey::new(
@@ -665,42 +1228,19 @@ mod tests {
         let _ = std::fs::remove_file(output_path);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn direct_custom_pane_command_opens_overlay_pane() {
-        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut app = App::new(
-            &Config::default(),
-            true,
-            None,
-            api_rx,
-            crate::api::EventHub::default(),
-        );
-        let (workspace, terminal, runtime) = Workspace::new(
-            std::env::current_dir().unwrap_or_else(|_| "/".into()),
-            24,
-            80,
-            app.state.pane_scrollback_limit_bytes,
-            app.state.host_terminal_theme,
-            &app.state.default_shell,
-            app.event_tx.clone(),
-            app.render_notify.clone(),
-            app.render_dirty.clone(),
-        )
-        .expect("workspace should spawn");
-        app.state.workspaces = vec![workspace];
-        app.state
-            .terminal_runtimes
-            .insert(terminal.id.clone(), runtime);
-        app.state.terminals.insert(terminal.id.clone(), terminal);
-        app.state.active = Some(0);
-        app.state.selected = 0;
-        app.state.mode = Mode::Terminal;
+        let mut app = app_with_spawned_workspace();
 
         app.state.keybinds.custom_commands = vec![crate::config::CustomCommandKeybind {
             bindings: crate::config::ActionKeybinds::direct("ctrl+alt+g"),
             label: "ctrl+alt+g".into(),
             command: "printf direct-pane".into(),
             action: crate::config::CustomCommandAction::Pane,
+            description: None,
+            width: None,
+            height: None,
         }];
 
         app.handle_terminal_key(TerminalKey::new(
@@ -709,11 +1249,162 @@ mod tests {
         ))
         .await;
 
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 2);
+        assert!(app.state.workspaces[0].tabs[0].zoomed);
+        assert_eq!(app.state.mode, Mode::Terminal);
+
+        shutdown_test_runtimes(&mut app);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn direct_custom_popup_command_opens_layout_neutral_popup() {
+        let mut app = app_with_spawned_workspace();
+
+        app.state.keybinds.custom_commands = vec![crate::config::CustomCommandKeybind {
+            bindings: crate::config::ActionKeybinds::direct("ctrl+alt+g"),
+            label: "ctrl+alt+g".into(),
+            command: "sleep 1".into(),
+            action: crate::config::CustomCommandAction::Popup,
+            description: None,
+            width: Some(crate::popup_size::PopupSize::Cells(60)),
+            height: Some(crate::popup_size::PopupSize::Cells(12)),
+        }];
+
+        app.handle_terminal_key(TerminalKey::new(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ))
+        .await;
+
+        assert!(app.state.popup_pane.is_some());
+        assert!(!app
+            .popup_runtime()
+            .unwrap()
+            .agent_detection_enabled_for_test());
         assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
-        assert_eq!(app.state.workspaces[0].tabs[0].panes.len(), 2);
-        assert!(app.state.pane_local_overlay.is_some());
         assert!(!app.state.workspaces[0].tabs[0].zoomed);
         assert_eq!(app.state.mode, Mode::Terminal);
+        let snapshot = crate::persist::capture(
+            &app.state.workspaces,
+            &app.state.terminals,
+            &app.terminal_runtimes,
+            app.state.active,
+            app.state.selected,
+            app.state.sidebar_width,
+            app.state.sidebar_section_split,
+            app.state.collapsed_space_keys.clone(),
+            app.state.collapsed_workspace_sections.clone(),
+        );
+        assert_eq!(snapshot.workspaces[0].tabs[0].panes.len(), 1);
+        assert!(matches!(
+            snapshot.workspaces[0].tabs[0].layout,
+            crate::persist::LayoutSnapshot::Pane(_)
+        ));
+
+        shutdown_test_runtimes(&mut app);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn direct_custom_popup_command_closes_after_exit() {
+        let mut app = app_with_spawned_workspace();
+        let focused_pane = app.state.workspaces[0].focused_pane_id().unwrap();
+        let focused_pane_id = app.public_pane_id(0, focused_pane).unwrap();
+
+        let output_path = unique_temp_path("custom-popup-command");
+        let command = format!(
+            "printf '%s|%s' \"${{HERDR_PANE_ID-unset}}\" \"$HERDR_ACTIVE_PANE_ID\" > '{}'",
+            output_path.display()
+        );
+        app.state.keybinds.custom_commands = vec![crate::config::CustomCommandKeybind {
+            bindings: crate::config::ActionKeybinds::direct("ctrl+alt+g"),
+            label: "ctrl+alt+g".into(),
+            command,
+            action: crate::config::CustomCommandAction::Popup,
+            description: None,
+            width: None,
+            height: None,
+        }];
+
+        app.handle_terminal_key(TerminalKey::new(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ))
+        .await;
+
+        assert_eq!(
+            wait_for_file(&output_path),
+            format!("unset|{focused_pane_id}")
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            app.drain_internal_events();
+            if app.state.popup_pane.is_none() {
+                break;
+            }
+        }
+
+        assert!(app.state.popup_pane.is_none());
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
+
+        shutdown_test_runtimes(&mut app);
+        let _ = std::fs::remove_file(output_path);
+    }
+
+    #[tokio::test]
+    async fn popup_forwards_escape_instead_of_closing() {
+        let mut app = app_for_mouse_test();
+        let (runtime, mut rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                40,
+                2,
+                1024,
+                b"one\r\ntwo\r\nthree\r\n",
+                4,
+            );
+        runtime.scroll_up(1);
+        assert!(runtime
+            .scroll_metrics()
+            .is_some_and(|metrics| metrics.offset_from_bottom > 0));
+        app.install_test_popup_runtime(runtime);
+        app.state.mode = Mode::Settings;
+
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Esc, KeyModifiers::empty()));
+
+        assert_eq!(rx.try_recv().unwrap().as_ref(), b"\x1b");
+        assert!(app.state.popup_pane.is_some());
+        assert_eq!(
+            app.popup_runtime()
+                .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+                .map(|metrics| metrics.offset_from_bottom),
+            Some(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn local_popup_input_waits_for_channel_capacity() {
+        let mut app = app_for_mouse_test();
+        let (runtime, mut rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_capacity(40, 2, 1);
+        runtime
+            .try_send_bytes(Bytes::from_static(b"queued"))
+            .unwrap();
+        app.install_test_popup_runtime(runtime);
+        app.state.mode = Mode::Settings;
+
+        let mut send = Box::pin(
+            app.handle_terminal_key(TerminalKey::new(KeyCode::Char('x'), KeyModifiers::empty())),
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut send)
+                .await
+                .is_err()
+        );
+
+        assert_eq!(rx.recv().await.unwrap().as_ref(), b"queued");
+        send.await;
+        assert_eq!(rx.recv().await.unwrap().as_ref(), b"x");
     }
 
     #[tokio::test]
@@ -723,7 +1414,7 @@ mod tests {
         let pane_id = ws.tabs[0].root_pane;
         let pane_infos = ws.tabs[0].layout.panes(Rect::new(0, 0, 80, 24));
         let info = pane_infos[0].clone();
-        let (runtime, mut rx) = crate::pane::PaneRuntime::test_with_channel(
+        let (runtime, mut rx) = crate::terminal::TerminalRuntime::test_with_channel(
             info.inner_rect.width,
             info.inner_rect.height,
         );
@@ -736,7 +1427,7 @@ mod tests {
         app.state.view.pane_infos = pane_infos;
 
         let key = crate::input::parse_terminal_key_sequence("\x1b\x7f").unwrap();
-        app.handle_terminal_key_headless(key).await;
+        app.handle_terminal_key_headless(key);
 
         let bytes = rx.try_recv().unwrap();
         assert_eq!(bytes.as_ref(), b"\x1b\x7f");
@@ -752,7 +1443,7 @@ mod tests {
         let info = pane_infos[0].clone();
         ws.tabs[0].runtimes.insert(
             pane_id,
-            crate::pane::PaneRuntime::test_with_scrollback_bytes(
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
                 info.inner_rect.width,
                 info.inner_rect.height,
                 16 * 1024,
@@ -768,18 +1459,17 @@ mod tests {
 
         let start_metrics = app
             .state
-            .runtime_for_pane_in_workspace(0, pane_id)
-            .and_then(crate::pane::PaneRuntime::scroll_metrics)
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("initial scroll metrics");
         assert_eq!(start_metrics.offset_from_bottom, 0);
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()))
-            .await;
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
 
         let end_metrics = app
             .state
-            .runtime_for_pane_in_workspace(0, pane_id)
-            .and_then(crate::pane::PaneRuntime::scroll_metrics)
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after PageUp");
         assert_eq!(
             end_metrics.offset_from_bottom,
@@ -796,7 +1486,7 @@ mod tests {
         let info = pane_infos[0].clone();
         ws.tabs[0].runtimes.insert(
             pane_id,
-            crate::pane::PaneRuntime::test_with_scrollback_bytes(
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
                 info.inner_rect.width,
                 info.inner_rect.height,
                 16 * 1024,
@@ -810,24 +1500,22 @@ mod tests {
         app.state.mode = Mode::Terminal;
         app.state.view.pane_infos = pane_infos;
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()))
-            .await;
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
         let after_up = app
             .state
-            .runtime_for_pane_in_workspace(0, pane_id)
-            .and_then(crate::pane::PaneRuntime::scroll_metrics)
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after PageUp");
         assert!(after_up.offset_from_bottom > 0);
 
         app.handle_terminal_key_headless(TerminalKey::new(
             KeyCode::PageDown,
             KeyModifiers::empty(),
-        ))
-        .await;
+        ));
         let after_down = app
             .state
-            .runtime_for_pane_in_workspace(0, pane_id)
-            .and_then(crate::pane::PaneRuntime::scroll_metrics)
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after PageDown");
         assert_eq!(after_down.offset_from_bottom, 0);
     }
@@ -841,7 +1529,7 @@ mod tests {
         let info = pane_infos[0].clone();
         ws.tabs[0].runtimes.insert(
             pane_id,
-            crate::pane::PaneRuntime::test_with_scrollback_bytes(
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
                 info.inner_rect.width,
                 info.inner_rect.height,
                 16 * 1024,
@@ -855,12 +1543,11 @@ mod tests {
         app.state.mode = Mode::Terminal;
         app.state.view.pane_infos = pane_infos;
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()))
-            .await;
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
         let after_press = app
             .state
-            .runtime_for_pane_in_workspace(0, pane_id)
-            .and_then(crate::pane::PaneRuntime::scroll_metrics)
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after PageUp press");
         assert_eq!(
             after_press.offset_from_bottom,
@@ -870,13 +1557,12 @@ mod tests {
         app.handle_terminal_key_headless(
             TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty())
                 .with_kind(KeyEventKind::Release),
-        )
-        .await;
+        );
 
         let after_release = app
             .state
-            .runtime_for_pane_in_workspace(0, pane_id)
-            .and_then(crate::pane::PaneRuntime::scroll_metrics)
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after PageUp release");
         assert_eq!(
             after_release.offset_from_bottom,
@@ -893,7 +1579,7 @@ mod tests {
         let info = pane_infos[0].clone();
         ws.tabs[0].runtimes.insert(
             pane_id,
-            crate::pane::PaneRuntime::test_with_scrollback_bytes(
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
                 info.inner_rect.width,
                 info.inner_rect.height,
                 16 * 1024,
@@ -907,13 +1593,12 @@ mod tests {
         app.state.mode = Mode::Terminal;
         app.state.view.pane_infos = pane_infos;
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::CONTROL))
-            .await;
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::CONTROL));
 
         let metrics = app
             .state
-            .runtime_for_pane_in_workspace(0, pane_id)
-            .and_then(crate::pane::PaneRuntime::scroll_metrics)
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after modified PageUp");
         assert_eq!(metrics.offset_from_bottom, 0);
     }
@@ -929,7 +1614,7 @@ mod tests {
         bytes.extend_from_slice(&numbered_lines_bytes(64));
         ws.tabs[0].runtimes.insert(
             pane_id,
-            crate::pane::PaneRuntime::test_with_scrollback_bytes(
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
                 info.inner_rect.width,
                 info.inner_rect.height,
                 16 * 1024,
@@ -945,20 +1630,63 @@ mod tests {
 
         let start_metrics = app
             .state
-            .runtime_for_pane_in_workspace(0, pane_id)
-            .and_then(crate::pane::PaneRuntime::scroll_metrics)
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("initial scroll metrics");
         assert_eq!(start_metrics.offset_from_bottom, 0);
 
-        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()))
-            .await;
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
 
         let end_metrics = app
             .state
-            .runtime_for_pane_in_workspace(0, pane_id)
-            .and_then(crate::pane::PaneRuntime::scroll_metrics)
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after PageUp");
         // Forwarded to pane, so test runtime doesn't process it — scroll stays at bottom.
+        assert_eq!(end_metrics.offset_from_bottom, 0);
+    }
+
+    #[tokio::test]
+    async fn page_up_forwarded_to_primary_screen_application_cursor_pane() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        let mut bytes = b"\x1b[?1h".to_vec();
+        bytes.extend_from_slice(&numbered_lines_bytes(64));
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                16 * 1024,
+                &bytes,
+                4,
+            );
+        ws.tabs[0].runtimes.insert(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+
+        let start_metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("initial scroll metrics");
+        assert_eq!(start_metrics.offset_from_bottom, 0);
+
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::PageUp, KeyModifiers::empty()));
+
+        let forwarded = input_rx.try_recv().expect("forwarded PageUp");
+        assert_eq!(forwarded.as_ref(), b"\x1b[5~");
+        let end_metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("scroll metrics after PageUp");
         assert_eq!(end_metrics.offset_from_bottom, 0);
     }
 }

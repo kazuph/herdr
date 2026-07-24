@@ -8,6 +8,7 @@ pub struct ForegroundProcess {
     pub pid: u32,
     pub name: String,
     pub argv0: Option<String>,
+    pub argv: Option<Vec<String>>,
     pub cmdline: Option<String>,
 }
 
@@ -24,6 +25,49 @@ pub enum Signal {
     Kill,
 }
 
+pub(crate) fn detached_custom_command_process(command: &str) -> std::process::Command {
+    detached_custom_command_process_platform(command)
+}
+
+pub(crate) fn pane_custom_command_pty_builder(command: &str) -> portable_pty::CommandBuilder {
+    pane_custom_command_pty_builder_platform(command)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlatformCapabilities {
+    pub(crate) live_handoff: bool,
+    pub(crate) remote_attach: bool,
+    pub(crate) direct_terminal_attach: bool,
+}
+
+pub(crate) const fn capabilities() -> PlatformCapabilities {
+    PlatformCapabilities {
+        live_handoff: cfg!(unix),
+        remote_attach: cfg!(unix),
+        direct_terminal_attach: cfg!(unix),
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn detach_server_daemon_command(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn current_process_is_detached_server_daemon() -> bool {
+    unsafe { libc::getsid(0) == libc::getpid() }
+}
+
+#[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClipboardCommand {
     pub program: &'static str,
@@ -31,11 +75,14 @@ pub struct ClipboardCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+// Windows does not wire clipboard-image bridging into semantic input yet.
+#[cfg_attr(windows, allow(dead_code))]
 pub struct ClipboardImage {
     pub bytes: Vec<u8>,
     pub extension: &'static str,
 }
 
+#[cfg(unix)]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum LimitedRead {
     Empty,
@@ -43,6 +90,7 @@ pub(crate) enum LimitedRead {
     Oversized,
 }
 
+#[cfg(unix)]
 pub(crate) fn read_limited_reader(
     mut reader: impl std::io::Read,
     max_bytes: usize,
@@ -107,14 +155,127 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::*;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::*;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 mod fallback;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use fallback::*;
 
-#[cfg(test)]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn process_agent_hint(_pid: u32) -> Option<crate::detect::Agent> {
+    None
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn parse_agent_env_hint(environ: &[u8]) -> Option<crate::detect::Agent> {
+    for record in environ.split(|&byte| byte == 0) {
+        let Some(value) = record.strip_prefix(b"HERDR_AGENT=") else {
+            continue;
+        };
+        return crate::detect::parse_agent_label(std::str::from_utf8(value).ok()?);
+    }
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug)]
+pub(crate) struct InputSourceRestore;
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn switch_to_ascii_input_source() -> Option<InputSourceRestore> {
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn pump_input_source_runloop() {}
+
+/// Switches the host keyboard input source while prefix mode is active.
+///
+/// `App` drives this through a trait so the prefix-mode transitions can be
+/// tested with a fake, without touching the real macOS APIs or leaking a
+/// platform-specific restore type into `App`.
+pub(crate) trait PrefixInputSource {
+    /// Switch to an ASCII-capable input source for prefix commands. No-op if
+    /// the current source is already ASCII-capable, the platform is
+    /// unsupported, or the switch fails. Calling it again before `restore`
+    /// keeps the source saved by the first call.
+    fn switch_to_ascii(&mut self);
+
+    /// Restore whatever `switch_to_ascii` saved. No-op if nothing was switched.
+    fn restore(&mut self);
+}
+
+/// Production [`PrefixInputSource`] backed by the per-platform API.
+#[derive(Default)]
+pub(crate) struct RealPrefixInputSource {
+    restore: Option<InputSourceRestore>,
+}
+
+impl PrefixInputSource for RealPrefixInputSource {
+    fn switch_to_ascii(&mut self) {
+        if self.restore.is_none() {
+            // Drain pending input-source-change notifications so the read below is fresh (see
+            // `pump_input_source_runloop`); a no-op on non-macOS.
+            pump_input_source_runloop();
+            self.restore = switch_to_ascii_input_source();
+        }
+    }
+
+    fn restore(&mut self) {
+        let _ = self.restore.take();
+    }
+}
+
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detached_custom_command_preserves_unix_login_shell_flag() {
+        let cmd = detached_custom_command_process("echo hello");
+        assert_eq!(cmd.get_program(), std::ffi::OsStr::new("/bin/sh"));
+        assert_eq!(
+            cmd.get_args().collect::<Vec<_>>(),
+            [
+                std::ffi::OsStr::new("-lc"),
+                std::ffi::OsStr::new("echo hello")
+            ]
+        );
+    }
+
+    #[test]
+    fn pane_custom_command_builder_preserves_unix_shell_flag() {
+        let expected: Vec<std::ffi::OsString> =
+            vec!["/bin/sh".into(), "-c".into(), "echo hello".into()];
+        assert_eq!(
+            pane_custom_command_pty_builder("echo hello").get_argv(),
+            &expected
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn parse_agent_env_hint_accepts_known_agents() {
+        assert_eq!(
+            parse_agent_env_hint(b"PATH=/bin\0HERDR_AGENT=claude\0TERM=xterm\0"),
+            Some(crate::detect::Agent::Claude)
+        );
+        assert_eq!(
+            parse_agent_env_hint(b"HERDR_AGENT=codex"),
+            Some(crate::detect::Agent::Codex)
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn parse_agent_env_hint_ignores_missing_or_unknown_agents() {
+        assert_eq!(parse_agent_env_hint(b"PATH=/bin\0TERM=xterm\0"), None);
+        assert_eq!(parse_agent_env_hint(b"HERDR_AGENT=not-an-agent\0"), None);
+    }
 
     #[test]
     fn read_limited_reader_returns_complete_data_under_limit() {

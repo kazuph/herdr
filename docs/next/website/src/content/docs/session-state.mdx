@@ -1,0 +1,102 @@
+---
+title: Session state and restore
+description: Understand what Herdr keeps live, restores after restart, replays from history, resumes through exact session ids, and hands off during updates.
+---
+
+Herdr has several state paths. They solve different problems.
+
+## What survives
+
+| Case | Processes keep running | Layout returns | Recent screen returns | Agent conversation resumes |
+| --- | --- | --- | --- | --- |
+| Detach and reattach | Yes | Yes | Yes, from the live terminal | Yes, because the process never stopped |
+| Server restart | No | Yes | Only with pane screen history | Only with native agent session restore |
+| Update without `--handoff` | Compatible servers keep running; restart-required servers may need stop/restart | Yes after restart | Only with pane screen history | Only with native agent session restore |
+| Update with `--handoff` | Best effort for supported running servers | Yes | Yes, from the live terminal if handoff succeeds | Yes, because the process keeps running if handoff succeeds |
+
+The sections below explain each path.
+
+## Live persistence
+
+Normal detach keeps the Herdr server running. Panes, shells, agents, servers, tests, and command processes keep running inside that server.
+
+Detach the client with `ctrl+b q`. Reattach later:
+
+```bash
+herdr
+```
+
+This is the strongest persistence path because the original processes never stop.
+
+## Snapshot restore
+
+If the Herdr server stops and starts again, the original pane processes are gone. Herdr restores the saved session shape: workspaces, tabs, panes, cwd, layout, and focus.
+
+Snapshot restore does not preserve running shells, servers, tests, or arbitrary processes. Panes that cannot use a stronger restore path come back as new shells in their saved directories.
+
+## Pane screen history replay
+
+Pane screen history restores recent terminal contents after a full server restart. It restores what Herdr can show, not the old process.
+
+This is off by default because pane output can include secrets, tokens, prompts, and command output. Enable it from Settings > Experiments > pane screen history or with:
+
+```toml
+[experimental]
+pane_history = true
+```
+
+When enabled, Herdr stores saved pane history in `session-history.json` next to `session.json`. Treat the Herdr config/session directory like terminal history.
+
+## Native agent session restore
+
+Some agents can resume their own conversation sessions. Herdr uses a pane's recorded exact session reference to restart a supported agent pane after a Herdr server restart.
+
+This is enabled by default. Disable it with:
+
+```toml
+[session]
+resume_agents_on_restore = false
+```
+
+Herdr only resumes panes with a safe, pane-specific native session reference. Trusted local tools can record one with `pane.report_agent`.
+
+After a client attaches and provides terminal size and theme context, Herdr resumes eligible restored agent panes across workspaces and tabs without waiting for each pane to be focused.
+
+Native session restore uses the agent's resume command:
+
+| Agent | Resume command |
+| --- | --- | --- |
+| Pi | `pi --session <path-or-id>` |
+| OMP | `omp --resume=<path-or-id>` |
+| Claude Code | `claude --resume <id>` |
+| Codex | `codex resume <id>` |
+| Cursor Agent CLI | `cursor-agent --resume <id>` |
+| GitHub Copilot CLI | `copilot --resume=<id>` |
+| Devin CLI | `devin --resume <id>` |
+| Droid | `droid --resume <id>` |
+| Kimi Code CLI | `kimi --session <id>` |
+| Qoder CLI | `qodercli --resume <id>` |
+| OpenCode | `opencode --session <id>` |
+| Kilo Code CLI | `kilo --session <id>` |
+| Hermes Agent | `hermes --resume <id>` |
+| MastraCode | `mastracode --thread <id>` |
+
+This fork does not manage agent hooks/plugins. Trusted local tools can report exact pane state and session ids with `herdr pane report-agent` or the `pane.report_agent` socket method.
+
+Unsupported, missing, invalid, duplicated, or stale session references restore as normal shells in the saved pane directory.
+
+If native agent session restore applies to a pane, Herdr resumes the agent session instead of replaying saved pane history for that pane.
+
+## Live handoff
+
+Live handoff is for update and remote attach flows that need to replace a running Herdr server. It asks the old server to transfer live panes to the new server, so pane processes can keep running across the server replacement.
+
+This is different from snapshot restore, pane history replay, and native agent session restore. Handoff tries to keep the current processes alive. The others reconstruct state after the old server has already stopped.
+
+Remote live handoff is experimental and opt-in:
+
+```bash
+herdr --remote workbox --handoff
+```
+
+Plain `herdr --remote workbox` uses the normal restart/stop flow by default. Self-update is disabled in this fork, so update handoff is not a supported install path.

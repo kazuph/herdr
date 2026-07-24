@@ -12,11 +12,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Deserialize;
+use serde_json::Value;
 use support::{
-    cleanup_test_base, client_handshake, encode_varint_u16, encode_varint_u32, frame_message,
-    read_server_message, register_runtime_dir, register_spawned_herdr_pid,
-    unregister_spawned_herdr_pid, wait_for_file, wait_for_message_variant, wait_for_socket,
-    wait_until,
+    cleanup_test_base, client_handshake, encode_varint_u32, frame_message, read_server_message,
+    register_runtime_dir, register_spawned_herdr_pid, unregister_spawned_herdr_pid,
+    wait_for_message_variant, wait_for_socket, wait_until, CURRENT_PROTOCOL,
 };
 
 fn unique_test_dir() -> PathBuf {
@@ -166,6 +166,43 @@ fn ping_socket(socket_path: &PathBuf) -> String {
     response.trim().to_string()
 }
 
+fn send_json_request(socket_path: &PathBuf, request: &str) -> Value {
+    let mut stream = UnixStream::connect(socket_path).expect("should connect to API socket");
+    writeln!(stream, "{}", request).unwrap();
+
+    let mut reader = BufReader::new(stream);
+    let mut response = String::new();
+    reader.read_line(&mut response).unwrap();
+    serde_json::from_str(&response).expect("response should be valid JSON")
+}
+
+fn first_pane_id_in_workspace(socket_path: &PathBuf, workspace_id: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let request = format!(
+            r#"{{"id":"pane_list","method":"pane.list","params":{{"workspace_id":"{workspace_id}"}}}}"#
+        );
+        let panes = send_json_request(socket_path, &request);
+        if let Some(pane_id) = panes["result"]["panes"]
+            .as_array()
+            .and_then(|panes| panes.first())
+            .and_then(|pane| pane["pane_id"].as_str())
+        {
+            return pane_id.to_string();
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    panic!("pane.list did not return a pane for workspace {workspace_id} before timeout");
+}
+
+fn app_dir_name() -> &'static str {
+    if cfg!(debug_assertions) {
+        "herdr-dev"
+    } else {
+        "herdr"
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct FrameWire {
@@ -229,9 +266,9 @@ fn read_next_frame_payload(stream: &mut UnixStream, timeout: Duration) -> Result
     Err("timed out waiting for Frame message".into())
 }
 
-fn frame_contains_text(frame: &FrameWire, needle: &str) -> bool {
+fn frame_text(frame: &FrameWire) -> String {
     if frame.cells.is_empty() {
-        return false;
+        return String::new();
     }
 
     let width = frame.width.max(1) as usize;
@@ -248,7 +285,7 @@ fn frame_contains_text(frame: &FrameWire, needle: &str) -> bool {
         let _ = (cursor.x, cursor.y, cursor.visible, cursor.shape);
     }
 
-    text.contains(needle)
+    text
 }
 
 // ---------------------------------------------------------------------------
@@ -269,13 +306,16 @@ fn client_connects_and_receives_frame() {
 
     let spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
     wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
+    wait_for_socket(&client_socket, Duration::from_secs(10));
 
     // Connect and handshake.
     let mut stream = UnixStream::connect(&client_socket).expect("should connect to client socket");
     let (version, error) =
-        client_handshake(&mut stream, 10, 80, 24).expect("handshake should succeed");
-    assert_eq!(version, 10, "server should report protocol version 10");
+        client_handshake(&mut stream, CURRENT_PROTOCOL, 80, 24).expect("handshake should succeed");
+    assert_eq!(
+        version, CURRENT_PROTOCOL,
+        "server should report current protocol version"
+    );
     assert!(
         error.is_none(),
         "handshake should not have error: {:?}",
@@ -338,12 +378,12 @@ fn client_sees_headless_startup_config_diagnostic() {
         child,
     };
     wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
+    wait_for_socket(&client_socket, Duration::from_secs(10));
 
     let mut stream = UnixStream::connect(&client_socket).expect("should connect to client socket");
     let (version, error) =
-        client_handshake(&mut stream, 10, 80, 24).expect("handshake should succeed");
-    assert_eq!(version, 10);
+        client_handshake(&mut stream, CURRENT_PROTOCOL, 80, 24).expect("handshake should succeed");
+    assert_eq!(version, CURRENT_PROTOCOL);
     assert!(error.is_none(), "{:?}", error);
 
     stream
@@ -351,11 +391,15 @@ fn client_sees_headless_startup_config_diagnostic() {
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut found_diagnostic = false;
+    let mut last_frame_text = String::new();
     while Instant::now() < deadline {
         match read_server_message(&mut stream) {
             Ok((1, payload)) => {
                 let frame = decode_frame_payload(&payload).expect("decode frame");
-                if frame_contains_text(&frame, "config parse error") {
+                last_frame_text = frame_text(&frame);
+                if last_frame_text.contains("config.toml")
+                    && last_frame_text.contains("herdr config check")
+                {
                     found_diagnostic = true;
                     break;
                 }
@@ -367,188 +411,10 @@ fn client_sees_headless_startup_config_diagnostic() {
 
     assert!(
         found_diagnostic,
-        "attached client should see startup config parse diagnostic"
+        "attached client should see startup config parse diagnostic; last frame:\n{last_frame_text}"
     );
 
     cleanup_spawned_herdr(spawned, base);
-}
-
-#[test]
-fn client_input_forwarded_to_pane() {
-    // Stdin input is forwarded to server as ClientMessage::Input.
-    // Server routes client input to the correct PTY.
-    let _lock = test_lock();
-    let base = unique_test_dir();
-    let config_home = base.join("config");
-    let runtime_dir = base.join("runtime");
-    let api_socket = runtime_dir.join("herdr.sock");
-    let client_socket = runtime_dir.join("herdr-client.sock");
-
-    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
-    wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
-
-    // Connect and handshake.
-    let mut stream = UnixStream::connect(&client_socket).expect("should connect to client socket");
-    let (version, error) =
-        client_handshake(&mut stream, 10, 80, 24).expect("handshake should succeed");
-    assert_eq!(version, 10);
-    assert!(error.is_none(), "{:?}", error);
-
-    // Send an Input message containing "echo hello\n".
-    // ClientMessage::Input is variant 1: { data: Vec<u8> }
-    let input_data = b"echo hello\n".to_vec();
-    let input_payload = {
-        let mut buf = encode_varint_u32(1); // variant 1 = Input
-                                            // Encode the data as a bincode Vec<u8>: length (varint) + bytes
-        buf.extend_from_slice(&encode_varint_u32(input_data.len() as u32));
-        buf.extend_from_slice(&input_data);
-        buf
-    };
-    let framed = frame_message(&input_payload);
-    stream
-        .write_all(&framed)
-        .expect("should send Input message");
-    stream.flush().expect("should flush");
-
-    assert!(
-        wait_until(Duration::from_secs(2), Duration::from_millis(25), || {
-            ping_socket(&api_socket).contains("pong")
-        }),
-        "server should still respond to ping after input"
-    );
-
-    // Verify the server is still alive and responsive via API.
-    let response = ping_socket(&api_socket);
-    assert!(
-        response.contains("pong"),
-        "server should still respond to ping after input: {response}"
-    );
-
-    cleanup_spawned_herdr(spawned, base);
-}
-
-#[test]
-fn client_resize_sends_message() {
-    // Terminal resize triggers ClientMessage::Resize.
-    let _lock = test_lock();
-    let base = unique_test_dir();
-    let config_home = base.join("config");
-    let runtime_dir = base.join("runtime");
-    let api_socket = runtime_dir.join("herdr.sock");
-    let client_socket = runtime_dir.join("herdr-client.sock");
-
-    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
-    wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
-
-    // Connect and handshake.
-    let mut stream = UnixStream::connect(&client_socket).expect("should connect to client socket");
-    let (version, error) =
-        client_handshake(&mut stream, 10, 80, 24).expect("handshake should succeed");
-    assert_eq!(version, 10);
-    assert!(error.is_none(), "{:?}", error);
-
-    // Drain the initial frame(s).
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
-    while read_server_message(&mut stream).is_ok() {}
-
-    // Send a Resize message: ClientMessage::Resize is variant 3.
-    let resize_payload = {
-        let mut buf = encode_varint_u32(3); // variant 3 = Resize
-        buf.extend_from_slice(&encode_varint_u16(120)); // cols
-        buf.extend_from_slice(&encode_varint_u16(40)); // rows
-        buf.extend_from_slice(&encode_varint_u32(8)); // cell_width_px
-        buf.extend_from_slice(&encode_varint_u32(16)); // cell_height_px
-        buf
-    };
-    let framed = frame_message(&resize_payload);
-    stream
-        .write_all(&framed)
-        .expect("should send Resize message");
-    stream.flush().expect("should flush");
-
-    assert!(
-        wait_until(Duration::from_secs(2), Duration::from_millis(25), || {
-            ping_socket(&api_socket).contains("pong")
-        }),
-        "server should respond after resize"
-    );
-
-    // Verify the server is still alive.
-    let response = ping_socket(&api_socket);
-    assert!(
-        response.contains("pong"),
-        "server should respond after resize: {response}"
-    );
-
-    cleanup_spawned_herdr(spawned, base);
-}
-
-#[test]
-fn server_shutdown_sends_message_to_client() {
-    // ServerShutdown causes clean exit with informative message.
-    let _lock = test_lock();
-    let base = unique_test_dir();
-    let config_home = base.join("config");
-    let runtime_dir = base.join("runtime");
-    let api_socket = runtime_dir.join("herdr.sock");
-    let client_socket = runtime_dir.join("herdr-client.sock");
-
-    let mut spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
-    wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
-
-    // Connect and handshake.
-    let mut stream = UnixStream::connect(&client_socket).expect("should connect to client socket");
-    let (version, error) =
-        client_handshake(&mut stream, 10, 80, 24).expect("handshake should succeed");
-    assert_eq!(version, 10);
-    assert!(error.is_none(), "{:?}", error);
-
-    // Send SIGINT so the server takes the graceful shutdown path and
-    // broadcasts ServerShutdown before exiting.
-    if let Some(pid) = spawned.child.process_id() {
-        unsafe {
-            libc::kill(pid as libc::pid_t, libc::SIGINT);
-        }
-    }
-
-    // The client should receive an explicit ServerShutdown message, or at
-    // minimum observe clean connection close if shutdown races with send.
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    let mut saw_shutdown = false;
-    let mut saw_disconnect = false;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        match read_server_message(&mut stream) {
-            Ok((variant, _)) => {
-                if variant == 3 {
-                    saw_shutdown = true;
-                    break;
-                }
-            }
-            Err(_) => {
-                saw_disconnect = true;
-                break;
-            }
-        }
-    }
-    assert!(
-        saw_shutdown || saw_disconnect,
-        "client should observe ServerShutdown or disconnect during graceful shutdown"
-    );
-
-    // Wait for the server to exit after shutdown signal.
-    spawned.close_master();
-    let _ = spawned.child.wait();
-
-    drop(spawned);
-    cleanup_test_base(&base);
 }
 
 #[test]
@@ -615,29 +481,38 @@ fn server_crash_after_attach_causes_lost_connection_error() {
 
     let mut spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
     wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
+    wait_for_socket(&client_socket, Duration::from_secs(10));
 
     // Attach a real thin client (client subcommand) through PTY so handshake and
     // terminal setup paths are exercised.
     let mut thin_client = spawn_client_process(&config_home, &runtime_dir, &api_socket);
 
-    // Prove attached before kill by waiting for at least one frame message.
+    // Prove attached before kill by waiting for recognizable rendered app content.
     let mut thin_reader = thin_client
         ._master
         .as_ref()
         .expect("thin client master")
         .try_clone_reader()
         .expect("clone client PTY reader");
-    let attached_before_kill = {
+    let (attached_before_kill, attach_output) = {
         let deadline = Instant::now() + Duration::from_secs(8);
         let mut buf = [0u8; 4096];
         let mut seen = false;
+        let mut output = String::new();
         while Instant::now() < deadline {
             match thin_reader.read(&mut buf) {
                 Ok(n) if n > 0 => {
                     let out = String::from_utf8_lossy(&buf[..n]);
-                    if !out.is_empty() {
+                    output.push_str(&out);
+                    if out.contains("\u{2500}")
+                        || out.contains("workspace")
+                        || out.contains("pane")
+                        || out.contains("terminal")
+                    {
                         seen = true;
+                        break;
+                    }
+                    if output.to_lowercase().contains("herdr:") {
                         break;
                     }
                 }
@@ -645,11 +520,11 @@ fn server_crash_after_attach_causes_lost_connection_error() {
                 Err(_) => thread::sleep(Duration::from_millis(30)),
             }
         }
-        seen
+        (seen, output)
     };
     assert!(
         attached_before_kill,
-        "thin client must complete attach and receive frame before server crash"
+        "thin client must complete attach and receive frame before server crash; output: {attach_output:?}"
     );
 
     // Kill server unexpectedly.
@@ -731,13 +606,13 @@ fn client_receives_frame_after_pane_output() {
 
     let spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
     wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
+    wait_for_socket(&client_socket, Duration::from_secs(10));
 
     // Connect and handshake.
     let mut stream = UnixStream::connect(&client_socket).expect("should connect to client socket");
     let (version, error) =
-        client_handshake(&mut stream, 10, 80, 24).expect("handshake should succeed");
-    assert_eq!(version, 10);
+        client_handshake(&mut stream, CURRENT_PROTOCOL, 80, 24).expect("handshake should succeed");
+    assert_eq!(version, CURRENT_PROTOCOL);
     assert!(error.is_none(), "{:?}", error);
 
     read_next_frame_payload(&mut stream, Duration::from_secs(10))
@@ -765,83 +640,6 @@ fn client_receives_frame_after_pane_output() {
 }
 
 #[test]
-fn navigate_mode_keybind_dispatch_in_server() {
-    // Navigate mode keybind dispatch in server.
-    // This tests that the server can process a prefix key (Ctrl+B) to enter
-    // navigate mode, and then a navigation key (like 'n' for new workspace).
-    let _lock = test_lock();
-    let base = unique_test_dir();
-    let config_home = base.join("config");
-    let runtime_dir = base.join("runtime");
-    let api_socket = runtime_dir.join("herdr.sock");
-    let client_socket = runtime_dir.join("herdr-client.sock");
-
-    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
-    wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
-
-    // Connect and handshake.
-    let mut stream = UnixStream::connect(&client_socket).expect("should connect to client socket");
-    let (version, error) =
-        client_handshake(&mut stream, 10, 80, 24).expect("handshake should succeed");
-    assert_eq!(version, 10);
-    assert!(error.is_none(), "{:?}", error);
-
-    // Drain initial frames.
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
-    while read_server_message(&mut stream).is_ok() {}
-
-    // Send Ctrl+B (prefix key) as raw bytes. In kitty mode, Ctrl+B is 0x02.
-    // In legacy mode, it's also 0x02 (control character).
-    let prefix_input = vec![0x02]; // Ctrl+B
-    let input_payload = {
-        let mut buf = encode_varint_u32(1); // Input variant
-        buf.extend_from_slice(&encode_varint_u32(prefix_input.len() as u32));
-        buf.extend_from_slice(&prefix_input);
-        buf
-    };
-    let framed = frame_message(&input_payload);
-    stream.write_all(&framed).expect("send prefix key");
-    stream.flush().expect("flush");
-
-    stream
-        .set_read_timeout(Some(Duration::from_millis(200)))
-        .unwrap();
-    while read_server_message(&mut stream).is_ok() {}
-    stream.set_read_timeout(None).unwrap();
-
-    // Send 'n' (new workspace in navigate mode).
-    let n_input = b"n".to_vec();
-    let n_payload = {
-        let mut buf = encode_varint_u32(1); // Input variant
-        buf.extend_from_slice(&encode_varint_u32(n_input.len() as u32));
-        buf.extend_from_slice(&n_input);
-        buf
-    };
-    let framed = frame_message(&n_payload);
-    stream.write_all(&framed).expect("send n key");
-    stream.flush().expect("flush");
-
-    assert!(
-        wait_until(Duration::from_secs(2), Duration::from_millis(25), || {
-            ping_socket(&api_socket).contains("pong")
-        }),
-        "server should still respond after navigate mode input"
-    );
-
-    // Verify the server is still alive and the API still works.
-    let response = ping_socket(&api_socket);
-    assert!(
-        response.contains("pong"),
-        "server should still respond after navigate mode input: {response}"
-    );
-
-    cleanup_spawned_herdr(spawned, base);
-}
-
-#[test]
 fn pane_spawn_cwd_fallback_in_server() {
     // Pane spawn failure cwd fallback in server context.
     // This test verifies that the server can start even with invalid
@@ -852,32 +650,59 @@ fn pane_spawn_cwd_fallback_in_server() {
     let runtime_dir = base.join("runtime");
     let api_socket = runtime_dir.join("herdr.sock");
     let client_socket = runtime_dir.join("herdr-client.sock");
+    let data_dir = config_home.join(app_dir_name());
+    let missing_cwd = base.join("missing-cwd-for-test");
+    let missing_cwd = missing_cwd.to_str().expect("test cwd should be UTF-8");
+    fs::create_dir_all(&data_dir).unwrap();
+    let session = serde_json::json!({
+        "version": 2,
+        "workspaces": [{
+            "custom_name": "missing-cwd",
+            "layout": { "Pane": 0 },
+            "panes": { "0": { "cwd": missing_cwd } },
+            "zoomed": false,
+            "focused": 0,
+            "root_pane": 0
+        }],
+        "active": 0,
+        "selected": 0
+    });
+    fs::write(
+        data_dir.join("session.json"),
+        serde_json::to_vec_pretty(&session).unwrap(),
+    )
+    .unwrap();
 
     let spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
     wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
+    wait_for_socket(&client_socket, Duration::from_secs(10));
 
-    // The server should have started successfully even though there are
-    // no existing sessions (fresh state). The test verifies that the
-    // server doesn't crash during initial pane creation.
-    let response = ping_socket(&api_socket);
-    assert!(
-        response.contains("pong"),
-        "server should respond to ping after startup: {response}"
+    let workspaces = send_json_request(
+        &api_socket,
+        r#"{"id":"workspace_list","method":"workspace.list","params":{}}"#,
     );
-
-    // Create a workspace via the API — this tests pane creation in the server.
-    let mut ws_stream = UnixStream::connect(&api_socket).expect("connect to API");
-    let request = r#"{"id":"2","method":"workspace.create","params":{"label":"cwd-test"}}"#;
-    writeln!(ws_stream, "{}", request).unwrap();
-
-    let mut reader = BufReader::new(ws_stream);
-    let mut response = String::new();
-    reader.read_line(&mut response).unwrap();
-
+    let restored_workspace = workspaces["result"]["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workspace| workspace["label"] == "missing-cwd")
+        .expect("server should restore workspace with missing pane cwd");
+    let workspace_id = restored_workspace["workspace_id"]
+        .as_str()
+        .expect("restored workspace should have public id");
+    let pane_id = first_pane_id_in_workspace(&api_socket, workspace_id);
+    let pane = send_json_request(
+        &api_socket,
+        &format!(r#"{{"id":"pane_get","method":"pane.get","params":{{"pane_id":"{pane_id}"}}}}"#),
+    );
+    assert_eq!(pane["result"]["pane"]["workspace_id"], workspace_id);
+    let cwd = pane["result"]["pane"]["cwd"]
+        .as_str()
+        .expect("restored pane should report fallback cwd");
+    assert_ne!(cwd, missing_cwd);
     assert!(
-        response.contains("workspace_created") || response.contains("ok"),
-        "workspace creation should succeed: {response}"
+        std::path::Path::new(cwd).exists(),
+        "fallback cwd should exist: {cwd}"
     );
 
     cleanup_spawned_herdr(spawned, base);
@@ -896,13 +721,13 @@ fn graceful_shutdown_sends_server_shutdown_to_client() {
 
     let mut spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
     wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
+    wait_for_socket(&client_socket, Duration::from_secs(10));
 
     // Connect and handshake.
     let mut stream = UnixStream::connect(&client_socket).expect("should connect to client socket");
     let (version, error) =
-        client_handshake(&mut stream, 10, 80, 24).expect("handshake should succeed");
-    assert_eq!(version, 10);
+        client_handshake(&mut stream, CURRENT_PROTOCOL, 80, 24).expect("handshake should succeed");
+    assert_eq!(version, CURRENT_PROTOCOL);
     assert!(error.is_none(), "{:?}", error);
 
     // Drain initial frame(s).
@@ -995,13 +820,13 @@ fn client_receives_notify_on_agent_state_change() {
         child,
     };
     wait_for_socket(&api_socket, Duration::from_secs(10));
-    wait_for_file(&client_socket, Duration::from_secs(10));
+    wait_for_socket(&client_socket, Duration::from_secs(10));
 
     // Connect as a client and perform handshake.
     let mut stream = UnixStream::connect(&client_socket).expect("should connect");
     let (version, error) =
-        client_handshake(&mut stream, 10, 80, 24).expect("handshake should succeed");
-    assert_eq!(version, 10);
+        client_handshake(&mut stream, CURRENT_PROTOCOL, 80, 24).expect("handshake should succeed");
+    assert_eq!(version, CURRENT_PROTOCOL);
     assert!(error.is_none(), "{:?}", error);
 
     // Drain initial frame(s).

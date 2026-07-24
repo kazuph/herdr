@@ -1,0 +1,50 @@
+---
+title: Herdr のインストール
+description: kazuph/herdr fork のビルド、インストール、動作確認。
+---
+
+kazuph/herdr fork はソースからインストールします。この fork の runtime には、upstream のリリースバイナリ、`herdr.dev` のインストーラー、Homebrew、mise、GitHub releases のバイナリを使わないでください。
+
+## インストール
+
+fork をビルドし、生成されたバイナリを配置します:
+
+```bash
+git clone https://github.com/kazuph/herdr
+cd herdr
+just build
+install -m 755 target/release/herdr ~/.local/bin/herdr
+```
+
+macOS のローカル開発インストールでは、コピー後に署名します:
+
+```bash
+codesign -s - -f ~/.local/bin/herdr
+```
+
+別名バイナリで検証する場合は、同じビルドを `herdrx` など別名でコピーします。そのバイナリは、名前に応じた独立した config、state、socket、session namespace を使います。
+
+## 動作確認
+
+Herdr を起動します:
+
+```bash
+herdr
+```
+
+シェルが `herdr` を見つけられない場合は、ターミナルを再起動するか、インストール先ディレクトリが PATH に含まれているか確認してください。
+
+## アップデート
+
+この fork では self-update は無効です。更新は fork checkout から再ビルドし、ローカルバイナリを明示的に置き換えてください:
+
+```bash
+just build
+install -m 755 target/release/herdr ~/.local/bin/herdr
+```
+
+稼働中の Herdr server/client の再起動は別操作です。新しいバイナリをビルドしただけで、実行中runtimeを暗黙に停止・置換しないでください。
+
+## 動作要件
+
+このソースツリーをビルドできる Rust toolchain と、対象プラットフォームの必要ライブラリが必要です。

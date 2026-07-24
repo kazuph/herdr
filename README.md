@@ -6,7 +6,16 @@
 </p>
 
 <p align="center">
-  <a href="https://herdr.dev">herdr.dev</a> · <a href="#install">install</a> · <a href="#quick-start">quick start</a> · <a href="#supported-agents">supported agents</a> · <a href="https://herdr.dev/docs/configuration/">configuration</a> · <a href="https://herdr.dev/docs/socket-api/">socket api</a>
+  <a href="https://herdr.dev">herdr.dev</a> · <a href="#install">install</a> · <a href="https://herdr.dev/docs/quick-start/">quick start</a> · <a href="https://herdr.dev/docs/">docs</a> · <a href="#sponsors">sponsors</a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-666666?labelColor=333333" alt="AGPL 3.0 license" /></a>
+  <a href="https://github.com/kazuph/herdr/releases"><img src="https://img.shields.io/github/downloads/kazuph/herdr/total?labelColor=333333&color=666666" alt="total GitHub release downloads" /></a>
+  <a href="https://github.com/kazuph/herdr/stargazers"><img src="https://img.shields.io/github/stars/kazuph/herdr?labelColor=333333&color=666666&logo=github" alt="GitHub stars" /></a>
+  <a href="https://github.com/kazuph/herdr/releases/latest"><img src="https://img.shields.io/github/v/release/kazuph/herdr?label=release&labelColor=333333&color=666666" alt="latest stable release" /></a>
+  <a href="https://formulae.brew.sh/formula/herdr"><img src="https://img.shields.io/homebrew/v/herdr?label=homebrew&labelColor=333333&color=666666" alt="Homebrew version" /></a>
+  <a href="https://x.com/herdrdev"><img src="https://img.shields.io/badge/follow-%40herdrdev-000000?logo=x&logoColor=white" alt="follow @herdrdev on X" /></a>
 </p>
 
 ---
@@ -15,7 +24,12 @@ https://github.com/user-attachments/assets/043ec09f-4bdd-41d5-aee0-8fda6b83e267
 
 **agent multiplexer that lives in your terminal.**
 
-workspaces, tabs, panes. mouse-native: click, drag, split. every agent at a glance: blocked, working, done. detach and reattach, agents keep running. no gui app, no electron, no mac-only native wrapper. you see the agent's own terminal, not someone's interpretation of it.
+- **every agent at a glance** — blocked, working, done. real terminal views, not a wrapped interpretation.
+- **detach, agents keep running** — reattach from any terminal, or over ssh. sessions survive restarts.
+- **agents can use herdr too** — a pure socket api: agents spawn panes, read output, wait on each other. [agent skill →](https://herdr.dev/docs/agent-skill/)
+- **keyboard and mouse, both first-class** — tmux-style prefix keys *and* click, drag, split. pick per moment, not per tool.
+- **plugins** — extend panes and workflows. [browse the marketplace →](https://herdr.dev/plugins/)
+- **one rust binary, no electron** — runs in whatever terminal you already use.
 
 ---
 
@@ -36,267 +50,42 @@ or download the binary from [releases](https://github.com/kazuph/herdr/releases)
 herdr
 ```
 
-by default herdr launches or attaches to one background session server. `ctrl+b q` detaches the client. agents keep running. use `herdr server stop` to stop the default server. use `--no-session` for the old single-process mode.
-
-named sessions are runtime/socket namespaces for separate persistent herdr servers. they do not replace workspaces; each named session has its own panes, tabs, workspaces, sockets, and session state while sharing the same global config file.
-
-```bash
-herdr session list
-herdr session attach work
-herdr session attach side-project
-herdr session stop work
-herdr session delete side-project
-```
-
-1. press `ctrl+b`, then `shift+n` to create a workspace
-2. run an agent in the root pane
-3. press `ctrl+b`, then `w` to open workspace navigation
-4. use `ctrl+b`, then `v` or `minus` to split panes, or `ctrl+b`, then `c` to create a new tab
-5. watch the sidebar for blocked, working, and done states
-
-on first run herdr opens a short onboarding flow. after that, restored sessions land in terminal mode; fresh sessions start in **navigate mode**.
-
-## how it compares
-
-|                          | tmux | gui managers | herdr |
-|--------------------------|------|--------------|-------|
-| persistent sessions       | ✓    | —            | ✓     |
-| detach / reattach        | ✓    | —            | ✓     |
-| panes, tabs, workspaces  | ✓    | ✓            | ✓     |
-| agent awareness          | —    | ✓            | ✓     |
-| lives in your terminal   | ✓    | —            | ✓     |
-| real terminal views      | ✓    | —            | ✓     |
-| mouse-native            | —    | ✓            | ✓     |
-| lightweight binary       | ✓    | —            | ✓     |
-| agents can orchestrate   | ?    | ?            | ✓     |
-
-tmux gives you persistence and panes, but it was built before agents existed. gui managers show agent state, but they make you leave your terminal and use their wrapped view. herdr is persistence and awareness in one tool that stays out of your way.
-
-## persistence
-
-start herdr where the work lives. locally, run `herdr`. it starts or attaches to the background session automatically, with no socket setup. run your agents, split panes, do your work. press `ctrl+b q` to detach. close your terminal, close your laptop; your agents keep running. open a new terminal, run `herdr`, you're back. same session, same panes, same agents.
-
-### from anywhere
-
-need to check on your agents from your phone? just ssh in and run herdr. your shell is remote, herdr runs there, and the panes keep running there after detach. any ssh client works. no app to download, no account to create.
-
-```
-ssh you@yourserver
-herdr
-```
-
-or attach from your local terminal through ssh without opening a shell first. your local herdr acts as a thin client, connects over ssh, starts or attaches to the remote herdr server, and streams the ui back to your terminal.
-
-```bash
-herdr --remote workbox
-herdr --remote ssh://you@yourserver:2222
-```
-
-for repeat targets, use your ssh config:
-
-```sshconfig
-Host workbox
-  HostName yourserver
-  User you
-  Port 2222
-```
-
-same session, same agents, same state.
-
-### direct agent attach
-
-`herdr` and `herdr --remote` attach to the full Herdr session UI. `herdr agent attach <target>` attaches your current terminal directly to one server-owned terminal, like a single-pane terminal attach. `herdr terminal attach <terminal_id>` does the same by terminal id.
-
-Direct attach streams the current rendered terminal state first, then live ANSI frames. Your input goes straight to that terminal. Detach with `ctrl+b q`; send a literal `ctrl+b` with `ctrl+b ctrl+b`. One writable client owns input and resize for a terminal. A second attach fails unless you pass `--takeover`.
-
-## agent awareness
-
-the sidebar shows which agents are blocked, working, or done. workspaces roll up to their most urgent state so you can scan the full list at a glance.
-
-states:
-
-- 🔴 **blocked** — agent needs input or approval
-- 🟡 **working** — agent is actively running
-- 🔵 **done** — work finished, you have not looked at it yet
-- 🟢 **idle** — done and seen
-
-detection works by reading foreground process and terminal output. zero config, no hooks or plugins required.
-
-## lives in your terminal
-
-not a gui window, not a web dashboard, not electron. herdr runs inside whatever terminal you already use. single rust binary, no dependencies. works inside tmux.
-
-## what you get
-
-- **workspaces** — organized around git repos or folder names, each with its own tabs and panes
-- **tabs** — first-class in the socket api and cli
-- **mouse-native** — click panes/tabs/workspaces/agents, drag borders, select text to copy, right-click menus; not keyboard-only
-- **notifications** — sounds and toasts for background events; tab-aware suppression
-- **18 built-in themes** — catppuccin, terminal, tokyo night, gruvbox, one, solarized, kanagawa, rosé pine, vesper, and light variants for the main palettes
-- **session persistence** — pane processes survive client detach; sessions restore after full restart
-
-## agents can use herdr too
-
-the local unix socket lets agents create workspaces, split panes, spawn helpers, read output, and wait for state changes.
-
-```bash
-# create a workspace and tab
-herdr workspace create --cwd ~/project --label "api"
-herdr tab create --label "logs"
-
-# split a pane and run
-herdr pane split 1-1 --direction right
-herdr pane run 1-2 "npm test"
-
-# wait for a pane-level UI attention state
-herdr wait agent-status 1-1 --status done
-
-# read output
-herdr pane read 1-2 --source recent --lines 50
-
-# read a rendered ANSI snapshot for TUI feedback loops
-herdr pane read 1-2 --source visible --ansi
-```
-
-full reference: [socket api](https://herdr.dev/docs/socket-api/) and [`SKILL.md`](./SKILL.md).
-
-## supported agents
-
-automatic detection works out of the box. process name matching plus terminal output heuristics.
-
-| agent | idle / done | working | blocked |
-|-------|-------------|---------|---------|
-| [pi](https://pi.dev) | ✓ | ✓ | partial |
-| [claude code](https://docs.anthropic.com/en/docs/claude-code) | ✓ | ✓ | ✓ |
-| [codex](https://github.com/openai/codex) | ✓ | ✓ | ✓ |
-| [droid](https://factory.ai) | ✓ | ✓ | ✓ |
-| [amp](https://ampcode.com) | ✓ | ✓ | ✓ |
-| [opencode](https://github.com/anomalyco/opencode) | ✓ | ✓ | ✓ |
-| [grok cli](https://x.ai/grok) | ✓ | ✓ | ✓ |
-| [hermes agent](https://github.com/NousResearch/hermes-agent) | ✓ | ✓ | ✓ |
-| [kiro cli](https://kiro.dev/docs/cli/) | ✓ | ✓ | — |
-
-detected but not fully tested: gemini cli, cursor agent, cline, kimi, github copilot cli.
-
-for agents outside the built-in list, herdr still works as a terminal multiplexer with workspaces, panes, and tiling. custom tools can report agent labels over the socket api. see the [socket api docs](https://herdr.dev/docs/socket-api/).
-
-## keybindings
-
-press `ctrl+b` to enter prefix mode. default actions are prefix-first and tmux-like:
-
-| key | action |
-|-----|--------|
-| `prefix+c` | new tab |
-| `prefix+n` / `prefix+p` | next / previous tab |
-| `prefix+1..9` | switch tab |
-| `prefix+w` | workspace navigation |
-| `prefix+shift+n` | new workspace |
-| `prefix+shift+g` | new git worktree |
-| `prefix+shift+w` | rename workspace |
-| `prefix+shift+d` | close workspace |
-| `prefix+h/j/k/l` | focus pane |
-| `prefix+v` / `prefix+minus` | split pane |
-| `prefix+x` | close pane |
-| `prefix+b` | toggle sidebar |
-| `prefix+z` | zoom pane |
-| `prefix+r` | resize mode |
-| `prefix+q` | detach |
-
-resize mode: `h`/`l` resize width, `j`/`k` resize height, `esc` exit.
-
-custom command keybindings can launch detached shell helpers or temporary panes:
-
-```toml
-[[keys.command]]
-key = "prefix+g"
-type = "pane" # "shell" or "pane"
-command = "lazygit"
-```
-
-if you have old custom keybindings and want the new defaults, run `herdr config reset-keys`. herdr backs up `config.toml`, removes only keybinding config, and uses built-in v2 defaults after restart or config reload.
-
-mouse is supported throughout. full reference: [configuration docs](https://herdr.dev/docs/configuration/).
-
-## configuration
-
-config file: `~/.config/herdr/config.toml`
-
-```bash
-herdr --default-config   # print full default config
-```
-
-in-app settings screen for theme, sound, and toast preferences. full reference: [configuration docs](https://herdr.dev/docs/configuration/).
-
-## logs
-
-herdr writes logs under `~/.config/herdr/`.
-
-common files:
-
-```text
-~/.config/herdr/herdr.log
-~/.config/herdr/herdr-client.log
-~/.config/herdr/herdr-server.log
-```
-
-in persistent session mode, the client and server logs are usually the useful ones. logs rotate automatically and keep a few older files like `.1` and `.2`.
-
-for issue reports, include the relevant current log plus rotated siblings if they exist. default logs are metadata-focused and avoid pane contents by default.
-
-use a higher log level only when needed:
-
-```bash
-HERDR_LOG=herdr=debug herdr
-```
-
-full logging and environment variable details: [configuration docs](https://herdr.dev/docs/configuration/).
+run your agents, split panes, walk away. `ctrl+b q` detaches, `herdr` reattaches. [quick start →](https://herdr.dev/docs/quick-start/)
 
 ## docs
 
-- [configuration](https://herdr.dev/docs/configuration/) — keybindings, themes, notifications, environment variables
-- [`SKILL.md`](./SKILL.md) — reusable agent skill
-- [socket api](https://herdr.dev/docs/socket-api/) — socket protocol and cli reference
+everything lives at [herdr.dev/docs](https://herdr.dev/docs/): [quick start](https://herdr.dev/docs/quick-start/) · [concepts](https://herdr.dev/docs/concepts/) · [supported agents](https://herdr.dev/docs/agents/) · [keyboard](https://herdr.dev/docs/keyboard/) · [configuration](https://herdr.dev/docs/configuration/) · [session state](https://herdr.dev/docs/session-state/) · [remote](https://herdr.dev/docs/persistence-remote/) · [plugins](https://herdr.dev/docs/plugins/) · [socket api](https://herdr.dev/docs/socket-api/)
+
+## sponsors
+
+herdr is built full-time, in the open. sponsoring directly funds development, stability, and the path to a real agent runtime.
+
+### gold
+
+<a href="https://terminaltrove.com/"><img src="assets/sponsors/terminal-trove.png" alt="Terminal Trove" width="200" /></a>
+
+[**→ become a sponsor**](https://github.com/sponsors/ogulcancelik) · enterprise / partnership: hey@herdr.dev · see [SPONSORS.md](./SPONSORS.md) for tiers. thank you 🐑
 
 ## agent instructions
 
-If you are an AI agent helping with this repository, read [`AGENTS.md`](./AGENTS.md) before making changes and read [`CONTRIBUTING.md`](./CONTRIBUTING.md) before opening issues or PRs.
+if you are an ai agent helping with this repository, read [`AGENTS.md`](./AGENTS.md) before making changes and read [`CONTRIBUTING.md`](./CONTRIBUTING.md) before opening issues or PRs.
 
-## building from source
+## development
 
 ```bash
 git clone https://github.com/kazuph/herdr
 cd herdr
 cargo build --release
-./target/release/herdr
-```
 
-## testing
-
-```bash
 just test        # unit tests
 just check       # formatting, tests, and maintenance checks
 ```
 
 ## license
 
-AGPL-3.0: free to use, modify, and distribute. modified versions must be open-sourced under the same license.
+Herdr is dual-licensed:
 
-## pi, ghostty, and shift+enter
+1. Open source: GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later).
+2. Commercial: commercial licenses are available for organizations that cannot comply with AGPL.
 
-herdr does not require or install terminal keybinds for pi.
-
-ghostty does not ship a default `shift+enter=text:\n` or `shift+enter=text:\x1b\r` keybind. if those lines exist in your ghostty config, they were added by user config or another tool, commonly claude code. they collapse shift+enter into legacy bytes, so downstream programs cannot reliably distinguish shift+enter from ctrl+j or alt+enter.
-
-if shift+enter behaves differently in pi inside herdr, first remove those custom terminal keybinds and retest. do not file this as a herdr keyboard encoding bug unless it reproduces with a clean terminal config.
-
-related context: #78, #81, #106, and earendil-works/pi#1872.
-
-## mandatory star history
-
-<a href="https://www.star-history.com/?repos=ogulcancelik%2Fherdr&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=ogulcancelik/herdr&type=date&theme=dark&legend=top-left&v=2026-05-19" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=ogulcancelik/herdr&type=date&legend=top-left&v=2026-05-19" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=ogulcancelik/herdr&type=date&legend=top-left&v=2026-05-19" />
- </picture>
-</a>
+Contact: hey@herdr.dev

@@ -3,20 +3,26 @@ title: Install Herdr
 description: Build, install, and verify Herdr on Linux and macOS.
 ---
 
-Herdr ships as a single binary for Linux and macOS.
+The kazuph/herdr fork is installed from source. Do not use upstream release binaries, `herdr.dev` installers, Homebrew, mise, or GitHub release downloads for this fork runtime.
 
 ## Install
 
-Build and install from this fork:
+Build the fork and install the resulting binary:
 
 ```bash
 git clone https://github.com/kazuph/herdr
 cd herdr
 just build
-install -m 0755 target/release/herdr ~/.local/bin/herdr
+install -m 755 target/release/herdr ~/.local/bin/herdr
 ```
 
-This fork does not use the hosted installer or self-update flow.
+On macOS local development installs, sign the binary after copying it:
+
+```bash
+codesign -s - -f ~/.local/bin/herdr
+```
+
+For alternate-binary testing, copy the same build under another name such as `herdrx`; that binary uses its own config, state, socket, and session namespace.
 
 ## Verify
 
@@ -28,26 +34,17 @@ herdr
 
 If your shell cannot find `herdr`, restart the terminal or check that the install directory is on your PATH.
 
-## Download manually
+## Update
 
-You can also download a binary from [GitHub releases](https://github.com/kazuph/herdr/releases).
-
-Choose the asset that matches your system:
-
-| System | Asset |
-| --- | --- |
-| Linux x86_64 | `herdr-linux-x86_64` |
-| Linux aarch64 | `herdr-linux-aarch64` |
-| macOS Intel | `herdr-macos-x86_64` |
-| macOS Apple silicon | `herdr-macos-aarch64` |
-
-Make it executable and move it somewhere on your PATH.
+Self-update is disabled in this fork. Update by rebuilding from the fork checkout and replacing the local binary explicitly:
 
 ```bash
-chmod +x herdr-linux-x86_64
-mv herdr-linux-x86_64 ~/.local/bin/herdr
+just build
+install -m 755 target/release/herdr ~/.local/bin/herdr
 ```
+
+Restarting a running Herdr server or client is a separate operation. Do not stop or replace the active runtime implicitly just because a new binary was built.
 
 ## Requirements
 
-Herdr supports Linux and macOS. Native Windows support is not available yet; use Herdr inside WSL for now.
+Build requirements are the Rust toolchain and the platform libraries required by this source tree.

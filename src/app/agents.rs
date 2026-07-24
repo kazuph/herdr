@@ -1,10 +1,6 @@
 use std::path::PathBuf;
 
-use super::{
-    state::{AgentPreset, AgentStartTarget, PendingAgentStartRequest},
-    terminal_targets::TerminalTargetError,
-    App, Mode,
-};
+use super::{terminal_targets::TerminalTargetError, App, Mode};
 use crate::api::schema::{AgentStartParams, SplitDirection};
 
 impl App {
@@ -40,17 +36,10 @@ impl App {
         target: &str,
     ) -> Result<crate::api::schema::AgentInfo, TerminalTargetError> {
         let resolved = self.resolve_terminal_target(target)?;
-        self.state.switch_workspace(resolved.ws_idx);
-        self.state.switch_tab(resolved.tab_idx);
-        if let Some(tab) = self
-            .state
-            .workspaces
-            .get_mut(resolved.ws_idx)
-            .and_then(|ws| ws.tabs.get_mut(resolved.tab_idx))
-        {
-            tab.layout.focus_pane(resolved.pane_id);
-        }
-        self.state.mode = Mode::Terminal;
+        self.state
+            .focus_pane_in_workspace(resolved.ws_idx, resolved.pane_id);
+        self.state.mark_active_tab_seen();
+        self.state.settle_terminal_mode_after_focus();
         self.agent_info(resolved.ws_idx, resolved.pane_id)
             .ok_or_else(|| TerminalTargetError::NotFound {
                 target: target.to_string(),
@@ -109,6 +98,7 @@ impl App {
     pub(super) fn start_agent(
         &mut self,
         params: AgentStartParams,
+        extra_env: Vec<(String, String)>,
     ) -> Result<(crate::api::schema::AgentInfo, Vec<String>), AgentStartError> {
         let name = params.name.trim().to_string();
         if name.is_empty() {
@@ -157,6 +147,7 @@ impl App {
                 params.split.unwrap_or(SplitDirection::Right),
                 cwd,
                 &argv,
+                extra_env,
                 focus,
             )?
         } else if let Some(workspace_id) = params.workspace_id {
@@ -173,10 +164,11 @@ impl App {
                 params.split.unwrap_or(SplitDirection::Right),
                 cwd,
                 &argv,
+                extra_env,
                 focus,
             )?
         } else if self.state.workspaces.is_empty() {
-            self.spawn_agent_workspace(cwd, rows, cols, &argv, focus)?
+            self.spawn_agent_workspace(cwd, rows, cols, &argv, extra_env, focus)?
         } else {
             let ws_idx = self.state.active.unwrap_or(0);
             let tab_idx = self.state.workspaces[ws_idx].active_tab;
@@ -187,6 +179,7 @@ impl App {
                 params.split.unwrap_or(SplitDirection::Right),
                 cwd,
                 &argv,
+                extra_env,
                 focus,
             )?
         };
@@ -210,122 +203,6 @@ impl App {
             .ok_or_else(|| AgentStartError::SpawnFailed("agent disappeared".into()))?;
         debug_assert_eq!(agent.tab_id, self.public_tab_id(ws_idx, tab_idx).unwrap());
         Ok((agent, argv))
-    }
-
-    pub(super) fn run_pending_agent_start(&mut self) -> bool {
-        let Some(request) = self.state.pending_agent_start.take() else {
-            return false;
-        };
-        match self.start_agent_from_menu(request) {
-            Ok(()) => true,
-            Err(err) => {
-                let body = self.agent_start_error_body(err);
-                self.state.config_diagnostic =
-                    Some(format!("agent start failed: {}", body.message));
-                true
-            }
-        }
-    }
-
-    fn start_agent_from_menu(
-        &mut self,
-        request: PendingAgentStartRequest,
-    ) -> Result<(), AgentStartError> {
-        let (ws_idx, tab_idx, target_pane) = self.agent_menu_target(request.target)?;
-        let cwd = self
-            .state
-            .workspaces
-            .get(ws_idx)
-            .and_then(|ws| ws.tabs.get(tab_idx))
-            .and_then(|tab| {
-                tab.cwd_for_pane(
-                    target_pane,
-                    &self.state.terminals,
-                    &self.state.terminal_runtimes,
-                )
-            })
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("/"));
-        let argv = agent_preset_argv(request.preset, &self.state.agent_start_config);
-        if argv.is_empty() {
-            return Err(AgentStartError::EmptyArgv);
-        }
-        let name = self.unique_agent_name(request.preset.base_name());
-        let (ws_idx, tab_idx, pane_id) =
-            self.spawn_agent_split(ws_idx, target_pane, SplitDirection::Right, cwd, &argv, true)?;
-
-        let terminal_id = self
-            .state
-            .workspaces
-            .get(ws_idx)
-            .and_then(|ws| ws.terminal_id(pane_id))
-            .cloned()
-            .ok_or_else(|| AgentStartError::SpawnFailed("terminal disappeared".into()))?;
-        let Some(terminal) = self.state.terminals.get_mut(&terminal_id) else {
-            return Err(AgentStartError::SpawnFailed("terminal disappeared".into()));
-        };
-        terminal.set_agent_name(name.clone());
-        terminal.set_manual_label(name);
-        self.state.switch_workspace(ws_idx);
-        self.state.switch_tab(tab_idx);
-        if let Some(tab) = self
-            .state
-            .workspaces
-            .get_mut(ws_idx)
-            .and_then(|ws| ws.tabs.get_mut(tab_idx))
-        {
-            tab.layout.focus_pane(pane_id);
-        }
-        self.state.mode = Mode::Terminal;
-        self.state.mark_session_dirty();
-        Ok(())
-    }
-
-    fn agent_menu_target(
-        &self,
-        target: AgentStartTarget,
-    ) -> Result<(usize, usize, crate::layout::PaneId), AgentStartError> {
-        match target {
-            AgentStartTarget::Workspace { ws_idx } => {
-                let ws = self.state.workspaces.get(ws_idx).ok_or_else(|| {
-                    AgentStartError::TargetNotFound {
-                        target: format!("workspace index {ws_idx}"),
-                    }
-                })?;
-                let tab_idx = ws.active_tab;
-                let pane_id = ws.tabs[tab_idx].layout.focused();
-                Ok((ws_idx, tab_idx, pane_id))
-            }
-            AgentStartTarget::Pane { pane_id } => self
-                .state
-                .workspaces
-                .iter()
-                .enumerate()
-                .find_map(|(ws_idx, ws)| {
-                    ws.tabs.iter().enumerate().find_map(|(tab_idx, tab)| {
-                        tab.layout
-                            .pane_ids()
-                            .contains(&pane_id)
-                            .then_some((ws_idx, tab_idx, pane_id))
-                    })
-                })
-                .ok_or_else(|| AgentStartError::TargetNotFound {
-                    target: pane_id.raw().to_string(),
-                }),
-        }
-    }
-
-    fn unique_agent_name(&self, base: &str) -> String {
-        if self.agent_name_conflicts(base, "").is_empty() {
-            return base.to_string();
-        }
-        for index in 2.. {
-            let candidate = format!("{base}-{index}");
-            if self.agent_name_conflicts(&candidate, "").is_empty() {
-                return candidate;
-            }
-        }
-        base.to_string()
     }
 
     pub(super) fn agent_start_error_body(
@@ -442,9 +319,10 @@ impl App {
         rows: u16,
         cols: u16,
         argv: &[String],
+        extra_env: Vec<(String, String)>,
         focus: bool,
     ) -> Result<(usize, usize, crate::layout::PaneId), AgentStartError> {
-        let (ws, terminal, runtime) = crate::workspace::Workspace::new_argv_command(
+        let (ws, terminal, runtime) = crate::workspace::Workspace::new_argv_command_with_extra_env(
             cwd,
             rows,
             cols,
@@ -454,14 +332,15 @@ impl App {
             self.event_tx.clone(),
             self.render_notify.clone(),
             self.render_dirty.clone(),
+            extra_env,
         )
         .map_err(|err| AgentStartError::SpawnFailed(err.to_string()))?;
-        self.state
-            .terminal_runtimes
-            .insert(terminal.id.clone(), runtime);
+        self.terminal_runtimes.insert(terminal.id.clone(), runtime);
         self.state.terminals.insert(terminal.id.clone(), terminal);
         self.state.workspaces.push(ws);
         let ws_idx = self.state.workspaces.len() - 1;
+        self.state
+            .remove_alias_shadowed_by_new_pane(self.state.workspaces[ws_idx].tabs[0].root_pane);
         if focus || self.state.active.is_none() {
             self.state.switch_workspace(ws_idx);
             self.state.mode = Mode::Terminal;
@@ -478,9 +357,11 @@ impl App {
         split: SplitDirection,
         cwd: PathBuf,
         argv: &[String],
+        extra_env: Vec<(String, String)>,
         focus: bool,
     ) -> Result<(usize, usize, crate::layout::PaneId), AgentStartError> {
         let (rows, cols) = self.state.estimate_pane_size();
+        let previous_focus = self.state.current_pane_focus_target();
         let direction = match split {
             SplitDirection::Right => ratatui::layout::Direction::Horizontal,
             SplitDirection::Down => ratatui::layout::Direction::Vertical,
@@ -497,6 +378,7 @@ impl App {
                     cols,
                     Some(cwd),
                     argv,
+                    extra_env,
                     self.state.pane_scrollback_limit_bytes,
                     self.state.host_terminal_theme,
                     focus,
@@ -506,15 +388,17 @@ impl App {
                 target: target_pane.raw().to_string(),
             })?
             .map_err(|err| AgentStartError::SpawnFailed(err.to_string()))?;
-        self.state
-            .terminal_runtimes
+        self.terminal_runtimes
             .insert(result.1.terminal.id.clone(), result.1.runtime);
+        self.state
+            .remove_alias_shadowed_by_new_pane(result.1.pane_id);
         self.state
             .terminals
             .insert(result.1.terminal.id.clone(), result.1.terminal);
         if focus {
-            self.state.switch_workspace(ws_idx);
-            self.state.switch_tab(result.0);
+            self.state.switch_workspace_tab(ws_idx, result.0);
+            self.state
+                .record_pane_focus_change(previous_focus, ws_idx, result.1.pane_id);
             self.state.mode = Mode::Terminal;
         }
         self.schedule_session_save();
@@ -533,19 +417,29 @@ impl App {
             return None;
         }
         let pane = self.pane_info(ws_idx, pane_id)?;
+        let global_pane_number = pane_id.raw() as u64;
         Some(crate::api::schema::AgentInfo {
             terminal_id: pane.terminal_id,
             name: terminal.agent_name.clone(),
             agent: pane.agent,
+            title: pane.title,
+            terminal_title: pane.terminal_title,
+            terminal_title_stripped: pane.terminal_title_stripped,
+            display_agent: pane.display_agent,
             agent_status: pane.agent_status,
+            screen_detection_skipped: terminal.full_lifecycle_hook_authority_active(),
+            state_labels: pane.state_labels,
+            tokens: pane.tokens,
+            agent_session: pane.agent_session,
             workspace_id: pane.workspace_id,
             tab_id: pane.tab_id,
-            short_pane_id: pane.short_id,
-            global_pane_id: pane.global_id,
-            global_pane_number: pane.global_number,
+            short_pane_id: pane.pane_id.clone(),
+            global_pane_id: format!("p_{global_pane_number}"),
+            global_pane_number,
             pane_id: pane.pane_id,
             focused: pane.focused,
             cwd: pane.cwd,
+            foreground_cwd: pane.foreground_cwd,
             revision: pane.revision,
         })
     }
@@ -562,14 +456,6 @@ impl App {
             })
             .collect()
     }
-}
-
-fn agent_preset_argv(preset: AgentPreset, config: &crate::config::AgentStartConfig) -> Vec<String> {
-    config
-        .commands
-        .get(preset.base_name())
-        .cloned()
-        .unwrap_or_else(|| preset.argv().iter().map(|arg| (*arg).to_string()).collect())
 }
 
 pub(super) enum AgentStartError {
@@ -592,37 +478,4 @@ pub(super) enum AgentRenameError {
         name: String,
         candidates: Vec<crate::api::schema::AgentInfo>,
     },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn agent_preset_argv_uses_configured_agent_start_command() {
-        let mut config = crate::config::AgentStartConfig::default();
-        config.commands.insert(
-            "codex".into(),
-            vec![
-                "codex".into(),
-                "--sandbox".into(),
-                "workspace-write".into(),
-                "--dangerously-bypass-approvals-and-sandbox".into(),
-            ],
-        );
-
-        assert_eq!(
-            agent_preset_argv(AgentPreset::Codex, &config),
-            vec![
-                "codex",
-                "--sandbox",
-                "workspace-write",
-                "--dangerously-bypass-approvals-and-sandbox",
-            ]
-        );
-        assert_eq!(
-            agent_preset_argv(AgentPreset::Claude, &config),
-            vec!["claude"]
-        );
-    }
 }

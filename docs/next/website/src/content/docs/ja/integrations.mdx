@@ -1,0 +1,20 @@
+---
+title: インテグレーション
+description: kazuph/herdr fork における agent 状態報告の方針。
+---
+
+kazuph/herdr fork では、integration サブコマンドによる agent hook/plugin の自動変更を行いません。エージェント状態は、screen/process/session evidence と、信頼済みローカルツールからの明示報告で扱います。
+
+## 状態を報告する
+
+信頼済みローカルツールは `pane report-agent` で状態、短いタイトル、復元用session idを報告できます:
+
+```bash
+herdr pane report-agent <pane_id> --source custom:tool --agent codex --state working --title "run tests" --session-id <id>
+```
+
+同じ操作は socket API の `pane.report_agent` method からも実行できます。
+
+## 無効化されている経路
+
+この fork では、hook/plugin install/uninstall経路は成功しません。ユーザーの `~/.claude`、`~/.codex`、OpenCode、Pi、Hermes などの設定やplugin/hook directoryを変更しないfail-closed errorを返します。

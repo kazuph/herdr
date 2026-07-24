@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -88,10 +88,7 @@ jobs:
               continue
             fi
 
-            if [ "$(jq -r '.state' <<<"$data")" != "open" ]; then
-              echo "Skipping #$issue because it is not open."
-              continue
-            fi
+            ISSUE_STATE="$(jq -r '.state' <<<"$data")"
 
             HAS_NEXT_RELEASE_LABEL="$(jq -r --arg label "$NEXT_RELEASE_LABEL" 'any(.labels[].name; . == $label)' <<<"$data")"
             if [ "$HAS_NEXT_RELEASE_LABEL" != "true" ]; then
@@ -111,13 +108,22 @@ jobs:
               HAS_PENDING_COMMENT="true"
             fi
 
-            if [ "$HAS_PENDING_COMMENT" = "true" ]; then
-              if ! gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason completed; then
+            if [ "$ISSUE_STATE" = "open" ]; then
+              if [ "$HAS_PENDING_COMMENT" = "true" ]; then
+                if ! gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason completed; then
+                  echo "::warning::Could not close issue #$issue."
+                  continue
+                fi
+              elif ! gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason completed --comment "$PENDING_COMMENT"; then
                 echo "::warning::Could not close issue #$issue."
                 continue
               fi
-            elif ! gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason completed --comment "$PENDING_COMMENT"; then
-              echo "::warning::Could not close issue #$issue."
-              continue
+            elif [ "$HAS_PENDING_COMMENT" != "true" ]; then
+              if ! gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body "$PENDING_COMMENT"; then
+                echo "::warning::Could not comment on closed issue #$issue."
+                continue
+              fi
+            else
+              echo "Skipping pending-release comment for #$issue because it already exists."
             fi
           done

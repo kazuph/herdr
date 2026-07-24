@@ -15,6 +15,10 @@ fn prefix_rhs_label(bindings: &crate::config::ActionKeybinds) -> String {
         .unwrap_or_else(|| "unset".to_string())
 }
 
+fn keybind_label(bindings: &crate::config::ActionKeybinds) -> String {
+    bindings.label().unwrap_or_else(|| "unset".to_string())
+}
+
 fn render_bottom_bar(frame: &mut Frame, area: Rect, line: Line<'_>, bg: ratatui::style::Color) {
     frame.render_widget(Clear, area);
     let buf = frame.buffer_mut();
@@ -56,6 +60,73 @@ pub(super) fn render_prefix_overlay(app: &AppState, frame: &mut Frame, area: Rec
     render_bottom_bar(frame, overlay_area, line, app.palette.panel_bg);
 }
 
+pub(super) fn render_copy_mode_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    let key = Style::default()
+        .fg(app.palette.accent)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(app.palette.overlay0);
+    let mode_style = Style::default()
+        .fg(panel_contrast_fg(&app.palette))
+        .bg(app.palette.accent)
+        .add_modifier(Modifier::BOLD);
+
+    let Some(copy_mode) = app.copy_mode.as_ref() else {
+        return;
+    };
+    let line = if let Some(prompt) = copy_mode.search.prompt.as_ref() {
+        let marker = match prompt.direction {
+            crate::app::state::CopyModeSearchDirection::Forward => "/",
+            crate::app::state::CopyModeSearchDirection::Backward => "?",
+        };
+        Line::from(vec![
+            Span::styled(" COPY ", mode_style),
+            Span::raw(" "),
+            Span::styled(marker, key),
+            Span::styled(prompt.query.clone(), Style::default().fg(app.palette.text)),
+            Span::styled("█", key),
+            Span::styled("  enter search  esc cancel", dim),
+        ])
+    } else {
+        let select = if copy_mode.selection.is_some() {
+            "selecting"
+        } else {
+            "select"
+        };
+        let match_status = copy_mode
+            .search
+            .current
+            .map(|current| format!(" {}/{}", current + 1, copy_mode.search.matches.len()))
+            .or_else(|| (!copy_mode.search.query.is_empty()).then(|| " 0/0".to_string()))
+            .unwrap_or_default();
+        let (exit_keys, exit_label) =
+            if copy_mode.search.query.is_empty() && copy_mode.selection.is_none() {
+                ("q/esc", " exit")
+            } else {
+                ("esc", " clear  q exit")
+            };
+        Line::from(vec![
+            Span::styled(" COPY ", mode_style),
+            Span::raw(" "),
+            Span::styled("h/j/k/l w/b/e { }", key),
+            Span::styled(" move  ", dim),
+            Span::styled("/ ?", key),
+            Span::styled(" search  ", dim),
+            Span::styled("n/N", key),
+            Span::styled(format!(" repeat{match_status}  "), dim),
+            Span::styled("v/space", key),
+            Span::styled(format!(" {select}  "), dim),
+            Span::styled("y/enter", key),
+            Span::styled(" copy  ", dim),
+            Span::styled(exit_keys, key),
+            Span::styled(exit_label, dim),
+        ])
+    };
+
+    let overlay_y = area.y + area.height.saturating_sub(1);
+    let overlay_area = Rect::new(area.x, overlay_y, area.width, 1);
+    render_bottom_bar(frame, overlay_area, line, app.palette.panel_bg);
+}
+
 pub(super) fn render_navigate_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
     let key = Style::default()
         .fg(app.palette.accent)
@@ -76,16 +147,24 @@ pub(super) fn render_navigate_overlay(app: &AppState, frame: &mut Frame, area: R
     let resize = prefix_rhs_label(&kb.resize_mode);
     let help = prefix_rhs_label(&kb.help);
     let settings = prefix_rhs_label(&kb.settings);
+    let goto = prefix_rhs_label(&kb.goto);
     let detach = prefix_rhs_label(&kb.detach);
+    let workspace_nav = format!(
+        "{} / {}",
+        keybind_label(&kb.navigate.workspace_up),
+        keybind_label(&kb.navigate.workspace_down)
+    );
     let line = Line::from(vec![
         Span::styled(" NAVIGATE ", mode_style),
         Span::raw(" "),
         Span::styled("esc", key),
         Span::styled(" back  ", dim),
-        Span::styled("↑↓", key),
+        Span::styled(workspace_nav, key),
         Span::styled(" ws  ", dim),
         Span::styled("⇥", key),
         Span::styled(" pane  ", dim),
+        Span::styled(goto, key),
+        Span::styled(" navigator  ", dim),
         Span::styled(new_tab, key),
         Span::styled(" new tab  ", dim),
         Span::styled(split_vertical, key),
@@ -144,6 +223,17 @@ pub(super) fn render_global_launcher_menu(app: &AppState, frame: &mut Frame) {
         let y = inner.y + idx as u16;
         if y >= inner.y + inner.height {
             break;
+        }
+        if *item == "--" {
+            let row_rect = Rect::new(inner.x, y, inner.width, 1);
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "─".repeat(inner.width as usize),
+                    Style::default().fg(app.palette.surface_dim),
+                ))),
+                row_rect,
+            );
+            continue;
         }
         let selected = idx == app.global_menu.highlighted;
         let rect = Rect::new(inner.x, y, inner.width, 1);
@@ -204,64 +294,6 @@ pub(super) fn render_resize_overlay(app: &AppState, frame: &mut Frame, area: Rec
     render_bottom_bar(frame, overlay_area, line, app.palette.panel_bg);
 }
 
-pub(super) fn render_copy_mode_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
-    let key = Style::default()
-        .fg(app.palette.accent)
-        .add_modifier(Modifier::BOLD);
-    let dim = Style::default().fg(app.palette.overlay0);
-    let mode_style = Style::default()
-        .fg(panel_contrast_fg(&app.palette))
-        .bg(app.palette.accent)
-        .add_modifier(Modifier::BOLD);
-
-    let line = Line::from(vec![
-        Span::styled(" COPY ", mode_style),
-        Span::raw(" "),
-        Span::styled("h/j/k/l", key),
-        Span::styled(" move  ", dim),
-        Span::styled("v", key),
-        Span::styled(" select  ", dim),
-        Span::styled("V", key),
-        Span::styled(" line  ", dim),
-        Span::styled("y/enter", key),
-        Span::styled(" yank  ", dim),
-        Span::styled("q/esc", key),
-        Span::styled(" cancel", dim),
-    ]);
-
-    let overlay_y = copy_mode_overlay_y(app, area);
-    let overlay_area = Rect::new(area.x, overlay_y, area.width, 1);
-    render_bottom_bar(frame, overlay_area, line, app.palette.panel_bg);
-}
-
-fn copy_mode_overlay_y(app: &AppState, area: Rect) -> u16 {
-    let bottom = area.y + area.height.saturating_sub(1);
-    if area.height <= 1 {
-        return bottom;
-    }
-    let Some(copy_mode) = app.copy_mode else {
-        return bottom;
-    };
-    let Some(info) = app
-        .view
-        .pane_infos
-        .iter()
-        .find(|info| info.id == copy_mode.pane_id)
-    else {
-        return bottom;
-    };
-    if copy_mode.cursor_row >= info.inner_rect.height {
-        return bottom;
-    }
-
-    let cursor_y = info.inner_rect.y + copy_mode.cursor_row;
-    if cursor_y == bottom {
-        area.y
-    } else {
-        bottom
-    }
-}
-
 pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
     let Some(menu) = &app.context_menu else {
         return;
@@ -300,50 +332,4 @@ pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
         .highlight_symbol(" ");
     let mut state = ListState::default().with_selected(Some(menu.list.highlighted));
     frame.render_stateful_widget(list, inner, &mut state);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        app::state::{CopyModeState, Mode},
-        layout::{PaneId, PaneInfo},
-    };
-
-    fn app_with_copy_cursor(cursor_row: u16, pane_inner: Rect) -> AppState {
-        let pane_id = PaneId::from_raw(1);
-        let mut app = AppState::test_new();
-        app.mode = Mode::Copy;
-        app.copy_mode = Some(CopyModeState {
-            pane_id,
-            cursor_row,
-            cursor_col: 0,
-            entry_offset_from_bottom: 0,
-            selection: None,
-        });
-        app.view.pane_infos = vec![PaneInfo {
-            id: pane_id,
-            rect: pane_inner,
-            inner_rect: pane_inner,
-            scrollbar_rect: None,
-            is_focused: true,
-        }];
-        app
-    }
-
-    #[test]
-    fn copy_mode_overlay_uses_bottom_when_cursor_is_elsewhere() {
-        let area = Rect::new(0, 0, 80, 24);
-        let app = app_with_copy_cursor(3, Rect::new(0, 0, 80, 24));
-
-        assert_eq!(copy_mode_overlay_y(&app, area), 23);
-    }
-
-    #[test]
-    fn copy_mode_overlay_moves_to_top_when_cursor_is_on_bottom_row() {
-        let area = Rect::new(0, 0, 80, 24);
-        let app = app_with_copy_cursor(23, Rect::new(0, 0, 80, 24));
-
-        assert_eq!(copy_mode_overlay_y(&app, area), 0);
-    }
 }

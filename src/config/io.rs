@@ -6,6 +6,22 @@ use tracing::warn;
 
 use super::{model::LoadedConfig, Config, CONFIG_PATH_ENV_VAR};
 
+const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
+    "advanced",
+    "agent_restore",
+    "agent_start",
+    "experimental",
+    "keys",
+    "onboarding",
+    "remote",
+    "session",
+    "terminal",
+    "theme",
+    "ui",
+    "update",
+    "worktrees",
+];
+
 const DEFAULT_APP_DIR_NAME: &str = "herdr";
 const DEFAULT_DEBUG_APP_DIR_NAME: &str = "herdr-dev";
 
@@ -16,8 +32,7 @@ fn app_namespace_override() -> &'static Mutex<Option<String>> {
 }
 
 pub fn configure_app_namespace_from_program(program: &str) {
-    let namespace = binary_namespace_from_program(program);
-    set_app_namespace_override(namespace);
+    set_app_namespace_override(binary_namespace_from_program(program));
 }
 
 #[cfg(not(test))]
@@ -63,32 +78,15 @@ fn app_namespace_override_value() -> Option<String> {
     APP_NAMESPACE_OVERRIDE.with(|override_name| override_name.borrow().clone())
 }
 
-pub fn config_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(dir).join(app_dir_name())
-    } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(format!(".config/{}", app_dir_name()))
-    } else {
-        PathBuf::from(format!("/tmp/{}", app_dir_name()))
-    }
-}
-
-pub fn state_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("XDG_STATE_HOME") {
-        PathBuf::from(dir).join(app_dir_name())
-    } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(format!(".local/state/{}", app_dir_name()))
-    } else {
-        PathBuf::from(format!("/tmp/{}-state", app_dir_name()))
-    }
-}
-
 fn binary_namespace_from_program(program: &str) -> Option<String> {
     let stem = Path::new(program)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or(DEFAULT_APP_DIR_NAME);
-    if stem == DEFAULT_APP_DIR_NAME {
+    if matches!(
+        stem,
+        DEFAULT_APP_DIR_NAME | DEFAULT_DEBUG_APP_DIR_NAME | "herdr-debug"
+    ) {
         None
     } else if valid_binary_namespace(stem) {
         Some(stem.to_string())
@@ -105,43 +103,120 @@ fn valid_binary_namespace(stem: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
+pub fn config_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+        return PathBuf::from(dir).join(app_dir_name());
+    }
+    platform_config_dir()
+}
+
+pub fn state_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("XDG_STATE_HOME") {
+        return PathBuf::from(dir).join(app_dir_name());
+    }
+    platform_state_dir()
+}
+
+#[cfg(windows)]
+fn platform_config_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("APPDATA") {
+        return PathBuf::from(dir).join(app_dir_name());
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        return PathBuf::from(profile)
+            .join("AppData")
+            .join("Roaming")
+            .join(app_dir_name());
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(format!(".config/{}", app_dir_name()));
+    }
+    std::env::temp_dir().join(app_dir_name())
+}
+
+#[cfg(not(windows))]
+fn platform_config_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(format!(".config/{}", app_dir_name()))
+    } else {
+        std::env::temp_dir().join(app_dir_name())
+    }
+}
+
+#[cfg(windows)]
+fn platform_state_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("LOCALAPPDATA") {
+        return PathBuf::from(dir).join(app_dir_name());
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        return PathBuf::from(profile)
+            .join("AppData")
+            .join("Local")
+            .join(app_dir_name());
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(format!(".local/state/{}", app_dir_name()));
+    }
+    std::env::temp_dir().join(format!("{}-state", app_dir_name()))
+}
+
+#[cfg(not(windows))]
+fn platform_state_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(format!(".local/state/{}", app_dir_name()))
+    } else {
+        std::env::temp_dir().join(format!("{}-state", app_dir_name()))
+    }
+}
+
+fn read_optional_config(path: &Path) -> std::io::Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
 impl Config {
     pub fn load() -> LoadedConfig {
         let path = config_path();
-        if path.exists() {
-            match std::fs::read_to_string(&path) {
-                Ok(content) => match toml::from_str::<Config>(&content) {
-                    Ok(config) => {
-                        let diagnostics = config.collect_diagnostics();
-                        return LoadedConfig {
-                            config,
-                            diagnostics,
-                            invalid_sections: Vec::new(),
-                        };
-                    }
-                    Err(err) => {
-                        warn!(err = %err, "config parse error, using defaults");
-                        return LoadedConfig {
-                            config: Self::default(),
-                            diagnostics: vec![format!("config parse error: {err}; using defaults")],
-                            invalid_sections: Vec::new(),
-                        };
-                    }
-                },
-                Err(err) => {
-                    warn!(err = %err, "config read error, using defaults");
-                    return LoadedConfig {
-                        config: Self::default(),
-                        diagnostics: vec![format!("config read error: {err}; using defaults")],
-                        invalid_sections: Vec::new(),
-                    };
+        let content = match read_optional_config(&path) {
+            Ok(Some(content)) => content,
+            Ok(None) => {
+                return LoadedConfig {
+                    config: Self::default(),
+                    diagnostics: Vec::new(),
+                    invalid_sections: Vec::new(),
+                };
+            }
+            Err(err) => {
+                warn!(err = %err, "config read error, using defaults");
+                return LoadedConfig {
+                    config: Self::default(),
+                    diagnostics: vec![format!("config read error: {err}; using defaults")],
+                    invalid_sections: Vec::new(),
+                };
+            }
+        };
+
+        match toml::from_str::<Config>(&content) {
+            Ok(config) => {
+                let mut diagnostics = unknown_top_level_section_diagnostics_from_str(&content);
+                diagnostics.extend(config.collect_diagnostics());
+                LoadedConfig {
+                    config,
+                    diagnostics,
+                    invalid_sections: Vec::new(),
                 }
             }
-        }
-        LoadedConfig {
-            config: Self::default(),
-            diagnostics: Vec::new(),
-            invalid_sections: Vec::new(),
+            Err(err) => {
+                warn!(err = %err, "config parse error, using defaults");
+                LoadedConfig {
+                    config: Self::default(),
+                    diagnostics: vec![format!("config parse error: {err}; using defaults")],
+                    invalid_sections: Vec::new(),
+                }
+            }
         }
     }
 }
@@ -165,36 +240,60 @@ pub fn config_path() -> PathBuf {
 }
 
 pub fn config_diagnostic_summary(diagnostics: &[String]) -> Option<String> {
-    const MAX_VISIBLE_DIAGNOSTICS: usize = 4;
-
     if diagnostics.is_empty() {
         return None;
     }
 
-    let mut lines: Vec<String> = diagnostics
+    let target = config_path()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config.toml")
+        .to_string();
+    let read_error = diagnostics
         .iter()
-        .take(MAX_VISIBLE_DIAGNOSTICS)
-        .map(|diagnostic| diagnostic.split_whitespace().collect::<Vec<_>>().join(" "))
-        .collect();
-    let hidden = diagnostics.len().saturating_sub(MAX_VISIBLE_DIAGNOSTICS);
-    if hidden > 0 {
-        lines.push(format!("and {hidden} more config warnings"));
-    }
-    Some(lines.join("\n"))
+        .any(|diagnostic| diagnostic.starts_with("config read error:"));
+    let impact = if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.contains("using defaults"))
+    {
+        if read_error {
+            " unreadable; using defaults"
+        } else {
+            " invalid; using defaults"
+        }
+    } else if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.contains("keeping current config"))
+    {
+        if read_error {
+            " unreadable; keeping current config"
+        } else {
+            " invalid; keeping current config"
+        }
+    } else {
+        ""
+    };
+
+    Some(format!("{target}{impact}; herdr config check"))
 }
 
 pub fn load_live_config() -> Result<LoadedConfig, Vec<String>> {
     let path = config_path();
-    if !path.exists() {
-        return Ok(LoadedConfig {
-            config: Config::default(),
-            diagnostics: Vec::new(),
-            invalid_sections: Vec::new(),
-        });
-    }
-
-    let content = std::fs::read_to_string(&path)
-        .map_err(|err| vec![format!("config read error: {err}; keeping current config")])?;
+    let content = match read_optional_config(&path) {
+        Ok(Some(content)) => content,
+        Ok(None) => {
+            return Ok(LoadedConfig {
+                config: Config::default(),
+                diagnostics: Vec::new(),
+                invalid_sections: Vec::new(),
+            });
+        }
+        Err(err) => {
+            return Err(vec![format!(
+                "config read error: {err}; keeping current config"
+            )]);
+        }
+    };
     load_live_config_from_str(&content)
 }
 
@@ -210,7 +309,7 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
     })?;
 
     let mut config = Config::default();
-    let mut diagnostics = Vec::new();
+    let mut diagnostics = unknown_top_level_section_diagnostics(table);
     let mut invalid_sections = Vec::new();
 
     if let Some(value) = table.get("onboarding") {
@@ -248,6 +347,22 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
     );
     load_live_section(
         table,
+        "session",
+        "session config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.session = section,
+    );
+    load_live_section(
+        table,
+        "update",
+        "update config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.update = section,
+    );
+    load_live_section(
+        table,
         "ui",
         "ui config",
         &mut diagnostics,
@@ -264,11 +379,27 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
     );
     load_live_section(
         table,
+        "worktrees",
+        "worktree config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.worktrees = section,
+    );
+    load_live_section(
+        table,
         "experimental",
         "experimental config",
         &mut diagnostics,
         &mut invalid_sections,
         |section| config.experimental = section,
+    );
+    load_live_section(
+        table,
+        "remote",
+        "remote config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.remote = section,
     );
     load_live_section(
         table,
@@ -292,6 +423,48 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         diagnostics,
         invalid_sections,
     })
+}
+
+fn unknown_top_level_section_diagnostics_from_str(content: &str) -> Vec<String> {
+    content
+        .parse::<toml::Value>()
+        .ok()
+        .and_then(|value| value.as_table().map(unknown_top_level_section_diagnostics))
+        .unwrap_or_default()
+}
+
+fn unknown_top_level_section_diagnostics(
+    table: &toml::map::Map<String, toml::Value>,
+) -> Vec<String> {
+    table
+        .iter()
+        .filter_map(|(key, value)| unknown_top_level_section_diagnostic(key, value))
+        .collect()
+}
+
+fn unknown_top_level_section_diagnostic(key: &str, value: &toml::Value) -> Option<String> {
+    if KNOWN_TOP_LEVEL_CONFIG_KEYS.contains(&key) {
+        return None;
+    }
+
+    let header = if value.is_table() {
+        format!("[{key}]")
+    } else if value
+        .as_array()
+        .is_some_and(|items| !items.is_empty() && items.iter().all(toml::Value::is_table))
+    {
+        format!("[[{key}]]")
+    } else {
+        return None;
+    };
+
+    if key == "toast" {
+        Some(format!(
+            "unknown config section {header}; did you mean [ui.toast]? ignoring section"
+        ))
+    } else {
+        Some(format!("unknown config section {header}; ignoring section"))
+    }
 }
 
 fn load_live_section<T>(
@@ -529,7 +702,9 @@ mod tests {
     }
 
     #[test]
-    fn config_diagnostic_summary_keeps_multiple_warnings_visible() {
+    fn config_diagnostic_summary_uses_compact_actionable_banner() {
+        let _guard = crate::config::lock_test_config_env();
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
         let diagnostics = vec![
             "one".to_string(),
             "two".to_string(),
@@ -540,8 +715,216 @@ mod tests {
 
         assert_eq!(
             config_diagnostic_summary(&diagnostics).as_deref(),
-            Some("one\ntwo\nthree\nfour\nand 1 more config warnings")
+            Some("config.toml; herdr config check")
         );
+    }
+
+    #[test]
+    fn config_diagnostic_summary_reports_default_fallback() {
+        let _guard = crate::config::lock_test_config_env();
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
+        let diagnostics = vec![
+            "config parse error: TOML parse error at line 33, column 8\n   |\n33 | type = \"popup\"\n   |        ^^^^^^^\nunknown variant `popup`; using defaults"
+                .to_string(),
+        ];
+
+        assert_eq!(
+            config_diagnostic_summary(&diagnostics).as_deref(),
+            Some("config.toml invalid; using defaults; herdr config check")
+        );
+    }
+
+    #[test]
+    fn config_diagnostic_summary_reports_unreadable_config_impact() {
+        let _guard = crate::config::lock_test_config_env();
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
+        let startup = vec!["config read error: permission denied; using defaults".to_string()];
+        assert_eq!(
+            config_diagnostic_summary(&startup).as_deref(),
+            Some("config.toml unreadable; using defaults; herdr config check")
+        );
+
+        let reload =
+            vec!["config read error: permission denied; keeping current config".to_string()];
+        assert_eq!(
+            config_diagnostic_summary(&reload).as_deref(),
+            Some("config.toml unreadable; keeping current config; herdr config check")
+        );
+    }
+
+    #[test]
+    fn config_diagnostic_summary_reports_retained_live_config() {
+        let _guard = crate::config::lock_test_config_env();
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
+        let diagnostics = vec![
+            "config parse error: TOML parse error at line 7, column 4; keeping current config"
+                .to_string(),
+        ];
+
+        assert_eq!(
+            config_diagnostic_summary(&diagnostics).as_deref(),
+            Some("config.toml invalid; keeping current config; herdr config check")
+        );
+    }
+
+    #[test]
+    fn config_loaders_report_unreadable_path() {
+        let _guard = crate::config::lock_test_config_env();
+        let path =
+            std::env::temp_dir().join(format!("herdr-config-unreadable-{}", std::process::id()));
+        std::fs::create_dir_all(&path).unwrap();
+        std::env::set_var(CONFIG_PATH_ENV_VAR, &path);
+
+        let startup = Config::load();
+        assert!(startup
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.contains("config read error")
+                && diagnostic.contains("using defaults")));
+
+        let reload = load_live_config().unwrap_err();
+        assert!(reload.iter().any(|diagnostic| {
+            diagnostic.contains("config read error")
+                && diagnostic.contains("keeping current config")
+        }));
+
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn load_live_config_parses_session_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[session]
+resume_agents_on_restore = true
+"#,
+        )
+        .unwrap();
+
+        assert!(loaded.config.session.resume_agents_on_restore);
+        assert!(loaded.diagnostics.is_empty());
+        assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_accepts_agent_start_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[agent_start.commands]
+agy = ["agy", "--dangerously-skip-permissions"]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            loaded.config.agent_start.commands.get("agy"),
+            Some(&vec!["agy".into(), "--dangerously-skip-permissions".into()])
+        );
+        assert!(loaded.diagnostics.is_empty());
+        assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_accepts_legacy_agent_restore_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[agent_restore]
+enabled = true
+restore_delay_ms = 3000
+
+[agent_restore.commands]
+codex = "codex resume {session_id}"
+"#,
+        )
+        .unwrap();
+
+        assert!(loaded.config.agent_restore.enabled);
+        assert_eq!(loaded.config.agent_restore.restore_delay_ms, 3000);
+        assert_eq!(
+            loaded.config.agent_restore.commands.get("codex"),
+            Some(&"codex resume {session_id}".to_string())
+        );
+        assert!(loaded.diagnostics.is_empty());
+        assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_warns_about_unknown_top_level_sections() {
+        let loaded = load_live_config_from_str(
+            r#"
+[toast]
+delivery = "system"
+
+[ui.toast]
+delivery = "herdr"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            loaded.diagnostics,
+            vec!["unknown config section [toast]; did you mean [ui.toast]? ignoring section"]
+        );
+        assert!(loaded.invalid_sections.is_empty());
+        assert_eq!(
+            loaded.config.ui.toast.delivery,
+            super::super::ToastDelivery::Herdr
+        );
+    }
+
+    #[test]
+    fn load_live_config_does_not_warn_about_unknown_top_level_scalar_values() {
+        let loaded = load_live_config_from_str(
+            r#"
+plugin = []
+
+[ui.toast]
+delivery = "herdr"
+"#,
+        )
+        .unwrap();
+
+        assert!(loaded.diagnostics.is_empty());
+        assert_eq!(
+            loaded.config.ui.toast.delivery,
+            super::super::ToastDelivery::Herdr
+        );
+    }
+
+    #[test]
+    fn startup_config_load_warns_about_unknown_top_level_sections() {
+        let _guard = crate::config::lock_test_config_env();
+        let path = std::env::temp_dir().join(format!(
+            "herdr-config-unknown-section-{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"
+[[plugin]]
+id = "example"
+
+[ui.toast]
+delivery = "system"
+"#,
+        )
+        .unwrap();
+        std::env::set_var(CONFIG_PATH_ENV_VAR, &path);
+
+        let loaded = Config::load();
+
+        assert_eq!(
+            loaded.diagnostics,
+            vec!["unknown config section [[plugin]]; ignoring section"]
+        );
+        assert_eq!(
+            loaded.config.ui.toast.delivery,
+            super::super::ToastDelivery::System
+        );
+
+        std::env::remove_var(CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

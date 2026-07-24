@@ -36,12 +36,10 @@ pub fn pending_path() -> PathBuf {
     path
 }
 
-#[cfg(test)]
 pub fn save_pending(version: &str, body: &str) -> std::io::Result<()> {
     save_pending_to_path(&pending_path(), version, body)
 }
 
-#[cfg(test)]
 fn save_pending_to_path(path: &Path, version: &str, body: &str) -> std::io::Result<()> {
     let body = normalize_body(body);
     if body.is_empty() {
@@ -80,7 +78,7 @@ fn load_stored_from_path(path: &Path) -> Option<StoredReleaseNotes> {
 }
 
 pub fn load_latest() -> Option<ReleaseNotes> {
-    load_latest_from_path(&pending_path(), env!("CARGO_PKG_VERSION"))
+    load_latest_from_path(&pending_path(), &crate::build_info::version())
 }
 
 fn load_latest_from_path(path: &Path, current_version: &str) -> Option<ReleaseNotes> {
@@ -116,7 +114,7 @@ fn release_notes_from_stored(
 }
 
 pub fn mark_current_version_seen() -> std::io::Result<()> {
-    mark_current_version_seen_at(&pending_path(), env!("CARGO_PKG_VERSION"))
+    mark_current_version_seen_at(&pending_path(), &crate::build_info::version())
 }
 
 fn mark_current_version_seen_at(path: &Path, current_version: &str) -> std::io::Result<()> {
@@ -130,7 +128,17 @@ fn mark_current_version_seen_at(path: &Path, current_version: &str) -> std::io::
     write_stored_to_path(path, &stored)
 }
 
-#[cfg(test)]
+pub fn load_preview_from_local_changelog(version: &str) -> Option<ReleaseNotes> {
+    let path = Path::new("CHANGELOG.md");
+    let content = fs::read_to_string(path).ok()?;
+    let body = extract_version_section(&content, version)?;
+    Some(ReleaseNotes {
+        version: version.to_string(),
+        body: normalize_body(&body),
+        preview: true,
+    })
+}
+
 fn clear_pending_at(path: &Path) -> std::io::Result<()> {
     if path.exists() {
         fs::remove_file(path)
@@ -139,7 +147,6 @@ fn clear_pending_at(path: &Path) -> std::io::Result<()> {
     }
 }
 
-#[cfg(test)]
 fn extract_version_section(content: &str, version: &str) -> Option<String> {
     let header = format!("## [{version}]");
     let mut collecting = false;

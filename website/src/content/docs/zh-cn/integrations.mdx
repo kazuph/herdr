@@ -1,0 +1,20 @@
+---
+title: 集成
+description: kazuph/herdr fork 中的智能体状态上报方针。
+---
+
+kazuph/herdr fork 不通过 integration 子命令自动修改智能体的 hook 或 plugin。智能体状态由屏幕/进程/会话证据,以及受信任本地工具的显式上报来处理。
+
+## 上报状态
+
+受信任本地工具可以用 `pane report-agent` 上报状态、短标题和用于恢复的 session id:
+
+```bash
+herdr pane report-agent <pane_id> --source custom:tool --agent codex --state working --title "run tests" --session-id <id>
+```
+
+同一操作也可以通过 socket API 的 `pane.report_agent` method 执行。
+
+## 已禁用的路径
+
+这个 fork 中,hook/plugin 的 install/uninstall 路径不会成功。它们会返回 fail-closed error,并且不会修改用户的 `~/.claude`、`~/.codex`、OpenCode、Pi、Hermes 等配置或 plugin/hook directory。

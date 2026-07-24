@@ -11,7 +11,6 @@ const FAKE_ANNOUNCEMENT_BODY_FILE_ENV: &str = "HERDR_FAKE_PRODUCT_ANNOUNCEMENT_B
 const FAKE_ANNOUNCEMENT_ID_ENV: &str = "HERDR_FAKE_PRODUCT_ANNOUNCEMENT_ID";
 const FAKE_ANNOUNCEMENT_TITLE_ENV: &str = "HERDR_FAKE_PRODUCT_ANNOUNCEMENT_TITLE";
 
-#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct ManifestAnnouncement {
     pub id: String,
@@ -86,7 +85,6 @@ pub fn store_path() -> PathBuf {
     crate::config::state_dir().join(PRODUCT_ANNOUNCEMENTS_PATH)
 }
 
-#[cfg(test)]
 pub fn save_manifest_announcement(
     manifest_version: &str,
     announcement: Option<&ManifestAnnouncement>,
@@ -108,14 +106,13 @@ pub fn save_manifest_announcement(
 
 pub fn load_unseen_for_current_version() -> Option<ProductAnnouncement> {
     load_fake_for_current_version()
-        .or_else(|| load_unseen_from_path(&store_path(), env!("CARGO_PKG_VERSION")))
+        .or_else(|| load_unseen_from_path(&store_path(), &crate::build_info::version()))
 }
 
 pub fn mark_seen(version: &str, id: &str) -> io::Result<()> {
     mark_seen_at(&store_path(), version, id)
 }
 
-#[cfg(test)]
 fn announcement_from_manifest(
     manifest_version: &str,
     announcement: &ManifestAnnouncement,
@@ -165,7 +162,7 @@ fn load_fake_for_current_version() -> Option<ProductAnnouncement> {
         .unwrap_or_else(|| "product announcement preview".to_string());
 
     Some(ProductAnnouncement {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::build_info::version(),
         id,
         title,
         body,
@@ -173,14 +170,12 @@ fn load_fake_for_current_version() -> Option<ProductAnnouncement> {
     })
 }
 
-#[cfg(test)]
 fn save_latest_to_path(path: &Path, announcement: ProductAnnouncement) -> io::Result<()> {
     let mut store = load_store_from_path(path).unwrap_or_default();
     store.latest = Some(StoredProductAnnouncement::from(&announcement));
     write_store_to_path(path, &store)
 }
 
-#[cfg(test)]
 fn clear_latest_for_version(path: &Path, version: &str) -> io::Result<()> {
     let mut store = load_store_from_path(path).unwrap_or_default();
     if store
@@ -247,9 +242,8 @@ fn normalize_body(body: &str) -> String {
 mod tests {
     use super::*;
 
-    fn env_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::config::lock_test_config_env()
     }
 
     fn temp_path(name: &str) -> PathBuf {
@@ -338,7 +332,7 @@ mod tests {
 
     #[test]
     fn fake_announcement_body_env_creates_preview() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         unsafe {
             std::env::set_var(FAKE_ANNOUNCEMENT_BODY_ENV, "### Preview\n- Local body");
             std::env::set_var(FAKE_ANNOUNCEMENT_TITLE_ENV, "Local title");

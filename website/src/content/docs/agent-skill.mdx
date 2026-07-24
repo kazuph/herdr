@@ -7,6 +7,8 @@ Herdr ships a reusable agent skill file at [`SKILL.md`](https://github.com/ogulc
 
 Install that file into any coding agent that supports reusable skills or custom instructions. The skill teaches the agent how to control Herdr from inside a Herdr pane.
 
+Herdr also serves a separate guide at [`herdr.dev/agent-guide.md`](https://herdr.dev/agent-guide.md) for a different job: an agent helping a human learn, set up, or troubleshoot Herdr. The skill is for an agent operating Herdr; the guide is for an agent teaching a human.
+
 ## What the skill does
 
 The skill tells an agent to use the `herdr` CLI when `HERDR_ENV=1` is set. That means the agent is running inside a Herdr-managed pane and can safely talk to the local Herdr socket.
@@ -23,7 +25,15 @@ The skill is not a separate app or service. It is a markdown instruction file fo
 
 ## Install it
 
-Use the repository copy as the source of truth:
+Install the skill with `npx skills`:
+
+```bash
+npx skills add ogulcancelik/herdr --skill herdr -g
+```
+
+The `-g` flag installs it globally for supported agents. Omit `-g` to install it into the current project.
+
+Use the repository copy as the manual fallback and source of truth:
 
 ```text
 https://github.com/ogulcancelik/herdr/blob/master/SKILL.md
