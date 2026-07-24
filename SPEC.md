@@ -1003,6 +1003,23 @@
   - `herdr help` がunknown command扱いになる。
   - protocol不一致がstatusで分からない。
 
+### global pane番号のsession再起動をまたぐ安定性
+- **分類**: CORE
+- **目的**: `p_N` を再起動前に指定したagent送信・親子報告の宛先として、session復元後も同じpaneへ解決できるようにする。
+- **UI挙動**:
+  - session保存時に各paneのglobal pane番号を保存し、通常のTUI再起動、server再起動、agent session復元、handoff復元では同じ番号を復元する。
+  - 保存global pane番号はsession全体で全paneを検証し、欠損、0、重複、layout参照不整合のいずれかがあれば部分採用せず全paneを再採番し、warningを記録する。
+  - 保存global pane番号を全採用した復元後の新規paneは、復元番号の最大値より大きい次番号を使う。workspace複製は生存paneとの衝突を避けるため保存番号を採用せず、全paneを再採番する。
+- **受け入れ条件**:
+  - 複数workspace・複数tabのsessionを保存して復元すると、各paneの`p_N`、agent infoの`global_pane_id`、`HERDR_PANE_ID`が保存前と同じpaneを指す。
+  - `global_pane_number`を持たない旧session.jsonと、不正な重複番号を含むsession.jsonは読込に成功し、全paneを衝突しない新規番号へ再採番してwarningを記録する。
+  - workspace/tab間moveとpane closeでは既存paneの`p_N`が変わらず、workspace複製だけは元paneと異なる`p_N`になる。
+- **実装方針**: session snapshotのpane記録に任意のglobal pane番号を追加する。復元開始時にsession全体の保存値を検証してから、通常復元・handoffには保存番号を、複製復元には明示的な全再採番方針を渡す。wire protocolは変更しない。
+- **デグレ判定**:
+  - 再起動後に`p_N`が別paneを指し、既存のagent宛先や親子報告が誤配送される。
+  - 不正snapshotの一部だけを採用して、同じ`p_N`を複数paneへ割り当てる。
+  - workspace複製が元paneの`p_N`を再利用する。
+
 ### agent sendとheadless入力の確実な送信
 - **元コミット**: f87cc86, 60036e2
 - **分類**: PARTIAL
