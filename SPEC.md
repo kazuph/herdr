@@ -283,6 +283,26 @@
   - OSC titleがworkspace identityへ反映されず、`pion-planner` のような区別ができなくなる。
   - density toggleがsection header行へ移る、slimのgit/`nogit`行が消える、または次workspaceと重なる。
 
+### workspace次/前移動はサイドバー表示順
+- **目的**: `⌘j` / `⌘k` で次または前のworkspaceへ移動した時、サイドバーまたはmobile switcherで見えているカードの上下順と移動先を一致させる。sectionをまたぐ移動で見えないworkspaceへ飛ぶ状態をなくす。
+- **UI挙動**:
+  - 次/前workspace移動は `⭐ favorites`、`💼 work`、`🏠 personal`、`spaces` のsection順で、各section内はworkspace listの順に移動する。
+  - collapsed sectionのworkspace cardは表示されないため、次/前workspace移動の候補からも除外する。worktree groupの子workspaceは各layoutで既存workspace listが表示する範囲を維持する。
+  - 先頭で前へ、末尾で次へ移動した時は、表示されているworkspaceカードの範囲でwrap aroundする。
+  - `⌘1`から`⌘9`のworkspace選択とworkspace cardのdrag/dropは、この次/前移動の対象外として既存の順序を維持する。
+  - mobile layoutでは、mobile switcherが表示するsection順とcollapsed sectionの除外に一致する。
+- **受け入れ条件**:
+  - 生のworkspace index順が `work`、`spaces`、`favorites`、`personal` でも、次workspace移動は `favorites`、`work`、`personal`、`spaces` の順になる。
+  - `personal` sectionを折りたたむと、次/前workspace移動はpersonalのworkspaceを選ばず、残る表示カードだけを循環する。
+  - 最後の表示workspaceから次へ移動すると先頭の表示workspaceへ、先頭から前へ移動すると最後の表示workspaceへ移動する。
+  - mobile layoutでnext/previous workspaceはmobile switcherのworkspaceカード順と一致する。
+  - `⌘1`から`⌘9`の選択位置とdrag/drop後のworkspace index順は、この変更前の契約から変わらない。
+- **デグレ判定**:
+  - `⌘j` / `⌘k` がsection順を飛ばし、サイドバーで離れたworkspaceカードへ移動する。
+  - collapsed sectionのworkspaceへ次/前移動できる。
+  - 端で移動が止まる、または表示されないworkspaceを経由してwrap aroundする。
+  - 番号選択またはdrag/dropの順序まで次/前移動用の順序へ変わる。
+
 ### サイドバー空白メニューと危険操作確認
 - **元コミット**: d5a853a, 17ad5aa
 - **分類**: CORE-UI
@@ -1351,12 +1371,15 @@
 - **挙動**:
   - `msg.send` / `msg.inbox` / `msg.history` / `msg.rooms` と対応CLIを提供し、messageはroom、project、sender、recipient、本文、created/delivered/read時刻を持つ。
   - direct sendとroom broadcastを扱い、busy中はqueue、idle時はnudgeする。nudgeにはshell quote済みの正確な `herdr msg inbox --room <room>` を含める。
+  - recipientは登録agent名でもpane ID（`p_N`を含むglobal pane IDとshort pane ID）でも同一paneのmailboxを指す。serverはpaneに解決できるrecipientについて同一paneのrecipientエイリアス集合を使い、nudgeとinboxで同じqueued行を扱う。paneに解決できないrecipientは完全一致で扱い、`claude`や`codex`など個別paneを指さないagent種別名をrecipientエイリアス集合へ加えない。
   - 全idle agentの未読確認はserver起動時に1回だけ行う。message送信時はそのrecipientとroom、agentがidleへ遷移した時はそのpaneのmailboxだけを確認し、無関係な通常API requestを全agent走査の起点にしない。
   - agentが持つqueued messageはrecipientのactor IDとstatusのindexを使う1回のqueryで取得し、取得結果をroom単位にgroup化する。agentごとに全roomを列挙してqueryしない。
 - **受け入れ条件**:
   - server再起動後も未読messageと履歴が残り、inbox取得で既読化できる。
   - room名に空白やquoteがあってもnudgeのinbox commandが安全に実行できる。
   - busy agentの現在の入力へ割り込まず、idle時だけnudgeする。
+  - `herdr msg send p_N ...` で送ったqueued messageは、同じpaneで登録agent名から実行した `herdr msg inbox --room <room>` に表示され、既読化される。登録agent名宛てのmessageも従来どおり同じinboxで読める。
+  - pane ID宛てのnudgeが示すinbox commandと、そのinboxが取得・既読化するrecipientエイリアス集合は一致する。別paneのagent種別名宛てmessageは取得しない。
   - queued messageがない状態でagent/pane一覧等の通常API requestを反復しても、requestごとの全idle agent走査とagent数×room数のmessage queryを実行しない。
   - server起動時の未読配送、message送信先への即時配送、blockedからidleへ変わったagentへの配送は、通常API request後の全agent走査を削除しても維持される。
 - **デグレ判定**: 各API requestの完了時に全idle agentのmailboxを走査する。各agentについてroom一覧を取得してroomごとに未読queryする。recipient/status indexを使わずmessage全体を走査する。
