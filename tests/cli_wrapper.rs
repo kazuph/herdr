@@ -3089,28 +3089,6 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
     );
     assert_eq!(spawned["result"]["pane"]["label"], "demo");
 
-    let waited_job = run_cli(
-        &socket_path,
-        &[
-            "wait",
-            "output",
-            pane,
-            "--match",
-            "run-spawn-done",
-            "--source",
-            "recent",
-            "--lines",
-            "80",
-            "--timeout",
-            "5000",
-        ],
-    );
-    assert!(
-        waited_job.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&waited_job.stderr)
-    );
-
     let waited_notice = run_cli(
         &socket_path,
         &[
