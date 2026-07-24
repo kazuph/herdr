@@ -478,6 +478,7 @@ impl DispatchStore {
         Ok(changed == 1)
     }
 
+    #[cfg(any(unix, test))]
     pub(crate) fn mark_command_cancelled(&self, id: &str) -> rusqlite::Result<bool> {
         let changed = self.conn.execute(
             r#"
@@ -490,6 +491,7 @@ impl DispatchStore {
         Ok(changed == 1)
     }
 
+    #[cfg(any(unix, test))]
     pub(crate) fn mark_command_cancelling(&self, id: &str) -> rusqlite::Result<bool> {
         let changed = self.conn.execute(
             r#"

@@ -76,10 +76,12 @@ impl JobStore {
         self.store.mark_command_finished(id, exit_code)
     }
 
+    #[cfg(any(unix, test))]
     pub(crate) fn mark_cancelling(&self, id: &str) -> rusqlite::Result<bool> {
         self.store.mark_command_cancelling(id)
     }
 
+    #[cfg(any(unix, test))]
     pub(crate) fn mark_cancelled(
         &self,
         id: &str,

@@ -757,6 +757,9 @@ mod tests {
     fn tapping_active_workspace_opens_its_context_menu() {
         let mut app = app_for_mouse_test();
         app.state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        for workspace in &mut app.state.workspaces {
+            workspace.identity_cwd = "/".into();
+        }
         app.state.active = Some(0);
         app.state.selected = 0;
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
