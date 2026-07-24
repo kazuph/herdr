@@ -13,6 +13,7 @@ mod config_io;
 mod creation;
 mod ids;
 mod input;
+mod msg;
 mod popup;
 mod runtime;
 mod runtime_mutations;
@@ -41,8 +42,7 @@ const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const PENDING_AGENT_RESUME_THEME_WAIT: Duration = Duration::from_millis(750);
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
 const SIDEBAR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
-const PANE_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
-const PANE_COPY_HIGHLIGHT_DURATION: Duration = Duration::from_millis(500);
+const PANE_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(500);
 const COPY_FEEDBACK_DURATION: Duration = Duration::from_secs(2);
 
 use crossterm::{
@@ -87,9 +87,9 @@ pub(crate) struct PaneClickState {
 impl PaneClickState {
     fn is_double_click_for(self, next: Self) -> bool {
         self.pane_id == next.pane_id
-            && next.at.duration_since(self.at) <= PANE_DOUBLE_CLICK_WINDOW
-            && self.viewport_row.abs_diff(next.viewport_row) <= 1
-            && self.col.abs_diff(next.col) <= 1
+            && next.at.saturating_duration_since(self.at) <= PANE_DOUBLE_CLICK_WINDOW
+            && self.viewport_row == next.viewport_row
+            && self.col == next.col
     }
 }
 
@@ -127,6 +127,8 @@ pub struct App {
     pub(crate) loaded_host_cursor: crate::config::HostCursorModeConfig,
     pub(crate) agent_metadata_deadline: Option<Instant>,
     pub(crate) pending_agent_resume_deadline: Option<Instant>,
+    pub(crate) pending_agent_resume_wait: Duration,
+    pub(crate) headless_agent_restore_enabled: bool,
     pub(crate) selection_autoscroll_deadline: Option<Instant>,
     pub(crate) selection_highlight_clear_deadline: Option<Instant>,
     pub(crate) session_save_deadline: Option<Instant>,
@@ -226,10 +228,33 @@ fn load_plugin_registry(no_session: bool) -> crate::app::state::InstalledPluginR
 
 fn agent_panel_sort_from_config(
     sort: crate::config::AgentPanelSortConfig,
+    legacy_scope: crate::config::AgentPanelScopeConfig,
 ) -> state::AgentPanelSort {
-    match sort {
-        crate::config::AgentPanelSortConfig::Spaces => state::AgentPanelSort::Spaces,
-        crate::config::AgentPanelSortConfig::Priority => state::AgentPanelSort::Priority,
+    match (sort, legacy_scope) {
+        (
+            crate::config::AgentPanelSortConfig::Priority,
+            crate::config::AgentPanelScopeConfig::Current
+            | crate::config::AgentPanelScopeConfig::All
+            | crate::config::AgentPanelScopeConfig::Sort,
+        )
+        | (
+            crate::config::AgentPanelSortConfig::Spaces,
+            crate::config::AgentPanelScopeConfig::Sort,
+        ) => state::AgentPanelSort::Priority,
+        (
+            crate::config::AgentPanelSortConfig::Spaces,
+            crate::config::AgentPanelScopeConfig::Current
+            | crate::config::AgentPanelScopeConfig::All,
+        ) => state::AgentPanelSort::Spaces,
+    }
+}
+
+fn workspace_panel_density_from_config(
+    density: crate::config::WorkspacePanelDensityConfig,
+) -> state::WorkspacePanelDensity {
+    match density {
+        crate::config::WorkspacePanelDensityConfig::Full => state::WorkspacePanelDensity::Full,
+        crate::config::WorkspacePanelDensityConfig::Slim => state::WorkspacePanelDensity::Slim,
     }
 }
 
@@ -376,6 +401,7 @@ impl App {
             sidebar_width_source,
             sidebar_section_split,
             collapsed_space_keys,
+            collapsed_workspace_sections,
         ) = if no_session {
             (
                 Vec::new(),
@@ -385,6 +411,7 @@ impl App {
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
                 std::collections::HashSet::new(),
+                std::collections::BTreeSet::new(),
             )
         } else if let Some(snap) = crate::persist::load() {
             let history = config
@@ -400,7 +427,10 @@ impl App {
                 config.advanced.scrollback_limit_bytes,
                 &config.terminal.default_shell,
                 config.terminal.shell_mode,
-                config.session.resume_agents_on_restore,
+                (
+                    config.session.resume_agents_on_restore || config.agent_restore.enabled,
+                    &config.agent_restore.commands,
+                ),
                 event_tx.clone(),
                 render_notify.clone(),
                 render_dirty.clone(),
@@ -421,6 +451,7 @@ impl App {
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
+                    snap.collapsed_workspace_sections,
                 )
             } else {
                 crate::logging::session_restored(ws.len(), "ok");
@@ -438,6 +469,7 @@ impl App {
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
+                    snap.collapsed_workspace_sections,
                 )
             }
         } else {
@@ -449,10 +481,14 @@ impl App {
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
                 std::collections::HashSet::new(),
+                std::collections::BTreeSet::new(),
             )
         };
 
-        let agent_panel_sort = agent_panel_sort_from_config(config.ui.agent_panel_sort);
+        let agent_panel_sort =
+            agent_panel_sort_from_config(config.ui.agent_panel_sort, config.ui.agent_panel_scope);
+        let workspace_panel_density =
+            workspace_panel_density_from_config(config.ui.workspace_panel_density);
 
         // Validate sidebar bounds before they reach any `u16::clamp(min, max)`
         // call: `clamp` panics when `min > max`. On bad config, fall back to
@@ -465,9 +501,9 @@ impl App {
             tracing::warn!(
                 min = config.ui.sidebar_min_width,
                 max = config.ui.sidebar_max_width,
-                "ui.sidebar_min_width is greater than sidebar_max_width; falling back to default bounds (18, 36)"
+                "ui.sidebar_min_width is greater than sidebar_max_width; falling back to default bounds (18, 72)"
             );
-            (18, 36)
+            (18, 72)
         });
 
         let worktree_directory =
@@ -478,12 +514,8 @@ impl App {
             "using pane scrollback configuration"
         );
 
-        let latest_release_notes = crate::release_notes::load_latest();
-        let update_available = latest_release_notes
-            .as_ref()
-            .filter(|notes| notes.preview)
-            .map(|notes| notes.version.clone());
-        let latest_release_notes_available = latest_release_notes.is_some();
+        let update_available = None;
+        let latest_release_notes_available = false;
         let update_install_command = crate::update::update_install_command().to_string();
         let startup_product_announcement =
             crate::product_announcements::load_unseen_for_current_version();
@@ -515,12 +547,15 @@ impl App {
             workspaces,
             active,
             previous_pane_focus: None,
+            pane_focus_back: Vec::new(),
+            pane_focus_forward: Vec::new(),
             selected,
             mode,
             should_quit: false,
             detach_exits: no_session,
             detach_requested: false,
             request_new_workspace: false,
+            requested_new_workspace_section: None,
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
@@ -530,6 +565,8 @@ impl App {
             request_submit_worktree_open: false,
             request_submit_worktree_remove: false,
             request_reload_config: false,
+            request_agent_restore: false,
+            request_restart: false,
             request_client_config_reload: false,
             request_clipboard_write: None,
             creating_new_tab: false,
@@ -538,8 +575,10 @@ impl App {
             worktree_create: None,
             worktree_open: None,
             worktree_remove: None,
+            pending_duplicate_workspace: None,
             worktree_directory,
             collapsed_space_keys,
+            collapsed_workspace_sections,
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,
@@ -557,6 +596,7 @@ impl App {
             keybind_help: state::KeybindHelpState { scroll: 0 },
             navigator: state::NavigatorState::default(),
             copy_mode: None,
+            copy_mode_fullscreen_pane: None,
             workspace_scroll: 0,
             agent_panel_scroll: 0,
             tab_scroll: 0,
@@ -566,12 +606,19 @@ impl App {
                 layout: state::ViewLayout::Desktop,
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                workspace_section_header_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
                 tab_scroll_right_hit_area: Rect::default(),
                 new_tab_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
+                pane_action_bar_rect: Rect::default(),
+                pane_action_copy_rect: Rect::default(),
+                pane_action_cycle_layout_rect: Rect::default(),
+                pane_action_rotate_rect: Rect::default(),
+                pane_action_equalize_rect: Rect::default(),
+                sidebar_width_toggle_rects: state::SidebarWidthToggleRects::default(),
                 mobile_header_rect: Rect::default(),
                 mobile_menu_hit_area: Rect::default(),
                 toast_hit_area: Rect::default(),
@@ -584,15 +631,18 @@ impl App {
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
+            dangerous_action: None,
             update_available,
             update_install_command,
             latest_release_notes_available,
             update_dismissed: false,
             config_diagnostic,
             toast: None,
+            notification_throttle: state::NotificationThrottle::default(),
             pending_agent_notifications: std::collections::HashMap::new(),
             copy_feedback: None,
             outer_terminal_focus: None,
+            agent_start_config: config.agent_start.clone(),
             prefix_code,
             prefix_mods,
             default_sidebar_width: config.ui.sidebar_width,
@@ -605,6 +655,7 @@ impl App {
             sidebar_collapsed: config.ui.sidebar_start_collapsed,
             sidebar_collapsed_mode: config.ui.sidebar_collapsed_mode,
             sidebar_section_split,
+            workspace_panel_density,
             agent_panel_sort,
             sidebar_agents: config.ui.sidebar.agents.clone(),
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
@@ -620,6 +671,7 @@ impl App {
             pane_borders: config.ui.pane_borders,
             pane_gaps: config.ui.pane_gaps,
             show_agent_labels_on_pane_borders: config.ui.show_agent_labels_on_pane_borders,
+            show_tab_bar: config.ui.show_tab_bar,
             hide_tab_bar_when_single_tab: config.ui.hide_tab_bar_when_single_tab,
             pane_history_persistence: config.experimental.pane_history,
             reveal_hidden_cursor_for_cjk_ime: config.experimental.reveal_hidden_cursor_for_cjk_ime,
@@ -651,10 +703,8 @@ impl App {
                 original_palette: None,
                 original_theme: None,
             },
-            integration_recommendations: crate::integration::integration_recommendations(),
             agent_manifest_summaries,
             agent_manifest_update_status: crate::detect::manifest_update::load_status(),
-            integration_install_messages: Vec::new(),
             installed_plugins: load_plugin_registry(no_session),
             plugin_panes: std::collections::HashMap::new(),
             pane_graphics_layers: std::collections::HashMap::new(),
@@ -668,6 +718,7 @@ impl App {
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
             session_dirty: false,
+            agent_session_ledger: crate::persist::agent_ledger::load(),
             terminal_runtime_shutdowns: Vec::new(),
         };
 
@@ -735,6 +786,9 @@ impl App {
             loaded_host_cursor: config.ui.host_cursor,
             agent_metadata_deadline: None,
             pending_agent_resume_deadline: None,
+            pending_agent_resume_wait: Duration::from_millis(config.agent_restore.restore_delay_ms)
+                .max(PENDING_AGENT_RESUME_THEME_WAIT),
+            headless_agent_restore_enabled: config.agent_restore.enabled,
             session_save_deadline: None,
             session_save_thread: None,
             detached_custom_command_children: Vec::new(),
@@ -817,6 +871,7 @@ impl App {
             app.state.sidebar_section_split = split;
         }
         app.state.collapsed_space_keys = snapshot.collapsed_space_keys.clone();
+        app.state.collapsed_workspace_sections = snapshot.collapsed_workspace_sections.clone();
         app.state.mode = if app.state.active.is_some() {
             state::Mode::Terminal
         } else {
@@ -930,6 +985,8 @@ impl App {
 
             if self.state.request_new_workspace {
                 self.state.request_new_workspace = false;
+                let requested_section = self.state.requested_new_workspace_section.take();
+                let workspace_count = self.state.workspaces.len();
                 self.runtime_workspace_create(
                     "tui.workspace.create",
                     crate::api::schema::WorkspaceCreateParams {
@@ -939,6 +996,15 @@ impl App {
                         env: Default::default(),
                     },
                 );
+                if let Some(section) = requested_section {
+                    if self.state.workspaces.len() > workspace_count {
+                        if let Some(workspace) = self.state.workspaces.last_mut() {
+                            workspace.section = section;
+                        }
+                        self.state.collapsed_workspace_sections.remove(&section);
+                        self.schedule_session_save();
+                    }
+                }
                 needs_render = true;
             }
 
@@ -986,6 +1052,10 @@ impl App {
                 needs_render = true;
             }
 
+            if self.run_pending_duplicate_workspace() {
+                needs_render = true;
+            }
+
             if self.state.request_submit_worktree_create {
                 self.state.request_submit_worktree_create = false;
                 self.submit_worktree_create_via_api();
@@ -1007,6 +1077,10 @@ impl App {
             if self.state.request_reload_config {
                 self.state.request_reload_config = false;
                 self.reload_config();
+                needs_render = true;
+            }
+
+            if self.run_pending_agent_restore_request() {
                 needs_render = true;
             }
 
@@ -1250,53 +1324,11 @@ impl App {
 
     pub(crate) fn open_settings_from_onboarding(&mut self) {
         self.mark_onboarding_complete();
-        self.refresh_integration_recommendations();
-        crate::app::input::open_settings_at(&mut self.state, state::SettingsSection::Integrations);
-    }
-
-    pub(crate) fn refresh_integration_recommendations(&mut self) {
-        self.state.integration_recommendations = crate::integration::integration_recommendations();
-    }
-
-    pub(crate) fn install_recommended_integrations(&mut self) {
-        let targets = self
-            .state
-            .integration_recommendations
-            .iter()
-            .filter(|recommendation| recommendation.needs_install())
-            .map(|recommendation| recommendation.target)
-            .collect::<Vec<_>>();
-
-        self.state.integration_install_messages.clear();
-        if targets.is_empty() {
-            self.state
-                .integration_install_messages
-                .push("all detected integrations are current".to_string());
-            return;
-        }
-
-        for target in targets {
-            let label = crate::integration::integration_target_label(target);
-            match crate::integration::install_target(target) {
-                Ok(messages) => {
-                    self.state
-                        .integration_install_messages
-                        .push(format!("installed {label}"));
-                    self.state
-                        .integration_install_messages
-                        .extend(messages.into_iter().filter(|message| {
-                            message.starts_with(crate::integration::INSTALL_WARNING_PREFIX)
-                        }));
-                }
-                Err(err) => self
-                    .state
-                    .integration_install_messages
-                    .push(format!("{label}: {err}")),
-            }
-        }
-
-        self.state.integration_recommendations = crate::integration::integration_recommendations();
-        self.state.mark_session_dirty();
+        self.state.mode = if self.state.active.is_some() {
+            Mode::Terminal
+        } else {
+            Mode::Navigate
+        };
     }
 
     pub(crate) fn reload_config(&mut self) -> crate::config::ConfigReloadReport {
@@ -1419,9 +1451,14 @@ impl App {
                 self.state.pane_gaps = config.ui.pane_gaps;
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
+                self.state.show_tab_bar = config.ui.show_tab_bar;
                 self.state.hide_tab_bar_when_single_tab = config.ui.hide_tab_bar_when_single_tab;
-                self.state.agent_panel_sort =
-                    agent_panel_sort_from_config(config.ui.agent_panel_sort);
+                self.state.agent_panel_sort = agent_panel_sort_from_config(
+                    config.ui.agent_panel_sort,
+                    config.ui.agent_panel_scope,
+                );
+                self.state.workspace_panel_density =
+                    workspace_panel_density_from_config(config.ui.workspace_panel_density);
                 self.state.sidebar_agents = config.ui.sidebar.agents.clone();
                 self.state.sidebar_spaces = config.ui.sidebar.spaces.clone();
                 self.state.agent_panel_scroll = 0;
@@ -1499,6 +1536,18 @@ impl App {
             self.state.default_shell = config.terminal.default_shell.clone();
             self.state.shell_mode = config.terminal.shell_mode;
             self.state.new_terminal_cwd = config.terminal.new_cwd.clone();
+        }
+
+        if !invalid_section("agent_restore") {
+            self.headless_agent_restore_enabled = config.agent_restore.enabled;
+            self.pending_agent_resume_wait =
+                Duration::from_millis(config.agent_restore.restore_delay_ms)
+                    .max(PENDING_AGENT_RESUME_THEME_WAIT);
+            self.pending_agent_resume_deadline = None;
+        }
+
+        if !invalid_section("agent_start") {
+            self.state.agent_start_config = config.agent_start.clone();
         }
 
         if !invalid_section("worktrees") {
@@ -1616,17 +1665,15 @@ impl App {
                     if self.try_route_paste_to_popup(&text) {
                     } else if self.state.mode != Mode::Terminal {
                         self.paste_into_active_text_input(&text);
-                    } else {
-                        if let Some(ws_idx) = self.state.active {
-                            if let Some(ws) = self.state.workspaces.get(ws_idx) {
-                                if let Some(focused) = ws.focused_pane_id() {
-                                    if let Some(runtime) = self.state.runtime_for_pane_in_workspace(
-                                        &self.terminal_runtimes,
-                                        ws_idx,
-                                        focused,
-                                    ) {
-                                        let _ = runtime.try_send_paste(text);
-                                    }
+                    } else if let Some(ws_idx) = self.state.active {
+                        if let Some(ws) = self.state.workspaces.get(ws_idx) {
+                            if let Some(focused) = ws.focused_pane_id() {
+                                if let Some(runtime) = self.state.runtime_for_pane_in_workspace(
+                                    &self.terminal_runtimes,
+                                    ws_idx,
+                                    focused,
+                                ) {
+                                    let _ = runtime.try_send_paste(text);
                                 }
                             }
                         }
@@ -1720,6 +1767,9 @@ impl App {
             Mode::ConfirmClose => {
                 self.handle_confirm_close_key_via_api(key_event);
             }
+            Mode::ConfirmDanger => {
+                input::handle_confirm_danger_key(&mut self.state, key_event);
+            }
             Mode::ContextMenu => {
                 self.handle_context_menu_key_via_api(key_event);
             }
@@ -1770,7 +1820,6 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
     use std::cell::Cell;
     use std::rc::Rc;
-    use std::sync::Mutex;
 
     fn raw_key(
         code: KeyCode,
@@ -1808,6 +1857,83 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("herdr-{name}-{}-{stamp}", std::process::id()))
+    }
+
+    #[tokio::test]
+    async fn duplicate_workspace_preserves_tabs_panes_and_cwds() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("source");
+        let root_pane = workspace.tabs[0].root_pane;
+        let split_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        let second_tab_idx = workspace.test_add_tab(Some("logs"));
+        workspace.active_tab = second_tab_idx;
+
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        let base = unique_temp_path("duplicate-workspace");
+        let one = base.join("one");
+        let two = base.join("two");
+        let three = base.join("three");
+        std::fs::create_dir_all(&one).unwrap();
+        std::fs::create_dir_all(&two).unwrap();
+        std::fs::create_dir_all(&three).unwrap();
+
+        for (pane_id, cwd) in [(root_pane, &one), (split_pane, &two)] {
+            let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+                .attached_terminal_id
+                .clone();
+            app.state.terminals.get_mut(&terminal_id).unwrap().cwd = cwd.clone();
+        }
+        let second_tab_root = app.state.workspaces[0].tabs[second_tab_idx].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[second_tab_idx].panes[&second_tab_root]
+            .attached_terminal_id
+            .clone();
+        app.state.terminals.get_mut(&terminal_id).unwrap().cwd = three.clone();
+
+        app.duplicate_workspace(0).unwrap();
+
+        assert_eq!(app.state.workspaces.len(), 2);
+        assert_eq!(app.state.active, Some(1));
+        let duplicate = &app.state.workspaces[1];
+        assert_ne!(duplicate.id, app.state.workspaces[0].id);
+        assert_eq!(duplicate.tabs.len(), 2);
+        assert_eq!(duplicate.active_tab, second_tab_idx);
+        assert_eq!(duplicate.tabs[0].layout.pane_count(), 2);
+        assert_eq!(duplicate.tabs[1].custom_name.as_deref(), Some("logs"));
+
+        let duplicated_cwds = duplicate
+            .tabs
+            .iter()
+            .flat_map(|tab| {
+                tab.layout.pane_ids().into_iter().filter_map(|pane_id| {
+                    tab.panes
+                        .get(&pane_id)
+                        .and_then(|pane| app.state.terminals.get(&pane.attached_terminal_id))
+                        .map(|terminal| terminal.cwd.clone())
+                })
+            })
+            .collect::<std::collections::HashSet<_>>();
+        assert!(duplicated_cwds.contains(&one));
+        assert!(duplicated_cwds.contains(&two));
+        assert!(duplicated_cwds.contains(&three));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn pending_duplicate_workspace_reports_missing_workspace() {
+        let mut app = test_app();
+        app.state.pending_duplicate_workspace = Some(7);
+
+        assert!(app.run_pending_duplicate_workspace());
+        assert_eq!(
+            app.state.config_diagnostic.as_deref(),
+            Some("duplicate workspace failed: workspace not found")
+        );
+        assert!(app.state.pending_duplicate_workspace.is_none());
     }
 
     #[cfg(windows)]
@@ -2044,10 +2170,6 @@ mod tests {
         assert_eq!(drained_prefix_active(&mut app), vec![false]);
     }
 
-    fn config_env_lock() -> &'static Mutex<()> {
-        crate::config::test_config_env_lock()
-    }
-
     fn temp_config_path(name: &str) -> std::path::PathBuf {
         let unique = format!(
             "herdr-{name}-{}-{}",
@@ -2107,6 +2229,7 @@ mod tests {
                 resolved_identity_cwd,
                 branch: Some("render-dirty-test".into()),
                 ahead_behind: Some((1, 0)),
+                diff_stats: None,
                 space: None,
             }],
             cache_updates: Vec::new(),
@@ -2120,12 +2243,12 @@ mod tests {
         let mut app = test_app();
 
         app.handle_internal_event(AppEvent::ClipboardWrite {
-            content: b"copied".to_vec(),
+            content: b"one\ntwo".to_vec(),
         });
 
         assert!(app.state.toast.is_none());
         let feedback = app.state.copy_feedback.as_ref().expect("copy feedback");
-        assert_eq!(feedback.message, "copied to clipboard");
+        assert_eq!(feedback.message, "Copied 2 lines");
         assert!(app.copy_feedback_deadline.is_some());
     }
 
@@ -2164,7 +2287,7 @@ mod tests {
                 .copy_feedback
                 .as_ref()
                 .map(|feedback| feedback.message.as_str()),
-            Some("copied to clipboard")
+            Some("Copied 1 lines")
         );
     }
 
@@ -2348,11 +2471,7 @@ mod tests {
 
         assert!(app.drain_internal_events());
 
-        let expected_version = format!("2.0.{}", APP_EVENT_DRAIN_LIMIT - 1);
-        assert_eq!(
-            app.state.update_available.as_deref(),
-            Some(expected_version.as_str())
-        );
+        assert!(app.state.update_available.is_none());
         assert!(app.event_rx.try_recv().is_ok());
     }
 
@@ -2377,11 +2496,7 @@ mod tests {
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
 
         assert_eq!(response["result"]["type"], "ok");
-        let expected_version = format!("3.0.{APP_EVENT_DRAIN_LIMIT}");
-        assert_eq!(
-            app.state.update_available.as_deref(),
-            Some(expected_version.as_str())
-        );
+        assert!(app.state.update_available.is_none());
         assert!(app.event_rx.try_recv().is_err());
     }
 
@@ -2391,6 +2506,13 @@ mod tests {
         config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
 
+        let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
+
+        assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
+
+        config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Spaces;
+        config.ui.agent_panel_scope = crate::config::AgentPanelScopeConfig::Sort;
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
 
         assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
@@ -2495,8 +2617,8 @@ mod tests {
     }
 
     #[test]
-    fn startup_restores_preview_update_available_from_saved_notes() {
-        let _guard = config_env_lock().lock().unwrap();
+    fn startup_ignores_preview_update_available_from_saved_notes() {
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("startup-preview-update-available");
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
 
@@ -2505,8 +2627,8 @@ mod tests {
 
         let app = test_app();
 
-        assert_eq!(app.state.update_available.as_deref(), Some("99.99.99"));
-        assert!(app.state.latest_release_notes_available);
+        assert_eq!(app.state.update_available, None);
+        assert!(!app.state.latest_release_notes_available);
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -2514,7 +2636,7 @@ mod tests {
 
     #[test]
     fn startup_does_not_restore_update_available_from_older_saved_notes() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("startup-stale-update-notes");
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
 
@@ -2523,7 +2645,7 @@ mod tests {
         let app = test_app();
 
         assert_eq!(app.state.update_available, None);
-        assert!(app.state.latest_release_notes_available);
+        assert!(!app.state.latest_release_notes_available);
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -2531,7 +2653,7 @@ mod tests {
 
     #[test]
     fn startup_keeps_pending_release_notes_available_without_auto_opening() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("startup-pending-release-notes-no-auto-open");
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
 
@@ -2547,7 +2669,7 @@ mod tests {
 
         assert_eq!(app.state.mode, Mode::Navigate);
         assert!(app.state.release_notes.is_none());
-        assert!(app.state.latest_release_notes_available);
+        assert!(!app.state.latest_release_notes_available);
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -2555,7 +2677,7 @@ mod tests {
 
     #[test]
     fn startup_still_auto_opens_unseen_product_announcement() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("startup-product-announcement-auto-open");
         let state_home = path.parent().unwrap().join("state");
         let original_xdg_state_home = std::env::var_os("XDG_STATE_HOME");
@@ -2598,13 +2720,43 @@ mod tests {
     }
 
     #[test]
+    fn pane_menu_double_click_requires_same_pane_cell_within_500ms() {
+        let at = Instant::now();
+        let pane_id = crate::layout::PaneId::from_raw(1);
+        let first = PaneClickState {
+            pane_id,
+            viewport_row: 3,
+            col: 7,
+            at,
+        };
+        assert!(first.is_double_click_for(PaneClickState {
+            at: at + Duration::from_millis(500),
+            ..first
+        }));
+        assert!(!first.is_double_click_for(PaneClickState {
+            at: at + Duration::from_millis(501),
+            ..first
+        }));
+        assert!(!first.is_double_click_for(PaneClickState {
+            col: 8,
+            at: at + Duration::from_millis(100),
+            ..first
+        }));
+        assert!(!first.is_double_click_for(PaneClickState {
+            pane_id: crate::layout::PaneId::from_raw(2),
+            at: at + Duration::from_millis(100),
+            ..first
+        }));
+    }
+
+    #[test]
     fn reload_config_updates_live_state() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-success");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            "[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\nnew_cwd = \"home\"\n[keys]\nnew_workspace = \"prefix+m\"\nprefix = \"ctrl+a\"\n[update]\nversion_check = false\nmanifest_check = false\n[ui]\nagent_panel_scope = \"current\"\nagent_panel_sort = \"priority\"\nredraw_on_focus_gained = false\ncopy_on_select = false\nright_click_passthrough_modifier = \"ctrl\"\n[ui.toast]\ndelivery = \"herdr\"\n[experimental]\nswitch_ascii_input_source_in_prefix = true\n",
+            "[terminal]\ndefault_shell = \"nu\"\nshell_mode = \"non_login\"\nnew_cwd = \"home\"\n[keys]\nnew_workspace = \"prefix+m\"\nprefix = \"ctrl+a\"\n[update]\nversion_check = false\nmanifest_check = false\n[agent_restore]\nenabled = true\nrestore_delay_ms = 3000\n[ui]\nagent_panel_scope = \"current\"\nagent_panel_sort = \"priority\"\nredraw_on_focus_gained = false\ncopy_on_select = false\nright_click_passthrough_modifier = \"ctrl\"\nshow_tab_bar = false\n[ui.toast]\ndelivery = \"herdr\"\n[experimental]\nswitch_ascii_input_source_in_prefix = true\n",
         )
         .unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -2650,6 +2802,9 @@ mod tests {
             crate::config::ToastDelivery::Herdr
         );
         assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
+        assert!(!app.state.show_tab_bar);
+        assert!(app.headless_agent_restore_enabled);
+        assert_eq!(app.pending_agent_resume_wait, Duration::from_millis(3000));
         assert!(!app.state.redraw_on_focus_gained);
         assert!(!app.state.copy_on_select);
         assert!(app.state.selection.is_none());
@@ -2699,8 +2854,66 @@ mod tests {
     }
 
     #[test]
+    fn reload_config_updates_agent_start_commands() {
+        let _guard = crate::config::lock_test_config_env();
+        let path = temp_config_path("reload-config-agent-start");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "[agent_start.commands]\ncodex = [\"codex\", \"--sandbox\", \"workspace-write\"]\n",
+        )
+        .unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        let report = app.reload_config();
+
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert_eq!(
+            app.state.agent_start_config.commands.get("codex"),
+            Some(&vec![
+                "codex".into(),
+                "--sandbox".into(),
+                "workspace-write".into()
+            ])
+        );
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn reload_config_keeps_agent_start_commands_when_section_is_invalid() {
+        let _guard = crate::config::lock_test_config_env();
+        let path = temp_config_path("reload-config-invalid-agent-start");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "[agent_start.commands]\ncodex = \"codex\"\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        app.state.agent_start_config.commands.insert(
+            "codex".into(),
+            vec!["codex".into(), "--sandbox".into(), "workspace-write".into()],
+        );
+        let report = app.reload_config();
+
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Partial);
+        assert_eq!(
+            app.state.agent_start_config.commands.get("codex"),
+            Some(&vec![
+                "codex".into(),
+                "--sandbox".into(),
+                "workspace-write".into()
+            ])
+        );
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
     fn reload_config_requests_client_reload_for_host_cursor_only_change() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-host-cursor");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "[ui]\nhost_cursor = \"native\"\n").unwrap();
@@ -2724,7 +2937,7 @@ mod tests {
 
     #[test]
     fn reload_config_updates_sidebar_width_only_when_config_owned() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-sidebar-width");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -2755,7 +2968,7 @@ mod tests {
 
     #[test]
     fn reload_config_updates_sidebar_token_rows() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-sidebar-tokens");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -2810,7 +3023,7 @@ mod tests {
 
     #[test]
     fn reload_config_does_not_reset_sidebar_to_startup_state() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-sidebar-start-collapsed");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -2829,7 +3042,7 @@ mod tests {
 
     #[test]
     fn reload_config_updates_sidebar_collapsed_mode() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-sidebar-collapsed-mode");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -2854,7 +3067,7 @@ mod tests {
 
     #[test]
     fn reload_config_updates_sidebar_bounds_and_reclamps() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-sidebar-bounds");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -2862,7 +3075,7 @@ mod tests {
         let mut app = test_app();
         // Default bounds.
         assert_eq!(app.state.sidebar_min_width, 18);
-        assert_eq!(app.state.sidebar_max_width, 36);
+        assert_eq!(app.state.sidebar_max_width, 72);
         assert_eq!(
             app.state.mobile_width_threshold,
             crate::config::DEFAULT_MOBILE_WIDTH_THRESHOLD
@@ -2908,7 +3121,7 @@ mod tests {
 
     #[test]
     fn reload_config_updates_mobile_width_threshold() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-mobile-width-threshold");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -2943,14 +3156,14 @@ mod tests {
             "App::new must fall back to default min when bounds are inverted"
         );
         assert_eq!(
-            app.state.sidebar_max_width, 36,
+            app.state.sidebar_max_width, 72,
             "App::new must fall back to default max when bounds are inverted"
         );
     }
 
     #[test]
     fn reload_config_invalid_sidebar_bounds_keeps_previous_ui_and_returns_partial() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-invalid-sidebar-bounds");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
@@ -2995,7 +3208,7 @@ mod tests {
 
     #[test]
     fn reload_config_disables_invalid_binding_but_applies_valid_keymap_and_other_sections() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-invalid-keybind");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
@@ -3028,7 +3241,7 @@ mod tests {
 
     #[test]
     fn reload_config_user_binding_displaces_default_without_rejecting_prefix() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-user-binding-displaces-default");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
@@ -3058,7 +3271,7 @@ mod tests {
 
     #[test]
     fn reload_config_preserves_invalid_ui_section_but_applies_valid_keys() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-invalid-ui-section");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
@@ -3092,7 +3305,7 @@ mod tests {
 
     #[test]
     fn reload_config_preserves_invalid_terminal_section_but_applies_valid_ui() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-invalid-terminal-section");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
@@ -3126,7 +3339,7 @@ mod tests {
 
     #[test]
     fn settings_save_toast_delivery_persists_then_applies_live_config() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("settings-save-toast-delivery");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "onboarding = false\n").unwrap();
@@ -3154,7 +3367,7 @@ mod tests {
 
     #[test]
     fn save_agent_panel_sort_persists_then_applies_live_config() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("save-agent-panel-sort");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "onboarding = false\n").unwrap();
@@ -3168,6 +3381,30 @@ mod tests {
         assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("agent_panel_sort = \"priority\""));
+        assert!(content.contains("agent_panel_scope = \"sort\""));
+        assert!(app.state.config_diagnostic.is_none());
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn save_workspace_panel_density_persists_then_applies_live_config() {
+        let _guard = crate::config::lock_test_config_env();
+        let path = temp_config_path("save-workspace-panel-density");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "onboarding = false\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        let mut app = test_app();
+        app.save_workspace_panel_density(state::WorkspacePanelDensity::Slim);
+
+        assert_eq!(
+            app.state.workspace_panel_density,
+            state::WorkspacePanelDensity::Slim
+        );
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("workspace_panel_density = \"slim\""));
         assert!(app.state.config_diagnostic.is_none());
 
         std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
@@ -3176,7 +3413,7 @@ mod tests {
 
     #[test]
     fn settings_save_pane_history_persists_then_applies_live_config() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("settings-save-pane-history");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "onboarding = false\n").unwrap();
@@ -3201,7 +3438,7 @@ mod tests {
 
     #[test]
     fn reload_config_keeps_current_state_on_invalid_toml() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let path = temp_config_path("reload-config-invalid-toml");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "[keys\nnew_workspace = \"g\"\n").unwrap();
@@ -3937,7 +4174,7 @@ mod tests {
 
     #[tokio::test]
     async fn pane_split_request_targets_pane_in_background_tab() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let original_shell = std::env::var_os("SHELL");
         std::env::set_var("SHELL", exiting_test_command());
 
@@ -4035,7 +4272,7 @@ mod tests {
 
     #[tokio::test]
     async fn pane_split_request_focuses_new_pane_when_requested() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let original_shell = std::env::var_os("SHELL");
         std::env::set_var("SHELL", exiting_test_command());
 
@@ -4084,7 +4321,7 @@ mod tests {
 
     #[tokio::test]
     async fn pane_split_request_applies_ratio() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let original_shell = std::env::var_os("SHELL");
         std::env::set_var("SHELL", "/usr/bin/true");
 
@@ -4131,7 +4368,7 @@ mod tests {
 
     #[tokio::test]
     async fn pane_split_request_uses_active_focused_pane_when_target_is_omitted() {
-        let _guard = config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let original_shell = std::env::var_os("SHELL");
         std::env::set_var("SHELL", "/usr/bin/true");
 
@@ -4377,7 +4614,7 @@ mod tests {
 
     #[test]
     fn due_session_save_starts_background_writer() {
-        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let _guard = crate::config::lock_test_config_env();
         let config_home = unique_temp_path("background-session-save");
         std::env::set_var("XDG_CONFIG_HOME", &config_home);
         std::env::remove_var(crate::session::SESSION_ENV_VAR);
@@ -4857,11 +5094,37 @@ last_pane = "prefix+tab"
 
         app.route_client_input(b"\r".to_vec());
 
-        assert_eq!(app.state.mode, Mode::Settings);
-        assert_eq!(
-            app.state.settings.section,
-            state::SettingsSection::Integrations
-        );
+        assert_eq!(app.state.mode, Mode::Navigate);
+    }
+
+    #[test]
+    fn onboarding_keys_persist_completion_without_opening_settings() {
+        let _guard = crate::config::lock_test_config_env();
+        let path = temp_config_path("onboarding-completion");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "[theme]\nname = \"tokyo-night\"\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+        for code in [
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyCode::Right,
+            crossterm::event::KeyCode::Char('l'),
+        ] {
+            let mut app = test_app();
+            app.state.mode = Mode::Onboarding;
+            app.handle_onboarding_key(crossterm::event::KeyEvent::new(
+                code,
+                crossterm::event::KeyModifiers::NONE,
+            ));
+
+            assert_eq!(app.state.mode, Mode::Navigate);
+            let content = std::fs::read_to_string(&path).unwrap();
+            assert!(content.contains("onboarding = false"));
+            assert!(content.contains("[theme]\nname = \"tokyo-night\""));
+        }
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]
@@ -4904,12 +5167,18 @@ last_pane = "prefix+tab"
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.confirm_close = false;
-        app.state.context_menu = Some(state::ContextMenuState {
+        let mut menu = state::ContextMenuState {
             kind: state::ContextMenuKind::Workspace { ws_idx: 1 },
             x: 2,
             y: 2,
-            list: state::MenuListState::new(1),
-        });
+            list: state::MenuListState::new(0),
+        };
+        menu.list.highlighted = menu
+            .items()
+            .iter()
+            .position(|item| *item == "Close")
+            .expect("workspace close item");
+        app.state.context_menu = Some(menu);
         app.state.mode = Mode::ContextMenu;
 
         app.route_client_input(b"\r".to_vec());

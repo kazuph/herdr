@@ -15,6 +15,55 @@ struct PendingAgentResumeCandidate {
 }
 
 impl App {
+    pub(crate) fn run_pending_agent_restore_request(&mut self) -> bool {
+        if !self.state.request_agent_restore {
+            return false;
+        }
+        self.state.request_agent_restore = false;
+
+        let pending_before = self
+            .state
+            .terminals
+            .values()
+            .filter(|terminal| terminal.pending_agent_resume_plan.is_some())
+            .count();
+        let previous_toast = self.state.toast.clone();
+        self.sync_pending_agent_resume_deadline(Instant::now());
+        self.start_pending_agent_resumes(true);
+        let pending_after = self
+            .state
+            .terminals
+            .values()
+            .filter(|terminal| terminal.pending_agent_resume_plan.is_some())
+            .count();
+        let running_agents = self
+            .state
+            .terminals
+            .values()
+            .filter(|terminal| terminal.effective_agent_label().is_some())
+            .count();
+        let launched = pending_before.saturating_sub(pending_after);
+        let skipped = pending_before.saturating_sub(launched);
+        let context = if pending_before == 0 {
+            if running_agents == 0 {
+                "no pending restore".to_string()
+            } else {
+                format!("no pending restore, {running_agents} already running")
+            }
+        } else {
+            format!("launched {launched}, skipped {skipped}")
+        };
+        self.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::Finished,
+            title: "agent restore".into(),
+            context,
+            position: None,
+            target: None,
+        });
+        self.sync_toast_deadline(previous_toast);
+        true
+    }
+
     pub(crate) fn has_pending_agent_resumes(&self) -> bool {
         self.state
             .terminals
@@ -32,7 +81,7 @@ impl App {
             return;
         }
         self.pending_agent_resume_deadline
-            .get_or_insert(now + super::PENDING_AGENT_RESUME_THEME_WAIT);
+            .get_or_insert(now + self.pending_agent_resume_wait);
     }
 
     pub(crate) fn pending_agent_resume_due(&self, now: Instant) -> bool {
@@ -313,7 +362,7 @@ fn stable_terminal_inner_rect(pane_inner: Rect) -> Rect {
     )
 }
 
-fn shell_command_from_argv(argv: &[String]) -> Option<String> {
+pub(crate) fn shell_command_from_argv(argv: &[String]) -> Option<String> {
     let mut parts = argv.iter();
     let first = shell_quote(parts.next()?);
     let mut command = first;
@@ -481,6 +530,41 @@ mod tests {
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
         }
+    }
+
+    #[test]
+    fn pending_agent_resume_deadline_uses_configured_restore_delay() {
+        let mut app = test_app();
+        let workspace = crate::workspace::Workspace::test_new("restored");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.terminal_id(pane_id).cloned().unwrap();
+        app.state.view.pane_infos = workspace.tabs[0]
+            .layout
+            .panes(ratatui::layout::Rect::new(0, 0, 100, 30));
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 100, 30);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.ensure_test_terminals();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("test terminal should exist")
+            .pending_agent_resume_plan = Some(crate::agent_resume::AgentResumePlan {
+            agent: "codex".into(),
+            argv: vec!["codex".into(), "resume".into(), "session".into()],
+            dedupe_key: "herdr:codex\0codex\0Id\0session".into(),
+        });
+        app.pending_agent_resume_wait = std::time::Duration::from_millis(3000);
+        let now = std::time::Instant::now();
+
+        app.sync_pending_agent_resume_deadline(now);
+
+        assert_eq!(
+            app.pending_agent_resume_deadline,
+            Some(now + std::time::Duration::from_millis(3000))
+        );
+        assert!(!app.pending_agent_resume_due(now + std::time::Duration::from_millis(2999)));
+        assert!(app.pending_agent_resume_due(now + std::time::Duration::from_millis(3000)));
     }
 
     #[cfg(not(windows))]
@@ -790,5 +874,37 @@ mod tests {
             Some("claude --resume 'session with '\\'' quote'")
         );
         assert_eq!(shell_command_from_argv(&[]), None);
+    }
+
+    #[test]
+    fn manual_restore_without_pending_resumes_distinguishes_running_agents() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            event_hub,
+        );
+        app.state.request_agent_restore = true;
+
+        assert!(app.run_pending_agent_restore_request());
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
+            Some("no pending restore")
+        );
+
+        let terminal_id = crate::terminal::TerminalId::alloc();
+        let mut terminal = crate::terminal::TerminalState::new(terminal_id.clone(), "/tmp".into());
+        terminal.detected_agent = Some(crate::detect::Agent::Codex);
+        app.state.terminals.insert(terminal_id, terminal);
+        app.state.request_agent_restore = true;
+
+        assert!(app.run_pending_agent_restore_request());
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
+            Some("no pending restore, 1 already running")
+        );
     }
 }

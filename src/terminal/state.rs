@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-#[cfg(any(windows, test))]
 use std::time::Duration;
 use std::time::Instant;
 
@@ -11,6 +10,38 @@ use std::time::Instant;
 
 use crate::detect::{Agent, AgentState};
 use crate::terminal::TerminalId;
+
+pub(crate) const CLAUDE_ACTIVITY_STALE_AFTER: Duration = Duration::from_secs(15);
+
+pub(crate) fn filter_stale_claude_working(
+    agent: Option<Agent>,
+    raw: AgentState,
+    fingerprint: Option<String>,
+    now: Instant,
+    tracker: &mut Option<(String, Instant)>,
+) -> AgentState {
+    if !matches!(agent, Some(Agent::Claude | Agent::Codex)) || raw != AgentState::Working {
+        *tracker = None;
+        return raw;
+    }
+    let Some(fingerprint) = fingerprint else {
+        *tracker = None;
+        return raw;
+    };
+    match tracker {
+        Some((last, frozen_since)) if *last == fingerprint => {
+            if now.duration_since(*frozen_since) >= CLAUDE_ACTIVITY_STALE_AFTER {
+                AgentState::Idle
+            } else {
+                raw
+            }
+        }
+        _ => {
+            *tracker = Some((fingerprint, now));
+            raw
+        }
+    }
+}
 
 #[path = "metadata.rs"]
 mod metadata;
@@ -429,7 +460,14 @@ impl TerminalState {
         if self.known_agent_label_conflicts_with_detected_agent(&agent_label) {
             return None;
         }
-        let owner_conflicts = self.current_session_owner_conflicts(&source, &agent_label);
+        let state_report_preserves_persisted_session = session_ref.is_none()
+            && self.hook_authority.is_none()
+            && self
+                .persisted_agent_session
+                .as_ref()
+                .is_some_and(|session| session.agent == agent_label);
+        let owner_conflicts = !state_report_preserves_persisted_session
+            && self.current_session_owner_conflicts(&source, &agent_label);
         let foreground_takeover_allowed = owner_conflicts
             && self.foreground_agent_confirms_hook_authority_takeover(
                 &source,
@@ -486,7 +524,9 @@ impl TerminalState {
                 }
             }
         }
-        self.persisted_agent_session = None;
+        if !state_report_preserves_persisted_session {
+            self.persisted_agent_session = None;
+        }
         self.hook_authority = Some(HookAuthority {
             source,
             agent_label,
@@ -1170,11 +1210,21 @@ impl TerminalState {
         if !should_clear {
             return None;
         }
+        let preserve_foreign_persisted_session = self
+            .hook_authority
+            .as_ref()
+            .zip(self.persisted_agent_session.as_ref())
+            .is_some_and(|(authority, session)| {
+                session.source != authority.source || session.agent != authority.agent_label
+            });
         self.suppress_current_full_lifecycle_hook_authority(
             FullLifecycleHookSuppressionReason::HookClear,
         );
         self.hook_authority = None;
-        self.persisted_agent_session = None;
+        if !preserve_foreign_persisted_session {
+            self.persisted_agent_session = None;
+        }
+        let current_session = self.current_session_identity_for_persistence();
         Some(TerminalStateMutation {
             effective_state_change: self.recompute_effective_state(
                 previous_agent_label,
@@ -1183,7 +1233,7 @@ impl TerminalState {
                 previous_presentation,
                 now,
             ),
-            session_ref_changed: previous_session.is_some(),
+            session_ref_changed: previous_session != current_session,
         })
     }
 
@@ -1336,17 +1386,18 @@ impl TerminalState {
             || self.launch_argv.is_some()
     }
 
-    pub fn border_label(&self, show_agent_labels: bool) -> Option<String> {
-        self.effective_title().or_else(|| {
-            self.manual_label.clone().or_else(|| {
-                show_agent_labels
-                    .then(|| {
-                        self.effective_display_agent()
-                            .or_else(|| self.effective_agent_label().map(str::to_string))
-                    })
-                    .flatten()
-            })
-        })
+    pub fn border_label(&self, _show_agent_labels: bool) -> String {
+        let label = self
+            .manual_label
+            .clone()
+            .or_else(|| self.effective_display_agent())
+            .or_else(|| self.effective_agent_label().map(str::to_string))
+            .unwrap_or_else(|| "terminal".into());
+        let detail = self
+            .effective_title()
+            .or_else(|| self.terminal_title_stripped())
+            .filter(|title| title != &label);
+        detail.map_or(label.clone(), |title| format!("{label} {title}"))
     }
 
     fn recompute_effective_state(
@@ -1403,6 +1454,128 @@ mod tests {
 
     fn test_terminal() -> TerminalState {
         TerminalState::new(TerminalId::alloc(), "/tmp".into())
+    }
+
+    #[test]
+    fn frozen_claude_activity_fingerprint_expires_to_idle() {
+        let now = Instant::now();
+        let mut tracker = None;
+        let fossil = "✢ Building… (13m 47s · thinking)".to_string();
+
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                Some(fossil.clone()),
+                now,
+                &mut tracker,
+            ),
+            AgentState::Working
+        );
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                Some(fossil),
+                now + CLAUDE_ACTIVITY_STALE_AFTER,
+                &mut tracker,
+            ),
+            AgentState::Idle
+        );
+    }
+
+    #[test]
+    fn changed_claude_activity_fingerprint_resumes_working() {
+        let now = Instant::now();
+        let mut tracker = None;
+        let fossil = "✢ Building… (13m 47s · thinking)".to_string();
+        let fresh = "✻ Building… (1s · thinking)".to_string();
+
+        filter_stale_claude_working(
+            Some(Agent::Claude),
+            AgentState::Working,
+            Some(fossil.clone()),
+            now,
+            &mut tracker,
+        );
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                Some(fossil),
+                now + CLAUDE_ACTIVITY_STALE_AFTER,
+                &mut tracker,
+            ),
+            AgentState::Idle
+        );
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                Some(fresh),
+                now + CLAUDE_ACTIVITY_STALE_AFTER + Duration::from_secs(1),
+                &mut tracker,
+            ),
+            AgentState::Working
+        );
+    }
+
+    #[test]
+    fn frozen_codex_working_header_expires_to_idle() {
+        let now = Instant::now();
+        let mut tracker = None;
+        let fossil = "• Working (37s • esc to interrupt)".to_string();
+
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Codex),
+                AgentState::Working,
+                Some(fossil.clone()),
+                now,
+                &mut tracker,
+            ),
+            AgentState::Working
+        );
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Codex),
+                AgentState::Working,
+                Some(fossil),
+                now + CLAUDE_ACTIVITY_STALE_AFTER,
+                &mut tracker,
+            ),
+            AgentState::Idle
+        );
+    }
+
+    #[test]
+    fn stale_activity_filter_does_not_expire_other_agents_or_untracked_working() {
+        let now = Instant::now();
+        let fossil = "fixed".to_string();
+        let mut tracker = Some((fossil.clone(), now));
+
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Gemini),
+                AgentState::Working,
+                Some(fossil),
+                now + CLAUDE_ACTIVITY_STALE_AFTER,
+                &mut tracker,
+            ),
+            AgentState::Working
+        );
+        assert!(tracker.is_none());
+        assert_eq!(
+            filter_stale_claude_working(
+                Some(Agent::Claude),
+                AgentState::Working,
+                None,
+                now + CLAUDE_ACTIVITY_STALE_AFTER,
+                &mut tracker,
+            ),
+            AgentState::Working
+        );
+        assert!(tracker.is_none());
     }
 
     fn test_session_path(name: &str) -> String {
@@ -3152,19 +3325,19 @@ mod tests {
         let mut terminal = test_terminal();
         terminal.set_detected_state(Some(Agent::Claude), AgentState::Idle);
 
-        assert_eq!(terminal.border_label(false), None);
-        assert_eq!(terminal.border_label(true).as_deref(), Some("claude"));
+        assert_eq!(terminal.border_label(false), "claude");
+        assert_eq!(terminal.border_label(true), "claude");
 
         terminal.set_manual_label(" reviewer ".into());
-        assert_eq!(terminal.border_label(false).as_deref(), Some("reviewer"));
-        assert_eq!(terminal.border_label(true).as_deref(), Some("reviewer"));
+        assert_eq!(terminal.border_label(false), "reviewer");
+        assert_eq!(terminal.border_label(true), "reviewer");
 
         terminal.set_manual_label("   ".into());
-        assert_eq!(terminal.border_label(true).as_deref(), Some("claude"));
+        assert_eq!(terminal.border_label(true), "claude");
 
         terminal.set_manual_label("reviewer".into());
         terminal.clear_manual_label();
-        assert_eq!(terminal.border_label(true).as_deref(), Some("claude"));
+        assert_eq!(terminal.border_label(true), "claude");
     }
 
     #[test]

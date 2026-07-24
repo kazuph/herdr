@@ -32,7 +32,7 @@ herdr --default-config > ~/.config/herdr/config.toml
 
 If a config value is invalid, Herdr falls back to a safe default and shows a startup warning.
 
-Herdr shows first-run setup when `onboarding` is missing or true. Continuing from onboarding writes `onboarding = false` and opens settings on the integrations tab. Set it when you want to skip that flow after setup.
+Herdr shows first-run setup when `onboarding` is missing or true. Continuing writes `onboarding = false` and returns to the normal workspace view. Set it when you want to skip that flow after setup.
 
 ```toml
 onboarding = false
@@ -78,6 +78,19 @@ new_cwd = "follow"
 ```
 
 `new_cwd = "follow"` keeps the default behavior and inherits the source pane or workspace. When there is no source workspace, Herdr starts in `$HOME`. Use `"home"` to always start in `$HOME`, `"current"` to use Herdr's process directory, or a fixed path such as `"~/Projects"`. Explicit `--cwd` values from the CLI or socket API still take precedence.
+
+## Agent launch commands
+
+The `New Claude Code agent`, `New Codex agent`, and `New agy agent` context-menu actions use the configured argv when present. This preserves existing launch flags without changing shell aliases or existing panes:
+
+```toml
+[agent_start.commands]
+claude = ["claude", "--permission-mode", "auto"]
+codex = ["codex", "--sandbox", "workspace-write"]
+agy = ["agy", "--dangerously-skip-permissions"]
+```
+
+When a command is omitted, Herdr starts the matching executable with no extra arguments. Reloading config changes subsequent context-menu launches; it does not restart existing agent panes.
 
 ## Worktrees
 
@@ -416,7 +429,7 @@ Herdr resumes supported Agent conversations after a server restart by default:
 resume_agents_on_restore = true
 ```
 
-Only panes with a valid native session reference from an official integration can resume; other panes restore as normal shells. See [Session state and restore](/docs/session-state/) for supported Agents and persistence behavior.
+Only panes with a valid pane-specific native session reference can resume; other panes restore as normal shells. See [Session state and restore](/docs/session-state/) for supported Agents and persistence behavior.
 
 ## IME cursor tracking
 

@@ -48,13 +48,12 @@ mod terminal;
 
 pub(crate) use self::{
     modal::{
-        handle_global_menu_key, handle_keybind_help_key, handle_navigator_key,
-        insert_navigator_search_text, insert_rename_input_text,
+        handle_confirm_danger_key, handle_global_menu_key, handle_keybind_help_key,
+        handle_navigator_key, insert_navigator_search_text, insert_rename_input_text,
     },
     navigate::{
         terminal_direct_indexed_navigation_action, terminal_direct_non_indexed_navigation_action,
     },
-    settings::open_settings_at,
 };
 use self::{
     modal::{
@@ -102,6 +101,7 @@ impl App {
                 Mode::ConfirmRemoveWorktree => self.handle_worktree_remove_key(key_event),
                 Mode::Resize => self.handle_resize_key_via_api(key),
                 Mode::ConfirmClose => self.handle_confirm_close_key_via_api(key_event),
+                Mode::ConfirmDanger => modal::handle_confirm_danger_key(&mut self.state, key_event),
                 Mode::ContextMenu => {
                     self.handle_context_menu_key_via_api(key_event);
                 }
@@ -285,90 +285,118 @@ impl App {
             return;
         }
 
-        let handled_pane_double_click = self.handle_pane_double_click(mouse);
+        if matches!(
+            mouse.kind,
+            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Down(MouseButton::Right)
+        ) {
+            self.last_pane_click = None;
+        }
 
         let previous_agent_panel_sort = self.state.agent_panel_sort;
-        let previous_settings_section = self.state.settings.section;
-        if !handled_pane_double_click {
-            let right_button = matches!(
-                mouse.kind,
-                MouseEventKind::Down(MouseButton::Right)
-                    | MouseEventKind::Up(MouseButton::Right)
-                    | MouseEventKind::Drag(MouseButton::Right)
-            );
-            let intentional_pane_press = matches!(
-                mouse.kind,
-                MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
-            );
-            if !right_button
-                && intentional_pane_press
-                && matches!(self.state.mode, Mode::Terminal | Mode::Resize)
-            {
-                if let (Some(ws_idx), Some(info)) = (
-                    self.state.active,
-                    self.state.pane_at(mouse.column, mouse.row).cloned(),
-                ) {
-                    self.focus_pane_internal_via_api(ws_idx, info.id);
-                }
-            }
-            if let Some(action) = self.state.handle_mouse(&mut self.terminal_runtimes, mouse) {
-                match action {
-                    MouseAction::Settings(action) => match action {
-                        SettingsAction::SaveTheme(name) => self.save_theme(&name),
-                        SettingsAction::SaveSound(enabled) => self.save_sound(enabled),
-                        SettingsAction::SaveToastDelivery(delivery) => {
-                            self.save_toast_delivery(delivery)
-                        }
-                        SettingsAction::SaveAgentBorderLabels(enabled) => {
-                            self.save_agent_border_labels(enabled)
-                        }
-                        SettingsAction::SavePaneHistory(enabled) => {
-                            self.save_pane_history_persistence(enabled)
-                        }
-                        SettingsAction::SaveSwitchAsciiInputSourceInPrefix(enabled) => {
-                            self.save_switch_ascii_input_source_in_prefix(enabled)
-                        }
-                        SettingsAction::InstallRecommendedIntegrations => {
-                            self.install_recommended_integrations()
-                        }
-                    },
-                    MouseAction::FocusWorkspace { ws_idx } => {
-                        self.focus_workspace_idx_via_api(ws_idx)
-                    }
-                    MouseAction::FocusTab { tab_idx } => self.focus_tab_idx_via_api(tab_idx),
-                    MouseAction::FocusPane { ws_idx, pane_id } => {
-                        self.focus_pane_internal_via_api(ws_idx, pane_id)
-                    }
-                    MouseAction::FocusToastTarget => self.focus_toast_target_via_api(),
-                    MouseAction::MoveWorkspace {
-                        source_ws_idx,
-                        insert_idx,
-                    } => self.move_workspace_via_api(source_ws_idx, insert_idx),
-                    MouseAction::MoveTab {
-                        ws_idx,
-                        source_tab_idx,
-                        insert_idx,
-                    } => self.move_tab_via_api(ws_idx, source_tab_idx, insert_idx),
-                    MouseAction::SetSplitRatio { path, ratio } => {
-                        self.set_split_ratio_via_api(path, ratio)
-                    }
-                    MouseAction::RenameModal(action) => {
-                        self.apply_rename_mouse_action_via_api(action)
-                    }
-                    MouseAction::ConfirmCloseAccept => self.confirm_close_accept_via_api(),
-                    MouseAction::ContextMenu { menu, idx } => {
-                        self.apply_context_menu_action_via_api(menu, idx)
-                    }
-                }
+        let previous_workspace_panel_density = self.state.workspace_panel_density;
+        let right_button = matches!(
+            mouse.kind,
+            MouseEventKind::Down(MouseButton::Right)
+                | MouseEventKind::Up(MouseButton::Right)
+                | MouseEventKind::Drag(MouseButton::Right)
+        );
+        let intentional_pane_press = matches!(
+            mouse.kind,
+            MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
+        );
+        if !right_button
+            && intentional_pane_press
+            && matches!(self.state.mode, Mode::Terminal | Mode::Resize)
+        {
+            if let (Some(ws_idx), Some(info)) = (
+                self.state.active,
+                self.state.pane_at(mouse.column, mouse.row).cloned(),
+            ) {
+                self.focus_pane_internal_via_api(ws_idx, info.id);
             }
         }
-        if previous_settings_section != crate::app::state::SettingsSection::Integrations
-            && self.state.settings.section == crate::app::state::SettingsSection::Integrations
-        {
-            self.refresh_integration_recommendations();
+        if let Some(action) = self.state.handle_mouse(&mut self.terminal_runtimes, mouse) {
+            match action {
+                MouseAction::Settings(action) => match action {
+                    SettingsAction::SaveTheme(name) => self.save_theme(&name),
+                    SettingsAction::SaveSound(enabled) => self.save_sound(enabled),
+                    SettingsAction::SaveToastDelivery(delivery) => {
+                        self.save_toast_delivery(delivery)
+                    }
+                    SettingsAction::SaveAgentBorderLabels(enabled) => {
+                        self.save_agent_border_labels(enabled)
+                    }
+                    SettingsAction::SavePaneHistory(enabled) => {
+                        self.save_pane_history_persistence(enabled)
+                    }
+                    SettingsAction::SaveSwitchAsciiInputSourceInPrefix(enabled) => {
+                        self.save_switch_ascii_input_source_in_prefix(enabled)
+                    }
+                },
+                MouseAction::FocusWorkspace { ws_idx } => self.focus_workspace_idx_via_api(ws_idx),
+                MouseAction::FocusTab { tab_idx } => self.focus_tab_idx_via_api(tab_idx),
+                MouseAction::FocusPane { ws_idx, pane_id } => {
+                    self.focus_pane_internal_via_api(ws_idx, pane_id)
+                }
+                MouseAction::OpenPaneContextMenu {
+                    ws_idx,
+                    pane_id,
+                    x,
+                    y,
+                } => {
+                    self.focus_pane_internal_via_api(ws_idx, pane_id);
+                    self.state.open_pane_context_menu(pane_id, x, y);
+                }
+                MouseAction::PaneMenuClick {
+                    ws_idx,
+                    pane_id,
+                    viewport_row,
+                    col,
+                    x,
+                    y,
+                } => {
+                    let click = PaneClickState {
+                        pane_id,
+                        viewport_row,
+                        col,
+                        at: std::time::Instant::now(),
+                    };
+                    if self.take_pane_double_click(click) {
+                        self.focus_pane_internal_via_api(ws_idx, pane_id);
+                        self.state.open_pane_context_menu(pane_id, x, y);
+                    }
+                }
+                MouseAction::FocusToastTarget => self.focus_toast_target_via_api(),
+                MouseAction::MoveWorkspace {
+                    source_ws_idx,
+                    insert_idx,
+                    target_section,
+                } => {
+                    if let Some(section) = target_section {
+                        self.state.set_workspace_section(source_ws_idx, section);
+                    }
+                    self.move_workspace_via_api(source_ws_idx, insert_idx);
+                }
+                MouseAction::MoveTab {
+                    ws_idx,
+                    source_tab_idx,
+                    insert_idx,
+                } => self.move_tab_via_api(ws_idx, source_tab_idx, insert_idx),
+                MouseAction::SetSplitRatio { path, ratio } => {
+                    self.set_split_ratio_via_api(path, ratio)
+                }
+                MouseAction::RenameModal(action) => self.apply_rename_mouse_action_via_api(action),
+                MouseAction::ConfirmCloseAccept => self.confirm_close_accept_via_api(),
+                MouseAction::ContextMenu { menu, idx } => {
+                    self.apply_context_menu_action_via_api(menu, idx)
+                }
+            }
         }
         if self.state.agent_panel_sort != previous_agent_panel_sort {
             self.save_agent_panel_sort(self.state.agent_panel_sort);
+        }
+        if self.state.workspace_panel_density != previous_workspace_panel_density {
+            self.save_workspace_panel_density(self.state.workspace_panel_density);
         }
 
         if let Some(content) = self.state.request_clipboard_write.take() {
@@ -481,77 +509,6 @@ impl App {
         true
     }
 
-    fn handle_pane_double_click(&mut self, mouse: MouseEvent) -> bool {
-        if !self.state.copy_on_select {
-            self.last_pane_click = None;
-            return false;
-        }
-
-        // A pane press stops being a double-click candidate once it becomes
-        // a drag or completes as a real text selection.
-        match mouse.kind {
-            MouseEventKind::Drag(MouseButton::Left) => {
-                self.last_pane_click = None;
-                return false;
-            }
-            MouseEventKind::Up(MouseButton::Left)
-                if self
-                    .state
-                    .selection
-                    .as_ref()
-                    .is_some_and(|selection| selection.is_visible()) =>
-            {
-                self.last_pane_click = None;
-                return false;
-            }
-            _ => {}
-        }
-
-        // Only terminal-pane left-clicks can start this gesture; other clicks
-        // should keep their existing mouse behavior and clear stale candidates.
-        let Some(click) = self.pane_click_candidate(mouse) else {
-            return false;
-        };
-
-        // Require the second click to land near the first click in the same pane
-        // and within the double-click window so adjacent interactions do not copy.
-        if !self.take_pane_double_click(click) {
-            return false;
-        }
-
-        // Preserve a short highlight after copying so the user gets visible
-        // confirmation without leaving a persistent selection behind.
-        self.copy_double_clicked_word(click)
-    }
-
-    fn pane_click_candidate(&mut self, mouse: MouseEvent) -> Option<PaneClickState> {
-        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-            return None;
-        }
-
-        if !mouse.modifiers.is_empty() {
-            self.last_pane_click = None;
-            return None;
-        }
-
-        if self.state.mode != Mode::Terminal {
-            self.last_pane_click = None;
-            return None;
-        }
-
-        let Some(info) = self.state.pane_at(mouse.column, mouse.row).cloned() else {
-            self.last_pane_click = None;
-            return None;
-        };
-
-        Some(PaneClickState {
-            pane_id: info.id,
-            viewport_row: mouse.row - info.inner_rect.y,
-            col: mouse.column - info.inner_rect.x,
-            at: std::time::Instant::now(),
-        })
-    }
-
     fn take_pane_double_click(&mut self, click: PaneClickState) -> bool {
         if !self
             .last_pane_click
@@ -563,20 +520,6 @@ impl App {
 
         self.last_pane_click = None;
         true
-    }
-
-    fn copy_double_clicked_word(&mut self, click: PaneClickState) -> bool {
-        let copied = self.state.copy_word_at_pane_cell(
-            &self.terminal_runtimes,
-            click.pane_id,
-            click.viewport_row,
-            click.col,
-        );
-        if copied {
-            self.selection_highlight_clear_deadline =
-                Some(std::time::Instant::now() + super::PANE_COPY_HIGHLIGHT_DURATION);
-        }
-        copied
     }
 }
 
@@ -741,6 +684,7 @@ fn capture_snapshot(state: &AppState) -> crate::persist::SessionSnapshot {
         state.sidebar_width,
         state.sidebar_section_split,
         state.collapsed_space_keys.clone(),
+        state.collapsed_workspace_sections.clone(),
     )
 }
 

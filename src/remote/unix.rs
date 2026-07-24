@@ -1,6 +1,5 @@
 //! Remote thin-client launcher over SSH command stdio.
 
-use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, IsTerminal, Write as _};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -15,13 +14,14 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+use std::collections::BTreeMap;
+
 const BRIDGE_ACCEPT_POLL: Duration = Duration::from_millis(50);
 const BRIDGE_SOCKET_PERMISSION_MODE: u32 = 0o600;
 const REMOTE_SERVER_SHUTDOWN_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const REMOTE_SERVER_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const CURRENT_PROTOCOL: u32 = crate::protocol::PROTOCOL_VERSION;
-const STABLE_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/latest.json";
-const PREVIEW_UPDATE_MANIFEST_URL: &str = "https://herdr.dev/preview.json";
 const REMOTE_BINARY_ENV_VAR: &str = "HERDR_REMOTE_BINARY";
 const SSH_CONTROL_SOCKET_NAME: &str = "ctl";
 pub(crate) const REATTACH_COMMAND_ENV_VAR: &str = "HERDR_REATTACH_COMMAND";
@@ -308,6 +308,7 @@ impl RemoteHerdr {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 enum RemoteAssetRef {
@@ -315,6 +316,7 @@ enum RemoteAssetRef {
     Object { url: String, sha256: Option<String> },
 }
 
+#[cfg(test)]
 impl RemoteAssetRef {
     fn url(&self) -> &str {
         match self {
@@ -333,6 +335,7 @@ impl RemoteAssetRef {
     }
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 struct RemoteUpdateManifest {
     version: String,
@@ -342,6 +345,7 @@ struct RemoteUpdateManifest {
     releases: BTreeMap<String, RemoteReleaseMetadata>,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 struct RemoteReleaseMetadata {
     protocol: Option<u32>,
@@ -349,6 +353,7 @@ struct RemoteReleaseMetadata {
     assets: BTreeMap<String, RemoteAssetRef>,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 struct RemotePreviewManifest {
     build_id: String,
@@ -358,12 +363,14 @@ struct RemotePreviewManifest {
     builds: BTreeMap<String, RemotePreviewBuildMetadata>,
 }
 
+#[cfg(test)]
 #[derive(Deserialize)]
 struct RemotePreviewBuildMetadata {
     protocol: u32,
     assets: BTreeMap<String, RemoteAssetRef>,
 }
 
+#[cfg(test)]
 fn deserialize_remote_manifest_releases<'de, D>(
     deserializer: D,
 ) -> Result<BTreeMap<String, RemoteReleaseMetadata>, D::Error>
@@ -384,6 +391,7 @@ where
     })
 }
 
+#[cfg(test)]
 impl RemoteUpdateManifest {
     fn release_for_version(&self, version: &str) -> Option<RemoteManifestReleaseRef<'_>> {
         if self.version.trim_start_matches('v') == version {
@@ -402,6 +410,7 @@ impl RemoteUpdateManifest {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct RemoteManifestReleaseRef<'a> {
     protocol: Option<u32>,
@@ -412,18 +421,9 @@ fn current_version() -> String {
     crate::build_info::version()
 }
 
-fn current_channel() -> &'static str {
-    crate::build_info::channel()
-}
-
 struct InstallSource {
     path: PathBuf,
     temporary_dir: Option<PathBuf>,
-}
-
-struct RemoteReleaseAsset {
-    url: String,
-    sha256: Option<String>,
 }
 
 struct PreparedRemoteHerdr {
@@ -655,6 +655,7 @@ impl InstallSource {
         }
     }
 
+    #[cfg(test)]
     fn temporary(path: PathBuf, temporary_dir: PathBuf) -> Self {
         Self {
             path,
@@ -960,9 +961,7 @@ fn install_source_description_for(
         "the current local herdr binary".to_string()
     } else {
         format!(
-            "the {} {} asset for {}",
-            current_version(),
-            current_channel(),
+            "{REMOTE_BINARY_ENV_VAR}=<path> for {}",
             platform.asset_key()
         )
     }
@@ -983,7 +982,10 @@ fn resolve_install_source(
         }
     }
 
-    download_release_asset(platform)
+    Err(io::Error::other(format!(
+        "automatic release downloads are disabled in the kazuph/herdr fork. Build herdr for the remote platform and pass {REMOTE_BINARY_ENV_VAR}. Required platform: {}",
+        platform.asset_key()
+    )))
 }
 
 fn local_binary_can_seed_remote(platform: &RemotePlatform) -> bool {
@@ -1443,62 +1445,7 @@ fn remote_shell_resolves_managed_install(stdout: &str) -> bool {
         .is_some_and(|path| path.ends_with("/.local/bin/herdr"))
 }
 
-fn download_release_asset(platform: &RemotePlatform) -> io::Result<InstallSource> {
-    let asset_key = platform.asset_key();
-    let asset = remote_release_asset(&asset_key)?;
-
-    let dir = private_download_dir(&asset_key)?;
-    let path = dir.join("herdr.tmp");
-    let status = Command::new("curl")
-        .args(["-sfL", "--max-time", "120", "-o"])
-        .arg(&path)
-        .arg(&asset.url)
-        .status()
-        .map_err(|err| io::Error::new(err.kind(), format!("download failed: {err}")))?;
-    if !status.success() {
-        let _ = fs::remove_dir_all(&dir);
-        return Err(io::Error::other("download failed"));
-    }
-    if let Some(expected) = &asset.sha256 {
-        if let Err(err) = crate::checksum::verify_sha256(&path, expected) {
-            let _ = fs::remove_dir_all(&dir);
-            return Err(io::Error::new(
-                err.kind(),
-                format!("downloaded remote asset checksum verification failed: {err}"),
-            ));
-        }
-    }
-
-    Ok(InstallSource::temporary(path, dir))
-}
-
-fn fetch_remote_manifest(url: &str) -> io::Result<Vec<u8>> {
-    let output = Command::new("curl")
-        .args([
-            "-sfL",
-            "--retry",
-            "3",
-            "--connect-timeout",
-            "10",
-            "--max-time",
-            "20",
-            url,
-        ])
-        .output()
-        .map_err(|err| io::Error::new(err.kind(), format!("curl failed: {err}")))?;
-    if !output.status.success() {
-        return Err(command_failed("failed to fetch update manifest", &output));
-    }
-    Ok(output.stdout)
-}
-
-fn remote_asset_info(asset: &RemoteAssetRef) -> RemoteReleaseAsset {
-    RemoteReleaseAsset {
-        url: asset.url().to_string(),
-        sha256: asset.sha256().map(str::to_string),
-    }
-}
-
+#[cfg(test)]
 fn preview_assets_for_build<'a>(
     manifest: &'a RemotePreviewManifest,
     build_id: &str,
@@ -1512,78 +1459,6 @@ fn preview_assets_for_build<'a>(
         ))
     })?;
     Ok((build.protocol, &build.assets))
-}
-
-fn remote_release_asset(asset_key: &str) -> io::Result<RemoteReleaseAsset> {
-    if crate::build_info::is_preview() {
-        let build_id = crate::build_info::build_id().ok_or_else(|| {
-            io::Error::other("preview client has no build id; set HERDR_REMOTE_BINARY or install Herdr on the remote manually")
-        })?;
-        let manifest_bytes = fetch_remote_manifest(PREVIEW_UPDATE_MANIFEST_URL)?;
-        let manifest: RemotePreviewManifest =
-            serde_json::from_slice(&manifest_bytes).map_err(|err| {
-                io::Error::other(format!("failed to parse preview manifest JSON: {err}"))
-            })?;
-        let (protocol, assets) = preview_assets_for_build(&manifest, build_id)?;
-        if protocol != CURRENT_PROTOCOL {
-            return Err(io::Error::other(format!(
-                "preview manifest has build {build_id} protocol {protocol}, but this client needs protocol {CURRENT_PROTOCOL}; set {REMOTE_BINARY_ENV_VAR}=target/release/herdr or install a matching Herdr on the remote host manually"
-            )));
-        }
-        return assets.get(asset_key).map(remote_asset_info).ok_or_else(|| {
-            io::Error::other(format!(
-                "no {asset_key} binary in the preview manifest for build {build_id}"
-            ))
-        });
-    }
-
-    let current_version = current_version();
-    let manifest_bytes = fetch_remote_manifest(STABLE_UPDATE_MANIFEST_URL)?;
-    let manifest: RemoteUpdateManifest = serde_json::from_slice(&manifest_bytes)
-        .map_err(|err| io::Error::other(format!("failed to parse update manifest JSON: {err}")))?;
-    let release = manifest.release_for_version(&current_version).ok_or_else(|| {
-        io::Error::other(format!(
-            "release manifest does not include herdr {current_version}; build herdr for {} or install it there manually",
-            asset_key
-        ))
-    })?;
-    if let Some(protocol) = release.protocol {
-        if protocol != CURRENT_PROTOCOL {
-            return Err(io::Error::other(format!(
-                "release manifest has herdr {current_version} protocol {protocol}, but this client needs protocol {CURRENT_PROTOCOL}; set {REMOTE_BINARY_ENV_VAR}=target/release/herdr or install a matching herdr on the remote host manually"
-            )));
-        }
-    }
-    release
-        .assets
-        .get(asset_key)
-        .map(remote_asset_info)
-        .ok_or_else(|| {
-            io::Error::other(format!(
-                "no {asset_key} binary in the release manifest for herdr {current_version}"
-            ))
-        })
-}
-
-fn private_download_dir(asset_key: &str) -> io::Result<PathBuf> {
-    let base = std::env::temp_dir();
-    for attempt in 0..100 {
-        let dir = base.join(format!(
-            "herdr-remote-{}-{}-{attempt}",
-            std::process::id(),
-            asset_key
-        ));
-        match fs::create_dir(&dir) {
-            Ok(()) => return Ok(dir),
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(err),
-        }
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "failed to create private herdr remote download directory",
-    ))
 }
 
 fn confirm_remote_install(
@@ -2971,17 +2846,12 @@ mod tests {
     }
 
     #[test]
-    fn install_source_description_uses_release_asset_when_local_binary_cannot_seed_remote() {
+    fn install_source_description_requires_explicit_binary_when_local_binary_cannot_seed_remote() {
         let platform = RemotePlatform::local();
 
         assert_eq!(
             install_source_description_for(&platform, None, false),
-            format!(
-                "the {} {} asset for {}",
-                current_version(),
-                current_channel(),
-                platform.asset_key()
-            )
+            format!("HERDR_REMOTE_BINARY=<path> for {}", platform.asset_key())
         );
     }
 
@@ -2997,9 +2867,26 @@ mod tests {
         assert!(source.temporary_dir.is_none());
     }
 
-    fn remote_env_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    #[test]
+    fn resolve_install_source_rejects_release_download_without_explicit_binary() {
+        let platform = RemotePlatform {
+            os: "linux",
+            arch: "aarch64",
+        };
+        let err = match resolve_install_source(&platform, None) {
+            Ok(_) => panic!("download fallback should be disabled"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string()
+                .contains("automatic release downloads are disabled in the kazuph/herdr fork"),
+            "{err}"
+        );
+        assert!(err.to_string().contains("HERDR_REMOTE_BINARY"), "{err}");
+    }
+
+    fn remote_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::config::lock_test_config_env()
     }
 
     fn socket_path_byte_len(path: &Path) -> usize {
@@ -3009,7 +2896,7 @@ mod tests {
 
     #[test]
     fn local_forward_socket_path_uses_readable_name_when_it_fits() {
-        let _guard = remote_env_lock().lock().unwrap();
+        let _guard = remote_env_lock();
         // Short target + session leave plenty of room — keep the human-
         // readable form so the socket path stays grep-friendly.
         let path = local_forward_socket_path("dev", "default");
@@ -3033,7 +2920,7 @@ mod tests {
 
     #[test]
     fn local_forward_socket_path_fits_in_sun_path() {
-        let _guard = remote_env_lock().lock().unwrap();
+        let _guard = remote_env_lock();
         // Worst case for the readable form: macOS-style 49-char TMPDIR +
         // max-length sanitized components. Should fall back to the hashed
         // short name, which fits under TMPDIR.
@@ -3050,7 +2937,7 @@ mod tests {
 
     #[test]
     fn local_forward_socket_path_falls_back_to_tmp_when_dir_is_long() {
-        let _guard = remote_env_lock().lock().unwrap();
+        let _guard = remote_env_lock();
         // Force a TMPDIR long enough that even the hashed short name cannot
         // fit inside it. The fallback should drop to /tmp.
         let prior = std::env::var_os("TMPDIR");

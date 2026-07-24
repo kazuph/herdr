@@ -77,7 +77,7 @@ herdr --remote workbox --handoff
 
 如果你先 SSH 到服务器再在那里运行 `herdr`,Herdr 就完全运行在服务器上。这种模式简单实用,但除了普通的终端文本粘贴之外,它无法访问你本地桌面的剪贴板。
 
-当本地和远程平台一致时,对于直接安装,Herdr 可以直接复制当前本地二进制文件。对于 Homebrew、mise 和 Nix 安装,或平台不一致时,它会从 `https://herdr.dev/latest.json` 下载与当前客户端版本匹配的发布产物。
+当本地和远程平台一致时,对于直接安装,Herdr 可以直接复制当前本地二进制文件。这个 fork 不会从 `https://herdr.dev/latest.json` 下载发布产物。对于包管理器安装、自定义二进制文件或平台不一致的情况,请在远程连接前把 `HERDR_REMOTE_BINARY` 设置为明确的本地文件路径。
 
 对于本地构建或自定义二进制文件,在远程连接前设置 `HERDR_REMOTE_BINARY` 指向本地文件路径。
 

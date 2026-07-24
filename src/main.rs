@@ -55,6 +55,9 @@ fn set_host_color_scheme_reports(enabled: bool) -> io::Result<()> {
 }
 
 mod agent_resume;
+#[allow(dead_code)]
+// Fork keeps fail-closed session discovery helpers; restore currently uses command rendering only.
+mod agent_sessions;
 mod api;
 mod app;
 mod build_info;
@@ -64,6 +67,7 @@ mod cli;
 mod client;
 mod config;
 mod detect;
+mod dispatch;
 mod events;
 mod ghostty;
 mod handoff_runtime;
@@ -71,10 +75,12 @@ mod input;
 #[allow(dead_code)]
 mod integration;
 mod ipc;
+mod job;
 mod kitty_graphics;
 mod layout;
 mod logging;
 mod metadata_tokens;
+mod msg;
 mod pane;
 mod persist;
 mod platform;
@@ -147,16 +153,13 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # new_cwd = "follow"
 
 [update]
-# Update channel used by background version checks and `herdr update`.
-# Defaults to "stable" on Linux/macOS and "preview" on Windows.
-# Set explicitly to choose stable releases or opt-in preview builds.
+# Source-built fork binaries never self-update or check release services.
+# These legacy settings are ignored by this build.
 # channel = "stable"
 
-# Check herdr.dev for new Herdr versions in the background.
-# version_check = true
+# version_check = false
 
-# Check herdr.dev for remote agent-detection manifest updates in the background.
-# manifest_check = true
+# manifest_check = false
 
 [keys]
 # Prefix key to enter prefix mode (default: "ctrl+b")
@@ -252,7 +255,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # sidebar_min_width = 18
 
 # Maximum sidebar width when expanded (columns)
-# sidebar_max_width = 36
+# sidebar_max_width = 72
 
 # Start with the sidebar collapsed. Changes take effect on the next launch.
 # sidebar_start_collapsed = false
@@ -370,7 +373,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 
 [session]
 # Resume supported AI-agent panes into their native conversation sessions after
-# a Herdr server restart. Requires official integrations that report session refs.
+# a Herdr server restart. Trusted local tools may report exact session refs.
 # resume_agents_on_restore = true
 
 [remote]
@@ -419,11 +422,24 @@ pane_history = false
 "##;
 
 fn should_block_nested(config: &config::Config) -> bool {
-    should_block_nested_for_env(config, std::env::var(HERDR_ENV_VAR).ok().as_deref())
+    should_block_nested_for_env_and_ancestor(
+        config,
+        std::env::var(HERDR_ENV_VAR).ok().as_deref(),
+        crate::platform::process_has_ancestor_named(std::process::id(), "herdr"),
+    )
 }
 
+#[cfg(test)]
 fn should_block_nested_for_env(config: &config::Config, herdr_env: Option<&str>) -> bool {
-    !config.experimental.allow_nested && herdr_env == Some(HERDR_ENV_VALUE)
+    should_block_nested_for_env_and_ancestor(config, herdr_env, true)
+}
+
+fn should_block_nested_for_env_and_ancestor(
+    config: &config::Config,
+    herdr_env: Option<&str>,
+    has_herdr_ancestor: bool,
+) -> bool {
+    !config.experimental.allow_nested && herdr_env == Some(HERDR_ENV_VALUE) && has_herdr_ancestor
 }
 
 fn random_nested_message() -> &'static str {
@@ -440,11 +456,80 @@ fn random_nested_message() -> &'static str {
 fn exit_if_nested_disabled(config: &config::Config) {
     if should_block_nested(config) {
         eprintln!("\x1b[1merror:\x1b[0m nested herdr is disabled by default.");
-        eprintln!("see configuration if you want to enable it.");
+        eprintln!("detected HERDR_ENV=1 with a herdr parent process.");
+        eprintln!("set [experimental] allow_nested = true if you want to enable it.");
         eprintln!();
         eprintln!("\x1b[2m\"{}\"\x1b[0m", random_nested_message());
         std::process::exit(1);
     }
+}
+
+pub(crate) fn print_root_help() {
+    println!(
+        r#"---
+name: herdr
+description: Terminal workspace manager for AI coding agents. Use this help as an operational contract, not just a command list.
+---
+
+# herdr
+
+## When To Use
+
+Use `herdr` to run terminal-based coding agents, address panes by stable targets, send durable messages, and run long commands without blocking the requester.
+
+## Agent Rules
+
+- Prefer `herdr pane current` to resolve your own pane.
+- `HERDR_PANE_ID` is authoritative when present; otherwise pane current resolves the calling process session.
+- Do not infer the requester pane from the focused pane, active window, pane list order, or UI selection.
+- If pane identity cannot be resolved, fail closed and ask for `--caller <pane>`.
+- For communication commands, remember: send=talk, run=execute, log=inspect, inbox=pull fallback.
+
+## Usage
+
+herdr [options]
+herdr help
+herdr --help
+herdr send <agent_target> <message>
+herdr inbox [--room <room>]
+herdr log [job_id|--db]
+herdr run --label tests -- cargo test
+
+## Commands
+
+- `herdr send <agent_target> <message>` sends a durable message to an agent or pane target.
+- `herdr inbox [--room <room>]` reads queued messages for the current agent.
+- `herdr log [job_id|--db]` inspects dispatch and job history; `sqlite3 "$(herdr log --db)"` opens the raw audit DB.
+- `herdr run --label tests -- cargo test` starts a pane-less background job by default.
+- `herdr run list` lists background jobs.
+- `herdr pane current` resolves the exact caller pane.
+- `herdr pane get <target>` accepts stable ids, workspace-local short ids, global numbers, and `%N` pane targets.
+- `herdr agent <subcommand>` controls agent identity, reads, sends, and restore actions.
+- `herdr workspace`, `herdr tab`, and `herdr pane` manage session layout through the socket API.
+
+## Essential Agent Recipes
+
+- Report your pane: `herdr pane report-agent "$(herdr pane current)" --source codex --agent codex --state working --title "<task>" --session-id "$CODEX_THREAD_ID"`.
+- Run long work: `herdr run --label tests -- cargo test`.
+- Read job output after completion: `herdr log <job_id>`.
+- Pull queued room mail: `herdr inbox --room <room>`.
+
+## Options
+
+- `--no-session` runs monolithically without server/client.
+- `--session <name>` uses or creates a named persistent session.
+- `--remote <target>` attaches through SSH to a remote Herdr server.
+- `--default-config` prints the default configuration.
+- `--version`, `-V` prints the version.
+- `--help`, `-h` shows this help.
+
+## More Help
+
+Run `herdr <command> help` for command-specific usage. Config: {config_path}. Logs: {log_paths}.
+"#,
+        config_path = config::config_path().display(),
+        log_paths = logging::help_log_paths_summary()
+    );
 }
 
 fn main() -> io::Result<()> {
@@ -530,102 +615,7 @@ fn main() -> io::Result<()> {
     }
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("herdr — terminal workspace manager for AI coding agents");
-        println!();
-        println!("Usage: herdr [options]");
-        println!("       herdr --session <name> [options]");
-        println!("       herdr --remote <ssh-target> [--session <name>]");
-        println!("       herdr session attach <name>");
-        println!("       herdr completion zsh");
-        println!("       herdr server stop");
-        println!("       herdr server reload-config");
-        println!("       herdr api <subcommand> ...");
-        println!("       herdr completion <shell>");
-        println!("       herdr config <subcommand> ...");
-        println!("       herdr workspace <subcommand> ...");
-        println!("       herdr worktree <subcommand> ...");
-        println!("       herdr tab <subcommand> ...");
-        println!("       herdr notification <subcommand> ...");
-        println!("       herdr agent <subcommand> ...");
-        println!("       herdr pane <subcommand> ...");
-        println!("       herdr wait <subcommand> ...");
-        println!("       herdr session <subcommand> ...");
-        println!();
-        println!("Common commands:");
-        for (command, description) in [
-            ("herdr", "Launch or attach to the persistent session"),
-            (
-                "herdr status [server|client]",
-                "Show local client and running server status",
-            ),
-            ("herdr completion zsh", "Generate shell completions for zsh"),
-            (
-                "herdr server stop",
-                "Stop the running server via the API socket",
-            ),
-            (
-                "herdr server reload-config",
-                "Reload config.toml in the running server",
-            ),
-            (
-                "herdr config reset-keys",
-                "Back up config.toml and remove custom keybindings",
-            ),
-            (
-                "herdr api <subcommand>",
-                "Inspect socket API metadata and live runtime state",
-            ),
-            (
-                "herdr workspace <subcommand>",
-                "Workspace helpers over the socket API",
-            ),
-            (
-                "herdr worktree <subcommand>",
-                "Git worktree helpers over the socket API",
-            ),
-            ("herdr tab <subcommand>", "Tab helpers over the socket API"),
-            (
-                "herdr notification <subcommand>",
-                "Notification helpers over the socket API",
-            ),
-            (
-                "herdr agent <subcommand>",
-                "Agent/terminal helpers over the socket API",
-            ),
-            (
-                "herdr pane <subcommand>",
-                "Pane control helpers over the socket API",
-            ),
-            (
-                "herdr wait <subcommand>",
-                "Blocking wait helpers over the socket API",
-            ),
-            (
-                "herdr session <subcommand>",
-                "Manage named persistent sessions",
-            ),
-        ] {
-            println!("  {command:<32} {description}");
-        }
-        println!();
-        println!("Advanced commands:");
-        println!("  {:<32} Run as headless server", "herdr server");
-        println!();
-        println!("Options:");
-        println!("  --no-session        Run monolithically (no server/client, escape hatch)");
-        println!("  --session <name>    Use or create a named persistent session");
-        println!("  --remote <target>   Attach through SSH to a remote Herdr server");
-        println!("  --remote-keybindings <local|server>");
-        println!("                      Keybindings for --remote app attach (default: local)");
-        println!("  --handoff           Opt into live handoff for remote attach");
-        println!("  --default-config    Print default configuration and exit");
-        println!("  --version, -V       Print version and exit");
-        println!("  --help, -h          Show this help");
-        println!();
-        println!("Config: {}", config::config_path().display());
-        println!("Logs:   {}", logging::help_log_paths_summary());
-        println!("Env:    HERDR_CONFIG_PATH overrides config file path");
-        println!("Home:   https://herdr.dev");
+        print_root_help();
         return Ok(());
     }
 
@@ -834,6 +824,16 @@ mod tests {
     fn nested_herdr_blocks_when_env_is_set() {
         let config = config::Config::default();
         assert!(should_block_nested_for_env(&config, Some(HERDR_ENV_VALUE)));
+    }
+
+    #[test]
+    fn nested_herdr_does_not_block_stale_env_without_herdr_ancestor() {
+        let config = config::Config::default();
+        assert!(!should_block_nested_for_env_and_ancestor(
+            &config,
+            Some(HERDR_ENV_VALUE),
+            false
+        ));
     }
 
     #[test]

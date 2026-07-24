@@ -329,6 +329,7 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
         app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
     }
 
     fn modified_mouse(
@@ -350,14 +351,6 @@ mod tests {
             AppEvent::ClipboardWrite { content } => content,
             event => panic!("unexpected event: {event:?}"),
         }
-    }
-
-    fn assert_visible_selection(app: &App) {
-        assert!(app
-            .state
-            .selection
-            .as_ref()
-            .is_some_and(crate::selection::Selection::is_visible));
     }
 
     #[cfg(unix)]
@@ -517,7 +510,7 @@ mod tests {
             start_col,
             row,
         ));
-        assert!(app.last_pane_click.is_some());
+        assert!(app.last_pane_click.is_none());
 
         app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
         assert!(app.last_pane_click.is_none());
@@ -531,24 +524,65 @@ mod tests {
             start_col,
             row,
         ));
+        assert!(app.last_pane_click.is_none());
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), start_col, row));
 
         assert!(app.last_pane_click.is_some());
         assert!(app.event_rx.try_recv().is_err());
     }
 
     #[tokio::test]
-    async fn double_click_selects_and_copies_word() {
+    async fn same_cell_double_click_opens_legacy_pane_menu() {
         let (mut app, info) = app_with_screen_bytes(b"alpha beta-gamma_delta@omega");
         let col = info.inner_rect.x + 13;
         let row = info.inner_rect.y;
         double_click(&mut app, col, row);
 
-        assert_eq!(clipboard_write_content(&mut app), b"beta-gamma_delta@omega");
-        assert_visible_selection(&app);
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+        let menu = app.state.context_menu.as_ref().expect("pane context menu");
+        assert_eq!((menu.x, menu.y), (col, row));
+        assert_eq!(menu.items()[0], "Split vertical");
+        assert_eq!(menu.items()[1], "Split horizontal");
+        assert!(menu.items().contains(&"New Claude Code agent"));
+        assert!(menu.items().contains(&"--"));
+        assert!(!menu.items().contains(&"Swap with focused pane"));
+
+        let double_click_items = menu.items();
+        let (mut right_click_app, right_click_info) = app_with_screen_bytes(b"alpha");
+        right_click_app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            right_click_info.inner_rect.x,
+            right_click_info.inner_rect.y,
+        ));
+        assert_eq!(
+            right_click_app
+                .state
+                .context_menu
+                .as_ref()
+                .expect("right-click pane menu")
+                .items(),
+            double_click_items
+        );
     }
 
     #[tokio::test]
-    async fn copy_on_select_disabled_ignores_drag_and_double_click_selection() {
+    async fn different_cell_second_click_does_not_open_pane_menu() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta");
+        let col = info.inner_rect.x + 2;
+        let row = info.inner_rect.y;
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col + 1, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col + 1, row));
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.context_menu.is_none());
+        assert!(app.last_pane_click.is_some());
+    }
+
+    #[tokio::test]
+    async fn copy_on_select_disabled_does_not_open_pane_menu_on_double_click() {
         let (mut app, info) = app_with_screen_bytes(b"alpha beta");
         app.state.copy_on_select = false;
         let row = info.inner_rect.y;
@@ -570,50 +604,15 @@ mod tests {
         double_click(&mut app, start_col, row);
 
         assert!(app.state.selection.is_none());
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.context_menu.is_none());
         assert!(app.last_pane_click.is_none());
         assert!(app.selection_highlight_clear_deadline.is_none());
         assert!(app.event_rx.try_recv().is_err());
     }
 
     #[tokio::test]
-    async fn double_click_uses_display_columns_for_wide_chars() {
-        let (mut app, info) = app_with_screen_bytes("echo 你好-world done".as_bytes());
-        let col = info.inner_rect.x + 8;
-        let row = info.inner_rect.y;
-        double_click(&mut app, col, row);
-
-        assert_eq!(clipboard_write_content(&mut app), "你好-world".as_bytes());
-        assert_visible_selection(&app);
-    }
-
-    #[tokio::test]
-    async fn double_click_copies_quoted_path_without_quotes() {
-        let line = r#"cat "/tmp/build output/log.txt""#;
-        let (mut app, info) = app_with_screen_bytes(line.as_bytes());
-        let col = info.inner_rect.x + line.find("output").expect("path segment") as u16;
-        let row = info.inner_rect.y;
-        double_click(&mut app, col, row);
-
-        assert_eq!(
-            clipboard_write_content(&mut app),
-            b"/tmp/build output/log.txt"
-        );
-        assert_visible_selection(&app);
-    }
-
-    #[tokio::test]
-    async fn double_click_excludes_trailing_punctuation() {
-        let (mut app, info) = app_with_screen_bytes(b"done.");
-        let col = info.inner_rect.x + 2;
-        let row = info.inner_rect.y;
-        double_click(&mut app, col, row);
-
-        assert_eq!(clipboard_write_content(&mut app), b"done");
-        assert_visible_selection(&app);
-    }
-
-    #[tokio::test]
-    async fn modified_pane_click_does_not_seed_double_click_copy() {
+    async fn modified_pane_click_does_not_seed_pane_menu_double_click() {
         let (mut app, info) = app_with_screen_bytes(b"alpha beta");
         let col = info.inner_rect.x + 7;
         let row = info.inner_rect.y;
@@ -626,8 +625,12 @@ mod tests {
         ));
         app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
 
         assert!(app.event_rx.try_recv().is_err());
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.context_menu.is_none());
+        assert!(app.last_pane_click.is_some());
         assert!(app.selection_highlight_clear_deadline.is_none());
     }
 
@@ -828,25 +831,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn double_click_highlight_clears_after_short_delay() {
-        let (mut app, info) = app_with_screen_bytes(b"copied");
-        let col = info.inner_rect.x + 2;
-        let row = info.inner_rect.y;
-        double_click(&mut app, col, row);
-        assert_eq!(clipboard_write_content(&mut app), b"copied");
-
-        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), col, row));
-
-        assert!(app.event_rx.try_recv().is_err());
-        assert!(app.state.selection.is_some());
-        let deadline = app
-            .selection_highlight_clear_deadline
-            .expect("highlight clear deadline");
-        assert!(app.handle_scheduled_tasks(deadline + std::time::Duration::from_millis(1), false));
-        assert!(app.state.selection.is_none());
-    }
-
-    #[tokio::test]
     async fn copy_on_select_disabled_still_forwards_mouse_reporting_gestures() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
@@ -898,6 +882,49 @@ mod tests {
             input_rx.try_recv().expect("forwarded left mouse up"),
             Bytes::from_static(b"\x1b[<0;4;5m")
         );
+        assert!(input_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn mouse_reporting_double_click_is_forwarded_without_opening_pane_menu() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                0,
+                b"\x1b[?1002h\x1b[?1006h",
+                4,
+            );
+        ws.insert_test_runtime(pane_id, runtime);
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+
+        let col = info.inner_rect.x + 2;
+        let row = info.inner_rect.y + 3;
+        double_click(&mut app, col, row);
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.context_menu.is_none());
+        assert!(app.last_pane_click.is_none());
+        for expected in [
+            Bytes::from_static(b"\x1b[<0;3;4M"),
+            Bytes::from_static(b"\x1b[<0;3;4m"),
+            Bytes::from_static(b"\x1b[<0;3;4M"),
+            Bytes::from_static(b"\x1b[<0;3;4m"),
+        ] {
+            assert_eq!(
+                input_rx.try_recv().expect("forwarded double-click event"),
+                expected
+            );
+        }
         assert!(input_rx.try_recv().is_err());
     }
 
@@ -1018,7 +1045,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn right_clicking_unfocused_mouse_reporting_pane_keeps_focus_for_context_menu() {
+    async fn right_clicking_unfocused_mouse_reporting_pane_focuses_menu_target() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
         let first_pane = ws.tabs[0].root_pane;
@@ -1068,10 +1095,14 @@ mod tests {
             second_info.inner_rect.y + 2,
         ));
 
-        assert_eq!(app.state.workspaces[0].tabs[0].layout.focused(), first_pane);
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.focused(),
+            second_pane
+        );
         assert_eq!(app.state.mode, Mode::ContextMenu);
         let menu = app.state.context_menu.as_ref().expect("pane context menu");
-        assert!(menu.items().contains(&"Swap with focused pane"));
+        assert_eq!(menu.items()[0], "Split vertical");
+        assert!(!menu.items().contains(&"Swap with focused pane"));
     }
 
     #[tokio::test]
@@ -1263,6 +1294,7 @@ mod tests {
             app.state.sidebar_width,
             app.state.sidebar_section_split,
             app.state.collapsed_space_keys.clone(),
+            app.state.collapsed_workspace_sections.clone(),
         );
         assert_eq!(snapshot.workspaces[0].tabs[0].panes.len(), 1);
         assert!(matches!(

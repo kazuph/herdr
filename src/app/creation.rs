@@ -225,6 +225,80 @@ impl App {
         Ok(idx)
     }
 
+    pub(super) fn duplicate_workspace(&mut self, ws_idx: usize) -> std::io::Result<()> {
+        if ws_idx >= self.state.workspaces.len() {
+            return Err(std::io::Error::other("workspace not found"));
+        }
+
+        let (rows, cols) = self.state.estimate_pane_size();
+        let mut snapshot = crate::persist::capture(
+            &self.state.workspaces,
+            &self.state.terminals,
+            &self.terminal_runtimes,
+            Some(ws_idx),
+            ws_idx,
+            self.state.sidebar_width,
+            self.state.sidebar_section_split,
+            self.state.collapsed_space_keys.clone(),
+            self.state.collapsed_workspace_sections.clone(),
+        );
+        let mut workspace_snapshot = snapshot.workspaces.remove(ws_idx);
+        workspace_snapshot.id = None;
+
+        let duplicate_snapshot = crate::persist::SessionSnapshot {
+            version: snapshot.version,
+            workspaces: vec![workspace_snapshot],
+            active: Some(0),
+            selected: 0,
+            sidebar_width: Some(self.state.sidebar_width),
+            sidebar_section_split: Some(self.state.sidebar_section_split),
+            collapsed_space_keys: self.state.collapsed_space_keys.clone(),
+            collapsed_workspace_sections: self.state.collapsed_workspace_sections.clone(),
+        };
+        let (mut workspaces, terminals, terminal_runtimes) = crate::persist::restore(
+            &duplicate_snapshot,
+            None,
+            rows,
+            cols,
+            self.state.pane_scrollback_limit_bytes,
+            &self.state.default_shell,
+            self.state.shell_mode,
+            (false, &std::collections::BTreeMap::new()),
+            self.event_tx.clone(),
+            self.render_notify.clone(),
+            self.render_dirty.clone(),
+        );
+        let Some(workspace) = workspaces.pop() else {
+            return Err(std::io::Error::other("workspace could not be restored"));
+        };
+
+        for (terminal_id, runtime) in terminal_runtimes {
+            self.terminal_runtimes.insert(terminal_id, runtime);
+        }
+        for (terminal_id, terminal) in terminals {
+            self.state.terminals.insert(terminal_id, terminal);
+        }
+        self.state.workspaces.push(workspace);
+        let duplicate_idx = self.state.workspaces.len() - 1;
+        self.state.switch_workspace(duplicate_idx);
+        self.state.mode = Mode::Terminal;
+        self.schedule_session_save();
+        Ok(())
+    }
+
+    pub(crate) fn run_pending_duplicate_workspace(&mut self) -> bool {
+        let Some(ws_idx) = self.state.pending_duplicate_workspace.take() else {
+            return false;
+        };
+        match self.duplicate_workspace(ws_idx) {
+            Ok(()) => true,
+            Err(err) => {
+                self.state.config_diagnostic = Some(format!("duplicate workspace failed: {err}"));
+                true
+            }
+        }
+    }
+
     pub(super) fn collect_panes_for_workspace(
         &self,
         workspace_id: Option<&str>,

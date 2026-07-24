@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use ratatui::layout::Direction;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::layout::Node;
 use crate::terminal::TerminalRuntimeRegistry;
@@ -26,6 +26,8 @@ pub struct SessionSnapshot {
     pub sidebar_section_split: Option<f32>,
     #[serde(default)]
     pub collapsed_space_keys: std::collections::HashSet<String>,
+    #[serde(default)]
+    pub collapsed_workspace_sections: BTreeSet<crate::workspace::WorkspaceSection>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -52,6 +54,8 @@ pub struct WorkspaceSnapshot {
     pub id: Option<String>,
     #[serde(default)]
     pub custom_name: Option<String>,
+    #[serde(default)]
+    pub section: crate::workspace::WorkspaceSection,
     pub identity_cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_space: Option<crate::workspace::WorktreeSpaceMembership>,
@@ -86,6 +90,8 @@ pub struct TabSnapshot {
     #[serde(default)]
     pub custom_name: Option<String>,
     pub layout: LayoutSnapshot,
+    #[serde(default)]
+    pub pane_order: Vec<u32>,
     pub panes: HashMap<u32, PaneSnapshot>,
     pub zoomed: bool,
     #[serde(default)]
@@ -102,6 +108,13 @@ pub struct PaneSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(
+        default,
+        alias = "agent_restore",
+        deserialize_with = "deserialize_pane_agent_session",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub agent_session: Option<PaneAgentSessionSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_argv: Option<Vec<String>>,
@@ -113,6 +126,41 @@ pub struct PaneAgentSessionSnapshot {
     pub agent: String,
     pub kind: crate::agent_resume::AgentSessionRefKind,
     pub value: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CompatiblePaneAgentSessionSnapshot {
+    Current(PaneAgentSessionSnapshot),
+    Legacy {
+        agent: String,
+        session_id: Option<String>,
+    },
+}
+
+fn deserialize_pane_agent_session<'de, D>(
+    deserializer: D,
+) -> Result<Option<PaneAgentSessionSnapshot>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let compatible = Option::<CompatiblePaneAgentSessionSnapshot>::deserialize(deserializer)?;
+    Ok(match compatible {
+        Some(CompatiblePaneAgentSessionSnapshot::Current(session)) => Some(session),
+        Some(CompatiblePaneAgentSessionSnapshot::Legacy {
+            agent,
+            session_id: Some(value),
+        }) => Some(PaneAgentSessionSnapshot {
+            source: format!("herdr:{agent}"),
+            agent,
+            kind: crate::agent_resume::AgentSessionRefKind::Id,
+            value,
+        }),
+        Some(CompatiblePaneAgentSessionSnapshot::Legacy {
+            session_id: None, ..
+        })
+        | None => None,
+    })
 }
 
 #[derive(Serialize, Deserialize)]
@@ -145,6 +193,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
         let tab = TabSnapshot {
             custom_name: None,
             layout: snap.layout,
+            pane_order: Vec::new(),
             panes: snap.panes,
             zoomed: snap.zoomed,
             focused: snap.focused,
@@ -154,6 +203,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
         Self {
             id: None,
             custom_name: snap.custom_name,
+            section: crate::workspace::WorkspaceSection::None,
             identity_cwd,
             worktree_space: None,
             public_pane_numbers: HashMap::new(),
@@ -182,6 +232,8 @@ struct RawSessionSnapshot {
     sidebar_section_split: Option<f32>,
     #[serde(default)]
     collapsed_space_keys: std::collections::HashSet<String>,
+    #[serde(default)]
+    collapsed_workspace_sections: BTreeSet<crate::workspace::WorkspaceSection>,
 }
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
@@ -197,6 +249,7 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,
+        collapsed_workspace_sections: raw.collapsed_workspace_sections,
     })
 }
 
@@ -259,6 +312,7 @@ pub fn capture(
     sidebar_width: u16,
     sidebar_section_split: f32,
     collapsed_space_keys: std::collections::HashSet<String>,
+    collapsed_workspace_sections: BTreeSet<crate::workspace::WorkspaceSection>,
 ) -> SessionSnapshot {
     SessionSnapshot {
         version: SNAPSHOT_VERSION,
@@ -271,6 +325,7 @@ pub fn capture(
         sidebar_width: Some(sidebar_width),
         sidebar_section_split: Some(sidebar_section_split),
         collapsed_space_keys,
+        collapsed_workspace_sections,
     }
 }
 
@@ -285,6 +340,7 @@ fn capture_workspace(
     WorkspaceSnapshot {
         id: Some(ws.id.clone()),
         custom_name: ws.custom_name.clone(),
+        section: ws.section,
         identity_cwd: ws
             .resolved_identity_cwd_from(terminals, terminal_runtimes)
             .unwrap_or_else(|| ws.identity_cwd.clone()),
@@ -329,6 +385,11 @@ fn capture_tab(
             .get(id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id))
             .and_then(|terminal| terminal.agent_name.clone());
+        let title = tab
+            .panes
+            .get(id)
+            .and_then(|pane| terminals.get(&pane.attached_terminal_id))
+            .and_then(|terminal| terminal.effective_title());
         let launch_argv = tab
             .panes
             .get(id)
@@ -364,6 +425,7 @@ fn capture_tab(
                 cwd,
                 label,
                 agent_name,
+                title,
                 agent_session,
                 launch_argv,
             },
@@ -372,6 +434,12 @@ fn capture_tab(
     TabSnapshot {
         custom_name: tab.custom_name.clone(),
         layout: capture_node(tab.layout.root()),
+        pane_order: tab
+            .layout
+            .pane_ids()
+            .into_iter()
+            .map(|pane_id| pane_id.raw())
+            .collect(),
         panes,
         zoomed: tab.zoomed,
         focused: Some(tab.layout.focused().raw()),
@@ -539,6 +607,7 @@ mod tests {
             state.sidebar_width,
             state.sidebar_section_split,
             state.collapsed_space_keys.clone(),
+            state.collapsed_workspace_sections.clone(),
         )
     }
 
@@ -566,6 +635,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            collapsed_workspace_sections: Default::default(),
         };
         let json = serde_json::to_string(&snap).unwrap();
         let restored = parse_snapshot(&json).unwrap();
@@ -606,6 +676,7 @@ mod tests {
                 cwd: PathBuf::from("/home/can/Projects/herdr"),
                 label: None,
                 agent_name: None,
+                title: None,
                 agent_session: None,
                 launch_argv: None,
             },
@@ -616,6 +687,7 @@ mod tests {
                 cwd: PathBuf::from("/home/can/Projects/website"),
                 label: Some("website".into()),
                 agent_name: None,
+                title: None,
                 agent_session: None,
                 launch_argv: None,
             },
@@ -625,6 +697,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("wproj".to_string()),
                 custom_name: Some("pi-mono".to_string()),
+                section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: PathBuf::from("/home/can/Projects/herdr"),
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(0, 1), (1, 2)]),
@@ -633,6 +706,7 @@ mod tests {
                 next_public_tab_number: 2,
                 tabs: vec![TabSnapshot {
                     custom_name: Some("api".to_string()),
+                    pane_order: vec![0, 1],
                     layout: LayoutSnapshot::Split {
                         direction: DirectionSnapshot::Horizontal,
                         ratio: 0.5,
@@ -651,6 +725,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            collapsed_workspace_sections: Default::default(),
             version: SNAPSHOT_VERSION,
         };
 
@@ -692,6 +767,41 @@ mod tests {
             snap.workspaces[1].identity_cwd,
             PathBuf::from("/home/test/projects/project-b")
         );
+    }
+
+    #[test]
+    fn legacy_pane_restore_fields_migrate_to_native_agent_session() {
+        let pane: PaneSnapshot = serde_json::from_str(
+            r#"{
+                "cwd": "/tmp",
+                "title": "restore pane sessions",
+                "agent_restore": {
+                    "agent": "codex",
+                    "session_id": "019f786c-335a-7b42-8f61-cf9f29068f56"
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(pane.title.as_deref(), Some("restore pane sessions"));
+        let session = pane.agent_session.expect("legacy session should migrate");
+        assert_eq!(session.source, "herdr:codex");
+        assert_eq!(session.agent, "codex");
+        assert_eq!(session.kind, crate::agent_resume::AgentSessionRefKind::Id);
+        assert_eq!(session.value, "019f786c-335a-7b42-8f61-cf9f29068f56");
+    }
+
+    #[test]
+    fn legacy_pane_restore_without_session_id_stays_fail_closed() {
+        let pane: PaneSnapshot = serde_json::from_str(
+            r#"{
+                "cwd": "/tmp",
+                "agent_restore": {"agent": "codex", "session_id": null}
+            }"#,
+        )
+        .unwrap();
+
+        assert!(pane.agent_session.is_none());
     }
 
     #[test]
@@ -831,11 +941,22 @@ mod tests {
         state.sidebar_width = 31;
         state.sidebar_section_split = 0.4;
         state.collapsed_space_keys.insert("repo-key".into());
+        state.workspaces[0].section = crate::workspace::WorkspaceSection::Work;
+        state
+            .collapsed_workspace_sections
+            .insert(crate::workspace::WorkspaceSection::Favorite);
 
         let snapshot = capture_from_state(&state);
         assert_eq!(snapshot.sidebar_width, Some(31));
         assert_eq!(snapshot.sidebar_section_split, Some(0.4));
         assert!(snapshot.collapsed_space_keys.contains("repo-key"));
+        assert_eq!(
+            snapshot.workspaces[0].section,
+            crate::workspace::WorkspaceSection::Work
+        );
+        assert!(snapshot
+            .collapsed_workspace_sections
+            .contains(&crate::workspace::WorkspaceSection::Favorite));
     }
 
     #[test]
@@ -1157,6 +1278,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test"),
                 label: None,
                 agent_name: None,
+                title: None,
                 agent_session: None,
                 launch_argv: None,
             },
@@ -1169,6 +1291,7 @@ mod tests {
                     .unwrap_or_else(|_| PathBuf::from("/tmp")),
                 label: None,
                 agent_name: None,
+                title: None,
                 agent_session: None,
                 launch_argv: None,
             },
@@ -1179,6 +1302,7 @@ mod tests {
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("test-ws".to_string()),
                 custom_name: Some("fallback test".to_string()),
+                section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: PathBuf::from("/tmp"),
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
@@ -1187,6 +1311,7 @@ mod tests {
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
                     custom_name: None,
+                    pane_order: vec![0, 1],
                     layout: LayoutSnapshot::Split {
                         direction: DirectionSnapshot::Horizontal,
                         ratio: 0.5,
@@ -1205,6 +1330,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            collapsed_workspace_sections: Default::default(),
         };
 
         let json = serde_json::to_string(&snap).unwrap();

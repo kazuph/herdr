@@ -556,11 +556,8 @@ mod tests {
             seq: None,
         });
 
-        assert_eq!(
-            terminal.border_label(false).as_deref(),
-            Some("Prompt title")
-        );
-        assert_eq!(terminal.border_label(true).as_deref(), Some("Prompt title"));
+        assert_eq!(terminal.border_label(false), "manual Prompt title");
+        assert_eq!(terminal.border_label(true), "manual Prompt title");
     }
 
     #[test]

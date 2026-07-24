@@ -1650,6 +1650,61 @@ fn print_plugin_pane_help() {
 mod tests {
     use super::*;
 
+    struct PluginUserDirSandbox {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        base: std::path::PathBuf,
+        previous_home: Option<std::ffi::OsString>,
+        previous_xdg_config_home: Option<std::ffi::OsString>,
+        previous_xdg_state_home: Option<std::ffi::OsString>,
+    }
+
+    impl PluginUserDirSandbox {
+        fn new(name: &str) -> Self {
+            let guard = crate::config::test_config_env_lock()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let base = std::env::temp_dir().join(format!(
+                "herdr-cli-plugin-{name}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|duration| duration.as_nanos())
+                    .unwrap_or(0)
+            ));
+            std::fs::create_dir_all(&base).unwrap();
+            let previous_home = std::env::var_os("HOME");
+            let previous_xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
+            let previous_xdg_state_home = std::env::var_os("XDG_STATE_HOME");
+            std::env::set_var("HOME", base.join("home"));
+            std::env::set_var("XDG_CONFIG_HOME", base.join("xdg-config"));
+            std::env::set_var("XDG_STATE_HOME", base.join("xdg-state"));
+            Self {
+                _guard: guard,
+                base,
+                previous_home,
+                previous_xdg_config_home,
+                previous_xdg_state_home,
+            }
+        }
+    }
+
+    impl Drop for PluginUserDirSandbox {
+        fn drop(&mut self) {
+            restore_env_var("HOME", self.previous_home.as_ref());
+            restore_env_var("XDG_CONFIG_HOME", self.previous_xdg_config_home.as_ref());
+            restore_env_var("XDG_STATE_HOME", self.previous_xdg_state_home.as_ref());
+            let _ = std::fs::remove_dir_all(&self.base);
+        }
+    }
+
+    fn restore_env_var(key: &str, value: Option<&std::ffi::OsString>) {
+        if let Some(value) = value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
+
     fn unique_plugin_id(label: &str) -> String {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1784,6 +1839,7 @@ mod tests {
 
     #[test]
     fn cli_user_dir_creation_seeds_legacy_config_before_printing_config_dir() {
+        let _sandbox = PluginUserDirSandbox::new("legacy-config");
         let plugin_id = unique_plugin_id("legacy-config");
         let config_dir = crate::plugin_paths::plugin_config_dir(&plugin_id);
         let state_dir = crate::plugin_paths::plugin_state_dir(&plugin_id);

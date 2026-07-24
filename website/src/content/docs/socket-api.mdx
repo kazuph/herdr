@@ -7,7 +7,7 @@ Herdr exposes a local socket API for scripts and agents that need to inspect or 
 
 Most automation should start with the CLI wrappers. Use the raw socket API only when you need direct request/response control or long-lived event subscriptions.
 
-## Choose an integration layer
+## Choose a control surface
 
 | Layer | Use it for |
 | --- | --- |
@@ -41,9 +41,8 @@ The socket API can:
 - create, list, focus, rename, and close tabs
 - list, inspect, split, swap, focus, resize, rename, read, close, and send input to panes
 - list, inspect, read, send to, rename, focus, start, and attach agents through CLI helpers
-- report custom agent state from hooks and plugins
+- report custom agent state from trusted local tools
 - subscribe to events and wait for output or state changes
-- install and uninstall built-in integrations
 - stop the server and reload config
 
 ## CLI examples
@@ -96,7 +95,7 @@ Raw socket method names use dot notation:
 
 | Area | Methods |
 | --- | --- |
-| Server | `ping`, `server.stop`, `server.reload_config`, `server.agent_manifests`, `server.reload_agent_manifests` |
+| Server | `ping`, `server.stop`, `server.restart`, `server.reload_config`, `server.agent_manifests`, `server.reload_agent_manifests` |
 | Notification | `notification.show` |
 | Client | `client.window_title.set`, `client.window_title.clear` |
 | Session | `session.snapshot` |
@@ -108,7 +107,6 @@ Raw socket method names use dot notation:
 | Layout | `layout.export`, `layout.apply`, `layout.set_split_ratio` |
 | Agent | `agent.list`, `agent.get`, `agent.read`, `agent.explain`, `agent.send`, `agent.rename`, `agent.focus`, `agent.start` |
 | Events | `events.subscribe`, `events.wait` |
-| Integrations | `integration.install`, `integration.uninstall` |
 | Plugins | `plugin.link`, `plugin.list`, `plugin.unlink`, `plugin.enable`, `plugin.disable`, `plugin.action.list`, `plugin.action.invoke`, `plugin.log.list`, `plugin.pane.open`, `plugin.pane.focus`, `plugin.pane.close` |
 
 Some CLI commands are conveniences around these methods. For example, `herdr agent wait` resolves an agent target and then subscribes to pane agent state events.
@@ -565,7 +563,7 @@ platform-native local socket form.
 
 ## Agent state reporting
 
-Integrations report agent state with `pane.report_agent`.
+Trusted local tools report agent state with `pane.report_agent`.
 
 ```json
 {
@@ -583,7 +581,7 @@ Integrations report agent state with `pane.report_agent`.
 
 `state` is semantic. It affects waits, notifications, and rollups. Report display-only values separately through metadata.
 
-Session-only official integrations report native session references with `pane.report_agent_session`. State-reporting integrations can still include native session references in `pane.report_agent`. State-independent session reports do not affect waits, notifications, or rollups.
+Trusted local tools can report native session references with `pane.report_agent_session`, or include them in `pane.report_agent`. State-independent session reports do not affect waits, notifications, or rollups.
 
 ```json
 {
@@ -617,7 +615,7 @@ If no native session reference is stored, the field is omitted.
 
 `PaneInfo` and `AgentInfo` expose optional `terminal_title` and `terminal_title_stripped` fields. `terminal_title` is the latest OSC 0/2 title after safety normalization. `terminal_title_stripped` removes one recognized leading activity or spinner glyph and following whitespace. These server-owned values are ephemeral across a cold restart and are independent of the metadata `title` and semantic agent state.
 
-Use `pane.report_metadata` when a user hook wants to customize presentation without taking over lifecycle state from a Herdr integration.
+Use `pane.report_metadata` when a trusted local tool wants to customize presentation without taking over lifecycle state.
 
 ```json
 {

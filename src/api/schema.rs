@@ -4,6 +4,7 @@ pub mod agents;
 pub mod common;
 pub mod events;
 pub mod integrations;
+pub mod messages;
 pub mod panes;
 pub mod plugins;
 pub mod response;
@@ -17,6 +18,7 @@ pub use agents::*;
 pub use common::*;
 pub use events::*;
 pub use integrations::*;
+pub use messages::*;
 pub use panes::*;
 pub use plugins::*;
 pub use response::*;
@@ -47,6 +49,8 @@ pub enum Method {
     Ping(PingParams),
     #[serde(rename = "server.stop")]
     ServerStop(EmptyParams),
+    #[serde(rename = "server.restart")]
+    ServerRestart(EmptyParams),
     #[serde(rename = "server.live_handoff")]
     ServerLiveHandoff(ServerLiveHandoffParams),
     #[serde(rename = "server.reload_config")]
@@ -117,6 +121,16 @@ pub enum Method {
     AgentFocus(AgentTarget),
     #[serde(rename = "agent.start")]
     AgentStart(AgentStartParams),
+    #[serde(rename = "agent.restore")]
+    AgentRestore(AgentRestoreParams),
+    #[serde(rename = "msg.send")]
+    MsgSend(MsgSendParams),
+    #[serde(rename = "msg.inbox")]
+    MsgInbox(MsgInboxParams),
+    #[serde(rename = "msg.history")]
+    MsgHistory(MsgHistoryParams),
+    #[serde(rename = "msg.rooms")]
+    MsgRooms(EmptyParams),
     #[serde(rename = "pane.split")]
     PaneSplit(PaneSplitParams),
     #[serde(rename = "pane.swap")]
@@ -199,10 +213,6 @@ pub enum Method {
     EventsWait(EventsWaitParams),
     #[serde(rename = "pane.wait_for_output")]
     PaneWaitForOutput(PaneWaitForOutputParams),
-    #[serde(rename = "integration.install")]
-    IntegrationInstall(IntegrationInstallParams),
-    #[serde(rename = "integration.uninstall")]
-    IntegrationUninstall(IntegrationUninstallParams),
     #[serde(rename = "plugin.link")]
     PluginLink(PluginLinkParams),
     #[serde(rename = "plugin.list")]

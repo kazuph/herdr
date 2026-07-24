@@ -17,12 +17,7 @@ herdr --remote workbox --remote-keybindings server
 herdr --remote workbox --handoff
 herdr --no-session            # シングルプロセスの逃げ道
 herdr --default-config        # デフォルト設定を表示
-herdr update                  # 設定済みチャンネルからダウンロードしてインストール
-herdr update --handoff        # 対応する実行中サーバーでライブハンドオフにオプトイン
 herdr completion zsh          # zsh 補完スクリプトを生成
-herdr channel show            # stable または preview を表示
-herdr channel set preview     # プレビュービルドにオプトイン
-herdr channel set stable      # Linux/macOS の直接インストールを安定版に戻す
 herdr --version               # バージョンを表示
 ```
 
@@ -81,13 +76,14 @@ compinit
 ```bash
 herdr server
 herdr server stop
+herdr server restart
 herdr server reload-config
 herdr server agent-manifests [--json]
 herdr server update-agent-manifests [--json]
 herdr server reload-agent-manifests
 ```
 
-`herdr server` はヘッドレスサーバーを明示的に起動します。監視下やサービス的な構成で使ってください。`reload-config` はペインを再起動せずにリロード可能な設定を適用します。`agent-manifests` は、アクティブなエージェント検出マニフェストのソース、キャッシュされたリモートバージョン、直近のリモート更新結果を表示します。`update-agent-manifests` はリモートマニフェストの更新を即座に取得し、実行中のサーバーにリロードして、更新後のマニフェスト状態を表示します。生のステータスレスポンスが欲しいときは `--json` を渡してください。`reload-agent-manifests` は、ローカルオーバーライドの編集後にエージェント検出マニフェストを実行中のサーバーにリロードします。
+`herdr server` はヘッドレスサーバーを明示的に起動します。監視下やサービス的な構成で使ってください。`restart` は実行中のサーバーを再起動し、保存済み session を復元します。`reload-config` はペインを再起動せずにリロード可能な設定を適用します。`agent-manifests` は、アクティブなエージェント検出マニフェストのソース、キャッシュされたリモートバージョン、直近のリモート更新結果を表示します。`update-agent-manifests` はリモートマニフェストの更新を即座に取得し、実行中のサーバーにリロードして、更新後のマニフェスト状態を表示します。生のステータスレスポンスが欲しいときは `--json` を渡してください。`reload-agent-manifests` は、ローカルオーバーライドの編集後にエージェント検出マニフェストを実行中のサーバーにリロードします。
 
 ## 通知
 
@@ -193,7 +189,7 @@ herdr pane run <pane_id> <command>
 
 `pane run` はテキストと Enter をアトミックに送信します。コマンドには `send-text` + `send-keys Enter` よりこちらを使ってください。
 
-カスタムフックからエージェント状態を報告する:
+信頼済みローカルツールからエージェント状態、表示metadata、exact restore用sessionを報告する:
 
 ```bash
 herdr pane report-agent <pane_id> \
@@ -201,9 +197,13 @@ herdr pane report-agent <pane_id> \
   --agent LABEL \
   --state idle|working|blocked|unknown \
   [--message TEXT] \
+  [--custom-status TEXT] \
   [--seq N] \
+  [--title TEXT] \
+  [--session-id ID] \
   [--agent-session-id ID] \
-  [--agent-session-path PATH]
+  [--agent-session-path PATH] \
+  [--model NAME]
 ```
 
 公式インテグレーションがネイティブセッション参照を報告している場合、`pane get`、`pane list`、`agent get`、`agent list` は読み取り専用の `agent_session` オブジェクトを含みます。ネイティブセッション参照が保存されていない場合、このフィールドは省略されます。
@@ -286,39 +286,14 @@ herdr wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [
 
 通常のコマンドやサーバーには `wait output` を使います。コーディングエージェントには `wait agent-status` を使います。
 
-## インテグレーション
+## エージェント状態報告
 
 ```bash
-herdr integration install pi
-herdr integration install omp
-herdr integration install claude
-herdr integration install codex
-herdr integration install copilot
-herdr integration install devin
-herdr integration install droid
-herdr integration install kimi
-herdr integration install opencode
-herdr integration install kilo
-herdr integration install hermes
-herdr integration install mastracode
-herdr integration install qodercli
-herdr integration install cursor
-herdr integration uninstall pi
-herdr integration uninstall omp
-herdr integration uninstall claude
-herdr integration uninstall codex
-herdr integration uninstall copilot
-herdr integration uninstall devin
-herdr integration uninstall droid
-herdr integration uninstall kimi
-herdr integration uninstall opencode
-herdr integration uninstall kilo
-herdr integration uninstall hermes
-herdr integration uninstall mastracode
-herdr integration uninstall qodercli
-herdr integration uninstall cursor
-herdr integration status [--outdated-only]
+herdr pane report-agent <pane_id> --source custom:tool --agent codex --state working
+herdr pane report-agent <pane_id> --source custom:tool --agent codex --state idle --session-id <id>
 ```
+
+この fork では `herdr integration` による agent hook/plugin の install/uninstall は行いません。信頼済みローカルツールから `pane report-agent` または `pane.report_agent` socket method で状態を報告してください。
 
 ## プラグイン
 

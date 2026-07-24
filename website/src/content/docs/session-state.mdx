@@ -1,6 +1,6 @@
 ---
 title: Session state and restore
-description: Understand what Herdr keeps live, restores after restart, replays from history, resumes through agent integrations, and hands off during updates.
+description: Understand what Herdr keeps live, restores after restart, replays from history, resumes through exact session ids, and hands off during updates.
 ---
 
 Herdr has several state paths. They solve different problems.
@@ -49,7 +49,7 @@ When enabled, Herdr stores saved pane history in `session-history.json` next to 
 
 ## Native agent session restore
 
-Some agents can resume their own conversation sessions. Herdr can use official integration-reported session references to restart supported agent panes after a Herdr server restart.
+Some agents can resume their own conversation sessions. Herdr uses a pane's recorded exact session reference to restart a supported agent pane after a Herdr server restart.
 
 This is enabled by default. Disable it with:
 
@@ -58,30 +58,30 @@ This is enabled by default. Disable it with:
 resume_agents_on_restore = false
 ```
 
-Herdr only resumes panes that reported a native session reference through a current official Herdr integration.
+Herdr only resumes panes with a safe, pane-specific native session reference. Trusted local tools can record one with `pane.report_agent`.
 
 After a client attaches and provides terminal size and theme context, Herdr resumes eligible restored agent panes across workspaces and tabs without waiting for each pane to be focused.
 
-Native session restore requires these Herdr integration versions or newer:
+Native session restore uses the agent's resume command:
 
-| Agent | Minimum Herdr integration version | Resume command |
+| Agent | Resume command |
 | --- | --- | --- |
-| Pi | `2` | `pi --session <path-or-id>` |
-| OMP | `3` | `omp --resume=<path-or-id>` |
-| Claude Code | `6` | `claude --resume <id>` |
-| Codex | `5` | `codex resume <id>` |
-| Cursor Agent CLI | `1` | `cursor-agent --resume <id>` |
-| GitHub Copilot CLI | `2` | `copilot --resume=<id>` |
-| Devin CLI | `2` | `devin --resume <id>` |
-| Droid | `2` | `droid --resume <id>` |
-| Kimi Code CLI | `3` | `kimi --session <id>` |
-| Qoder CLI | `2` | `qodercli --resume <id>` |
-| OpenCode | `5` | `opencode --session <id>` |
-| Kilo Code CLI | `1` | `kilo --session <id>` |
-| Hermes Agent | `2` | `hermes --resume <id>` |
-| MastraCode | `1` | `mastracode --thread <id>` |
+| Pi | `pi --session <path-or-id>` |
+| OMP | `omp --resume=<path-or-id>` |
+| Claude Code | `claude --resume <id>` |
+| Codex | `codex resume <id>` |
+| Cursor Agent CLI | `cursor-agent --resume <id>` |
+| GitHub Copilot CLI | `copilot --resume=<id>` |
+| Devin CLI | `devin --resume <id>` |
+| Droid | `droid --resume <id>` |
+| Kimi Code CLI | `kimi --session <id>` |
+| Qoder CLI | `qodercli --resume <id>` |
+| OpenCode | `opencode --session <id>` |
+| Kilo Code CLI | `kilo --session <id>` |
+| Hermes Agent | `hermes --resume <id>` |
+| MastraCode | `mastracode --thread <id>` |
 
-Run `herdr integration status` to check installed integration versions. Reinstall outdated integrations with `herdr integration install <agent>`.
+This fork does not manage agent hooks/plugins. Trusted local tools can report exact pane state and session ids with `herdr pane report-agent` or the `pane.report_agent` socket method.
 
 Unsupported, missing, invalid, duplicated, or stale session references restore as normal shells in the saved pane directory.
 
@@ -93,13 +93,10 @@ Live handoff is for update and remote attach flows that need to replace a runnin
 
 This is different from snapshot restore, pane history replay, and native agent session restore. Handoff tries to keep the current processes alive. The others reconstruct state after the old server has already stopped.
 
-Live handoff is experimental and opt-in:
+Remote live handoff is experimental and opt-in:
 
 ```bash
-herdr update --handoff
 herdr --remote workbox --handoff
 ```
 
-Plain `herdr update` and plain `herdr --remote workbox` use the normal restart/stop flow by default.
-
-`herdr update --handoff` only applies to installs managed by Herdr's own updater. Homebrew, mise, and Nix installs are updated through their package managers, so `herdr update` is disabled there and cannot perform live handoff.
+Plain `herdr --remote workbox` uses the normal restart/stop flow by default. Self-update is disabled in this fork, so update handoff is not a supported install path.

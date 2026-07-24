@@ -681,6 +681,54 @@ mod tests {
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    struct PluginUserDirSandbox {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        base: std::path::PathBuf,
+        previous_home: Option<std::ffi::OsString>,
+        previous_xdg_config_home: Option<std::ffi::OsString>,
+        previous_xdg_state_home: Option<std::ffi::OsString>,
+    }
+
+    impl PluginUserDirSandbox {
+        fn new(name: &str) -> Self {
+            let guard = crate::config::test_config_env_lock()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let base = unique_temp_path(name);
+            std::fs::create_dir_all(&base).unwrap();
+            let previous_home = std::env::var_os("HOME");
+            let previous_xdg_config_home = std::env::var_os("XDG_CONFIG_HOME");
+            let previous_xdg_state_home = std::env::var_os("XDG_STATE_HOME");
+            std::env::set_var("HOME", base.join("home"));
+            std::env::set_var("XDG_CONFIG_HOME", base.join("xdg-config"));
+            std::env::set_var("XDG_STATE_HOME", base.join("xdg-state"));
+            Self {
+                _guard: guard,
+                base,
+                previous_home,
+                previous_xdg_config_home,
+                previous_xdg_state_home,
+            }
+        }
+    }
+
+    impl Drop for PluginUserDirSandbox {
+        fn drop(&mut self) {
+            restore_env_var("HOME", self.previous_home.as_ref());
+            restore_env_var("XDG_CONFIG_HOME", self.previous_xdg_config_home.as_ref());
+            restore_env_var("XDG_STATE_HOME", self.previous_xdg_state_home.as_ref());
+            let _ = std::fs::remove_dir_all(&self.base);
+        }
+    }
+
+    fn restore_env_var(key: &str, value: Option<&std::ffi::OsString>) {
+        if let Some(value) = value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
+
     fn test_app() -> App {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         App::new(
@@ -800,6 +848,7 @@ action = "bootstrap"
 
     #[test]
     fn plugin_link_creates_stable_config_and_state_dirs() {
+        let _sandbox = PluginUserDirSandbox::new("plugin-link-dirs-user");
         let mut app = test_app();
         let root = unique_temp_path("plugin-link-dirs");
         let config_dir = super::env::plugin_config_dir("example.config-dirs");
@@ -829,6 +878,7 @@ platforms = ["linux", "macos", "windows"]
 
     #[test]
     fn plugin_link_seeds_stable_config_dir_from_legacy_unhashed_dir() {
+        let _sandbox = PluginUserDirSandbox::new("plugin-link-legacy-user");
         let mut app = test_app();
         let root = unique_temp_path("plugin-link-legacy-config");
         let config_dir = super::env::plugin_config_dir("example.legacy-config");
@@ -1403,6 +1453,7 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \
     #[cfg(unix)]
     #[tokio::test]
     async fn plugin_pane_open_injects_plugin_paths_and_protects_overrides() {
+        let _sandbox = PluginUserDirSandbox::new("plugin-pane-path-user");
         let mut app = test_app();
         app.state.workspaces = vec![crate::workspace::Workspace::test_new("plugin-path-env")];
         app.state.ensure_test_terminals();
@@ -1583,6 +1634,7 @@ command = ["sh", "-c", "sleep 1"]
     #[cfg(unix)]
     #[tokio::test]
     async fn plugin_pane_open_zoomed_split_emits_layout_updated() {
+        let _sandbox = PluginUserDirSandbox::new("plugin-pane-split-user");
         let event_hub = crate::api::EventHub::default();
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
@@ -1662,6 +1714,7 @@ command = ["sh", "-c", "sleep 1"]
     #[cfg(unix)]
     #[tokio::test]
     async fn plugin_pane_open_overlay_emits_layout_updated() {
+        let _sandbox = PluginUserDirSandbox::new("plugin-pane-overlay-user");
         let event_hub = crate::api::EventHub::default();
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
@@ -1741,6 +1794,7 @@ command = ["sh", "-c", "sleep 1"]
     #[cfg(unix)]
     #[tokio::test]
     async fn plugin_pane_open_popup_is_layout_neutral() {
+        let _sandbox = PluginUserDirSandbox::new("plugin-pane-popup-user");
         let event_hub = crate::api::EventHub::default();
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
@@ -2061,6 +2115,7 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
     #[cfg(unix)]
     #[test]
     fn manifest_action_invoke_injects_plugin_paths() {
+        let _sandbox = PluginUserDirSandbox::new("plugin-action-path-user");
         let mut app = test_app();
         let root = unique_temp_path("plugin-action-path-env");
         write_manifest_content(
@@ -2626,9 +2681,13 @@ action = "missing"
                 agent: "codex".into(),
                 state: crate::api::schema::PaneAgentState::Working,
                 message: None,
+                custom_status: None,
                 seq: None,
+                title: None,
                 agent_session_id: None,
+                session_id: None,
                 agent_session_path: None,
+                model: None,
             },
         );
 

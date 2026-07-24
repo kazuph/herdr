@@ -465,21 +465,19 @@ fn wait_for_replacement_server_pid(runtime_dir: &Path, old_pid: u32, timeout: Du
 }
 
 #[cfg(target_os = "macos")]
-fn wait_for_replacement_server_pid(_runtime_dir: &Path, old_pid: u32, timeout: Duration) -> u32 {
-    let handoff_socket_pattern = format!("herdr-handoff-{old_pid}.sock");
+fn wait_for_replacement_server_pid(runtime_dir: &Path, old_pid: u32, timeout: Duration) -> u32 {
+    let api_socket = runtime_dir.join("herdr.sock");
     let deadline = Instant::now() + timeout;
     let mut last_stdout = String::new();
     while Instant::now() < deadline {
-        if let Ok(output) = std::process::Command::new("pgrep")
-            .args(["-af", &handoff_socket_pattern])
+        if let Ok(output) = std::process::Command::new("lsof")
+            .args(["-nP", "-t", "--"])
+            .arg(&api_socket)
             .output()
         {
             last_stdout = String::from_utf8_lossy(&output.stdout).into_owned();
             for line in last_stdout.lines() {
-                let Some(pid_text) = line.split_whitespace().next() else {
-                    continue;
-                };
-                let Ok(pid) = pid_text.parse::<u32>() else {
+                let Ok(pid) = line.trim().parse::<u32>() else {
                     continue;
                 };
                 if pid != old_pid {
@@ -490,8 +488,8 @@ fn wait_for_replacement_server_pid(_runtime_dir: &Path, old_pid: u32, timeout: D
         thread::sleep(Duration::from_millis(25));
     }
     panic!(
-        "replacement server for {} did not appear; last pgrep output: {}",
-        _runtime_dir.display(),
+        "replacement server for {} did not appear; last lsof output: {}",
+        runtime_dir.display(),
         last_stdout
     );
 }

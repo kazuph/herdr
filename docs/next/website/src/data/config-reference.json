@@ -181,7 +181,7 @@
           "key": "update.channel",
           "type": "enum",
           "default": "\"stable\" (\"preview\" on Windows)",
-          "description": "Update channel used by background version checks and herdr update. Homebrew, mise, and Nix installs ignore the preview channel.",
+          "description": "Upstream update channel setting retained for config compatibility. The kazuph/herdr fork disables self-update and background version checks.",
           "values": [
             "stable",
             "preview"
@@ -482,6 +482,18 @@
           "description": "Cycle to the previous pane."
         },
         {
+          "key": "keys.focus_history_back",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Move back through pane focus history. Unset by default."
+        },
+        {
+          "key": "keys.focus_history_forward",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Move forward through pane focus history. Unset by default."
+        },
+        {
           "key": "keys.last_pane",
           "type": "keybinding",
           "default": "unset",
@@ -562,7 +574,7 @@
         {
           "key": "ui.sidebar_max_width",
           "type": "integer",
-          "default": "36",
+          "default": "72",
           "description": "Maximum sidebar width (columns) when expanded."
         },
         {
@@ -659,6 +671,12 @@
           "description": "Show agent labels in split pane borders when no manual pane label is set."
         },
         {
+          "key": "ui.show_tab_bar",
+          "type": "boolean",
+          "default": "true",
+          "description": "Show the top tab bar in the main content area."
+        },
+        {
           "key": "ui.hide_tab_bar_when_single_tab",
           "type": "boolean",
           "default": "false",
@@ -672,6 +690,27 @@
           "values": [
             "spaces",
             "priority"
+          ]
+        },
+        {
+          "key": "ui.agent_panel_scope",
+          "type": "enum",
+          "default": "\"all\"",
+          "description": "Legacy fork agent ordering. Saved values are \"all\" or \"sort\"; \"current\" is accepted as \"all\".",
+          "values": [
+            "current",
+            "all",
+            "sort"
+          ]
+        },
+        {
+          "key": "ui.workspace_panel_density",
+          "type": "enum",
+          "default": "\"full\"",
+          "description": "Workspace sidebar density.",
+          "values": [
+            "full",
+            "slim"
           ]
         },
         {
@@ -1016,6 +1055,42 @@
           "type": "boolean",
           "default": "true",
           "description": "Resume supported AI-agent panes into their native conversation sessions when restoring a Herdr session."
+        }
+      ]
+    },
+    {
+      "id": "agent-restore",
+      "title": "Agent restore",
+      "keys": [
+        {
+          "key": "agent_restore.enabled",
+          "type": "boolean",
+          "default": "false",
+          "description": "Relaunch agent CLIs in restored panes only from explicit recorded session ids."
+        },
+        {
+          "key": "agent_restore.restore_delay_ms",
+          "type": "integer",
+          "default": "3000",
+          "description": "Delay before relaunching eligible restored agent panes."
+        },
+        {
+          "key": "agent_restore.commands",
+          "type": "map of strings",
+          "default": "{}",
+          "description": "Agent name to restore command template mapping."
+        }
+      ]
+    },
+    {
+      "id": "agent-start",
+      "title": "Agent launch commands",
+      "keys": [
+        {
+          "key": "agent_start.commands",
+          "type": "map of string arrays",
+          "default": "{}",
+          "description": "Agent name to argv mapping used by New agent context-menu actions."
         }
       ]
     },

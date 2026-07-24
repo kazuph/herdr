@@ -394,6 +394,14 @@ impl App {
                 self.cycle_pane_via_api(true);
                 leave_navigate_mode(&mut self.state);
             }
+            NavigateAction::FocusHistoryBack => {
+                self.state.pane_focus_history_back();
+                leave_navigate_mode(&mut self.state);
+            }
+            NavigateAction::FocusHistoryForward => {
+                self.state.pane_focus_history_forward();
+                leave_navigate_mode(&mut self.state);
+            }
             NavigateAction::LastPane => {
                 self.last_pane_via_api();
                 leave_navigate_mode(&mut self.state);
@@ -1332,6 +1340,8 @@ pub(crate) enum NavigateAction {
     ToggleSidebar,
     CyclePaneNext,
     CyclePanePrevious,
+    FocusHistoryBack,
+    FocusHistoryForward,
     LastPane,
     Help,
     Settings,
@@ -1359,6 +1369,8 @@ fn copy_mode_survives_prefix_action(action: NavigateAction) -> bool {
             | NavigateAction::FocusPaneRight
             | NavigateAction::CyclePaneNext
             | NavigateAction::CyclePanePrevious
+            | NavigateAction::FocusHistoryBack
+            | NavigateAction::FocusHistoryForward
             | NavigateAction::LastPane
             | NavigateAction::OpenNotificationTarget
     )
@@ -1460,6 +1472,11 @@ fn non_indexed_action_for_key(
         (&kb.last_pane, NavigateAction::LastPane),
         (&kb.cycle_pane_next, NavigateAction::CyclePaneNext),
         (&kb.cycle_pane_previous, NavigateAction::CyclePanePrevious),
+        (&kb.focus_history_back, NavigateAction::FocusHistoryBack),
+        (
+            &kb.focus_history_forward,
+            NavigateAction::FocusHistoryForward,
+        ),
         (&kb.split_vertical, NavigateAction::SplitVertical),
         (&kb.split_horizontal, NavigateAction::SplitHorizontal),
         (&kb.close_pane, NavigateAction::ClosePane),
@@ -1542,6 +1559,7 @@ pub(super) fn execute_navigate_action_in_context(
     match action {
         NavigateAction::NewWorkspace => {
             state.request_new_workspace = true;
+            state.requested_new_workspace_section = None;
             leave_navigate_mode(state);
         }
         NavigateAction::NewWorktree => {
@@ -1706,6 +1724,14 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::CyclePanePrevious => {
             state.cycle_pane(true);
+            leave_navigate_mode(state);
+        }
+        NavigateAction::FocusHistoryBack => {
+            state.pane_focus_history_back();
+            leave_navigate_mode(state);
+        }
+        NavigateAction::FocusHistoryForward => {
+            state.pane_focus_history_forward();
             leave_navigate_mode(state);
         }
         NavigateAction::LastPane => {
@@ -2375,7 +2401,7 @@ navigate_pane_right = "ctrl+l"
         );
 
         assert_eq!(state.selected, 1);
-        assert_eq!(state.mobile_switcher_scroll, 1);
+        assert_eq!(state.mobile_switcher_scroll, 2);
     }
 
     #[test]

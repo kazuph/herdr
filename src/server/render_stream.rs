@@ -2,6 +2,7 @@
 
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
 use ratatui::layout::{Position, Rect, Size};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::state::AppState;
 use crate::app::Mode;
@@ -316,6 +317,8 @@ pub(crate) fn render_virtual_with_runtime_registry(
         popup_terminal_cursor(app_state, terminal_runtimes)
     } else if suppress_focused_terminal_cursor {
         None
+    } else if let Some(cursor) = rename_modal_cursor(app_state, area) {
+        Some(cursor)
     } else {
         focused_terminal_cursor(app_state, terminal_runtimes).or_else(|| {
             (!focused_terminal_owns_host_cursor(app_state, terminal_runtimes))
@@ -325,6 +328,34 @@ pub(crate) fn render_virtual_with_runtime_registry(
     };
 
     (buffer, cursor)
+}
+
+fn rename_modal_cursor(app_state: &AppState, area: Rect) -> Option<CursorState> {
+    if !matches!(
+        app_state.mode,
+        Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane
+    ) {
+        return None;
+    }
+    let popup = crate::ui::centered_popup_rect(area, 56, 7)?;
+    let inner = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .inner(popup);
+    if inner.height < 4 {
+        return None;
+    }
+    let input_y = inner.y.saturating_add(2);
+    let input_x = inner
+        .x
+        .saturating_add(1)
+        .saturating_add(UnicodeWidthStr::width(app_state.name_input.as_str()) as u16)
+        .min(inner.x.saturating_add(inner.width.saturating_sub(1)));
+    Some(CursorState {
+        x: input_x,
+        y: input_y,
+        visible: true,
+        shape: 6,
+    })
 }
 
 fn popup_terminal_cursor(

@@ -1573,7 +1573,7 @@ fn named_sessions_use_separate_servers_and_workspace_state() {
 }
 
 #[test]
-fn integration_commands_run_locally_when_server_is_missing() {
+fn integration_commands_fail_closed_without_changing_user_dirs_when_server_is_missing() {
     let base = unique_test_dir();
     let home_dir = base.join("home");
     let extensions_dir = home_dir.join(".pi/agent/extensions");
@@ -1589,6 +1589,7 @@ fn integration_commands_run_locally_when_server_is_missing() {
         !expected_extension.exists(),
         "test setup should start without extension file"
     );
+    fs::write(home_dir.join("sentinel.txt"), "keep\n").unwrap();
 
     let workspace_list = Command::new(env!("CARGO_BIN_EXE_herdr"))
         .args(["workspace", "list"])
@@ -1604,22 +1605,14 @@ fn integration_commands_run_locally_when_server_is_missing() {
         .env("HOME", &home_dir)
         .output()
         .unwrap();
-    assert_eq!(integration_install.status.code(), Some(0));
-    assert!(
-        expected_extension.exists(),
-        "integration install should write local files without a server"
+    assert_eq!(integration_install.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&integration_install.stderr)
+        .contains("agent integration commands are disabled in the kazuph/herdr fork"));
+    assert!(!expected_extension.exists());
+    assert_eq!(
+        fs::read_to_string(home_dir.join("sentinel.txt")).unwrap(),
+        "keep\n"
     );
-
-    let integration_status = Command::new(env!("CARGO_BIN_EXE_herdr"))
-        .args(["integration", "status"])
-        .env("HERDR_SOCKET_PATH", &missing_socket)
-        .env("HOME", &home_dir)
-        .output()
-        .unwrap();
-    assert_eq!(integration_status.status.code(), Some(0));
-    let status_stdout = String::from_utf8_lossy(&integration_status.stdout);
-    assert!(status_stdout.contains("pi: current (v5)"));
-    assert!(status_stdout.contains("claude: not installed"));
 
     let integration_uninstall = Command::new(env!("CARGO_BIN_EXE_herdr"))
         .args(["integration", "uninstall", "pi"])
@@ -1627,17 +1620,21 @@ fn integration_commands_run_locally_when_server_is_missing() {
         .env("HOME", &home_dir)
         .output()
         .unwrap();
-    assert_eq!(integration_uninstall.status.code(), Some(0));
+    assert_eq!(integration_uninstall.status.code(), Some(1));
     assert!(
         !expected_extension.exists(),
-        "integration uninstall should remove local files without a server"
+        "disabled integration commands must not change user files"
+    );
+    assert_eq!(
+        fs::read_to_string(home_dir.join("sentinel.txt")).unwrap(),
+        "keep\n"
     );
 
     cleanup_test_base(&base);
 }
 
 #[test]
-fn integration_status_outdated_only_prints_action_for_legacy_install() {
+fn integration_status_is_disabled_even_for_legacy_hook_files() {
     let base = unique_test_dir();
     let home_dir = base.join("home");
     let extensions_dir = home_dir.join(".pi/agent/extensions");
@@ -1660,17 +1657,16 @@ fn integration_status_outdated_only_prints_action_for_legacy_install() {
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("installed herdr integrations need updating"));
-    assert!(stderr.contains("herdr integration install pi"));
+    assert!(stderr.contains("agent integration commands are disabled in the kazuph/herdr fork"));
 
     cleanup_test_base(&base);
 }
 
 #[test]
-fn integration_status_rejects_unknown_flags() {
+fn integration_status_remains_fail_closed_for_unknown_flags() {
     let base = unique_test_dir();
     let home_dir = base.join("home");
     fs::create_dir_all(&home_dir).unwrap();
@@ -1686,7 +1682,9 @@ fn integration_status_rejects_unknown_flags() {
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("agent integration commands are disabled in the kazuph/herdr fork"));
 
     cleanup_test_base(&base);
 }
@@ -3059,6 +3057,390 @@ fn pane_run_read_and_wait_commands_work() {
     let text = String::from_utf8(read.stdout).unwrap();
     assert!(text.contains("alpha"));
     assert!(text.contains("ready"));
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
+fn herdr_run_fails_closed_when_caller_is_unresolved() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_run_fail_closed_1","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+
+    let output = run_cli(&socket_path, &["run", "--", "echo", "should-not-run"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unable to resolve caller pane"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("--caller <pane>"), "stderr: {stderr}");
+
+    let panes = run_cli_json(&socket_path, &["pane", "list", "--workspace", "1"]);
+    assert_eq!(panes["result"]["panes"].as_array().unwrap().len(), 1);
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
+fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_run_spawn_1","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+    let reported = send_request(
+        &socket_path,
+        r#"{"id":"req_run_pane_agent","method":"pane.report_agent","params":{"pane_id":"1-1","source":"test","agent":"codex","state":"idle"}}"#,
+    );
+    assert!(reported["result"].is_object());
+    let caller = run_cli_json(&socket_path, &["pane", "get", "1-1"]);
+    let caller_tab = caller["result"]["pane"]["tab_id"].as_str().unwrap();
+
+    let run = run_cli(
+        &socket_path,
+        &[
+            "run",
+            "--pane",
+            "--caller",
+            "1-1",
+            "--label",
+            "demo",
+            "--split",
+            "down",
+            "--",
+            "sh",
+            "-c",
+            "printf 'run-spawn-done\\n'",
+        ],
+    );
+    assert!(
+        run.status.success(),
+        "stderr: {} stdout: {}",
+        String::from_utf8_lossy(&run.stderr),
+        String::from_utf8_lossy(&run.stdout)
+    );
+    let run_json: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let pane = run_json["pane"].as_str().unwrap();
+    let job = run_json["job"].as_str().unwrap();
+    assert_eq!(run_json["label"], "demo");
+
+    let spawned = run_cli_json(&socket_path, &["pane", "get", pane]);
+    assert_eq!(
+        spawned["result"]["pane"]["tab_id"].as_str().unwrap(),
+        caller_tab
+    );
+    assert_eq!(spawned["result"]["pane"]["label"], "demo");
+
+    let waited_job = run_cli(
+        &socket_path,
+        &[
+            "wait",
+            "output",
+            pane,
+            "--match",
+            "run-spawn-done",
+            "--source",
+            "recent",
+            "--lines",
+            "80",
+            "--timeout",
+            "5000",
+        ],
+    );
+    assert!(
+        waited_job.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&waited_job.stderr)
+    );
+
+    let waited_notice = run_cli(
+        &socket_path,
+        &[
+            "wait",
+            "output",
+            "1-1",
+            "--match",
+            "[herdr run] exit=0 label=demo",
+            "--source",
+            "recent",
+            "--lines",
+            "80",
+            "--timeout",
+            "5000",
+        ],
+    );
+    assert!(
+        waited_notice.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&waited_notice.stderr)
+    );
+
+    let caller_read = run_cli(
+        &socket_path,
+        &[
+            "pane",
+            "read",
+            "1-1",
+            "--source",
+            "recent-unwrapped",
+            "--lines",
+            "80",
+        ],
+    );
+    assert!(caller_read.status.success());
+    let caller_text = String::from_utf8(caller_read.stdout).unwrap();
+    assert!(
+        caller_text.contains(&format!("pane={pane}")),
+        "{caller_text}"
+    );
+    assert!(
+        caller_text.contains(&format!("details: herdr log {job}")),
+        "{caller_text}"
+    );
+    assert!(
+        !caller_text.contains("tail=run-spawn-done"),
+        "{caller_text}"
+    );
+
+    let log = run_cli(&socket_path, &["log", job]);
+    assert!(log.status.success());
+    let log_text = String::from_utf8(log.stdout).unwrap();
+    assert!(log_text.contains("run-spawn-done"), "{log_text}");
+    let log_tail = run_cli(&socket_path, &["log", job, "tail=1"]);
+    assert!(log_tail.status.success());
+    let log_tail_text = String::from_utf8(log_tail.stdout).unwrap();
+    assert!(log_tail_text.contains("exit_code: 0"), "{log_tail_text}");
+
+    let fetched = run_cli(&socket_path, &["pane", "get", pane]);
+    assert!(
+        !fetched.status.success(),
+        "{pane} was not closed after successful run"
+    );
+
+    let error_run = run_cli(
+        &socket_path,
+        &[
+            "run",
+            "--pane",
+            "--caller",
+            "1-1",
+            "--label",
+            "close-error-demo",
+            "--",
+            "sh",
+            "-c",
+            "echo run-spawn-error; exit 7",
+        ],
+    );
+    assert!(
+        error_run.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&error_run.stderr)
+    );
+    let error_json: serde_json::Value = serde_json::from_slice(&error_run.stdout).unwrap();
+    let error_pane = error_json["pane"].as_str().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut closed = false;
+    while Instant::now() < deadline {
+        let fetched = run_cli(&socket_path, &["pane", "get", error_pane]);
+        if !fetched.status.success() {
+            closed = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(closed, "{error_pane} was not closed after failed run");
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
+fn herdr_run_adds_cwd_node_modules_bin_to_path() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let project = base.join("project");
+    let node_bin = project.join("node_modules").join(".bin");
+    std::fs::create_dir_all(&node_bin).unwrap();
+    let tool = node_bin.join("local-wrangler");
+    std::fs::write(&tool, "#!/bin/sh\nprintf 'local-tool-ok\\n'\n").unwrap();
+    let mut perms = std::fs::metadata(&tool).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&tool, perms).unwrap();
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_run_spawn_node_bin","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+    let reported = send_request(
+        &socket_path,
+        r#"{"id":"req_run_agent","method":"pane.report_agent","params":{"pane_id":"1-1","source":"test","agent":"codex","state":"idle"}}"#,
+    );
+    assert!(reported["result"].is_object());
+
+    let run = run_cli(
+        &socket_path,
+        &[
+            "run",
+            "--caller",
+            "1-1",
+            "--cwd",
+            project.to_str().unwrap(),
+            "--label",
+            "node-bin",
+            "--",
+            "local-wrangler",
+        ],
+    );
+    assert!(
+        run.status.success(),
+        "stderr: {} stdout: {}",
+        String::from_utf8_lossy(&run.stderr),
+        String::from_utf8_lossy(&run.stdout)
+    );
+    let run_json: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let job = run_json["job"].as_str().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let status = run_cli(&socket_path, &["job", "status", job]);
+        assert!(status.status.success());
+        let status_json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+        if status_json["status"] == "exited" {
+            assert_eq!(status_json["exit_code"], 0);
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "job did not finish: {status_json}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    let log = run_cli(&socket_path, &["job", "log", job]);
+    assert!(log.status.success());
+    let log_text = String::from_utf8(log.stdout).unwrap();
+    assert!(log_text.contains("local-tool-ok"), "{log_text}");
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
+fn herdr_job_cancel_kills_term_ignoring_process_tree_before_marking_cancelled() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+    let child_pid_path = base.join("term-ignoring-child.pid");
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_cancel_workspace","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+    let reported = send_request(
+        &socket_path,
+        r#"{"id":"req_cancel_agent","method":"pane.report_agent","params":{"pane_id":"1-1","source":"test","agent":"codex","state":"idle"}}"#,
+    );
+    assert!(reported["result"].is_object());
+
+    let script = format!(
+        "trap '' TERM; (trap '' TERM; while :; do sleep 1; done) & child=$!; echo $child > '{}'; wait",
+        child_pid_path.display()
+    );
+    let run = run_cli(
+        &socket_path,
+        &[
+            "run",
+            "--caller",
+            "1-1",
+            "--completion",
+            "none",
+            "--",
+            "/bin/sh",
+            "-c",
+            &script,
+        ],
+    );
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let run_json: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let job = run_json["job"].as_str().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !child_pid_path.exists() {
+        assert!(Instant::now() < deadline, "child pid was not written");
+        thread::sleep(Duration::from_millis(25));
+    }
+    let child_pid: i32 = fs::read_to_string(&child_pid_path)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let cancelled = run_cli(&socket_path, &["job", "cancel", job]);
+    assert!(
+        cancelled.status.success(),
+        "stderr: {} stdout: {}",
+        String::from_utf8_lossy(&cancelled.stderr),
+        String::from_utf8_lossy(&cancelled.stdout)
+    );
+    let cancelled_json: serde_json::Value = serde_json::from_slice(&cancelled.stdout).unwrap();
+    assert_eq!(cancelled_json["status"], "cancelled");
+    assert_eq!(cancelled_json["signal"], "KILL");
+    let status = run_cli_json(&socket_path, &["job", "status", job]);
+    assert_eq!(status["status"], "cancelled");
+    assert_eq!(
+        unsafe { libc::kill(child_pid, 0) },
+        -1,
+        "child {child_pid} survived cancel"
+    );
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
 
     cleanup_spawned_herdr(herdr, base);
 }

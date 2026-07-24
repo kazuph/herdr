@@ -1,6 +1,7 @@
 //! Pure state mutations on AppState.
 //! These don't need channels, async, or PTY runtime.
 
+use ratatui::layout::Direction;
 use tracing::{info, warn};
 
 use crate::detect::{Agent, AgentState};
@@ -187,16 +188,143 @@ pub fn notification_toast_for_pane_state_update(
     )
 }
 
-fn toast_agent_label(agent_label: &str) -> &str {
-    agent_label
+pub(crate) fn notification_title(workspace_label: &str, ws_idx: usize) -> String {
+    format!("{} {workspace_label}", ws_idx + 1)
 }
 
-fn toast_event_text(kind: ToastKind) -> &'static str {
-    match kind {
-        ToastKind::NeedsAttention => "needs attention",
-        ToastKind::Finished => "finished",
-        ToastKind::UpdateInstalled => "updated",
+const NOTIFICATION_BODY_MAX_CHARS: usize = 120;
+
+pub(crate) fn notification_body_excerpt(text: &str, title: &str) -> Option<String> {
+    let cleaned: Vec<String> = text.lines().map(clean_notification_line).collect();
+    let cutoff = cleaned
+        .iter()
+        .rposition(|line| is_composer_prompt_line(line))
+        .unwrap_or(cleaned.len());
+    let lines = &cleaned[..cutoff];
+
+    if let Some(excerpt) = excerpt_from_last_response_marker(lines, title) {
+        return Some(excerpt);
     }
+
+    let mut blocks = Vec::new();
+    let mut current_block = Vec::new();
+    for line in lines {
+        if line.is_empty() {
+            if !current_block.is_empty() {
+                blocks.push(std::mem::take(&mut current_block));
+            }
+            continue;
+        }
+        current_block.push(line);
+    }
+    if !current_block.is_empty() {
+        blocks.push(current_block);
+    }
+    let excerpt = blocks
+        .into_iter()
+        .rev()
+        .flat_map(|block| block.into_iter())
+        .find(|line| !is_notification_chrome_line(line, title))?;
+    Some(truncate_notification_body(
+        excerpt,
+        NOTIFICATION_BODY_MAX_CHARS,
+    ))
+}
+
+fn excerpt_from_last_response_marker(lines: &[String], title: &str) -> Option<String> {
+    let start = lines.iter().rposition(|line| {
+        is_agent_response_marker(line) && !is_notification_chrome_line(line, title)
+    })?;
+    let mut collected = String::new();
+    for line in &lines[start..] {
+        if line.is_empty() {
+            continue;
+        }
+        if !collected.is_empty()
+            && (is_agent_response_marker(line) || is_notification_chrome_line(line, title))
+        {
+            break;
+        }
+        let segment = line
+            .strip_prefix("• ")
+            .or_else(|| line.strip_prefix("⏺ "))
+            .unwrap_or(line);
+        if !collected.is_empty() {
+            collected.push(' ');
+        }
+        collected.push_str(segment);
+        if collected.chars().count() >= NOTIFICATION_BODY_MAX_CHARS {
+            break;
+        }
+    }
+    (!collected.is_empty())
+        .then(|| truncate_notification_body(&collected, NOTIFICATION_BODY_MAX_CHARS))
+}
+
+fn clean_notification_line(raw: &str) -> String {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed
+        .trim_matches(|ch: char| ch.is_whitespace() || is_decoration_char(ch))
+        .to_string()
+}
+
+fn is_decoration_char(ch: char) -> bool {
+    ('\u{2500}'..='\u{259F}').contains(&ch)
+}
+
+fn is_composer_prompt_line(line: &str) -> bool {
+    matches!(line, "❯" | "›" | ">")
+}
+
+fn is_agent_response_marker(line: &str) -> bool {
+    line.starts_with("• ") || line.starts_with("⏺ ")
+}
+
+fn is_notification_chrome_line(line: &str, title: &str) -> bool {
+    if line == title {
+        return true;
+    }
+    if line.starts_with('›')
+        || line.starts_with('❯')
+        || line == ">"
+        || line.starts_with('⎿')
+        || line.starts_with('└')
+        || line.starts_with("⏵⏵")
+        || line.starts_with('※')
+    {
+        return true;
+    }
+    if matches!(line.chars().next(), Some(ch) if "✻✽✶✢✳✣✤❋✺".contains(ch)) {
+        return true;
+    }
+    if let Some((count, rest)) = line.split_once(' ') {
+        if !count.is_empty()
+            && count.chars().all(|ch| ch.is_ascii_digit())
+            && (rest.starts_with("tasks (") || rest.starts_with("task ("))
+        {
+            return true;
+        }
+    }
+
+    let lower = line.to_lowercase();
+    lower.starts_with("gpt-")
+        || lower.starts_with("worked for ")
+        || lower.contains("% left")
+        || lower.contains("esc to interrupt")
+        || lower.contains("ctrl+c to interrupt")
+        || lower.contains("ctrl+o to expand")
+        || lower.contains("? for shortcuts")
+        || lower.contains("/ps to view")
+        || lower.contains("tokens used")
+        || lower.contains("disable recaps in /config")
+}
+
+fn truncate_notification_body(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let prefix: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{prefix}…")
 }
 
 fn sound_for_toast_kind(
@@ -287,6 +415,7 @@ impl AppState {
         };
         if previous.as_ref() != Some(&target) {
             self.previous_pane_focus = previous;
+            self.record_pane_focus_history_before_current();
         }
     }
 
@@ -294,7 +423,74 @@ impl AppState {
         let current = self.current_pane_focus_target();
         if previous != current {
             self.previous_pane_focus = previous;
+            self.record_pane_focus_history_before_current();
         }
+    }
+
+    fn record_pane_focus_history_before_current(&mut self) {
+        let Some(previous) = self.previous_pane_focus.clone() else {
+            return;
+        };
+        if self.pane_focus_back.last() != Some(&previous) {
+            self.pane_focus_back.push(previous);
+        }
+        self.pane_focus_forward.clear();
+    }
+
+    fn pane_focus_target_exists(&self, target: &PaneFocusTarget) -> bool {
+        self.pane_focus_target_indices(target).is_some()
+    }
+
+    fn focus_pane_target_without_history(&mut self, target: &PaneFocusTarget) -> bool {
+        let Some((ws_idx, tab_idx)) = self.pane_focus_target_indices(target) else {
+            return false;
+        };
+        self.switch_workspace_tab(ws_idx, tab_idx);
+        let Some(tab) = self
+            .workspaces
+            .get_mut(ws_idx)
+            .and_then(|workspace| workspace.tabs.get_mut(tab_idx))
+        else {
+            return false;
+        };
+        tab.layout.focus_pane(target.pane_id);
+        self.mark_session_dirty();
+        self.sync_selection_after_focus_navigation();
+        true
+    }
+
+    pub(crate) fn pane_focus_history_back(&mut self) -> bool {
+        let Some(current) = self.current_pane_focus_target() else {
+            return false;
+        };
+        while let Some(target) = self.pane_focus_back.pop() {
+            if target == current || !self.pane_focus_target_exists(&target) {
+                continue;
+            }
+            if self.focus_pane_target_without_history(&target) {
+                self.previous_pane_focus = Some(current.clone());
+                self.pane_focus_forward.push(current);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(crate) fn pane_focus_history_forward(&mut self) -> bool {
+        let Some(current) = self.current_pane_focus_target() else {
+            return false;
+        };
+        while let Some(target) = self.pane_focus_forward.pop() {
+            if target == current || !self.pane_focus_target_exists(&target) {
+                continue;
+            }
+            if self.focus_pane_target_without_history(&target) {
+                self.previous_pane_focus = Some(current.clone());
+                self.pane_focus_back.push(current);
+                return true;
+            }
+        }
+        false
     }
 
     fn sync_selection_after_focus_navigation(&mut self) {
@@ -332,6 +528,7 @@ impl AppState {
         {
             tab.layout.focus_pane(pane_id);
             self.previous_pane_focus = previous;
+            self.record_pane_focus_history_before_current();
             self.mark_session_dirty();
             self.sync_copy_mode_with_focus();
             return true;
@@ -1006,6 +1203,57 @@ impl AppState {
         self.workspaces[ws_idx]
             .find_tab_index_for_pane(pane_id)
             .is_some_and(|tab_idx| tab_idx == self.workspaces[ws_idx].active_tab)
+    }
+
+    pub fn move_focused_pane_to_split_side(
+        &mut self,
+        direction: Direction,
+        side: crate::layout::RootSplitSide,
+    ) {
+        if let Some(tab) = self
+            .active
+            .and_then(|i| self.workspaces.get_mut(i))
+            .and_then(|ws| ws.active_tab_mut())
+        {
+            if tab.layout.move_focused_to_root_split_side(direction, side) {
+                self.mark_session_dirty();
+            }
+        }
+    }
+
+    pub fn cycle_pane_layout(&mut self) {
+        if let Some(tab) = self
+            .active
+            .and_then(|i| self.workspaces.get_mut(i))
+            .and_then(|ws| ws.active_tab_mut())
+        {
+            if tab.layout.cycle_layout() {
+                self.mark_session_dirty();
+            }
+        }
+    }
+
+    pub fn rotate_panes(&mut self, reverse: bool) {
+        if let Some(tab) = self
+            .active
+            .and_then(|i| self.workspaces.get_mut(i))
+            .and_then(|ws| ws.active_tab_mut())
+        {
+            if tab.rotate_panes(reverse) {
+                self.mark_session_dirty();
+            }
+        }
+    }
+
+    pub fn equalize_pane_sizes(&mut self) {
+        if let Some(tab) = self
+            .active
+            .and_then(|i| self.workspaces.get_mut(i))
+            .and_then(|ws| ws.active_tab_mut())
+        {
+            tab.layout.equalize();
+            self.mark_session_dirty();
+        }
     }
 
     pub fn switch_workspace(&mut self, idx: usize) {
@@ -1963,76 +2211,6 @@ impl AppState {
         self.selection_autoscroll = None;
     }
 
-    pub(crate) fn copy_word_at_pane_cell(
-        &mut self,
-        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
-        pane_id: crate::layout::PaneId,
-        viewport_row: u16,
-        col: u16,
-    ) -> bool {
-        // Resolve the active pane cell the double-click landed on.
-        let Some(ws_idx) = self
-            .active
-            .filter(|idx| self.workspaces.get(*idx).is_some())
-        else {
-            return false;
-        };
-
-        let Some(info) = self.pane_info_by_id(pane_id) else {
-            return false;
-        };
-        if viewport_row >= info.inner_rect.height || col >= info.inner_rect.width {
-            return false;
-        }
-
-        // Leave mouse input to terminal apps that requested it.
-        let Some(rt) = self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, pane_id)
-        else {
-            return false;
-        };
-        if rt
-            .input_state()
-            .is_some_and(crate::pane::InputState::mouse_reporting_enabled)
-        {
-            return false;
-        }
-
-        // Read the visible row and identify the clicked token bounds.
-        let metrics = self.pane_scroll_metrics(terminal_runtimes, pane_id);
-        let row_selection = Selection::range(
-            pane_id,
-            viewport_row,
-            0,
-            info.inner_rect.width.saturating_sub(1),
-            metrics,
-        );
-        let Some(row_text) = rt.extract_selection(&row_selection) else {
-            return false;
-        };
-        let Some((start_col, end_col)) = word_bounds_at_column(&row_text, col) else {
-            return false;
-        };
-
-        // Copy the token and keep its selection visible as short-lived feedback.
-        let mut selection = Selection::range(pane_id, viewport_row, start_col, end_col, metrics);
-        if !selection.finish() {
-            return false;
-        }
-
-        let Some(text) = rt
-            .extract_selection(&selection)
-            .filter(|text| !text.is_empty())
-        else {
-            self.clear_selection();
-            return false;
-        };
-        self.request_clipboard_write = Some(text.into_bytes());
-        self.selection = Some(selection);
-        self.selection_autoscroll = None;
-        info!("copied double-clicked token to clipboard");
-        true
-    }
-
     pub(crate) fn url_at_pane_cell(
         &self,
         terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
@@ -2129,6 +2307,7 @@ impl CellSpan {
         idx >= self.start && idx <= self.end
     }
 
+    #[cfg(test)]
     fn columns(self, cells: &[TextCell]) -> (u16, u16) {
         (cells[self.start].start_col, cells[self.end].end_col)
     }
@@ -2140,6 +2319,7 @@ impl CellSpan {
 /// zero-width marks use display columns, then prefers structured spans that
 /// users expect to copy whole (URLs and quoted paths), and finally falls back
 /// to a separator-delimited token.
+#[cfg(test)]
 fn word_bounds_at_column(row: &str, col: u16) -> Option<(u16, u16)> {
     // Map the row into display cells before doing any word-boundary work.
     let cells = text_cells(row);
@@ -2263,6 +2443,7 @@ pub(crate) fn logical_cell_for_visible_cell(
         })
 }
 
+#[cfg(test)]
 fn token_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan> {
     if is_word_separator(cells[clicked_idx].ch) {
         return None;
@@ -2323,6 +2504,7 @@ fn byte_index_after_cell(row: &str, cell_idx: usize) -> usize {
         .unwrap_or(row.len())
 }
 
+#[cfg(test)]
 fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan> {
     let mut start = 0;
     while start < cells.len() {
@@ -2385,6 +2567,7 @@ fn trailing_url_closer_is_balanced(
     balance > 0
 }
 
+#[cfg(test)]
 fn quoted_path_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan> {
     let clicked = cells.get(clicked_idx)?.ch;
     if clicked == '"' || clicked == '\'' || clicked == '`' {
@@ -2417,6 +2600,7 @@ fn quoted_path_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<
     None
 }
 
+#[cfg(test)]
 fn is_escaped(cells: &[TextCell], idx: usize) -> bool {
     let mut slashes = 0;
     let mut cursor = idx;
@@ -2434,6 +2618,7 @@ fn starts_with_chars(cells: &[TextCell], prefix: &str) -> bool {
         .all(|(idx, expected)| cells.get(idx).is_some_and(|cell| cell.ch == expected))
 }
 
+#[cfg(test)]
 fn is_word_separator(ch: char) -> bool {
     ch.is_whitespace()
         || matches!(
@@ -2442,6 +2627,7 @@ fn is_word_separator(ch: char) -> bool {
         )
 }
 
+#[cfg(test)]
 fn trim_token_edges(cells: &[TextCell], span: CellSpan) -> Option<CellSpan> {
     let mut start = span.start;
     let mut end = span.end;
@@ -2460,10 +2646,12 @@ fn trim_token_edges(cells: &[TextCell], span: CellSpan) -> Option<CellSpan> {
     (start <= end).then_some(CellSpan { start, end })
 }
 
+#[cfg(test)]
 fn is_leading_token_wrapper(ch: char) -> bool {
     matches!(ch, '(' | '[' | '{' | '<' | '"' | '\'' | '`')
 }
 
+#[cfg(test)]
 fn is_trailing_token_wrapper(ch: char) -> bool {
     matches!(
         ch,
@@ -2508,6 +2696,10 @@ impl AppState {
                 ws.cached_git_ahead_behind = result.ahead_behind;
                 changed = true;
             }
+            if ws.cached_git_diff_stats != result.diff_stats {
+                ws.cached_git_diff_stats = result.diff_stats;
+                changed = true;
+            }
             if ws.cached_git_space != result.space {
                 ws.cached_git_space = result.space;
                 changed = true;
@@ -2524,11 +2716,11 @@ impl AppState {
             }
             AppEvent::UpdateReady {
                 version,
-                install_command,
+                install_command: _,
             } => {
-                self.update_available = Some(version.clone());
-                self.update_install_command = install_command.clone();
-                self.latest_release_notes_available = true;
+                self.update_available = None;
+                self.update_install_command = crate::update::update_install_command().into();
+                self.latest_release_notes_available = false;
                 self.update_dismissed = true;
                 if matches!(
                     self.toast_config.delivery,
@@ -2537,7 +2729,9 @@ impl AppState {
                     self.toast = Some(ToastNotification {
                         kind: ToastKind::UpdateInstalled,
                         title: format!("v{version} available"),
-                        context: crate::update::update_install_instruction(&install_command),
+                        context: crate::update::update_install_instruction(
+                            crate::update::update_install_command(),
+                        ),
                         position: None,
                         target: None,
                     });
@@ -2760,6 +2954,7 @@ impl AppState {
         };
         if mutation.session_ref_changed {
             self.mark_session_dirty();
+            self.update_agent_session_ledger_for_pane(pane_id);
         }
         let change = mutation.effective_state_change?;
         if change.previous_state != change.state {
@@ -2876,6 +3071,10 @@ impl AppState {
                 change.known_agent,
                 kind,
                 change.state,
+                matches!(
+                    self.toast_config.delivery,
+                    crate::config::ToastDelivery::Herdr
+                ),
             );
         }
 
@@ -2903,7 +3102,7 @@ impl AppState {
     }
 
     fn agent_notification_delivery(
-        &self,
+        &mut self,
         ws_idx: usize,
         pane_id: PaneId,
         workspace_id: String,
@@ -2911,6 +3110,7 @@ impl AppState {
         known_agent: Option<Agent>,
         kind: ToastKind,
         expected_state: AgentState,
+        throttle_notifications: bool,
     ) -> Option<AgentNotificationDelivery> {
         let terminal_state = self
             .workspaces
@@ -2929,17 +3129,17 @@ impl AppState {
             active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
         let sound = sound_for_toast_kind(kind, suppress_active_tab_notifications)
             .filter(|_| self.sound.allows(known_agent));
+        let notifications_allowed = !throttle_notifications
+            || self
+                .notification_throttle
+                .allow(pane_id, kind, std::time::Instant::now());
         let build_toast = || {
             let workspace_label = self.workspaces[ws_idx].display_name();
             let context =
                 notification_context(&self.workspaces[ws_idx], &workspace_label, ws_idx, pane_id);
             ToastNotification {
                 kind,
-                title: format!(
-                    "{} {}",
-                    toast_agent_label(&agent_label),
-                    toast_event_text(kind)
-                ),
+                title: notification_title(&workspace_label, ws_idx),
                 context,
                 position: None,
                 target: Some(ToastTarget {
@@ -2948,8 +3148,9 @@ impl AppState {
                 }),
             }
         };
-        let toast = (!is_active_tab).then(build_toast);
-        let client_notification = (!suppress_active_tab_notifications).then(build_toast);
+        let toast = (notifications_allowed && !is_active_tab).then(build_toast);
+        let client_notification =
+            (notifications_allowed && !suppress_active_tab_notifications).then(build_toast);
 
         if toast.is_none() && client_notification.is_none() && sound.is_none() {
             return None;
@@ -3021,6 +3222,7 @@ impl AppState {
                 pending.known_agent,
                 pending.kind,
                 pending.state,
+                true,
             ) else {
                 continue;
             };
@@ -3652,6 +3854,7 @@ mod tests {
                 resolved_identity_cwd: first_cwd,
                 branch: Some("main".into()),
                 ahead_behind: Some((2, 1)),
+                diff_stats: Some((12, 3)),
                 space: None,
             }],
         );
@@ -3659,6 +3862,7 @@ mod tests {
         assert!(changed);
         assert_eq!(state.workspaces[0].branch().as_deref(), Some("main"));
         assert_eq!(state.workspaces[0].git_ahead_behind(), Some((2, 1)));
+        assert_eq!(state.workspaces[0].git_diff_stats(), Some((12, 3)));
         assert_eq!(state.workspaces[1].id, second_id);
         assert_eq!(state.workspaces[1].git_ahead_behind(), None);
     }
@@ -3678,6 +3882,7 @@ mod tests {
                 resolved_identity_cwd: std::path::PathBuf::from("/definitely/not/current"),
                 branch: Some("main".into()),
                 ahead_behind: Some((0, 1)),
+                diff_stats: None,
                 space: None,
             }],
         );
@@ -3703,6 +3908,7 @@ mod tests {
                 resolved_identity_cwd: cwd,
                 branch: None,
                 ahead_behind: None,
+                diff_stats: None,
                 space: None,
             }],
         );
@@ -3728,6 +3934,7 @@ mod tests {
                 resolved_identity_cwd: cwd,
                 branch: Some("scratch".into()),
                 ahead_behind: None,
+                diff_stats: None,
                 space: Some(crate::workspace::GitSpaceMetadata {
                     key: "other-repo-key".into(),
                     checkout_key: "/other/checkout".into(),
@@ -3955,6 +4162,43 @@ mod tests {
         state.last_pane();
 
         assert_eq!(state.workspaces[0].focused_pane_id(), Some(right));
+    }
+
+    #[test]
+    fn pane_focus_history_walks_back_and_forward_without_reordering_panes() {
+        let mut state = app_with_workspaces(&["test"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let second = state.workspaces[0].test_split(Direction::Horizontal);
+        let third = state.workspaces[0].test_split(Direction::Horizontal);
+
+        state.focus_pane_in_workspace(0, root);
+        state.focus_pane_in_workspace(0, second);
+        state.focus_pane_in_workspace(0, third);
+
+        assert!(state.pane_focus_history_back());
+        assert_eq!(state.workspaces[0].focused_pane_id(), Some(second));
+        assert!(state.pane_focus_history_back());
+        assert_eq!(state.workspaces[0].focused_pane_id(), Some(root));
+        assert!(state.pane_focus_history_forward());
+        assert_eq!(state.workspaces[0].focused_pane_id(), Some(second));
+        assert!(state.pane_focus_history_forward());
+        assert_eq!(state.workspaces[0].focused_pane_id(), Some(third));
+    }
+
+    #[test]
+    fn pane_focus_history_skips_closed_panes() {
+        let mut state = app_with_workspaces(&["test"]);
+        let root = state.workspaces[0].tabs[0].root_pane;
+        let second = state.workspaces[0].test_split(Direction::Horizontal);
+        let third = state.workspaces[0].test_split(Direction::Horizontal);
+
+        state.focus_pane_in_workspace(0, root);
+        state.focus_pane_in_workspace(0, second);
+        state.focus_pane_in_workspace(0, third);
+        state.workspaces[0].remove_pane(second);
+
+        assert!(state.pane_focus_history_back());
+        assert_eq!(state.workspaces[0].focused_pane_id(), Some(root));
     }
 
     #[test]
@@ -4455,6 +4699,45 @@ mod tests {
     }
 
     #[test]
+    fn notification_body_prefers_last_agent_response_and_discards_composer_chrome() {
+        assert_eq!(
+            notification_body_excerpt(
+                "• 古い応答\n\n\
+                 ⏺ 最新の応答です。\n\
+                 次の行も本文です。\n\n\
+                 ───────────────────\n\
+                 ❯ 入力欄\n\
+                 gpt-5.5 medium · Context 71% left",
+                "2 herdr-planner",
+            ),
+            Some("最新の応答です。 次の行も本文です。".into())
+        );
+    }
+
+    #[test]
+    fn notification_body_omits_chrome_only_screen() {
+        assert_eq!(
+            notification_body_excerpt(
+                "────────────────────\n\
+                 ✻ 作業時間 3m\n\
+                 8 tasks (0 done, 8 open)\n\
+                 ❯",
+                "2 background",
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn notification_body_truncates_unicode_without_splitting_characters() {
+        let text = format!("• {}", "あ".repeat(121));
+        let body = notification_body_excerpt(&text, "1 workspace").unwrap();
+
+        assert_eq!(body.chars().count(), 120);
+        assert!(body.ends_with('…'));
+    }
+
+    #[test]
     fn background_waiting_sets_attention_toast() {
         let mut state = app_with_workspaces(&["active", "background"]);
         state.active = Some(0);
@@ -4473,7 +4756,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
-        assert_eq!(toast.title, "pi needs attention");
+        assert_eq!(toast.title, "2 background");
         assert_eq!(toast.context, "background · 2");
     }
 
@@ -4504,7 +4787,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
-        assert_eq!(toast.title, "pi needs attention");
+        assert_eq!(toast.title, "2 background");
         assert_eq!(toast.context, "background · 2");
         assert!(state.pending_agent_notifications.is_empty());
     }
@@ -4641,7 +4924,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
-        assert_eq!(toast.title, "hermes needs attention");
+        assert_eq!(toast.title, "2 background");
         assert_eq!(toast.context, "background · 2");
     }
 
@@ -4690,7 +4973,7 @@ mod tests {
         assert_eq!(terminal.state, AgentState::Blocked);
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
-        assert_eq!(toast.title, "codex needs attention");
+        assert_eq!(toast.title, "2 background");
     }
 
     #[test]
@@ -4898,7 +5181,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::Finished);
-        assert_eq!(toast.title, "droid finished");
+        assert_eq!(toast.title, "2 background");
         assert_eq!(toast.context, "background · 2");
         let target = toast.target.as_ref().expect("toast target");
         assert_eq!(&target.workspace_id, &state.workspaces[1].id);
@@ -4927,7 +5210,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
-        assert_eq!(toast.title, "pi needs attention");
+        assert_eq!(toast.title, "2 background");
         assert_eq!(toast.context, "background · 2 · logs");
     }
 
@@ -4953,7 +5236,7 @@ mod tests {
 
         let toast = state.toast.as_ref().unwrap();
         assert_eq!(toast.kind, ToastKind::NeedsAttention);
-        assert_eq!(toast.title, "pi needs attention");
+        assert_eq!(toast.title, "1 active");
         assert_eq!(toast.context, "active · 1 · logs");
     }
 
@@ -5007,7 +5290,7 @@ mod tests {
     }
 
     #[test]
-    fn update_ready_sets_manual_update_toast() {
+    fn update_ready_keeps_update_surfaces_disabled() {
         let mut state = AppState::test_new();
         state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
 
@@ -5017,20 +5300,24 @@ mod tests {
         });
 
         assert!(updates.is_empty());
-        assert_eq!(state.update_available.as_deref(), Some("0.5.0"));
-        assert!(state.latest_release_notes_available);
+        assert!(state.update_available.is_none());
+        assert!(!state.latest_release_notes_available);
+        assert_eq!(
+            state.update_install_command,
+            "build from source and install target/release/herdr"
+        );
         assert!(state.update_dismissed);
         let toast = state.toast.as_ref().expect("update toast");
         assert_eq!(toast.kind, ToastKind::UpdateInstalled);
         assert_eq!(toast.title, "v0.5.0 available");
         assert_eq!(
             toast.context,
-            "detach, run `herdr update`, then follow its restart guidance"
+            "detach, then run `build from source and install target/release/herdr`"
         );
     }
 
     #[test]
-    fn update_ready_uses_event_install_command_in_toast() {
+    fn update_ready_ignores_event_install_command_in_toast() {
         let mut state = AppState::test_new();
         state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
 
@@ -5041,12 +5328,12 @@ mod tests {
 
         assert_eq!(
             state.update_install_command,
-            "brew update && brew upgrade herdr"
+            "build from source and install target/release/herdr"
         );
         let toast = state.toast.as_ref().expect("update toast");
         assert_eq!(
             toast.context,
-            "detach, run `brew update && brew upgrade herdr`, then restart this Herdr session when ready"
+            "detach, then run `build from source and install target/release/herdr`"
         );
     }
 

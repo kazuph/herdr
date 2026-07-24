@@ -46,21 +46,6 @@ impl AgentSessionLedger {
     ) -> Option<&AgentSessionLedgerEntry> {
         self.entries.get(&Self::key(workspace_id, tab_id, pane_id))
     }
-
-    pub fn remove_workspace(&mut self, workspace_id: &str) {
-        self.entries
-            .retain(|_, entry| entry.workspace_id != workspace_id);
-    }
-
-    pub fn remove_tab(&mut self, workspace_id: &str, tab_id: &str) {
-        self.entries
-            .retain(|_, entry| entry.workspace_id != workspace_id || entry.tab_id != tab_id);
-    }
-
-    pub fn remove_pane(&mut self, workspace_id: &str, tab_id: &str, pane_id: u32) {
-        self.entries
-            .remove(&Self::key(workspace_id, tab_id, pane_id));
-    }
 }
 
 pub fn now_millis() -> u128 {
@@ -98,7 +83,8 @@ pub(crate) fn load_from_path(path: &Path) -> AgentSessionLedger {
     }
 }
 
-pub(crate) fn save_to_path(path: &Path, ledger: &AgentSessionLedger) -> std::io::Result<()> {
+#[cfg(test)]
+fn save_to_path(path: &Path, ledger: &AgentSessionLedger) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

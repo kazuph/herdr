@@ -40,7 +40,6 @@ afterEach(async () => {
 });
 
 const integrations = [
-  { name: "Pi", modulePath: "./pi/herdr-agent-state.ts" },
   { name: "Oh My Pi", modulePath: "./omp/herdr-agent-state.ts" },
 ] as const;
 
@@ -148,115 +147,6 @@ for (const integration of integrations) {
   });
 }
 
-test("Pi reports the session replacement source", async () => {
-  const requests = await startRecordingServer("pi-session-source");
-  const { handlers, pi } = createExtensionHarness();
-
-  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
-  install(pi);
-
-  const sessionStart = handlers.get("session_start");
-  expect(sessionStart).toBeDefined();
-  await sessionStart?.(
-    { reason: "new" },
-    {
-      hasUI: true,
-      isIdle: () => true,
-      sessionManager: {
-        getSessionFile: () => "/tmp/pi-new.jsonl",
-        getSessionId: () => "pi-new",
-      },
-    },
-  );
-
-  const reportedSession = () =>
-    requests.find((request) => isRecord(request) && request.method === "pane.report_agent_session");
-  const deadline = Date.now() + 1_000;
-  while (Date.now() < deadline && reportedSession() === undefined) {
-    await Bun.sleep(5);
-  }
-
-  const request = reportedSession();
-  expect(request).toBeDefined();
-  expect(isRecord(request) && isRecord(request.params) ? request.params.session_start_source : null)
-    .toBe("new");
-});
-
-test("Pi waits for a replacement session report before publishing state", async () => {
-  const recordingSocketPath = join(tmpdir(), `herdr-pi-session-order-${process.pid}.sock`);
-  socketPath = recordingSocketPath;
-  await rm(recordingSocketPath, { force: true });
-
-  const requests: unknown[] = [];
-  let acknowledgeSessionReport: (() => void) | undefined;
-  const recordingServer = createServer((socket) => {
-    let input = "";
-    socket.setEncoding("utf8");
-    socket.on("data", (chunk) => {
-      input += chunk;
-      const newline = input.indexOf("\n");
-      if (newline === -1) {
-        return;
-      }
-      const request = JSON.parse(input.slice(0, newline));
-      requests.push(request);
-      if (isRecord(request) && request.method === "pane.report_agent_session") {
-        acknowledgeSessionReport = () => socket.end("{}\n");
-        return;
-      }
-      socket.end("{}\n");
-    });
-  });
-  server = recordingServer;
-  await new Promise<void>((resolve, reject) => {
-    recordingServer.once("error", reject);
-    recordingServer.listen(recordingSocketPath, resolve);
-  });
-
-  configureIntegrationEnvironment(recordingSocketPath);
-  const { handlers, pi } = createExtensionHarness();
-  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
-  install(pi);
-
-  const sessionStart = handlers.get("session_start");
-  expect(sessionStart).toBeDefined();
-  const sessionStartResult = sessionStart?.(
-    { reason: "new" },
-    {
-      hasUI: true,
-      isIdle: () => false,
-      sessionManager: {
-        getSessionFile: () => "/tmp/pi-new.jsonl",
-        getSessionId: () => "pi-new",
-      },
-    },
-  );
-
-  const deadline = Date.now() + 1_000;
-  while (Date.now() < deadline && acknowledgeSessionReport === undefined) {
-    await Bun.sleep(5);
-  }
-  expect(acknowledgeSessionReport).toBeDefined();
-  expect(
-    requests.some((request) => isRecord(request) && request.method === "pane.report_agent"),
-  ).toBe(false);
-
-  acknowledgeSessionReport?.();
-  await sessionStartResult;
-
-  const stateDeadline = Date.now() + 1_000;
-  while (
-    Date.now() < stateDeadline &&
-    !requests.some((request) => isRecord(request) && request.method === "pane.report_agent")
-  ) {
-    await Bun.sleep(5);
-  }
-  expect(requests.map((request) => (isRecord(request) ? request.method : undefined))).toEqual([
-    "pane.report_agent_session",
-    "pane.report_agent",
-  ]);
-});
-
 async function startDroppedFirstResponseServer(name: string) {
   const recordingSocketPath = join(tmpdir(), `herdr-${name}-${process.pid}.sock`);
   socketPath = recordingSocketPath;
@@ -327,48 +217,6 @@ test("Oh My Pi retries working before a queued idle state", async () => {
   expect(attemptedRequests[1]).toEqual(attemptedRequests[0]);
   expect(requestState(attemptedRequests[0])).toBe("working");
   expect(requestState(attemptedRequests[2])).toBe("idle");
-});
-
-test("Pi retries working state after an unanswered socket attempt", async () => {
-  const { attemptedRequests, deliveredRequests, connectionCount } =
-    await startDroppedFirstResponseServer("pi-retry");
-  const { handlers, pi } = createExtensionHarness();
-
-  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
-  install(pi);
-
-  const sessionStart = handlers.get("session_start");
-  expect(sessionStart).toBeDefined();
-  await sessionStart?.(
-    { reason: "startup" },
-    {
-      hasUI: true,
-      isIdle: () => false,
-      sessionManager: {
-        getSessionFile: () => undefined,
-        getSessionId: () => undefined,
-      },
-    },
-  );
-
-  const reportedWorking = () =>
-    deliveredRequests.some((request) => {
-      if (!isRecord(request) || request.method !== "pane.report_agent") {
-        return false;
-      }
-      const params = request.params;
-      return isRecord(params) && params.state === "working";
-    });
-
-  const deadline = Date.now() + 2_500;
-  while (Date.now() < deadline && !reportedWorking()) {
-    await Bun.sleep(5);
-  }
-
-  expect(connectionCount()).toBeGreaterThanOrEqual(2);
-  expect(attemptedRequests.length).toBeGreaterThanOrEqual(2);
-  expect(attemptedRequests[1]).toEqual(attemptedRequests[0]);
-  expect(reportedWorking()).toBe(true);
 });
 
 function requestState(request: unknown): unknown {

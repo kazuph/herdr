@@ -9,8 +9,6 @@ function rewriteHerdrLinks() {
     ['./README.md', '/docs/'],
     ['CONFIGURATION.md', '/docs/configuration/'],
     ['./CONFIGURATION.md', '/docs/configuration/'],
-    ['INTEGRATIONS.md', '/docs/integrations/'],
-    ['./INTEGRATIONS.md', '/docs/integrations/'],
     ['SOCKET_API.md', '/docs/socket-api/'],
     ['./SOCKET_API.md', '/docs/socket-api/'],
     ['SKILL.md', '/docs/agent-skill/'],
@@ -179,7 +177,6 @@ export default defineConfig({
           items: [
             { label: 'CLI reference', translations: { ja: 'CLI リファレンス', 'zh-CN': 'CLI 参考' }, slug: 'docs/cli-reference' },
             { label: 'Socket API', translations: { ja: 'ソケット API', 'zh-CN': 'Socket API' }, slug: 'docs/socket-api' },
-            { label: 'Integrations', translations: { ja: 'インテグレーション', 'zh-CN': '集成' }, slug: 'docs/integrations' },
             { label: 'Agent skill file', translations: { ja: 'エージェントスキルファイル', 'zh-CN': '智能体技能文件' }, slug: 'docs/agent-skill' },
             { label: 'Windows beta', translations: { ja: 'Windows ベータ', 'zh-CN': 'Windows 测试版' }, slug: 'docs/windows-beta' },
           ],

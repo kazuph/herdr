@@ -17,12 +17,7 @@ herdr --remote workbox --remote-keybindings server
 herdr --remote workbox --handoff
 herdr --no-session            # 单进程逃生舱
 herdr --default-config        # 打印默认配置
-herdr update                  # 从配置的通道下载并安装
-herdr update --handoff        # 对受支持的运行中服务器启用实时交接
 herdr completion zsh          # 生成 zsh 补全脚本
-herdr channel show            # 打印 stable 或 preview
-herdr channel set preview     # 启用预览构建
-herdr channel set stable      # 把 Linux/macOS 直接安装切回稳定版
 herdr --version               # 打印版本
 ```
 
@@ -193,7 +188,7 @@ herdr pane run <pane_id> <command>
 
 `pane run` 把文本和回车作为一个原子操作提交。发送命令时优先用它,而不是 `send-text` 加 `send-keys Enter`。
 
-从自定义钩子上报智能体状态:
+从可信本地工具上报智能体状态、显示元数据和精确恢复会话:
 
 ```bash
 herdr pane report-agent <pane_id> \
@@ -201,9 +196,13 @@ herdr pane report-agent <pane_id> \
   --agent LABEL \
   --state idle|working|blocked|unknown \
   [--message TEXT] \
+  [--custom-status TEXT] \
   [--seq N] \
+  [--title TEXT] \
+  [--session-id ID] \
   [--agent-session-id ID] \
-  [--agent-session-path PATH]
+  [--agent-session-path PATH] \
+  [--model NAME]
 ```
 
 当官方集成上报了原生会话引用时,`pane get`、`pane list`、`agent get` 和 `agent list` 会包含一个只读的 `agent_session` 对象。没有存储原生会话引用时,该字段被省略。
@@ -286,39 +285,14 @@ herdr wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [
 
 普通命令和服务器用 `wait output`。编程智能体用 `wait agent-status`。
 
-## 集成
+## 智能体状态报告
 
 ```bash
-herdr integration install pi
-herdr integration install omp
-herdr integration install claude
-herdr integration install codex
-herdr integration install copilot
-herdr integration install devin
-herdr integration install droid
-herdr integration install kimi
-herdr integration install opencode
-herdr integration install kilo
-herdr integration install hermes
-herdr integration install mastracode
-herdr integration install qodercli
-herdr integration install cursor
-herdr integration uninstall pi
-herdr integration uninstall omp
-herdr integration uninstall claude
-herdr integration uninstall codex
-herdr integration uninstall copilot
-herdr integration uninstall devin
-herdr integration uninstall droid
-herdr integration uninstall kimi
-herdr integration uninstall opencode
-herdr integration uninstall kilo
-herdr integration uninstall hermes
-herdr integration uninstall mastracode
-herdr integration uninstall qodercli
-herdr integration uninstall cursor
-herdr integration status [--outdated-only]
+herdr pane report-agent <pane_id> --source custom:tool --agent codex --state working
+herdr pane report-agent <pane_id> --source custom:tool --agent codex --state idle --session-id <id>
 ```
+
+这个 fork 不通过 `herdr integration` 安装或卸载智能体 hook/plugin。请让可信本地工具通过 `pane report-agent` 或 `pane.report_agent` socket method 报告状态。
 
 ## 插件
 

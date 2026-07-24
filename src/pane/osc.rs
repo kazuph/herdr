@@ -44,13 +44,6 @@ pub(super) struct DefaultColorOscTracker {
     body: Vec<u8>,
 }
 
-#[derive(Debug, Default)]
-pub(super) struct TitleOscTracker {
-    state: DefaultColorOscTrackerState,
-    body: Vec<u8>,
-    latest: Option<Option<String>>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum DefaultColorOscTrackerState {
     #[default]
@@ -147,71 +140,6 @@ impl DefaultColorOscTracker {
         }
 
         saw_default_color_set
-    }
-}
-
-impl TitleOscTracker {
-    pub(super) fn observe(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            match self.state {
-                DefaultColorOscTrackerState::Ground => {
-                    if byte == 0x1b {
-                        self.state = DefaultColorOscTrackerState::Escape;
-                    }
-                }
-                DefaultColorOscTrackerState::Escape => {
-                    if byte == b']' {
-                        self.body.clear();
-                        self.state = DefaultColorOscTrackerState::OscBody;
-                    } else if byte == 0x1b {
-                        self.state = DefaultColorOscTrackerState::Escape;
-                    } else {
-                        self.state = DefaultColorOscTrackerState::Ground;
-                    }
-                }
-                DefaultColorOscTrackerState::OscBody => match byte {
-                    0x07 => {
-                        self.finalize();
-                        self.state = DefaultColorOscTrackerState::Ground;
-                    }
-                    0x1b => self.state = DefaultColorOscTrackerState::OscEscape,
-                    _ => self.body.push(byte),
-                },
-                DefaultColorOscTrackerState::OscEscape => {
-                    if byte == b'\\' {
-                        self.finalize();
-                        self.state = DefaultColorOscTrackerState::Ground;
-                    } else {
-                        self.body.push(0x1b);
-                        self.body.push(byte);
-                        self.state = DefaultColorOscTrackerState::OscBody;
-                    }
-                }
-                DefaultColorOscTrackerState::IgnoreString
-                | DefaultColorOscTrackerState::IgnoreStringEscape
-                | DefaultColorOscTrackerState::OversizedOsc
-                | DefaultColorOscTrackerState::OversizedOscEscape => {
-                    self.body.clear();
-                    self.state = DefaultColorOscTrackerState::Ground;
-                }
-            }
-
-            if self.body.len() > 1024 {
-                self.body.clear();
-                self.state = DefaultColorOscTrackerState::Ground;
-            }
-        }
-    }
-
-    fn finalize(&mut self) {
-        if let Some(title) = parse_title_osc(&self.body) {
-            self.latest = Some(title);
-        }
-        self.body.clear();
-    }
-
-    pub(super) fn take_latest(&mut self) -> Option<Option<String>> {
-        self.latest.take()
     }
 }
 
@@ -351,21 +279,6 @@ fn parse_default_color_set_event(body: &[u8]) -> Option<DefaultColorEvent> {
     };
     let value = &body[separator + 1..];
     (!value.is_empty() && value != b"?").then_some(DefaultColorEvent::Set(query))
-}
-
-fn parse_title_osc(body: &[u8]) -> Option<Option<String>> {
-    let separator = body.iter().position(|byte| *byte == b';')?;
-    let command = &body[..separator];
-    if !matches!(command, b"0" | b"1" | b"2") {
-        return None;
-    }
-
-    let value = std::str::from_utf8(&body[separator + 1..]).ok()?;
-    let title = value
-        .trim_matches(|ch: char| ch.is_control())
-        .trim()
-        .to_string();
-    Some((!title.is_empty()).then_some(title))
 }
 
 /// 256 KiB of base64 ≈ 192 KiB of text — enough for real source-file copies
@@ -1054,26 +967,6 @@ pub(super) fn restore_host_terminal_theme_if_needed(
     true
 }
 
-pub(super) fn force_restore_host_terminal_theme(
-    core: &mut GhosttyPaneCore,
-    pane_id: PaneId,
-) -> bool {
-    let Some(owner_pgid) = core.transient_default_color_owner_pgid else {
-        return false;
-    };
-    if core.host_terminal_theme.is_empty() {
-        return false;
-    }
-
-    core.transient_default_color_owner_pgid = None;
-    write_host_terminal_theme(&mut core.terminal, core.host_terminal_theme);
-    info!(
-        pane = pane_id.raw(),
-        owner_pgid, "restored host terminal default colors after pane exit"
-    );
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use tokio::sync::mpsc;
@@ -1618,23 +1511,6 @@ mod tests {
     }
 
     #[test]
-    fn title_tracker_detects_osc_title_sequences() {
-        let mut tracker = TitleOscTracker::default();
-        tracker.observe(b"\x1b]0;planner\x07");
-
-        assert_eq!(tracker.take_latest(), Some(Some("planner".into())));
-    }
-
-    #[test]
-    fn title_tracker_detects_split_st_title_sequences() {
-        let mut tracker = TitleOscTracker::default();
-        tracker.observe(b"\x1b]2;review");
-        tracker.observe(b"\x1b\\");
-
-        assert_eq!(tracker.take_latest(), Some(Some("review".into())));
-    }
-
-    #[test]
     fn osc52_forwarder_handles_split_sequence_mid_payload() {
         let mut fw = Osc52Forwarder::default();
         fw.observe(b"\x1b]52;c;aGVs");
@@ -1872,49 +1748,6 @@ mod tests {
                 false,
                 Some(&shell_job(shell_pid)),
             ));
-        }
-
-        assert_eq!(pane_default_theme(&pane).background, host_theme.background);
-        assert_eq!(pane_default_theme(&pane).foreground, host_theme.foreground);
-    }
-
-    #[test]
-    fn force_restore_host_terminal_theme_reapplies_cached_colors_without_foreground_probe() {
-        let (tx, _rx) = mpsc::channel(4);
-        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
-        let pane = super::super::GhosttyPaneTerminal::new(terminal, tx).unwrap();
-        let pane_id = PaneId::from_raw(1);
-        let host_theme = crate::terminal_theme::TerminalTheme {
-            foreground: Some(crate::terminal_theme::RgbColor {
-                r: 0xaa,
-                g: 0xbb,
-                b: 0xcc,
-            }),
-            background: Some(crate::terminal_theme::RgbColor {
-                r: 0x11,
-                g: 0x22,
-                b: 0x33,
-            }),
-        };
-
-        pane.apply_host_terminal_theme(host_theme);
-        {
-            let mut core = pane.core.lock().unwrap();
-            core.transient_default_color_owner_pgid = Some(42);
-            core.terminal.write(b"\x1b]11;rgb:dd/ee/ff\x1b\\");
-        }
-        assert_eq!(
-            pane_default_theme(&pane).background,
-            Some(crate::terminal_theme::RgbColor {
-                r: 0xdd,
-                g: 0xee,
-                b: 0xff,
-            })
-        );
-
-        {
-            let mut core = pane.core.lock().unwrap();
-            assert!(force_restore_host_terminal_theme(&mut core, pane_id));
         }
 
         assert_eq!(pane_default_theme(&pane).background, host_theme.background);

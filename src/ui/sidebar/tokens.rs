@@ -21,6 +21,7 @@ pub(super) enum ResolvedTokenKind {
     TerminalTitle(String),
     Branch(String),
     GitStatus { ahead: usize, behind: usize },
+    GitDiff { additions: usize, deletions: usize },
     Custom(String),
 }
 
@@ -93,6 +94,7 @@ pub(super) struct SpaceTokenContext<'a> {
     pub branch: Option<&'a str>,
     pub state_text: &'a str,
     pub ahead_behind: Option<(usize, usize)>,
+    pub diff_stats: Option<(usize, usize)>,
     pub tokens: &'a std::collections::HashMap<String, String>,
     pub suppress_git_details: bool,
 }
@@ -117,15 +119,25 @@ pub(super) fn space_rows(
                         SpaceSidebarToken::Workspace => {
                             Some(ResolvedTokenKind::Workspace(context.workspace.to_string()))
                         }
-                        SpaceSidebarToken::Branch if !context.suppress_git_details => context
-                            .branch
-                            .map(|branch| ResolvedTokenKind::Branch(branch.to_string())),
+                        SpaceSidebarToken::Branch if !context.suppress_git_details => {
+                            Some(ResolvedTokenKind::Branch(
+                                context.branch.unwrap_or("nogit").to_string(),
+                            ))
+                        }
                         SpaceSidebarToken::Branch => None,
                         SpaceSidebarToken::GitStatus if !context.suppress_git_details => context
                             .ahead_behind
                             .filter(|(ahead, behind)| *ahead > 0 || *behind > 0)
                             .map(|(ahead, behind)| ResolvedTokenKind::GitStatus { ahead, behind }),
                         SpaceSidebarToken::GitStatus => None,
+                        SpaceSidebarToken::GitDiff if !context.suppress_git_details => context
+                            .diff_stats
+                            .filter(|(additions, deletions)| *additions > 0 || *deletions > 0)
+                            .map(|(additions, deletions)| ResolvedTokenKind::GitDiff {
+                                additions,
+                                deletions,
+                            }),
+                        SpaceSidebarToken::GitDiff => None,
                         SpaceSidebarToken::Custom(name) => context
                             .tokens
                             .get(name)
@@ -143,7 +155,10 @@ pub(super) fn space_rows(
 
 pub(super) fn separator(previous: &ResolvedToken, current: &ResolvedToken) -> &'static str {
     if matches!(previous.kind, ResolvedTokenKind::StateIcon)
-        || matches!(current.kind, ResolvedTokenKind::GitStatus { .. })
+        || matches!(
+            current.kind,
+            ResolvedTokenKind::GitStatus { .. } | ResolvedTokenKind::GitDiff { .. }
+        )
     {
         " "
     } else {
@@ -297,6 +312,7 @@ mod tests {
                     branch: Some("worktree/feature"),
                     state_text: "idle",
                     ahead_behind: Some((2, 1)),
+                    diff_stats: Some((4, 3)),
                     tokens: &std::collections::HashMap::new(),
                     suppress_git_details: true,
                 },
@@ -305,6 +321,56 @@ mod tests {
                 ResolvedToken::unstyled(ResolvedTokenKind::StateIcon),
                 ResolvedToken::unstyled(ResolvedTokenKind::Workspace("feature".into())),
             ]]
+        );
+    }
+
+    #[test]
+    fn default_space_rows_include_worktree_diff_stats() {
+        let rows = space_rows(
+            &SpacesSidebarConfig::default(),
+            SpaceTokenContext {
+                workspace: "repo",
+                branch: Some("main"),
+                state_text: "idle",
+                ahead_behind: None,
+                diff_stats: Some((7, 2)),
+                tokens: &std::collections::HashMap::new(),
+                suppress_git_details: false,
+            },
+        );
+
+        assert_eq!(
+            rows[1],
+            vec![
+                ResolvedToken::unstyled(ResolvedTokenKind::Branch("main".into())),
+                ResolvedToken::unstyled(ResolvedTokenKind::GitDiff {
+                    additions: 7,
+                    deletions: 2,
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn default_space_rows_render_nogit_without_a_branch() {
+        let rows = space_rows(
+            &SpacesSidebarConfig::default(),
+            SpaceTokenContext {
+                workspace: "shell",
+                branch: None,
+                state_text: "idle",
+                ahead_behind: None,
+                diff_stats: None,
+                tokens: &std::collections::HashMap::new(),
+                suppress_git_details: false,
+            },
+        );
+
+        assert_eq!(
+            rows[1],
+            vec![ResolvedToken::unstyled(ResolvedTokenKind::Branch(
+                "nogit".into()
+            ))]
         );
     }
 
@@ -324,6 +390,7 @@ mod tests {
                     branch: None,
                     state_text: "idle",
                     ahead_behind: None,
+                    diff_stats: None,
                     tokens: &tokens,
                     suppress_git_details: false,
                 },
