@@ -225,12 +225,13 @@ pub(super) fn render_global_launcher_menu(app: &AppState, frame: &mut Frame) {
             break;
         }
         if *item == "--" {
+            let row_rect = Rect::new(inner.x, y, inner.width, 1);
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
                     "─".repeat(inner.width as usize),
                     Style::default().fg(app.palette.surface_dim),
                 ))),
-                rect,
+                row_rect,
             );
             continue;
         }

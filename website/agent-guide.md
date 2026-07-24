@@ -48,7 +48,7 @@ First check where you are. If `HERDR_ENV=1` is set in your environment, you are 
 Walk the human through this sequence:
 
 1. `cd` into a project and run `herdr`. It launches or attaches to the default background session and creates a workspace automatically. First run shows an onboarding flow.
-2. Start their coding agent in the pane — `claude`, `codex`, or any supported agent (full list: https://herdr.dev/docs/agents/). Herdr detects it automatically; the sidebar shows its state. Installing the matching integration improves detection: `herdr integration install claude` (and similarly for other agents).
+2. Start their coding agent in the pane — `claude`, `codex`, or any supported agent (full list: https://herdr.dev/docs/agents/). Herdr detects it automatically; trusted local tools can report richer state and session references through `herdr pane report-agent`.
 3. Show them the mouse first: click panes and tabs to focus, drag split borders, right-click for menus, drag-select to copy. No keybindings are required to use Herdr.
 4. Split panes: right-click menu, or `prefix+v` (right) / `prefix+minus` (down). New tab: `prefix+c`.
 5. Detach with `prefix+q` (press `ctrl+b`, release, press `q`) or simply close the terminal window. Everything keeps running. Reattach later with `herdr`.
@@ -79,7 +79,7 @@ Once the human is set up, offer to install it into your own harness so future se
 
 ## Diagnosis recipes
 
-- **Agent not detected or wrong state:** `herdr agent list` to see what Herdr sees, `herdr agent explain <target> --json` to see why the detector classified a pane the way it did. Installing the agent's integration (`herdr integration install <name>`, status via `herdr integration status`) gives Herdr authoritative state instead of screen detection. Details: https://herdr.dev/docs/agents/ and https://herdr.dev/docs/integrations/
+- **Agent not detected or wrong state:** `herdr agent list` shows what Herdr sees, and `herdr agent explain <target> --json` shows why the detector classified a pane that way. Trusted local tools can report richer state and session references through `herdr pane report-agent`; this fork does not install agent integrations. Details: https://herdr.dev/docs/agents/
 - **A keybinding does nothing:** the outer terminal or desktop environment owns that chord. Point the human to https://herdr.dev/docs/keyboard/ to pick a safe one or free the chord in their terminal settings.
 - **Something looks wrong at startup or with the socket API:** logs are at `~/.config/herdr/herdr.log`, `~/.config/herdr/herdr-client.log`, and `~/.config/herdr/herdr-server.log`. `herdr status`, `herdr status server`, and `herdr status client` summarize the runtime.
 - **Remote questions:** SSH to the machine and run `herdr` there (works like tmux), or attach as a thin local client with `herdr --remote <host>`. Trade-offs: https://herdr.dev/docs/how-to-work/

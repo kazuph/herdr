@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use super::widgets::panel_contrast_fg;
+use super::{text::display_width_u16, widgets::panel_contrast_fg};
 use crate::{
     app::{
         state::{CopyFeedback, Palette, ToastKind, ToastNotification},
@@ -158,8 +158,8 @@ pub(crate) fn toast_notification_rect(
     offset_for_warning: bool,
     position: ToastHerdrPosition,
 ) -> Rect {
-    let content_width = (toast.title.len() as u16)
-        .max(toast.context.len() as u16)
+    let content_width = display_width_u16(&toast.title)
+        .max(display_width_u16(&toast.context))
         .saturating_add(4);
     let width = content_width.saturating_add(2).min(area.width);
     let content_height = if toast.context.is_empty() { 1 } else { 2 };
@@ -409,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn toast_rect_uses_byte_length_for_cjk_labels() {
+    fn toast_rect_uses_display_width_for_cjk_labels() {
         let area = Rect::new(0, 0, 100, 20);
         let toast = ToastNotification {
             kind: ToastKind::NeedsAttention,
@@ -421,7 +421,8 @@ mod tests {
 
         let rect = toast_notification_rect(area, &toast, false, ToastHerdrPosition::TopRight);
 
-        let expected_content_width = (toast.title.len() as u16).max(toast.context.len() as u16) + 6;
+        let expected_content_width =
+            display_width_u16(&toast.title).max(display_width_u16(&toast.context)) + 6;
         assert_eq!(rect.width, expected_content_width);
         assert_eq!(rect.x + rect.width, area.x + area.width);
     }
