@@ -500,6 +500,7 @@ herdr run --label tests -- cargo test
 - `herdr send <agent_target> <message>` sends a durable message to an agent or pane target.
 - `herdr inbox [--room <room>]` reads queued messages for the current agent.
 - `herdr log [job_id|--db]` inspects dispatch and job history; `sqlite3 "$(herdr log --db)"` opens the raw audit DB.
+- `herdr api <subcommand>` inspects live socket state and the bundled API schema.
 - `herdr run --label tests -- cargo test` starts a pane-less background job by default.
 - `herdr run list` lists background jobs.
 - `herdr pane current` resolves the exact caller pane.
