@@ -983,7 +983,7 @@ fn validated_saved_global_pane_ids(
                 else {
                     return Err("a pane has no saved global pane ID");
                 };
-                if global_id == 0 || global_id == u32::MAX {
+                if global_id == 0 || global_id >= u32::MAX - 1 {
                     return Err("a saved global pane ID cannot be allocated safely");
                 }
                 if saved_ids.contains_key(&old_id) || !global_ids.insert(global_id) {
@@ -1239,6 +1239,26 @@ mod tests {
             .collect();
         assert_eq!(restored_ids.len(), 2);
         assert!(!restored_ids.contains(&4000));
+    }
+
+    #[tokio::test]
+    async fn saved_global_pane_id_without_space_for_next_pane_reallocates_all_panes() {
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot = test_session_snapshot(vec![test_workspace_snapshot(
+            &cwd,
+            "w1",
+            10,
+            Some(u32::MAX - 1),
+        )]);
+
+        assert!(validated_saved_global_pane_ids(&snapshot).is_err());
+        let (workspaces, _) =
+            restore_for_test(&snapshot, PaneIdRestoreMode::PreserveSnapshotGlobalIds);
+        assert_ne!(
+            workspaces[0].tabs[0].root_pane.raw(),
+            u32::MAX - 1,
+            "an unreservable saved global pane ID must be replaced"
+        );
     }
 
     #[tokio::test]
