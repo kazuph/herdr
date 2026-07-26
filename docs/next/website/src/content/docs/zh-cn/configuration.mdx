@@ -414,6 +414,8 @@ resume_agents_on_restore = true
 
 只有通过官方集成获得有效原生会话引用的窗格才能恢复；其他窗格会作为普通 shell 恢复。有关受支持的智能体和持久化行为，请参阅[会话状态与恢复](/docs/session-state/)。
 
+Codex 会话恢复会复用 `agent_start.commands.codex` 中配置的 argv，并且只在末尾追加 `resume <session-id>`。将 approval、sandbox、network 和 wrapper 选项放入这个结构化 argv，可让新窗格与恢复窗格以相同条件启动 Codex。未配置该 argv 时，Herdr 会保留旧的 `agent_restore.commands.codex` 模板行为。
+
 ## IME 光标跟踪
 
 在 macOS 上，隐藏硬件光标的 AI 智能体 TUI 可能导致原生输入法候选窗口无法跟随聚焦窗格。使用以下设置可为这些窗格显示光标锚点：

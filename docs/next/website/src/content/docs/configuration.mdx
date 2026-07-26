@@ -92,6 +92,8 @@ agy = ["agy", "--dangerously-skip-permissions"]
 
 When a command is omitted, Herdr starts the matching executable with no extra arguments. Reloading config changes subsequent context-menu launches; it does not restart existing agent panes.
 
+Codex session restore also reuses the configured `agent_start.commands.codex` argv and appends only `resume <session-id>`. Put approval, sandbox, network, and wrapper options in this structured argv so new panes and restored panes start Codex under the same conditions. When this argv is absent, Herdr retains the legacy `agent_restore.commands.codex` template behavior.
+
 ## Worktrees
 
 Set the root directory Herdr uses for Git worktree checkouts created from the sidebar:

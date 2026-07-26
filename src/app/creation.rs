@@ -267,6 +267,7 @@ impl App {
                 pane_id_restore_mode: crate::persist::PaneIdRestoreMode::AllocateFreshIds,
                 resume_agents_on_restore: false,
                 agent_restore_commands: &std::collections::BTreeMap::new(),
+                agent_start_commands: &std::collections::BTreeMap::new(),
             },
             self.event_tx.clone(),
             self.render_notify.clone(),

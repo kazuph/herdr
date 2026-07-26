@@ -433,6 +433,7 @@ impl App {
                     resume_agents_on_restore: config.session.resume_agents_on_restore
                         || config.agent_restore.enabled,
                     agent_restore_commands: &config.agent_restore.commands,
+                    agent_start_commands: &config.agent_start.commands,
                 },
                 event_tx.clone(),
                 render_notify.clone(),

@@ -8,6 +8,7 @@
 
 ### Fixed
 - Live handoff now preserves installed plugins and no longer lets the next plugin installation overwrite the existing registry. (#893)
+- Codex session restore now preserves the configured `[agent_start.commands].codex` argv before appending `resume <session-id>`, so approval, sandbox, network, and wrapper options no longer disappear after a Herdr restart.
 
 ## [0.7.4] - 2026-07-15
 

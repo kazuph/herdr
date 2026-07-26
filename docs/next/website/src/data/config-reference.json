@@ -1090,7 +1090,7 @@
           "key": "agent_start.commands",
           "type": "map of string arrays",
           "default": "{}",
-          "description": "Agent name to argv mapping used by New agent context-menu actions."
+          "description": "Agent name to argv mapping used by New agent context-menu actions; Codex session restore reuses this argv before appending resume <session-id>."
         }
       ]
     },

@@ -586,7 +586,8 @@
   - 旧CLI形式の`--source custom:tool --agent codex --session-id ID`（任意のtrusted local tool source、Claudeも同様）は、状態・title・custom statusの所有sourceを呼出元指定のまま保ち、known agentのsafeなsession idだけを現本家のnative `herdr:codex` agent session記録へ分離して保存する。
   - 復元済みpaneに同じagentのnative session記録がある場合、session refを含まないtrusted local toolの状態報告はnative sessionを消さず、異なる状態報告sourceとagent session sourceを共存させる。
   - custom状態報告sourceをclear/releaseしても、異なるnative agent session sourceが所有する同じagentのsession idは削除しない。
-  - 復元コマンドの組み立ては、agentごとのtemplateに `{session_id}` を必須にする。fork時点のbuiltinは `claude = "claude --resume {session_id}"` と `codex = "codex resume {session_id}"`。
+  - Codexの復元コマンドは、`[agent_start.commands].codex`が設定されている場合、その構造化argvを順序どおり保持し、末尾へ`resume`とpane固有session idだけを追加する。新規pane起動とrestoreでsandbox・approval・network・wrapper等の起動オプションを変えず、shell aliasや`sh -lc`へ依存しない。
+  - `[agent_start.commands].codex`が無い場合だけ、既存のagent別restore templateを使う。templateには`{session_id}`を必須とし、fork時点のbuiltinは`claude = "claude --resume {session_id}"`と`codex = "codex resume {session_id}"`。
   - session idは、明示報告が最優先。明示報告がないplain processでは、実行中processのcmdlineから `claude --resume <id>` / `claude --resume=<id>` / `codex resume <id>` を読む。
   - plain Claude/Codexでcmdlineにresume idがない場合だけ、実行中processのcwdとprocess start timeに一致するsession fileを探す。Codexは `$HOME/.codex/sessions/**/*.jsonl` の先頭 `session_meta.payload.id` または `session_meta.payload.session_id`、`payload.cwd`、`payload.timestamp` を使う。Claudeは `$HOME/.claude/projects/**/*.jsonl` の先頭64行以内にある `sessionId`、`cwd`、`timestamp` を使う。
   - session file recoveryは、session timestampとprocess start timeの差が120秒以内で、候補が1件だけのときだけ採用する。0件または2件以上ならsession id未確定として扱う。
@@ -598,6 +599,7 @@
   - live agentが既に見えているpaneは二重起動せず、`reason = "agent already running"` でskipし、そのpaneのpending resume状態を消す。
 - **受け入れ条件**:
   - 同一cwdの3つのCodex paneにそれぞれ別session idが記録されている状態でsnapshot/restoreしても、3paneが同じ「cwd最新」会話へ潰れない。
+  - `[agent_start.commands].codex = ["codex", "--sandbox", "workspace-write", "--config", "sandbox_workspace_write.network_access=true", "--dangerously-bypass-approvals-and-sandbox"]`の時、restore planは同じ6要素の後ろへ`resume`, `<session-id>`だけを追加し、legacyの`codex resume {session_id}`が併存しても`["sh", "-lc", ...]`へ変換しない。
   - `herdr agent restore --dry-run` が `codex resume 019ef3a2-749c-7b52-b324-2c20cb0b2379` のようにpane固有id入りコマンドを返す。
   - `pane.report-agent ... --session-id bad;id` のようなunsafe idは記録されず、session dirtyにもならない。
   - `pane.report-agent ... --source custom:tool --agent codex --state working --title "restore pane sessions" --custom-status "checking parity" --session-id ID` の1回の報告で、状態・title・custom statusとnative restore用session idの両方が保持される。
@@ -613,6 +615,7 @@
 - **デグレ判定**:
   - session idがないpaneをcwd最新、`resume --last`、`--last`、mtime最新sessionで復元したら劣化。
   - 同じcwdの複数paneが同じ会話に復元されたら劣化。
+  - `[agent_start.commands].codex`の実行ファイルまたは通常起動オプションがrestoreで欠落・並び替えされる、あるいはlegacy shell templateが優先されてapproval/sandbox条件が変わったら劣化。
   - `pane.report-agent --session-id` またはcmdline観測で得たpane固有session idがsnapshot後に失われたら劣化。
   - `--dry-run` がpaneごとの具体的command/skip理由を返さない、または実行してしまうなら劣化。
 

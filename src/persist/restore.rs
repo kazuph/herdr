@@ -27,6 +27,7 @@ const RESTORED_TITLE_METADATA_SOURCE: &str = "herdr:session-restore";
 struct AgentRestoreState<'a> {
     enabled: bool,
     commands: &'a BTreeMap<String, String>,
+    agent_start_commands: &'a BTreeMap<String, Vec<String>>,
     resumed_sessions: &'a mut HashSet<String>,
 }
 
@@ -42,6 +43,7 @@ struct RestoreRuntimeContext<'a> {
     shell_config: crate::pane::PaneShellConfig<'a>,
     resume_agents_on_restore: bool,
     agent_restore_commands: &'a BTreeMap<String, String>,
+    agent_start_commands: &'a BTreeMap<String, Vec<String>>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<AtomicBool>,
@@ -76,6 +78,7 @@ pub struct RestoreOptions<'a> {
     pub pane_id_restore_mode: PaneIdRestoreMode,
     pub resume_agents_on_restore: bool,
     pub agent_restore_commands: &'a BTreeMap<String, String>,
+    pub agent_start_commands: &'a BTreeMap<String, Vec<String>>,
 }
 
 /// Restore workspaces from a snapshot. Each pane gets a fresh shell in its saved cwd.
@@ -130,6 +133,7 @@ pub fn restore_handoff(
             pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
             resume_agents_on_restore: true,
             agent_restore_commands: &BTreeMap::new(),
+            agent_start_commands: &BTreeMap::new(),
         },
         imports,
         events,
@@ -321,6 +325,7 @@ fn restore_with_imports_and_failures(
     };
     let resume_agents_on_restore = restore_options.resume_agents_on_restore;
     let agent_restore_commands = restore_options.agent_restore_commands;
+    let agent_start_commands = restore_options.agent_start_commands;
     let mut workspaces = Vec::new();
     let mut terminals = HashMap::new();
     let mut terminal_runtimes = HashMap::new();
@@ -332,6 +337,7 @@ fn restore_with_imports_and_failures(
             shell_config,
             resume_agents_on_restore,
             agent_restore_commands,
+            agent_start_commands,
             events: events.clone(),
             render_notify: render_notify.clone(),
             render_dirty: render_dirty.clone(),
@@ -557,6 +563,7 @@ fn restore_tab(
             let mut agent_restore = AgentRestoreState {
                 enabled: runtime_context.resume_agents_on_restore,
                 commands: runtime_context.agent_restore_commands,
+                agent_start_commands: runtime_context.agent_start_commands,
                 resumed_sessions: resumed_agent_sessions,
             };
             pane_restore_startup(saved_agent_session, saved_history, &mut agent_restore)
@@ -819,7 +826,12 @@ fn pane_restore_startup<'a>(
     // presentation history into that terminal, even when this pane is a
     // duplicate suppressed by session de-duplication.
     let restore_plan = session.and_then(|session| {
-        restore_plan_for_snapshot(session, agent_restore.enabled, agent_restore.commands)
+        restore_plan_for_snapshot(
+            session,
+            agent_restore.enabled,
+            agent_restore.commands,
+            agent_restore.agent_start_commands,
+        )
     });
     let has_native_agent_restore = restore_plan.is_some();
     // Reserve before spawning so later panes in the same restore pass cannot
@@ -859,6 +871,7 @@ fn restore_plan_for_snapshot(
     session: &PaneAgentSessionSnapshot,
     resume_agents_on_restore: bool,
     agent_restore_commands: &BTreeMap<String, String>,
+    agent_start_commands: &BTreeMap<String, Vec<String>>,
 ) -> Option<crate::agent_resume::AgentResumePlan> {
     if !resume_agents_on_restore {
         return None;
@@ -866,6 +879,20 @@ fn restore_plan_for_snapshot(
     let persisted = persisted_agent_session_from_snapshot(session)?;
     let native_plan =
         crate::agent_resume::plan(&session.source, &session.agent, &persisted.session_ref)?;
+    if persisted.agent == "codex" {
+        if let Some(mut argv) = agent_start_commands
+            .get(&persisted.agent)
+            .filter(|argv| !argv.is_empty())
+            .cloned()
+        {
+            argv.extend(native_plan.argv.iter().skip(1).cloned());
+            return Some(crate::agent_resume::AgentResumePlan {
+                agent: native_plan.agent,
+                argv,
+                dedupe_key: native_plan.dedupe_key,
+            });
+        }
+    }
     if let Some(template) =
         crate::agent_sessions::restore_template(agent_restore_commands, &persisted.agent)
     {
@@ -912,8 +939,13 @@ fn take_restore_plan_for_snapshot(
     resume_agents_on_restore: bool,
     resumed_agent_sessions: &mut HashSet<String>,
 ) -> Option<crate::agent_resume::AgentResumePlan> {
-    restore_plan_for_snapshot(session, resume_agents_on_restore, &BTreeMap::new())
-        .filter(|plan| resumed_agent_sessions.insert(plan.dedupe_key.clone()))
+    restore_plan_for_snapshot(
+        session,
+        resume_agents_on_restore,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    )
+    .filter(|plan| resumed_agent_sessions.insert(plan.dedupe_key.clone()))
 }
 
 pub(super) fn prune_restored_node(node: Node, surviving: &HashSet<PaneId>) -> Option<Node> {
@@ -1158,6 +1190,7 @@ mod tests {
                 pane_id_restore_mode,
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
+                agent_start_commands: &BTreeMap::new(),
             },
             events,
             Arc::new(Notify::new()),
@@ -1355,9 +1388,12 @@ mod tests {
             value: pi_session_path.clone(),
         };
 
-        assert!(restore_plan_for_snapshot(&session, false, &BTreeMap::new()).is_none());
+        assert!(
+            restore_plan_for_snapshot(&session, false, &BTreeMap::new(), &BTreeMap::new(),)
+                .is_none()
+        );
         assert_eq!(
-            restore_plan_for_snapshot(&session, true, &BTreeMap::new())
+            restore_plan_for_snapshot(&session, true, &BTreeMap::new(), &BTreeMap::new(),)
                 .unwrap()
                 .argv,
             vec!["pi", "--session", pi_session_path.as_str()]
@@ -1369,7 +1405,13 @@ mod tests {
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: test_session_path("claude-session"),
         };
-        assert!(restore_plan_for_snapshot(&unsupported_path, true, &BTreeMap::new()).is_none());
+        assert!(restore_plan_for_snapshot(
+            &unsupported_path,
+            true,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        )
+        .is_none());
     }
 
     #[test]
@@ -1381,7 +1423,67 @@ mod tests {
             value: "--last".into(),
         };
 
-        assert!(restore_plan_for_snapshot(&session, true, &BTreeMap::new()).is_none());
+        assert!(
+            restore_plan_for_snapshot(&session, true, &BTreeMap::new(), &BTreeMap::new(),)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn codex_restore_reuses_structured_start_argv_before_legacy_template() {
+        let session = super::super::snapshot::PaneAgentSessionSnapshot {
+            source: "herdr:codex".into(),
+            agent: "codex".into(),
+            kind: crate::agent_resume::AgentSessionRefKind::Id,
+            value: "codex-session".into(),
+        };
+        let restore_commands =
+            BTreeMap::from([("codex".into(), "codex resume {session_id}".into())]);
+        let start_commands = BTreeMap::from([(
+            "codex".into(),
+            vec![
+                "codex".into(),
+                "--sandbox".into(),
+                "workspace-write".into(),
+                "--config".into(),
+                "sandbox_workspace_write.network_access=true".into(),
+                "--dangerously-bypass-approvals-and-sandbox".into(),
+            ],
+        )]);
+
+        let plan =
+            restore_plan_for_snapshot(&session, true, &restore_commands, &start_commands).unwrap();
+
+        assert_eq!(
+            plan.argv,
+            vec![
+                "codex",
+                "--sandbox",
+                "workspace-write",
+                "--config",
+                "sandbox_workspace_write.network_access=true",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "resume",
+                "codex-session",
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_restore_keeps_legacy_template_without_structured_start_argv() {
+        let session = super::super::snapshot::PaneAgentSessionSnapshot {
+            source: "herdr:codex".into(),
+            agent: "codex".into(),
+            kind: crate::agent_resume::AgentSessionRefKind::Id,
+            value: "codex-session".into(),
+        };
+        let restore_commands =
+            BTreeMap::from([("codex".into(), "codex resume {session_id}".into())]);
+
+        let plan =
+            restore_plan_for_snapshot(&session, true, &restore_commands, &BTreeMap::new()).unwrap();
+
+        assert_eq!(plan.argv, vec!["sh", "-lc", "codex resume codex-session"]);
     }
 
     #[test]
@@ -1423,6 +1525,7 @@ mod tests {
         let mut agent_restore = AgentRestoreState {
             enabled: true,
             commands: &BTreeMap::new(),
+            agent_start_commands: &BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
 
@@ -1449,6 +1552,7 @@ mod tests {
         let mut agent_restore = AgentRestoreState {
             enabled: true,
             commands: &BTreeMap::new(),
+            agent_start_commands: &BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
 
@@ -1478,6 +1582,7 @@ mod tests {
         let mut agent_restore = AgentRestoreState {
             enabled: false,
             commands: &BTreeMap::new(),
+            agent_start_commands: &BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
 
@@ -1583,6 +1688,7 @@ mod tests {
                 pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
+                agent_start_commands: &BTreeMap::new(),
             },
             events,
             Arc::new(Notify::new()),
@@ -1683,6 +1789,7 @@ mod tests {
                 pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
+                agent_start_commands: &BTreeMap::new(),
             },
             events,
             Arc::new(Notify::new()),
@@ -1809,6 +1916,7 @@ mod tests {
                 pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
+                agent_start_commands: &BTreeMap::new(),
             },
             events,
             Arc::new(Notify::new()),
@@ -1931,6 +2039,7 @@ mod tests {
                 pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
                 resume_agents_on_restore: true,
                 agent_restore_commands: &BTreeMap::new(),
+                agent_start_commands: &BTreeMap::new(),
             },
             events,
             Arc::new(Notify::new()),
@@ -2002,6 +2111,7 @@ mod tests {
                 pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
+                agent_start_commands: &BTreeMap::new(),
             },
             events,
             render_notify,
@@ -2045,6 +2155,7 @@ mod tests {
                 pane_id_restore_mode: PaneIdRestoreMode::PreserveSnapshotGlobalIds,
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
+                agent_start_commands: &BTreeMap::new(),
             },
             events,
             render_notify,

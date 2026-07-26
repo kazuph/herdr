@@ -92,6 +92,8 @@ agy = ["agy", "--dangerously-skip-permissions"]
 
 コマンドを省略した Agent は、追加引数なしで対応する実行ファイルを起動します。設定のリロードは以後のコンテキストメニュー起動に反映され、既存の Agent pane は再起動しません。
 
+Codexのsession restoreも、設定された`agent_start.commands.codex`のargvを再利用し、末尾へ`resume <session-id>`だけを追加します。approval、sandbox、network、wrapperの各オプションをこの構造化argvへ置くと、新規paneと復元paneが同じ条件でCodexを起動します。このargvが無い場合は、従来の`agent_restore.commands.codex` templateを使います。
+
 ## Worktree
 
 サイドバーから作成される Git worktree チェックアウトに Herdr が使うルートディレクトリを設定します:
