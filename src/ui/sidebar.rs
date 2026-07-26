@@ -881,7 +881,7 @@ pub(super) fn render_sidebar_collapsed(app: &AppState, frame: &mut Frame, area: 
     let sep_style = if is_navigating {
         Style::default().fg(p.accent)
     } else {
-        Style::default().fg(p.surface_dim)
+        Style::default().fg(p.overlay0)
     };
     let sep_x = area.x + area.width.saturating_sub(1);
     let buf = frame.buffer_mut();
@@ -941,7 +941,7 @@ pub(super) fn render_sidebar_collapsed(app: &AppState, frame: &mut Frame, area: 
         let buf = frame.buffer_mut();
         for x in ws_area.x..ws_area.x + ws_area.width {
             buf[(x, divider_y)].set_symbol("─");
-            buf[(x, divider_y)].set_style(Style::default().fg(p.surface_dim));
+            buf[(x, divider_y)].set_style(Style::default().fg(p.overlay0));
         }
     }
 
@@ -1035,7 +1035,7 @@ pub(super) fn render_sidebar(
     let sep_style = if is_navigating {
         Style::default().fg(p.accent)
     } else {
-        Style::default().fg(p.surface_dim)
+        Style::default().fg(p.overlay0)
     };
 
     let sep_x = area.x + area.width.saturating_sub(1);
@@ -1589,7 +1589,7 @@ fn render_agent_detail(
 
     let sep_line = "─".repeat(area.width as usize);
     frame.render_widget(
-        Paragraph::new(Span::styled(&sep_line, Style::default().fg(p.surface_dim))),
+        Paragraph::new(Span::styled(&sep_line, Style::default().fg(p.overlay0))),
         Rect::new(area.x, area.y, area.width, 1),
     );
 
@@ -1781,6 +1781,50 @@ mod tests {
                     row_text(buffer, row, width)
                 )
             })
+    }
+
+    #[test]
+    fn expanded_sidebar_dividers_use_visible_overlay_color() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.mode = Mode::Terminal;
+        let area = Rect::new(0, 0, 26, 20);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let (_, detail_area) = expanded_sidebar_sections(area, app.sidebar_section_split);
+        let outer_divider = &buffer[(area.width - 1, 0)];
+        let section_divider = &buffer[(0, detail_area.y)];
+
+        assert_eq!(outer_divider.symbol(), "│");
+        assert_eq!(outer_divider.style().fg, Some(app.palette.overlay0));
+        assert_eq!(section_divider.symbol(), "─");
+        assert_eq!(section_divider.style().fg, Some(app.palette.overlay0));
+    }
+
+    #[test]
+    fn collapsed_sidebar_dividers_use_visible_overlay_color() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.mode = Mode::Terminal;
+        let area = Rect::new(0, 0, 6, 20);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+
+        terminal
+            .draw(|frame| render_sidebar_collapsed(&app, frame, area))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let (_, divider_y, _) = collapsed_sidebar_sections(area);
+        let outer_divider = &buffer[(area.width - 1, 0)];
+        let section_divider = &buffer[(0, divider_y.unwrap())];
+
+        assert_eq!(outer_divider.symbol(), "│");
+        assert_eq!(outer_divider.style().fg, Some(app.palette.overlay0));
+        assert_eq!(section_divider.symbol(), "─");
+        assert_eq!(section_divider.style().fg, Some(app.palette.overlay0));
     }
 
     #[test]
