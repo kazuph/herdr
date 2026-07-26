@@ -29,7 +29,9 @@ fork-spec-contracts:
     just test-one section_new_button
     just test-one clicking_existing_section_new_button
     just test-one headless_deferred_workspace_create_preserves_requested_section
-    just test-one slim_workspace_keeps_one_row
+    just test-one slim_workspace_uses_two_rows
+    just test-one full_workspace_is_tappable_across_all_three_rows
+    just test-one slim_workspace_is_tappable_across_both_rows
     just test-one expanded_sidebar_workspace_rows_show_state_number_and_name
     just test-one default_space_rows_render_nogit
     just test-one space_row_gap_preserves_compact_worktree_children

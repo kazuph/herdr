@@ -236,8 +236,8 @@ fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indent
         },
     );
     match app.workspace_panel_density {
-        WorkspacePanelDensity::Full => rows.len().max(2).min(u16::MAX as usize) as u16,
-        WorkspacePanelDensity::Slim => 1,
+        WorkspacePanelDensity::Full => rows.len().max(3).min(u16::MAX as usize) as u16,
+        WorkspacePanelDensity::Slim => 2,
     }
 }
 
@@ -541,10 +541,10 @@ fn workspace_list_visible_count(app: &AppState, area: Rect, scroll: usize) -> us
     let mut visible = 0usize;
     let mut skipped = 0usize;
     for (section, entries) in sidebar_workspace_sections(app) {
-        if used_rows.saturating_add(2) > body.height {
+        if used_rows.saturating_add(1) > body.height {
             break;
         }
-        used_rows = used_rows.saturating_add(2);
+        used_rows = used_rows.saturating_add(1);
         if !workspace_section_is_expanded(app, section) {
             continue;
         }
@@ -793,8 +793,7 @@ pub(crate) fn compute_workspace_list_areas(
             section,
             rect: Rect::new(body.x, row_y, body.width, 1),
         });
-        // The second row deliberately separates each header from its cards.
-        row_y = row_y.saturating_add(2).min(body_bottom);
+        row_y = row_y.saturating_add(1).min(body_bottom);
 
         if !workspace_section_is_expanded(app, section) {
             continue;
@@ -985,7 +984,7 @@ pub(crate) fn workspace_drop_indicator_row(
 
     let first = cards.first()?;
     if insert_idx == first.ws_idx {
-        return first.rect.y.checked_sub(1).filter(|y| *y < list_bottom);
+        return (first.rect.y < list_bottom).then_some(first.rect.y);
     }
 
     if let Some(row) = cards
@@ -2265,8 +2264,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.workspace_panel_density = WorkspacePanelDensity::Slim;
         let slim = compute_workspace_card_areas(&app, area);
 
-        assert_eq!(full[0].rect.height, 2);
-        assert_eq!(slim[0].rect.height, 1);
+        assert_eq!(full[0].rect.height, 3);
+        assert_eq!(slim[0].rect.height, 2);
     }
 
     #[test]
@@ -2318,7 +2317,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     }
 
     #[test]
-    fn slim_workspace_keeps_one_row_hit_area_and_two_row_visual_footprint() {
+    fn slim_workspace_uses_two_rows_for_hit_area_and_visual_footprint() {
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
         for workspace in &mut app.workspaces {
@@ -2334,7 +2333,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         crate::ui::compute_view(&mut app, area);
         let cards = app.view.workspace_card_areas.clone();
 
-        assert_eq!(cards[0].rect.height, 1);
+        assert_eq!(cards[0].rect.height, 2);
         assert_eq!(cards[1].rect.y, cards[0].rect.y + 2);
 
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
@@ -2839,7 +2838,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.sidebar_spaces.row_gap = 1;
 
-        let (cards, headers) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 20));
+        let (cards, headers) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 22));
 
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].section, crate::workspace::WorkspaceSection::None);
@@ -2863,10 +2862,10 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.row_gap = 2;
         app.workspace_panel_density = WorkspacePanelDensity::Slim;
 
-        let (spacious, _) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
+        let (spacious, _) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 32));
         assert_eq!(
             spacious[1].rect.y,
-            spacious[0].rect.y + spacious[0].rect.height + 3
+            spacious[0].rect.y + spacious[0].rect.height + 2
         );
         assert_eq!(
             spacious[2].rect.y,
@@ -2881,11 +2880,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(spacious_metrics.max_offset_from_bottom, 3);
 
         app.sidebar_spaces.row_gap = 0;
-        let (packed, _) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
-        assert_eq!(
-            packed[1].rect.y,
-            packed[0].rect.y + packed[0].rect.height + 1
-        );
+        let (packed, _) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 32));
+        assert_eq!(packed[1].rect.y, packed[0].rect.y + packed[0].rect.height);
         assert_eq!(packed[2].rect.y, packed[1].rect.y + packed[1].rect.height);
         assert_eq!(packed[3].rect.y, packed[2].rect.y + packed[2].rect.height);
         let packed_metrics = workspace_list_scroll_metrics(&app, Rect::new(0, 0, 30, 7));
@@ -2909,15 +2905,13 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let list_area = workspace_list_rect(area, app.sidebar_section_split);
         let indicator_row =
             workspace_drop_indicator_row(&app.view.workspace_card_areas, list_area, 2).unwrap();
-        let last_visible = app
+        let insertion_target = app
             .view
             .workspace_card_areas
-            .last()
-            .expect("at least one visible workspace");
-        assert_eq!(
-            indicator_row,
-            last_visible.rect.y.saturating_add(last_visible.rect.height)
-        );
+            .iter()
+            .find(|card| card.ws_idx == 2)
+            .expect("insertion target workspace");
+        assert_eq!(indicator_row, insertion_target.rect.y.saturating_sub(1));
         app.drag = Some(crate::app::state::DragState {
             target: crate::app::state::DragTarget::WorkspaceReorder {
                 source_ws_idx: 0,
@@ -3253,7 +3247,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert!(favorite_header.rect.y < work_header.rect.y);
         assert_eq!(cards[0].ws_idx, 1);
         assert_eq!(cards[1].ws_idx, 0);
-        assert_eq!(cards[0].rect.y, favorite_header.rect.y + 2);
+        assert_eq!(cards[0].rect.y, favorite_header.rect.y + 1);
 
         app.collapsed_workspace_sections
             .insert(crate::workspace::WorkspaceSection::Favorite);

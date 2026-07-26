@@ -1610,6 +1610,60 @@ mod tests {
     }
 
     #[test]
+    fn full_workspace_is_tappable_across_all_three_rows() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.workspace_panel_density = crate::app::state::WorkspacePanelDensity::Full;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+        let target = app.state.view.workspace_card_areas[1].rect;
+        assert_eq!(target.height, 3);
+        let bottom_row = target.y + target.height - 1;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.x + 1,
+            bottom_row,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            target.x + 1,
+            bottom_row,
+        ));
+
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.selected, 1);
+    }
+
+    #[test]
+    fn slim_workspace_is_tappable_across_both_rows() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.workspace_panel_density = crate::app::state::WorkspacePanelDensity::Slim;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+        let target = app.state.view.workspace_card_areas[1].rect;
+        assert_eq!(target.height, 2);
+        let bottom_row = target.y + target.height - 1;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.x + 1,
+            bottom_row,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            target.x + 1,
+            bottom_row,
+        ));
+
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.selected, 1);
+    }
+
+    #[test]
     fn clicking_worktree_parent_row_focuses_workspace_without_toggling() {
         let mut app = app_for_mouse_test();
         app.state.workspaces = vec![Workspace::test_new("main"), Workspace::test_new("issue")];
@@ -1974,11 +2028,6 @@ mod tests {
         assert_eq!(
             app.state
                 .workspace_drop_index_at_row(first.y.saturating_sub(1)),
-            Some(0)
-        );
-        assert_eq!(
-            app.state
-                .workspace_drop_index_at_row(first.y.saturating_sub(2)),
             None
         );
         assert_eq!(
