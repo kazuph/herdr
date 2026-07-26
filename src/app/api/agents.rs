@@ -130,7 +130,13 @@ impl App {
                     let Some(plan) = terminal.pending_agent_resume_plan.as_ref() else {
                         continue;
                     };
-                    let command = crate::app::agent_resume::shell_command_from_argv(&plan.argv);
+                    let command = crate::app::agent_resume::shell_command_from_argv(
+                        &plan.argv,
+                        crate::pane::PaneShellConfig::new(
+                            &self.state.default_shell,
+                            self.state.shell_mode,
+                        ),
+                    );
                     let (status, reason) = if command.is_none() {
                         (
                             AgentRestoreActionStatus::Skipped,

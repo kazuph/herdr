@@ -8,7 +8,9 @@
 
 ### Fixed
 - Live handoff now preserves installed plugins and no longer lets the next plugin installation overwrite the existing registry. (#893)
-- Codex session restore now preserves the configured `[agent_start.commands].codex` argv before appending `resume <session-id>`, so approval, sandbox, network, and wrapper options no longer disappear after a Herdr restart.
+- Codex and Claude session restore now preserve each configured `[agent_start.commands]` argv before appending native resume arguments, avoid Unix alias expansion, and safely carry literal argv through Windows cmd and PowerShell.
+- Pane borders again show `saved session` when Herdr has an agent conversation reference available for the next restore.
+- Mailbox messages remain available through inbox and history without being injected into agent panes; only `herdr-jobs` completion notices are delivered directly.
 
 ## [0.7.4] - 2026-07-15
 

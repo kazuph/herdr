@@ -942,6 +942,11 @@ impl TerminalState {
         })
     }
 
+    pub(crate) fn has_saved_agent_session(&self) -> bool {
+        self.current_session_identity_for_persistence().is_some()
+            || self.pending_agent_resume_plan.is_some()
+    }
+
     fn current_session_owner_conflicts(&self, source: &str, agent_label: &str) -> bool {
         self.current_session_identity_for_persistence().is_some_and(
             |(current_source, current_agent, _, _)| {

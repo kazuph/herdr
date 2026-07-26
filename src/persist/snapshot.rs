@@ -1222,6 +1222,48 @@ mod tests {
     }
 
     #[test]
+    fn codex_and_claude_session_ids_survive_snapshot_roundtrip() {
+        for (agent, session_id) in [
+            ("codex", "019f9c7d-d4eb-7173-94f1-e19e47523ad4"),
+            ("claude", "f491f16e-9e4c-4764-8238-bb47d3819161"),
+        ] {
+            let mut state = state_with_workspaces(&[agent]);
+            let root = state.workspaces[0].tabs[0].root_pane;
+            state.ensure_test_terminals();
+            let terminal_id = state.workspaces[0].tabs[0].panes[&root]
+                .attached_terminal_id
+                .clone();
+            state
+                .terminals
+                .get_mut(&terminal_id)
+                .unwrap()
+                .set_hook_authority_with_session_ref(
+                    format!("herdr:{agent}"),
+                    agent.into(),
+                    crate::detect::AgentState::Working,
+                    None,
+                    crate::agent_resume::AgentSessionRef::id(session_id),
+                    Some(20),
+                );
+
+            let encoded = serde_json::to_string(&capture_from_state(&state)).unwrap();
+            let restored = parse_snapshot(&encoded).unwrap();
+            let agent_session = restored.workspaces[0].tabs[0].panes[&root.raw()]
+                .agent_session
+                .as_ref()
+                .expect("agent session should survive the snapshot roundtrip");
+
+            assert_eq!(agent_session.source, format!("herdr:{agent}"));
+            assert_eq!(agent_session.agent, agent);
+            assert_eq!(
+                agent_session.kind,
+                crate::agent_resume::AgentSessionRefKind::Id
+            );
+            assert_eq!(agent_session.value, session_id);
+        }
+    }
+
+    #[test]
     fn capture_contract_preserves_restored_agent_session() {
         let mut state = state_with_workspaces(&["one"]);
         let root = state.workspaces[0].tabs[0].root_pane;

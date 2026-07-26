@@ -650,9 +650,10 @@ fn render_pane_border_titles(app: &AppState, ws: &crate::workspace::Workspace, f
             continue;
         }
         let is_zoomed_title = ws.zoomed && info.is_focused;
-        let Some(title) = ws
+        let terminal = ws
             .pane_state(info.id)
-            .and_then(|pane| app.terminals.get(&pane.attached_terminal_id))
+            .and_then(|pane| app.terminals.get(&pane.attached_terminal_id));
+        let Some(title) = terminal
             .map(|terminal| pane_border_label(terminal, app.show_agent_labels_on_pane_borders))
             .map(|label| {
                 let label = format!("%{} {label}", info.id.raw());
@@ -696,6 +697,16 @@ fn render_pane_border_titles(app: &AppState, ws: &crate::workspace::Workspace, f
             end_x.saturating_sub(start_x) as usize,
             style,
         );
+        if info.rect.width >= 34 {
+            if let Some(status) = restore_status_label(terminal) {
+                let status = format!(" {status} ");
+                let status_width = status.len() as u16;
+                let status_x = end_x.saturating_sub(status_width);
+                if status_x > start_x {
+                    buf.set_stringn(status_x, y, status, status_width as usize, style);
+                }
+            }
+        }
     }
 }
 
@@ -706,6 +717,17 @@ fn pane_border_label(terminal: &crate::terminal::TerminalState, show_agent_label
         label.push_str(&branch);
     }
     label
+}
+
+fn restore_status_label(terminal: Option<&crate::terminal::TerminalState>) -> Option<&'static str> {
+    let terminal = terminal?;
+    if terminal.has_saved_agent_session() {
+        Some("saved session")
+    } else if terminal.is_agent_terminal() {
+        Some("no saved session")
+    } else {
+        None
+    }
 }
 
 fn line_cell_symbol(line: LineCell) -> &'static str {
@@ -1045,6 +1067,30 @@ mod tests {
     }
 
     #[test]
+    fn restore_status_label_tracks_the_persisted_session_identity() {
+        let mut terminal = TerminalState::new(
+            crate::terminal::TerminalId::alloc(),
+            std::path::PathBuf::from("/tmp"),
+        )
+        .with_launch_argv(vec!["codex".into()]);
+
+        assert_eq!(
+            restore_status_label(Some(&terminal)),
+            Some("no saved session")
+        );
+
+        terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+            source: "herdr:codex".into(),
+            agent: "codex".into(),
+            session_ref: crate::agent_resume::AgentSessionRef::id("codex-session")
+                .expect("test session id should be valid"),
+        });
+
+        assert_eq!(restore_status_label(Some(&terminal)), Some("saved session"));
+        assert_eq!(restore_status_label(None), None);
+    }
+
+    #[test]
     fn pane_border_renderer_places_adjacent_cjk_by_display_width() {
         let mut app = AppState::test_new();
         app.mode = Mode::Terminal;
@@ -1074,6 +1120,43 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let row = (0..80).map(|x| buffer[(x, 0)].symbol()).collect::<String>();
         assert!(row.contains("模 块"), "rendered row: {row:?}");
+    }
+
+    #[test]
+    fn pane_border_renderer_places_saved_session_on_the_right() {
+        let mut app = AppState::test_new();
+        app.mode = Mode::Terminal;
+        let ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        app.view.pane_infos = vec![PaneInfo {
+            id: pane_id,
+            rect: Rect::new(0, 0, 50, 3),
+            inner_rect: Rect::default(),
+            scrollbar_rect: None,
+            borders: Borders::ALL,
+            is_focused: true,
+        }];
+
+        let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
+        let mut terminal_state = TerminalState::new(terminal_id.clone(), "/tmp".into());
+        terminal_state.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+            source: "herdr:codex".into(),
+            agent: "codex".into(),
+            session_ref: crate::agent_resume::AgentSessionRef::id("codex-session")
+                .expect("test session id should be valid"),
+        });
+        app.terminals.insert(terminal_id, terminal_state);
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(50, 3)).unwrap();
+        terminal
+            .draw(|frame| render_pane_borders(&app, &ws, frame))
+            .unwrap();
+
+        let row = (0..50)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+        assert!(row.ends_with(" saved session ┐"), "rendered row: {row:?}");
     }
 
     #[test]

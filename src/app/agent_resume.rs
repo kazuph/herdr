@@ -265,7 +265,9 @@ impl App {
             return false;
         }
 
-        let Some(resume_command) = shell_command_from_argv(&plan.argv) else {
+        let shell_config =
+            crate::pane::PaneShellConfig::new(&self.state.default_shell, self.state.shell_mode);
+        let Some(resume_command) = shell_command_from_argv(&plan.argv, shell_config) else {
             tracing::warn!(
                 pane = pane_id.raw(),
                 terminal = %terminal_id,
@@ -288,7 +290,7 @@ impl App {
             cwd,
             self.state.pane_scrollback_limit_bytes,
             host_terminal_theme,
-            crate::pane::PaneShellConfig::new(&self.state.default_shell, self.state.shell_mode),
+            shell_config,
             &launch_env,
             self.event_tx.clone(),
             self.render_notify.clone(),
@@ -362,31 +364,81 @@ fn stable_terminal_inner_rect(pane_inner: Rect) -> Rect {
     )
 }
 
-pub(crate) fn shell_command_from_argv(argv: &[String]) -> Option<String> {
+#[derive(Clone, Copy)]
+enum ResumeShellKind {
+    Unix,
+    WindowsCmd,
+    WindowsPowerShell,
+}
+
+impl ResumeShellKind {
+    fn current(shell_config: crate::pane::PaneShellConfig<'_>) -> Self {
+        if !cfg!(windows) {
+            return Self::Unix;
+        }
+        if crate::pane::uses_windows_powershell_pane_shell(shell_config) {
+            Self::WindowsPowerShell
+        } else {
+            Self::WindowsCmd
+        }
+    }
+}
+
+pub(crate) fn shell_command_from_argv(
+    argv: &[String],
+    shell_config: crate::pane::PaneShellConfig<'_>,
+) -> Option<String> {
+    shell_command_from_argv_for_kind(argv, ResumeShellKind::current(shell_config))
+}
+
+fn shell_command_from_argv_for_kind(argv: &[String], kind: ResumeShellKind) -> Option<String> {
+    if matches!(kind, ResumeShellKind::WindowsCmd) {
+        return windows_cmd_resume_command(argv);
+    }
     let mut parts = argv.iter();
-    let first = shell_quote(parts.next()?);
-    let mut command = first;
+    let first = parts.next()?;
+    let mut command = match kind {
+        ResumeShellKind::Unix => format!("command {}", unix_shell_quote(first)),
+        ResumeShellKind::WindowsPowerShell => format!("& {}", powershell_quote(first)),
+        ResumeShellKind::WindowsCmd => unreachable!(),
+    };
     for part in parts {
         command.push(' ');
-        command.push_str(&shell_quote(part));
+        command.push_str(&match kind {
+            ResumeShellKind::Unix => unix_shell_quote(part),
+            ResumeShellKind::WindowsPowerShell => powershell_quote(part),
+            ResumeShellKind::WindowsCmd => unreachable!(),
+        });
     }
     Some(command)
 }
 
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    if value.bytes().all(|byte| {
-        byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b'_' | b'-' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'='
-            )
-    }) {
-        return value.to_string();
-    }
+fn unix_shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn windows_cmd_resume_command(argv: &[String]) -> Option<String> {
+    use base64::Engine;
+
+    let mut parts = argv.iter();
+    let first = parts.next()?;
+    let mut script = format!("& {}", powershell_quote(first));
+    for part in parts {
+        script.push(' ');
+        script.push_str(&powershell_quote(part));
+    }
+    let utf16le = script
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16le);
+    Some(format!(
+        "powershell.exe -NoLogo -NoProfile -EncodedCommand {encoded}"
+    ))
 }
 
 #[cfg(test)]
@@ -861,18 +913,82 @@ mod tests {
     }
 
     #[test]
-    fn shell_command_from_argv_quotes_resume_arguments() {
+    fn resume_command_uses_the_target_shell_without_alias_expansion() {
         let argv = vec![
-            "claude".to_string(),
-            "--resume".to_string(),
+            "codex".to_string(),
+            "--sandbox".to_string(),
+            "workspace-write".to_string(),
+            "resume".to_string(),
             "session with ' quote".to_string(),
         ];
 
         assert_eq!(
-            shell_command_from_argv(&argv).as_deref(),
-            Some("claude --resume 'session with '\\'' quote'")
+            shell_command_from_argv_for_kind(&argv, ResumeShellKind::Unix).as_deref(),
+            Some(
+                "command 'codex' '--sandbox' 'workspace-write' 'resume' 'session with '\\'' quote'"
+            )
         );
-        assert_eq!(shell_command_from_argv(&[]), None);
+        assert_eq!(
+            shell_command_from_argv_for_kind(&argv, ResumeShellKind::WindowsPowerShell).as_deref(),
+            Some("& 'codex' '--sandbox' 'workspace-write' 'resume' 'session with '' quote'")
+        );
+        assert_eq!(
+            decoded_windows_cmd_resume_script(&argv).as_deref(),
+            Some("& 'codex' '--sandbox' 'workspace-write' 'resume' 'session with '' quote'")
+        );
+        assert_eq!(
+            shell_command_from_argv_for_kind(&[], ResumeShellKind::Unix),
+            None
+        );
+    }
+
+    #[test]
+    fn windows_cmd_resume_encodes_shell_metacharacters_as_literal_argv() {
+        for value in [
+            "foo&bar",
+            "a|b",
+            "left<right",
+            "left>right",
+            "(group)",
+            "caret^value",
+            "%VAR%",
+            "!delayed!",
+            "with space",
+            "with\"quote",
+            r"trailing\",
+        ] {
+            let argv = vec!["codex".to_string(), value.to_string()];
+            assert_eq!(
+                decoded_windows_cmd_resume_script(&argv),
+                Some(format!("& 'codex' {}", powershell_quote(value)))
+            );
+            let command =
+                shell_command_from_argv_for_kind(&argv, ResumeShellKind::WindowsCmd).unwrap();
+            assert!(
+                command
+                    .strip_prefix("powershell.exe -NoLogo -NoProfile -EncodedCommand ")
+                    .is_some_and(|encoded| encoded
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric()
+                            || matches!(byte, b'+' | b'/' | b'='))),
+                "cmd command must contain only a fixed prefix and base64 payload: {command:?}"
+            );
+        }
+    }
+
+    fn decoded_windows_cmd_resume_script(argv: &[String]) -> Option<String> {
+        use base64::Engine;
+
+        let command = shell_command_from_argv_for_kind(argv, ResumeShellKind::WindowsCmd)?;
+        let encoded = command.strip_prefix("powershell.exe -NoLogo -NoProfile -EncodedCommand ")?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .ok()?;
+        let utf16 = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        String::from_utf16(&utf16).ok()
     }
 
     #[test]

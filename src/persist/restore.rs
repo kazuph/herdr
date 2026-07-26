@@ -879,7 +879,7 @@ fn restore_plan_for_snapshot(
     let persisted = persisted_agent_session_from_snapshot(session)?;
     let native_plan =
         crate::agent_resume::plan(&session.source, &session.agent, &persisted.session_ref)?;
-    if persisted.agent == "codex" {
+    if matches!(persisted.agent.as_str(), "claude" | "codex") {
         if let Some(mut argv) = agent_start_commands
             .get(&persisted.agent)
             .filter(|argv| !argv.is_empty())
@@ -891,6 +891,9 @@ fn restore_plan_for_snapshot(
                 argv,
                 dedupe_key: native_plan.dedupe_key,
             });
+        }
+        if native_plan_without_structured_start(&persisted.agent, cfg!(windows)) {
+            return Some(native_plan);
         }
     }
     if let Some(template) =
@@ -910,6 +913,10 @@ fn restore_plan_for_snapshot(
         });
     }
     Some(native_plan)
+}
+
+fn native_plan_without_structured_start(agent: &str, windows: bool) -> bool {
+    windows && matches!(agent, "claude" | "codex")
 }
 
 fn persisted_agent_session_from_snapshot(
@@ -1470,6 +1477,48 @@ mod tests {
     }
 
     #[test]
+    fn claude_restore_reuses_structured_start_argv_before_legacy_template() {
+        let session = super::super::snapshot::PaneAgentSessionSnapshot {
+            source: "herdr:claude".into(),
+            agent: "claude".into(),
+            kind: crate::agent_resume::AgentSessionRefKind::Id,
+            value: "claude-session".into(),
+        };
+        let restore_commands =
+            BTreeMap::from([("claude".into(), "claude --resume {session_id}".into())]);
+        let start_commands = BTreeMap::from([(
+            "claude".into(),
+            vec![
+                "env".into(),
+                "ENABLE_BACKGROUND_TASKS=1".into(),
+                "claude".into(),
+                "--thinking-display".into(),
+                "summarized".into(),
+                "--permission-mode".into(),
+                "auto".into(),
+            ],
+        )]);
+
+        let plan =
+            restore_plan_for_snapshot(&session, true, &restore_commands, &start_commands).unwrap();
+
+        assert_eq!(
+            plan.argv,
+            vec![
+                "env",
+                "ENABLE_BACKGROUND_TASKS=1",
+                "claude",
+                "--thinking-display",
+                "summarized",
+                "--permission-mode",
+                "auto",
+                "--resume",
+                "claude-session",
+            ]
+        );
+    }
+
+    #[test]
     fn codex_restore_keeps_legacy_template_without_structured_start_argv() {
         let session = super::super::snapshot::PaneAgentSessionSnapshot {
             source: "herdr:codex".into(),
@@ -1484,6 +1533,14 @@ mod tests {
             restore_plan_for_snapshot(&session, true, &restore_commands, &BTreeMap::new()).unwrap();
 
         assert_eq!(plan.argv, vec!["sh", "-lc", "codex resume codex-session"]);
+    }
+
+    #[test]
+    fn windows_native_agents_do_not_require_posix_sh_for_legacy_restore() {
+        assert!(native_plan_without_structured_start("codex", true));
+        assert!(native_plan_without_structured_start("claude", true));
+        assert!(!native_plan_without_structured_start("pi", true));
+        assert!(!native_plan_without_structured_start("codex", false));
     }
 
     #[test]

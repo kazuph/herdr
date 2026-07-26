@@ -314,8 +314,8 @@ impl Default for AgentRestoreConfig {
 }
 
 /// `[agent_start]` configures the argv used by the workspace and pane
-/// "New ... agent" context-menu actions. Codex restore preserves the configured
-/// argv before appending its native resume arguments.
+/// "New ... agent" context-menu actions. Codex and Claude restore preserve the
+/// configured argv before appending their native resume arguments.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct AgentStartConfig {

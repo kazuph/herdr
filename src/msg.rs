@@ -4,8 +4,6 @@ use crate::api::schema::MsgMessage;
 
 pub(crate) const DEFAULT_ROOM: &str = "default";
 pub(crate) const JOBS_ROOM: &str = "herdr-jobs";
-pub(crate) const FALLBACK_MAX_MESSAGES: usize = 5;
-pub(crate) const FALLBACK_MAX_BYTES: usize = 4 * 1024;
 #[cfg(test)]
 pub(crate) const MSG_DB_PATH_ENV_VAR: &str = crate::dispatch::HERDR_DB_PATH_ENV_VAR;
 

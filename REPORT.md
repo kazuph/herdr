@@ -1,65 +1,55 @@
-# Codex restoreが通常起動と同じ権限条件を維持する
+# Codex・Claude復元とpane通知の回帰を修正
 
-> 「リストアするとCodexの権限が弱まる気がしています。」
+> 「修正して」
 >
-> 「この問題解決してください。コミット、プッシュ、バイナリ差し替え、再起動まで一貫して行ってください。メインブランチだけでお願いします。」
+> 「claudeが立ち上がっていた部分でまったく復元されませんでした。必ず復元させて。」
+>
+> 「それぞれのpaneの右上にsaved sessionという表記がでなくなってます。」
+>
+> 「ゴミなので一旦これが全く止まらない、飛ばない状況まで戻してほしい」
 
-## 課題
+## 修正前
 
-通常のzshから`codex`を起動すると、aliasによってsandbox、network、approvalのオプションが追加されます。一方、Herdrのsession restoreはlegacy templateを`sh -lc`で実行していたためzsh aliasを読まず、同じCodex binaryを`codex resume <session-id>`だけで起動していました。
+- Codex restore commandをinteractive zshへ入れると、先頭の`codex` aliasが通常起動オプションを再追加し、`--sandbox`などが二重指定された。
+- Claude restoreは`[agent_start.commands].claude`の環境変数・permission・thinking設定を継承しなかった。
+- Windows cmd向けcommand生成はcmdメタ文字をliteral argvとして保持できなかった。
+- pane borderから`saved session`表示が失われていた。
+- 通常roomの古いmailbox nudgeが、再利用されたagent名を解決して無関係paneへ注入された。
 
-実sessionでは、通常起動直後の`approval_policy`は`never`でしたが、restore後は`on-request`へ変わっていました。`sandbox_policy`は両方とも`danger-full-access`であり、体感していた権限低下は承認条件の差でした。
+## 修正後
 
-## 対策
+- Unixは`command 'codex' ...`でalias/function展開を避ける。Windows PowerShellはcall operatorとsingle quote、cmdはUTF-16LE PowerShell scriptの`-EncodedCommand`を使う。
+- CodexとClaudeは各`[agent_start.commands]`をそのまま使い、native resume引数を一度だけ追加する。
+- 復元commandはpane shell内で実行し、即時失敗後もshellと保存session IDを残して再試行経路を維持する。
+- 保存session参照またはpending restore planがあるpane border右上へ`saved session`を表示する。
+- `herdr-jobs`だけをpaneへ直接通知し、通常roomはqueuedのままinbox/historyへ保持してpaneへ注入しない。
 
-Codexの新規pane起動で既に使っている構造化設定`[agent_start.commands].codex`を、session restoreでも同じ順序のまま使います。restore時はそのargvの末尾へ`resume`とpane固有session IDだけを追加します。
+## 実再起動結果
 
-Codexの構造化起動argvがある時はlegacy restore templateより優先するため、`sh -lc`やshell aliasへ依存しません。構造化argvが無い既存環境では、legacy templateを従来どおり維持します。他agentのrestore経路は変更しません。
+- `/Users/kazuph/.local/bin/herdr`へrelease binaryをad-hoc署名付きでインストールし、server restartはexit 0。
+- 再起動前のClaude 5 IDとCodex 16 IDは、再起動後も全件同じIDでagent listと`session.json`に存在する。
+- session ID差分は、read-only監査で新規作成されたCodex 2 IDの追加だけ。既存IDの欠落・置換は0件。
+- Claude 5件は`--thinking-display summarized --permission-mode auto --resume <id>`で稼働。
+- Codex 16件は`--sandbox workspace-write --config sandbox_workspace_write.network_access=true --dangerously-bypass-approvals-and-sandbox resume <id>`で稼働し、同一flagの二重指定はない。
+- Claude paneの実画面には再起動前の会話本文が残り、全agent paneの画面末尾にrestore errorは0件。
+- 通常room 158件をqueuedとしてinboxへ戻し、一時DB triggerは削除済み。全paneの画面末尾に`📬 未読` nudgeは0件。
 
-修正前のrestoreは、実際には次のコマンドでした。`sh -lc`はzshのaliasを読まないため、Codexへsandbox・network・approvalのオプションが渡りません。
+## 検証
 
-```sh
-sh -lc 'codex resume <session-id>'
-```
-
-現在の新規pane起動は、`[agent_start.commands].codex`から次のargvを使います。
-
-```sh
-codex --sandbox workspace-write --config sandbox_workspace_write.network_access=true --dangerously-bypass-approvals-and-sandbox
-```
-
-修正後のrestoreは、同じargvの末尾へ`resume`と保存済みsession IDだけを追加します。
-
-```sh
-codex --sandbox workspace-write --config sandbox_workspace_write.network_access=true --dangerously-bypass-approvals-and-sandbox resume <session-id>
-```
-
-## 達成したこと
-
-- `RestoreOptions`へ構造化agent起動argvを渡し、Codex restore planへ反映
-- sandbox、network、approval、wrapperの全オプションを順序込みで維持
-- legacy templateが併存しても構造化Codex argvを優先する回帰テスト
-- 構造化Codex argvが無い場合にlegacy templateを維持する回帰テスト
-- `SPEC.md`へ新規paneとrestoreの起動条件一致を恒久契約として追加
-- next CHANGELOG、英語・日本語・簡体字中国語configuration、config referenceを更新
-- Codex restore重点テスト: 2 / 2 pass
-- 既存restore plan重点テスト: 3 / 3 pass
-- SPEC / config reference / docs translation tests: 20 / 20 pass
-- native fmt / clippy / Rust nextest: 2891 / 2891 pass
+- focused restore・notification: 30 / 30 pass
+- Rust nextest: 2,897 / 2,897 pass
+- native Clippy: pass
 - integration assets: 2 / 2 pass
 - plugin marketplace: 12 / 12 pass
-- maintenance scripts: 80 / 80 pass
-- fork distribution docs: 11 current guidance files / pass
-- `ZIG=/usr/bin/true just build`: release build成功
-- Mac上のWindows cross-clippyだけは、`libsqlite3-sys`のCコンパイル時にWindows SDKの`stdlib.h`が存在せず停止。native実装・テスト完了後の環境依存停止であり、今回のコード失敗ではない
+- selected maintenance tests: 38 / 38 pass
+- `cargo fmt --check`、`git diff --check`: pass
+- 実zsh alias環境で`command 'codex' ... --version`: `codex-cli 0.145.0`、exit 0
+- `saved session`のrenderer testとインストール済みbinary文字列: pass
 
-## 未達成のこと
+## 残る確認
 
-- `main`へのcommitと`origin/main`へのpush
-- `/Users/kazuph/.local/bin/herdr`のrelease binary差し替えとSHA-256・codesign・version検証
-- Herdr server再起動
-- restore後のCodex実process argvとsession権限が通常起動条件と一致するlive検証
-- Herdr repoの`main`以外のworktree・local branch・origin branch削除
-- 作業前に退避したmainの既存未コミット変更の復元
+- GhosttyはComputer Useの安全制限対象だったため、pane borderの実スクリーンショットは未取得。実serverでは保存session参照を持つ全agent paneと、インストール済み描画コードを確認済み。
+- macOSからのWindows cross-ClippyはWindows CRT/SDKの`stdlib.h`不在で、Herdr sourceの診断前に停止。Windows用shell文字列のunit testはpassしたが、Windows実機実行は未確認。
+- commit・pushは依頼されていないため実施していない。
 
-`[agent_start.commands].codex`をCodexの新規起動とrestore起動の共通argvにし、session再接続引数だけを追加する修正として承認できるか確認してください。承認後、上記の未達成項目を一貫して完了します。
+復元・`saved session`表示・通常room nudge停止の結果を確認してください。
