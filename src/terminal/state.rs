@@ -487,11 +487,13 @@ impl TerminalState {
             return None;
         }
         let state_report_preserves_persisted_session = session_ref.is_none()
-            && self.hook_authority.is_none()
             && self
                 .persisted_agent_session
                 .as_ref()
-                .is_some_and(|session| session.agent == agent_label);
+                .is_some_and(|session| session.agent == agent_label)
+            && self.hook_authority.as_ref().is_none_or(|authority| {
+                authority.source == source && authority.agent_label == agent_label
+            });
         let owner_conflicts = !state_report_preserves_persisted_session
             && self.current_session_owner_conflicts(&source, &agent_label);
         let foreground_takeover_allowed = owner_conflicts

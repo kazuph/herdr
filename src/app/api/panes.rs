@@ -3984,14 +3984,50 @@ mod tests {
         let response = app.handle_pane_report_agent(
             "restored-report".into(),
             PaneReportAgentParams {
-                pane_id,
-                source: "custom:tool".into(),
+                pane_id: pane_id.clone(),
+                source: "codex".into(),
+                agent: "codex".into(),
+                state: PaneAgentState::Idle,
+                message: None,
+                custom_status: None,
+                seq: None,
+                title: None,
+                agent_session_id: None,
+                session_id: Some("019f786c-335a-7b42-8f61-cf9f29068f56".into()),
+                agent_session_path: None,
+                model: None,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert!(matches!(success.result, ResponseResult::Ok {}));
+        let terminal = &app.state.terminals[&terminal_id];
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert_eq!(
+            terminal
+                .hook_authority
+                .as_ref()
+                .map(|authority| authority.source.as_str()),
+            Some("codex")
+        );
+        let session = terminal.persisted_agent_session.as_ref().unwrap();
+        assert_eq!(session.source, "herdr:codex");
+        assert_eq!(
+            session.session_ref.value,
+            "019f786c-335a-7b42-8f61-cf9f29068f56"
+        );
+
+        let response = app.handle_pane_report_agent(
+            "restored-report-working".into(),
+            PaneReportAgentParams {
+                pane_id: pane_id.clone(),
+                source: "codex".into(),
                 agent: "codex".into(),
                 state: PaneAgentState::Working,
                 message: None,
-                custom_status: Some("checking parity".into()),
-                seq: Some(1),
-                title: Some("restore pane sessions".into()),
+                custom_status: None,
+                seq: None,
+                title: None,
                 agent_session_id: None,
                 session_id: Some("019f786c-335a-7b42-8f61-cf9f29068f56".into()),
                 agent_session_path: None,
@@ -4008,7 +4044,74 @@ mod tests {
                 .hook_authority
                 .as_ref()
                 .map(|authority| authority.source.as_str()),
-            Some("custom:tool")
+            Some("codex")
+        );
+        assert_eq!(
+            terminal
+                .persisted_agent_session
+                .as_ref()
+                .map(|session| session.source.as_str()),
+            Some("herdr:codex")
+        );
+
+        let response = app.handle_pane_report_agent(
+            "restored-report-idle".into(),
+            PaneReportAgentParams {
+                pane_id: pane_id.clone(),
+                source: "codex".into(),
+                agent: "codex".into(),
+                state: PaneAgentState::Idle,
+                message: None,
+                custom_status: None,
+                seq: None,
+                title: None,
+                agent_session_id: None,
+                session_id: Some("019f786c-335a-7b42-8f61-cf9f29068f56".into()),
+                agent_session_path: None,
+                model: None,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert!(matches!(success.result, ResponseResult::Ok {}));
+        let terminal = &app.state.terminals[&terminal_id];
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert_eq!(
+            terminal
+                .hook_authority
+                .as_ref()
+                .map(|authority| authority.source.as_str()),
+            Some("codex")
+        );
+
+        let response = app.handle_pane_report_agent(
+            "foreign-report".into(),
+            PaneReportAgentParams {
+                pane_id,
+                source: "custom:other".into(),
+                agent: "codex".into(),
+                state: PaneAgentState::Working,
+                message: None,
+                custom_status: None,
+                seq: None,
+                title: None,
+                agent_session_id: None,
+                session_id: Some("019f786c-335a-7b42-8f61-cf9f29068f56".into()),
+                agent_session_path: None,
+                model: None,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert!(matches!(success.result, ResponseResult::Ok {}));
+        let terminal = &app.state.terminals[&terminal_id];
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert_eq!(
+            terminal
+                .hook_authority
+                .as_ref()
+                .map(|authority| authority.source.as_str()),
+            Some("codex")
         );
         let session = terminal.persisted_agent_session.as_ref().unwrap();
         assert_eq!(session.source, "herdr:codex");
