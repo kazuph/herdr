@@ -10,7 +10,7 @@ use windows_sys::{
     Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation},
     Win32::{
         Foundation::{
-            CloseHandle, GlobalFree, LocalFree, HANDLE, INVALID_HANDLE_VALUE, NTSTATUS,
+            CloseHandle, GlobalFree, LocalFree, FILETIME, HANDLE, INVALID_HANDLE_VALUE, NTSTATUS,
             STATUS_SUCCESS, UNICODE_STRING,
         },
         System::{
@@ -27,9 +27,9 @@ use windows_sys::{
             Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
             Ole::CF_UNICODETEXT,
             Threading::{
-                GetCurrentProcess, GetExitCodeProcess, OpenProcess, TerminateProcess,
-                DETACHED_PROCESS, PROCESS_BASIC_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
-                PROCESS_VM_READ,
+                GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, OpenProcess,
+                TerminateProcess, DETACHED_PROCESS, PROCESS_BASIC_INFORMATION,
+                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
             },
         },
         UI::Shell::{CommandLineToArgvW, ShellExecuteW},
@@ -170,6 +170,37 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
 }
 
+pub fn process_started_at(pid: u32) -> Option<std::time::SystemTime> {
+    if pid == 0 {
+        return None;
+    }
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return None;
+    }
+    let mut created = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let mut exited = created;
+    let mut kernel = created;
+    let mut user = created;
+    let ok = unsafe { GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) };
+    unsafe {
+        CloseHandle(handle);
+    }
+    if ok == 0 {
+        return None;
+    }
+    let windows_ticks =
+        (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+    const WINDOWS_TO_UNIX_EPOCH_TICKS: u64 = 116_444_736_000_000_000;
+    let unix_ticks = windows_ticks.checked_sub(WINDOWS_TO_UNIX_EPOCH_TICKS)?;
+    std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_nanos(
+        unix_ticks.checked_mul(100)?,
+    ))
+}
+
 fn select_pane_foreground_job(
     shell_pid: u32,
     entries: &[WindowsProcessEntry],
@@ -286,12 +317,15 @@ fn descendant_entries(root_pid: u32, entries: &[WindowsProcessEntry]) -> Vec<&Wi
 }
 
 fn foreground_process_from_entry(entry: &WindowsProcessEntry) -> super::ForegroundProcess {
+    let identity = super::stable_process_identity(entry.pid);
     super::ForegroundProcess {
         pid: entry.pid,
         name: entry.name.clone(),
         argv0: entry.argv0.clone(),
         argv: entry.argv.clone(),
         cmdline: entry.cmdline.clone(),
+        cwd: identity.as_ref().map(|(cwd, _)| cwd.clone()),
+        started_at: identity.map(|(_, started_at)| started_at),
     }
 }
 

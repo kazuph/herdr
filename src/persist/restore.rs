@@ -44,6 +44,7 @@ struct RestoreRuntimeContext<'a> {
     resume_agents_on_restore: bool,
     agent_restore_commands: &'a BTreeMap<String, String>,
     agent_start_commands: &'a BTreeMap<String, Vec<String>>,
+    agent_session_ledger: &'a crate::persist::agent_ledger::AgentSessionLedger,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<AtomicBool>,
@@ -79,6 +80,7 @@ pub struct RestoreOptions<'a> {
     pub resume_agents_on_restore: bool,
     pub agent_restore_commands: &'a BTreeMap<String, String>,
     pub agent_start_commands: &'a BTreeMap<String, Vec<String>>,
+    pub agent_session_ledger: &'a crate::persist::agent_ledger::AgentSessionLedger,
 }
 
 /// Restore workspaces from a snapshot. Each pane gets a fresh shell in its saved cwd.
@@ -117,6 +119,7 @@ pub fn restore_handoff(
     scrollback_limit_bytes: usize,
     default_shell: &str,
     shell_mode: crate::config::ShellModeConfig,
+    agent_session_ledger: &crate::persist::agent_ledger::AgentSessionLedger,
     imports: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -134,6 +137,7 @@ pub fn restore_handoff(
             resume_agents_on_restore: true,
             agent_restore_commands: &BTreeMap::new(),
             agent_start_commands: &BTreeMap::new(),
+            agent_session_ledger,
         },
         imports,
         events,
@@ -326,6 +330,7 @@ fn restore_with_imports_and_failures(
     let resume_agents_on_restore = restore_options.resume_agents_on_restore;
     let agent_restore_commands = restore_options.agent_restore_commands;
     let agent_start_commands = restore_options.agent_start_commands;
+    let agent_session_ledger = restore_options.agent_session_ledger;
     let mut workspaces = Vec::new();
     let mut terminals = HashMap::new();
     let mut terminal_runtimes = HashMap::new();
@@ -338,6 +343,7 @@ fn restore_with_imports_and_failures(
             resume_agents_on_restore,
             agent_restore_commands,
             agent_start_commands,
+            agent_session_ledger,
             events: events.clone(),
             render_notify: render_notify.clone(),
             render_dirty: render_dirty.clone(),
@@ -556,7 +562,14 @@ fn restore_tab(
         let saved_agent_name = saved_pane.and_then(|p| p.agent_name.clone());
         let saved_title = saved_pane.and_then(|p| p.title.clone());
         let saved_launch_argv = saved_pane.and_then(|p| p.launch_argv.clone());
-        let saved_agent_session = saved_pane.and_then(|p| p.agent_session.as_ref());
+        let old_pane_id = reverse_id_map.get(id).copied();
+        let saved_agent_session = agent_session_from_snapshot_and_ledger(
+            saved_pane.and_then(|pane| pane.agent_session.clone()),
+            runtime_context.agent_session_ledger,
+            workspace_id,
+            &crate::workspace::public_tab_id_for_number(workspace_id, number),
+            old_pane_id.unwrap_or(id.raw()),
+        );
         let saved_history =
             old_id.and_then(|old_id| history.and_then(|history| history.panes.get(old_id)));
         let startup = {
@@ -566,14 +579,17 @@ fn restore_tab(
                 agent_start_commands: runtime_context.agent_start_commands,
                 resumed_sessions: resumed_agent_sessions,
             };
-            pane_restore_startup(saved_agent_session, saved_history, &mut agent_restore)
+            pane_restore_startup(
+                saved_agent_session.as_ref(),
+                saved_history,
+                &mut agent_restore,
+            )
         };
         let initial_restore_agent = startup
             .restore_plan
             .as_ref()
             .and_then(|plan| crate::detect::parse_agent_label(&plan.agent));
 
-        let old_pane_id = reverse_id_map.get(id).copied();
         let public_pane_id = old_pane_id
             .and_then(|old_id| public_pane_ids_by_old_raw.get(&old_id))
             .map(String::as_str);
@@ -616,7 +632,7 @@ fn restore_tab(
                 );
             }
             if let Some(session) = restored_terminal_agent_session(
-                saved_agent_session,
+                saved_agent_session.as_ref(),
                 startup.duplicate_agent_session,
             ) {
                 terminal.set_persisted_agent_session(session);
@@ -710,7 +726,7 @@ fn restore_tab(
                     );
                 }
                 if let Some(session) = restored_terminal_agent_session(
-                    saved_agent_session,
+                    saved_agent_session.as_ref(),
                     startup.duplicate_agent_session,
                 ) {
                     terminal.set_persisted_agent_session(session);
@@ -795,6 +811,42 @@ fn restore_tab(
         )),
         failed_imports,
     )
+}
+
+fn agent_session_from_snapshot_and_ledger(
+    mut saved_session: Option<PaneAgentSessionSnapshot>,
+    agent_session_ledger: &crate::persist::agent_ledger::AgentSessionLedger,
+    workspace_id: &str,
+    tab_id: &str,
+    pane_id: u32,
+) -> Option<PaneAgentSessionSnapshot> {
+    let Some(ledger_entry) = agent_session_ledger
+        .get(workspace_id, tab_id, pane_id)
+        .filter(|entry| crate::agent_sessions::is_safe_session_id(&entry.session_id))
+    else {
+        return saved_session;
+    };
+    match &mut saved_session {
+        Some(session)
+            if session.agent == ledger_entry.agent
+                && session.kind == crate::agent_resume::AgentSessionRefKind::Id
+                && !crate::agent_sessions::is_safe_session_id(&session.value) =>
+        {
+            session.source = ledger_entry.source.clone();
+            session.kind = crate::agent_resume::AgentSessionRefKind::Id;
+            session.value = ledger_entry.session_id.clone();
+        }
+        None => {
+            saved_session = Some(PaneAgentSessionSnapshot {
+                source: ledger_entry.source.clone(),
+                agent: ledger_entry.agent.clone(),
+                kind: crate::agent_resume::AgentSessionRefKind::Id,
+                value: ledger_entry.session_id.clone(),
+            });
+        }
+        _ => {}
+    }
+    saved_session
 }
 
 fn restore_saved_title(terminal: &mut TerminalState, title: Option<String>) {
@@ -1198,12 +1250,38 @@ mod tests {
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
                 agent_start_commands: &BTreeMap::new(),
+                agent_session_ledger: &Default::default(),
             },
             events,
             Arc::new(Notify::new()),
             Arc::new(AtomicBool::new(false)),
         );
         (workspaces, terminals)
+    }
+
+    #[test]
+    fn restore_uses_matching_pane_ledger_when_snapshot_session_is_missing() {
+        let mut ledger = crate::persist::agent_ledger::AgentSessionLedger::default();
+        ledger.upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+            pane_id: 7,
+            terminal_id: "term_7".into(),
+            workspace_id: "w1".into(),
+            tab_id: "w1:t1".into(),
+            cwd: "/tmp".into(),
+            agent: "claude".into(),
+            session_id: "24fcd322-987c-427b-9b7c-31bc6bc98005".into(),
+            observed_at: 1,
+            source: "herdr:claude".into(),
+            title: None,
+        });
+
+        let session =
+            agent_session_from_snapshot_and_ledger(None, &ledger, "w1", "w1:t1", 7).unwrap();
+
+        assert_eq!(session.source, "herdr:claude");
+        assert_eq!(session.agent, "claude");
+        assert_eq!(session.kind, crate::agent_resume::AgentSessionRefKind::Id);
+        assert_eq!(session.value, "24fcd322-987c-427b-9b7c-31bc6bc98005");
     }
 
     #[tokio::test]
@@ -1746,6 +1824,7 @@ mod tests {
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
                 agent_start_commands: &BTreeMap::new(),
+                agent_session_ledger: &Default::default(),
             },
             events,
             Arc::new(Notify::new()),
@@ -1847,6 +1926,7 @@ mod tests {
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
                 agent_start_commands: &BTreeMap::new(),
+                agent_session_ledger: &Default::default(),
             },
             events,
             Arc::new(Notify::new()),
@@ -1974,6 +2054,7 @@ mod tests {
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
                 agent_start_commands: &BTreeMap::new(),
+                agent_session_ledger: &Default::default(),
             },
             events,
             Arc::new(Notify::new()),
@@ -2097,6 +2178,7 @@ mod tests {
                 resume_agents_on_restore: true,
                 agent_restore_commands: &BTreeMap::new(),
                 agent_start_commands: &BTreeMap::new(),
+                agent_session_ledger: &Default::default(),
             },
             events,
             Arc::new(Notify::new()),
@@ -2129,6 +2211,7 @@ mod tests {
             0,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
+            &Default::default(),
             &mut imports,
             mpsc::channel(4).0,
             Arc::new(Notify::new()),
@@ -2169,6 +2252,7 @@ mod tests {
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
                 agent_start_commands: &BTreeMap::new(),
+                agent_session_ledger: &Default::default(),
             },
             events,
             render_notify,
@@ -2213,6 +2297,7 @@ mod tests {
                 resume_agents_on_restore: false,
                 agent_restore_commands: &BTreeMap::new(),
                 agent_start_commands: &BTreeMap::new(),
+                agent_session_ledger: &Default::default(),
             },
             events,
             render_notify,

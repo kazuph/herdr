@@ -1075,6 +1075,8 @@ impl App {
 
         self.state.remove_alias_shadowed_by_new_pane(moved_pane_id);
         self.state.mark_session_dirty();
+        self.state
+            .update_agent_session_ledger_for_pane(moved_pane_id);
         self.schedule_session_save();
         let Some(pane) = self.pane_info(target_ws_idx, moved_pane_id) else {
             return encode_error(id, "pane_move_failed", "moved pane is unavailable");
@@ -3050,6 +3052,16 @@ mod tests {
             .unwrap()
             .clone();
         seed_terminal_states(&mut app);
+        let source_terminal_state = app.state.terminals.get_mut(&source_terminal).unwrap();
+        source_terminal_state.detected_agent = Some(crate::detect::Agent::Claude);
+        source_terminal_state.set_agent_session_ref(
+            "herdr:claude".into(),
+            "claude".into(),
+            crate::agent_resume::AgentSessionRef::id("move-session"),
+            None,
+        );
+        app.state.update_agent_session_ledger_for_pane(source);
+        assert_eq!(app.state.agent_session_ledger.entries.len(), 1);
         let source_public = app.public_pane_id(0, source).unwrap();
         let source_workspace = app.public_workspace_id(0);
 
@@ -3100,6 +3112,16 @@ mod tests {
             app.state.workspaces[0].tabs[0].terminal_id(source),
             Some(&source_terminal)
         );
+        assert_eq!(app.state.agent_session_ledger.entries.len(), 1);
+        let moved_ledger_entry = app
+            .state
+            .agent_session_ledger
+            .entries
+            .values()
+            .next()
+            .unwrap();
+        assert_eq!(moved_ledger_entry.workspace_id, app.state.workspaces[0].id);
+        assert_eq!(moved_ledger_entry.tab_id, app.public_tab_id(0, 0).unwrap());
         assert!(std::sync::Arc::ptr_eq(
             &app.state.workspaces[0].tabs[0].render_notify,
             &app.render_notify
@@ -3927,6 +3949,7 @@ mod tests {
             app.state.sidebar_section_split,
             app.state.collapsed_space_keys.clone(),
             app.state.collapsed_workspace_sections.clone(),
+            &app.state.agent_session_ledger,
         );
         let pane_snapshot = snapshot.workspaces[0].tabs[0]
             .panes

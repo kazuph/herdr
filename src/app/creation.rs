@@ -241,6 +241,7 @@ impl App {
             self.state.sidebar_section_split,
             self.state.collapsed_space_keys.clone(),
             self.state.collapsed_workspace_sections.clone(),
+            &self.state.agent_session_ledger,
         );
         let mut workspace_snapshot = snapshot.workspaces.remove(ws_idx);
         workspace_snapshot.id = None;
@@ -268,6 +269,7 @@ impl App {
                 resume_agents_on_restore: false,
                 agent_restore_commands: &std::collections::BTreeMap::new(),
                 agent_start_commands: &std::collections::BTreeMap::new(),
+                agent_session_ledger: &self.state.agent_session_ledger,
             },
             self.event_tx.clone(),
             self.render_notify.clone(),

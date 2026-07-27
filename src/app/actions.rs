@@ -1760,6 +1760,7 @@ impl AppState {
         pane_ids: impl IntoIterator<Item = PaneId>,
     ) {
         let pane_ids = pane_ids.into_iter().collect::<Vec<_>>();
+        self.remove_agent_session_ledger_panes(pane_ids.iter().copied());
         self.clear_copy_mode_for_removed_panes(pane_ids.iter().copied());
         if self
             .previous_pane_focus
@@ -2859,18 +2860,22 @@ impl AppState {
                 seq,
                 session_ref,
                 session_start_source,
-            } => self
-                .update_terminal_state(pane_id, |terminal| {
-                    terminal.set_agent_session_ref_for_session_start(
-                        source,
-                        agent_label,
-                        session_ref,
-                        seq,
-                        session_start_source,
-                    )
-                })
-                .into_iter()
-                .collect(),
+            } => {
+                let updates = self
+                    .update_terminal_state(pane_id, |terminal| {
+                        terminal.set_agent_session_ref_for_session_start(
+                            source,
+                            agent_label,
+                            session_ref,
+                            seq,
+                            session_start_source,
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                self.update_agent_session_ledger_for_pane(pane_id);
+                updates
+            }
             AppEvent::HookMetadataReported {
                 pane_id,
                 source,
@@ -3433,6 +3438,29 @@ mod tests {
         state
             .pane_graphics_streams
             .insert(pane_id, "test-stream".into());
+    }
+
+    fn insert_test_agent_ledger_entry(state: &mut AppState, pane_id: PaneId) {
+        let terminal_id = state
+            .workspaces
+            .iter()
+            .find_map(|workspace| workspace.terminal_id(pane_id))
+            .unwrap()
+            .to_string();
+        state
+            .agent_session_ledger
+            .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+                pane_id: pane_id.raw(),
+                terminal_id,
+                workspace_id: "test-workspace".into(),
+                tab_id: "test-tab".into(),
+                cwd: "/tmp".into(),
+                agent: "claude".into(),
+                session_id: "test-session".into(),
+                observed_at: 1,
+                source: "herdr:claude".into(),
+                title: None,
+            });
     }
 
     fn mark_linked_worktree(state: &mut AppState, ws_idx: usize) {
@@ -5604,12 +5632,18 @@ mod tests {
             },
         );
         insert_test_pane_graphics_state(&mut state, closed);
+        insert_test_agent_ledger_entry(&mut state, closed);
 
         state.close_pane();
         assert_eq!(state.workspaces[0].panes.len(), 1);
         assert!(!state.plugin_panes.contains_key(&closed));
         assert!(!state.pane_graphics_layers.contains_key(&closed));
         assert!(!state.pane_graphics_streams.contains_key(&closed));
+        assert!(state
+            .agent_session_ledger
+            .entries
+            .values()
+            .all(|entry| entry.pane_id != closed.raw()));
         state.assert_invariants_for_test();
     }
 
@@ -5675,6 +5709,7 @@ mod tests {
             },
         );
         insert_test_pane_graphics_state(&mut state, pane_id);
+        insert_test_agent_ledger_entry(&mut state, pane_id);
 
         state.close_tab();
 
@@ -5682,6 +5717,11 @@ mod tests {
         assert!(!state.plugin_panes.contains_key(&pane_id));
         assert!(!state.pane_graphics_layers.contains_key(&pane_id));
         assert!(!state.pane_graphics_streams.contains_key(&pane_id));
+        assert!(state
+            .agent_session_ledger
+            .entries
+            .values()
+            .all(|entry| entry.pane_id != pane_id.raw()));
         state.assert_invariants_for_test();
     }
 
@@ -5698,6 +5738,7 @@ mod tests {
             },
         );
         insert_test_pane_graphics_state(&mut state, pane_id);
+        insert_test_agent_ledger_entry(&mut state, pane_id);
 
         state.close_selected_workspace();
 
@@ -5705,6 +5746,11 @@ mod tests {
         assert!(!state.plugin_panes.contains_key(&pane_id));
         assert!(!state.pane_graphics_layers.contains_key(&pane_id));
         assert!(!state.pane_graphics_streams.contains_key(&pane_id));
+        assert!(state
+            .agent_session_ledger
+            .entries
+            .values()
+            .all(|entry| entry.pane_id != pane_id.raw()));
         state.assert_invariants_for_test();
     }
 

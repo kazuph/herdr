@@ -50,6 +50,7 @@ impl App {
                 self.state.sidebar_section_split,
                 self.state.collapsed_space_keys.clone(),
                 self.state.collapsed_workspace_sections.clone(),
+                &self.state.agent_session_ledger,
             );
             let history = self.persist_pane_history.then(|| {
                 crate::persist::capture_history(&self.state.workspaces, &self.terminal_runtimes)

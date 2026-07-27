@@ -94,12 +94,15 @@ pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
         .into_iter()
         .map(|member| {
             let argv = process_argv(member.pid);
+            let identity = super::stable_process_identity(member.pid);
             ForegroundProcess {
                 pid: member.pid,
                 name: member.comm,
                 argv0: None,
                 cmdline: argv.as_ref().map(|parts| parts.join(" ")),
                 argv,
+                cwd: identity.as_ref().map(|(cwd, _)| cwd.clone()),
+                started_at: identity.map(|(_, started_at)| started_at),
             }
         })
         .collect::<Vec<_>>();
@@ -210,6 +213,7 @@ pub fn foreground_group_leader_job(process_group_id: u32) -> Option<ForegroundJo
     }
 
     let argv = process_argv(process_group_id);
+    let identity = super::stable_process_identity(process_group_id);
     Some(ForegroundJob {
         process_group_id,
         processes: vec![ForegroundProcess {
@@ -218,6 +222,8 @@ pub fn foreground_group_leader_job(process_group_id: u32) -> Option<ForegroundJo
             argv0: None,
             cmdline: argv.as_ref().map(|parts| parts.join(" ")),
             argv,
+            cwd: identity.as_ref().map(|(cwd, _)| cwd.clone()),
+            started_at: identity.map(|(_, started_at)| started_at),
         }],
     })
 }
@@ -272,6 +278,34 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
         return None;
     }
     std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+}
+
+pub fn process_started_at(pid: u32) -> Option<std::time::SystemTime> {
+    if pid == 0 {
+        return None;
+    }
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = stat.get(stat.rfind(')')? + 2..)?;
+    // After (comm), field 0 is state; Linux proc field 22 (starttime) is index 19.
+    let start_ticks: u64 = rest.split_whitespace().nth(19)?.parse().ok()?;
+    let boot_seconds: u64 = std::fs::read_to_string("/proc/stat")
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("btime ")?.parse().ok())?;
+    let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if ticks_per_second <= 0 {
+        return None;
+    }
+    let ticks_per_second = u64::try_from(ticks_per_second).ok()?;
+    let seconds = start_ticks / ticks_per_second;
+    let remainder = start_ticks % ticks_per_second;
+    std::time::UNIX_EPOCH
+        .checked_add(std::time::Duration::from_secs(
+            boot_seconds.checked_add(seconds)?,
+        ))?
+        .checked_add(std::time::Duration::from_nanos(
+            remainder.saturating_mul(1_000_000_000) / ticks_per_second,
+        ))
 }
 
 /// Read a Herdr agent identity hint from a process environment.

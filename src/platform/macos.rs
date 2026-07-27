@@ -336,12 +336,15 @@ pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
             continue;
         };
         let argv = process_argv(pid);
+        let identity = super::stable_process_identity(pid);
         processes.push(ForegroundProcess {
             pid,
             name,
             argv0: process_argv0_name(pid),
             cmdline: argv.as_ref().map(|parts| parts.join(" ")),
             argv,
+            cwd: identity.as_ref().map(|(cwd, _)| cwd.clone()),
+            started_at: identity.map(|(_, started_at)| started_at),
         });
     }
 
@@ -363,6 +366,7 @@ pub fn foreground_group_leader_job(process_group_id: u32) -> Option<ForegroundJo
 
     let name = comm_from_bsdinfo(&info)?;
     let argv = process_argv(process_group_id);
+    let identity = super::stable_process_identity(process_group_id);
     Some(ForegroundJob {
         process_group_id,
         processes: vec![ForegroundProcess {
@@ -371,6 +375,8 @@ pub fn foreground_group_leader_job(process_group_id: u32) -> Option<ForegroundJo
             argv0: process_argv0_name(process_group_id),
             cmdline: argv.as_ref().map(|parts| parts.join(" ")),
             argv,
+            cwd: identity.as_ref().map(|(cwd, _)| cwd.clone()),
+            started_at: identity.map(|(_, started_at)| started_at),
         }],
     })
 }
@@ -848,6 +854,13 @@ pub fn parent_process_id(pid: u32) -> Option<u32> {
     (ppid > 0).then_some(ppid)
 }
 
+pub fn process_started_at(pid: u32) -> Option<std::time::SystemTime> {
+    let info = process_bsdinfo(pid)?;
+    std::time::UNIX_EPOCH
+        .checked_add(std::time::Duration::from_secs(info.pbi_start_tvsec))?
+        .checked_add(std::time::Duration::from_micros(info.pbi_start_tvusec))
+}
+
 pub fn process_name(pid: u32) -> Option<String> {
     comm_from_bsdinfo(&process_bsdinfo(pid)?)
 }
@@ -1074,6 +1087,15 @@ pub fn process_exists(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_started_at_reads_current_process_birth_time() {
+        let started_at = process_started_at(std::process::id()).expect("current process start");
+        let elapsed = std::time::SystemTime::now()
+            .duration_since(started_at)
+            .expect("current process cannot start in the future");
+        assert!(elapsed < std::time::Duration::from_secs(60));
+    }
 
     #[test]
     fn nofile_target_raises_low_soft_limit_to_cap_when_hard_is_unlimited() {

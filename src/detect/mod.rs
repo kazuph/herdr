@@ -682,6 +682,8 @@ mod tests {
             argv0: None,
             argv: Some(argv.iter().map(|arg| (*arg).to_string()).collect()),
             cmdline: Some(argv.join(" ")),
+            cwd: None,
+            started_at: None,
         }
     }
 

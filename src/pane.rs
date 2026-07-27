@@ -201,6 +201,32 @@ async fn publish_state_changed_event(
     }
 }
 
+async fn publish_agent_session_observed_event(
+    state_events: mpsc::Sender<AppEvent>,
+    pane_id: PaneId,
+    agent: Agent,
+    session_id: String,
+) {
+    let agent_label = crate::detect::agent_label(agent).to_string();
+    if let Err(e) = state_events
+        .send(AppEvent::AgentSessionReported {
+            pane_id,
+            source: format!("herdr:{agent_label}"),
+            agent_label,
+            seq: None,
+            session_ref: crate::agent_resume::AgentSessionRef::id(session_id),
+            session_start_source: None,
+        })
+        .await
+    {
+        warn!(
+            pane = pane_id.raw(),
+            err = %e,
+            "failed to deliver observed agent session"
+        );
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct AgentDetectionPublishUpdate {
     state: AgentState,
@@ -435,6 +461,7 @@ struct ProcessProbeResult {
     foreground_is_pane_shell: bool,
     agent: Option<Agent>,
     process_name: Option<String>,
+    foreground_job: Option<crate::platform::ForegroundJob>,
 }
 
 fn agent_hint_for_foreground_job_members(
@@ -480,6 +507,7 @@ fn process_probe_result(
         foreground_is_pane_shell: job.processes.iter().any(|process| process.pid == pid),
         agent: Some(agent),
         process_name: Some(process_name),
+        foreground_job: Some(job.clone()),
     }
 }
 
@@ -541,6 +569,7 @@ fn probe_foreground_process_from_jobs(
             foreground_is_pane_shell: job.processes.iter().any(|process| process.pid == pid),
             agent: identified.as_ref().map(|(agent, _)| *agent),
             process_name: identified.map(|(_, process_name)| process_name),
+            foreground_job: Some(job.clone()),
         };
     }
 
@@ -549,6 +578,7 @@ fn probe_foreground_process_from_jobs(
         foreground_is_pane_shell: false,
         agent: None,
         process_name: None,
+        foreground_job: None,
     }
 }
 
@@ -560,6 +590,54 @@ fn probe_foreground_process(pid: u32, foreground_pgid: Option<u32>) -> ProcessPr
         || crate::detect::foreground_job(pid),
         crate::platform::process_agent_hint,
     )
+}
+
+fn observed_agent_session_from_foreground_job(
+    job: &crate::platform::ForegroundJob,
+    agent: Agent,
+) -> Option<String> {
+    let agent_label = crate::detect::agent_label(agent);
+    let mut session_ids = std::collections::BTreeSet::new();
+    for process in &job.processes {
+        let single_process_job = crate::platform::ForegroundJob {
+            process_group_id: process.pid,
+            processes: vec![process.clone()],
+        };
+        let process_matches_agent = crate::platform::process_agent_hint(process.pid) == Some(agent)
+            || crate::detect::identify_agent_in_job(&single_process_job)
+                .is_some_and(|(identified, _)| identified == agent);
+        if !process_matches_agent {
+            continue;
+        }
+
+        let observed = process
+            .cmdline
+            .as_deref()
+            .and_then(|cmdline| {
+                crate::agent_sessions::session_id_from_cmdline(agent_label, cmdline)
+            })
+            .or_else(|| {
+                let cwd = process.cwd.as_deref()?;
+                let started_at = process.started_at?;
+                match agent {
+                    Agent::Claude => crate::agent_sessions::session_id_from_claude_process_record(
+                        process.pid,
+                        cwd,
+                        started_at,
+                    )
+                    .or_else(|| {
+                        crate::agent_sessions::claude_session_id_from_session_files(cwd, started_at)
+                    }),
+                    _ => None,
+                }
+            });
+        if let Some(session_id) = observed {
+            session_ids.insert(session_id);
+        }
+    }
+    (session_ids.len() == 1)
+        .then(|| session_ids.pop_first())
+        .flatten()
 }
 
 #[cfg(unix)]
@@ -600,6 +678,7 @@ fn spawn_basic_detection_task(
         let mut agent_startup_grace_until = None;
         let mut pending_idle = PendingIdleConfirmation::default();
         let mut agent_activity_tracker = None;
+        let mut last_observed_agent_session = None;
 
         loop {
             let sleep_duration = if pending_idle.active() {
@@ -629,6 +708,7 @@ fn spawn_basic_detection_task(
                     agent_startup_grace_until = None;
                     pending_idle.clear();
                     agent_activity_tracker = None;
+                    last_observed_agent_session = None;
                 }
             }
 
@@ -677,11 +757,30 @@ fn spawn_basic_detection_task(
                 let process_group_id = probe.process_group_id;
                 let foreground_is_pane_shell = probe.foreground_is_pane_shell;
                 let mut new_agent = probe.agent;
+                let foreground_job = probe.foreground_job;
                 if let Some(suppressed_agent) = suppressed_agent {
                     if new_agent == Some(suppressed_agent) {
                         new_agent = None;
                     } else if let Ok(mut pending_release) = pending_release_for_task.lock() {
                         *pending_release = None;
+                    }
+                }
+                if let Some(agent) = new_agent {
+                    if let Some(session_id) = foreground_job
+                        .as_ref()
+                        .and_then(|job| observed_agent_session_from_foreground_job(job, agent))
+                    {
+                        let observed = (agent, session_id.clone());
+                        if last_observed_agent_session.as_ref() != Some(&observed) {
+                            last_observed_agent_session = Some(observed);
+                            publish_agent_session_observed_event(
+                                state_events.clone(),
+                                pane_id,
+                                agent,
+                                session_id,
+                            )
+                            .await;
+                        }
                     }
                 }
                 let previous_agent = agent_presence.current_agent();
@@ -2035,6 +2134,7 @@ impl PaneRuntime {
                 let mut agent_startup_grace_until = None;
                 let mut pending_idle = PendingIdleConfirmation::default();
                 let mut agent_activity_tracker = None;
+                let mut last_observed_agent_session = None;
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -2074,6 +2174,7 @@ impl PaneRuntime {
                             agent_startup_grace_until = None;
                             pending_idle.clear();
                             agent_activity_tracker = None;
+                            last_observed_agent_session = None;
                         }
                     }
 
@@ -2124,6 +2225,7 @@ impl PaneRuntime {
                             let process_group_id = probe.process_group_id;
                             let foreground_is_pane_shell = probe.foreground_is_pane_shell;
                             let mut new_agent = probe.agent;
+                            let foreground_job = probe.foreground_job;
 
                             if let Some(suppressed_agent) = suppressed_agent {
                                 if new_agent == Some(suppressed_agent) {
@@ -2132,6 +2234,23 @@ impl PaneRuntime {
                                     pending_release_for_task.lock()
                                 {
                                     *pending_release = None;
+                                }
+                            }
+                            if let Some(agent) = new_agent {
+                                if let Some(session_id) = foreground_job.as_ref().and_then(|job| {
+                                    observed_agent_session_from_foreground_job(job, agent)
+                                }) {
+                                    let observed = (agent, session_id.clone());
+                                    if last_observed_agent_session.as_ref() != Some(&observed) {
+                                        last_observed_agent_session = Some(observed);
+                                        publish_agent_session_observed_event(
+                                            state_events.clone(),
+                                            pane_id,
+                                            agent,
+                                            session_id,
+                                        )
+                                        .await;
+                                    }
                                 }
                             }
 
@@ -3415,6 +3534,8 @@ mod tests {
             argv0: None,
             argv: None,
             cmdline: None,
+            cwd: None,
+            started_at: None,
         }
     }
 
@@ -3448,6 +3569,73 @@ mod tests {
                 (pid == 100).then_some(Agent::Codex)
             }),
             Some(Agent::Codex)
+        );
+    }
+
+    #[test]
+    fn observed_session_uses_only_identified_foreground_agent_members() {
+        let mut claude = foreground_process(100, "claude");
+        claude.cmdline = Some("claude --resume exact-session".into());
+        let mut unrelated = foreground_process(101, "bash");
+        unrelated.cmdline = Some("bash claude --resume wrong-session".into());
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 100,
+            processes: vec![claude, unrelated],
+        };
+
+        assert_eq!(
+            observed_agent_session_from_foreground_job(&job, Agent::Claude),
+            Some("exact-session".into())
+        );
+    }
+
+    #[test]
+    fn observed_session_rejects_conflicting_agent_member_ids() {
+        let mut first = foreground_process(100, "claude");
+        first.cmdline = Some("claude --resume first-session".into());
+        let mut second = foreground_process(101, "claude");
+        second.cmdline = Some("claude --resume second-session".into());
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 100,
+            processes: vec![first, second],
+        };
+
+        assert_eq!(
+            observed_agent_session_from_foreground_job(&job, Agent::Claude),
+            None
+        );
+    }
+
+    #[test]
+    fn observed_session_uses_the_same_job_snapshot_as_agent_detection() {
+        let mut first = foreground_process(100, "claude");
+        first.cmdline = Some("claude --resume first-session".into());
+        let first_job = crate::platform::ForegroundJob {
+            process_group_id: 100,
+            processes: vec![first],
+        };
+        let mut later = foreground_process(200, "claude");
+        later.cmdline = Some("claude --resume later-session".into());
+        let later_job = crate::platform::ForegroundJob {
+            process_group_id: 200,
+            processes: vec![later],
+        };
+
+        let probe = probe_foreground_process_from_jobs(
+            42,
+            Some(100),
+            Some(first_job),
+            || Some(later_job),
+            |_| None,
+        );
+
+        assert_eq!(probe.agent, Some(Agent::Claude));
+        assert_eq!(
+            probe
+                .foreground_job
+                .as_ref()
+                .and_then(|job| observed_agent_session_from_foreground_job(job, Agent::Claude)),
+            Some("first-session".into())
         );
     }
 

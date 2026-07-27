@@ -1841,6 +1841,7 @@ pub struct AppState {
     /// Set when a persisted session snapshot would change.
     pub session_dirty: bool,
     pub(crate) agent_session_ledger: crate::persist::agent_ledger::AgentSessionLedger,
+    pub(crate) agent_session_ledger_path: Option<std::path::PathBuf>,
     /// Terminal runtimes that should be shut down by the app/runtime layer
     /// after state has detached their terminal metadata.
     pub(crate) terminal_runtime_shutdowns: Vec<crate::terminal::TerminalId>,
@@ -1920,6 +1921,11 @@ impl AppState {
     }
 
     pub(crate) fn update_agent_session_ledger_for_pane(&mut self, pane_id: PaneId) {
+        self.update_agent_session_ledger_for_pane_in_memory(pane_id);
+        self.save_agent_session_ledger();
+    }
+
+    fn update_agent_session_ledger_for_pane_in_memory(&mut self, pane_id: PaneId) {
         let Some((ws_idx, tab_idx, terminal_id)) =
             self.workspaces
                 .iter()
@@ -1941,16 +1947,15 @@ impl AppState {
         let Some(terminal) = self.terminals.get(&terminal_id) else {
             return;
         };
-        let Some(agent) = terminal.effective_agent_label() else {
-            return;
-        };
-        let Some(session_id) = terminal_safe_session_id(terminal) else {
+        let Some((source, agent, session_id)) = terminal_safe_agent_session(terminal) else {
+            self.agent_session_ledger.remove_panes(&[pane_id.raw()]);
             return;
         };
         let workspace = &self.workspaces[ws_idx];
         let Some(tab_number) = workspace.public_tab_number(tab_idx) else {
             return;
         };
+        self.agent_session_ledger.remove_panes(&[pane_id.raw()]);
         self.agent_session_ledger
             .upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
                 pane_id: pane_id.raw(),
@@ -1961,11 +1966,45 @@ impl AppState {
                 agent: agent.to_string(),
                 session_id: session_id.to_string(),
                 observed_at: crate::persist::agent_ledger::now_millis(),
-                source: terminal_session_source(terminal)
-                    .unwrap_or_default()
-                    .to_string(),
+                source: source.to_string(),
                 title: terminal.effective_title(),
             });
+    }
+
+    pub(crate) fn sync_agent_session_ledger_from_terminals(&mut self) {
+        let pane_ids = self
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.tabs.iter())
+            .flat_map(|tab| tab.panes.keys().copied())
+            .collect::<Vec<_>>();
+        for pane_id in pane_ids {
+            self.update_agent_session_ledger_for_pane_in_memory(pane_id);
+        }
+        self.save_agent_session_ledger();
+    }
+
+    pub(crate) fn save_agent_session_ledger(&self) {
+        let Some(path) = &self.agent_session_ledger_path else {
+            return;
+        };
+        if let Err(err) =
+            crate::persist::agent_ledger::save_to_path(path, &self.agent_session_ledger)
+        {
+            tracing::warn!(err = %err, "failed to save agent session ledger");
+        }
+    }
+
+    pub(crate) fn remove_agent_session_ledger_panes(
+        &mut self,
+        pane_ids: impl IntoIterator<Item = PaneId>,
+    ) {
+        let pane_ids = pane_ids.into_iter().map(PaneId::raw).collect::<Vec<_>>();
+        if pane_ids.is_empty() {
+            return;
+        }
+        self.agent_session_ledger.remove_panes(&pane_ids);
+        self.save_agent_session_ledger();
     }
 
     pub(crate) fn remove_alias_shadowed_by_new_pane(&mut self, pane_id: PaneId) {
@@ -2124,14 +2163,24 @@ impl AppState {
 }
 
 fn terminal_safe_session_id(terminal: &crate::terminal::TerminalState) -> Option<&str> {
+    terminal_safe_agent_session(terminal).map(|(_, _, session_id)| session_id)
+}
+
+fn terminal_safe_agent_session(
+    terminal: &crate::terminal::TerminalState,
+) -> Option<(&str, &str, &str)> {
     terminal
         .hook_authority
         .as_ref()
-        .and_then(|authority| authority.session_ref.as_ref())
-        .and_then(|session_ref| {
+        .and_then(|authority| {
+            let session_ref = authority.session_ref.as_ref()?;
             (session_ref.kind == crate::agent_resume::AgentSessionRefKind::Id
                 && crate::agent_sessions::is_safe_session_id(&session_ref.value))
-            .then_some(session_ref.value.as_str())
+            .then_some((
+                authority.source.as_str(),
+                authority.agent_label.as_str(),
+                session_ref.value.as_str(),
+            ))
         })
         .or_else(|| {
             terminal
@@ -2140,7 +2189,11 @@ fn terminal_safe_session_id(terminal: &crate::terminal::TerminalState) -> Option
                 .and_then(|session| {
                     (session.session_ref.kind == crate::agent_resume::AgentSessionRefKind::Id
                         && crate::agent_sessions::is_safe_session_id(&session.session_ref.value))
-                    .then_some(session.session_ref.value.as_str())
+                    .then_some((
+                        session.source.as_str(),
+                        session.agent.as_str(),
+                        session.session_ref.value.as_str(),
+                    ))
                 })
         })
 }
@@ -2161,24 +2214,6 @@ fn terminal_has_unsafe_session_id(terminal: &crate::terminal::TerminalState) -> 
                 session.session_ref.kind == crate::agent_resume::AgentSessionRefKind::Id
                     && !crate::agent_sessions::is_safe_session_id(&session.session_ref.value)
             })
-}
-
-fn terminal_session_source(terminal: &crate::terminal::TerminalState) -> Option<&str> {
-    terminal
-        .hook_authority
-        .as_ref()
-        .and_then(|authority| {
-            authority
-                .session_ref
-                .as_ref()
-                .map(|_| authority.source.as_str())
-        })
-        .or_else(|| {
-            terminal
-                .persisted_agent_session
-                .as_ref()
-                .map(|session| session.source.as_str())
-        })
 }
 
 #[cfg(test)]
@@ -2381,6 +2416,7 @@ impl AppState {
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
             session_dirty: false,
             agent_session_ledger: crate::persist::agent_ledger::AgentSessionLedger::default(),
+            agent_session_ledger_path: None,
             terminal_runtime_shutdowns: Vec::new(),
         }
     }
@@ -3065,6 +3101,100 @@ mod tests {
         assert!(!items.contains(&"Swap with focused pane"));
         assert!(!items.contains(&"Split right"));
         assert!(!items.contains(&"Split down"));
+    }
+
+    #[test]
+    fn session_report_updates_ledger_before_agent_state_arrives() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("work")];
+        state.ensure_test_terminals();
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].terminal_id(pane_id).unwrap().clone();
+
+        state.handle_app_event(crate::events::AppEvent::AgentSessionReported {
+            pane_id,
+            source: "herdr:claude".into(),
+            agent_label: "claude".into(),
+            seq: None,
+            session_ref: crate::agent_resume::AgentSessionRef::id(
+                "24fcd322-987c-427b-9b7c-31bc6bc98005",
+            ),
+            session_start_source: None,
+        });
+
+        assert!(state.terminals[&terminal_id]
+            .effective_agent_label()
+            .is_none());
+        let initial_entry = state
+            .agent_session_ledger
+            .entries
+            .values()
+            .next()
+            .expect("first session report should update the ledger");
+        assert_eq!(initial_entry.agent, "claude");
+
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .detected_agent = Some(crate::detect::Agent::Codex);
+        state.agent_session_ledger.entries.clear();
+        state.handle_app_event(crate::events::AppEvent::AgentSessionReported {
+            pane_id,
+            source: "herdr:claude".into(),
+            agent_label: "claude".into(),
+            seq: None,
+            session_ref: crate::agent_resume::AgentSessionRef::id(
+                "24fcd322-987c-427b-9b7c-31bc6bc98005",
+            ),
+            session_start_source: None,
+        });
+        assert_eq!(
+            state.terminals[&terminal_id].effective_agent_label(),
+            Some("codex")
+        );
+        let entry = state
+            .agent_session_ledger
+            .entries
+            .values()
+            .next()
+            .expect("rejected report should heal from the existing session owner");
+        assert_eq!(entry.agent, "claude");
+        assert_eq!(entry.session_id, "24fcd322-987c-427b-9b7c-31bc6bc98005");
+    }
+
+    #[test]
+    fn startup_sync_heals_ledger_from_persisted_terminal_session() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("work")];
+        state.ensure_test_terminals();
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].terminal_id(pane_id).unwrap().clone();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+                source: "herdr:claude".into(),
+                agent: "claude".into(),
+                session_ref: crate::agent_resume::AgentSessionRef {
+                    kind: crate::agent_resume::AgentSessionRefKind::Id,
+                    value: "24fcd322-987c-427b-9b7c-31bc6bc98005".into(),
+                },
+            });
+
+        state.agent_session_ledger.entries.clear();
+        state.sync_agent_session_ledger_from_terminals();
+
+        let entry = state
+            .agent_session_ledger
+            .entries
+            .values()
+            .next()
+            .expect("startup sync should restore the missing ledger entry");
+        assert_eq!(entry.pane_id, pane_id.raw());
+        assert_eq!(entry.agent, "claude");
+        assert_eq!(entry.session_id, "24fcd322-987c-427b-9b7c-31bc6bc98005");
     }
 
     #[test]

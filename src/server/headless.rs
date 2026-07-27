@@ -1145,6 +1145,7 @@ impl HeadlessServer {
             self.app.state.sidebar_section_split,
             self.app.state.collapsed_space_keys.clone(),
             self.app.state.collapsed_workspace_sections.clone(),
+            &self.app.state.agent_session_ledger,
         );
 
         let mut handoff_entries = Vec::new();

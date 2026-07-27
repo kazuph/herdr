@@ -10,12 +10,20 @@ pub struct ForegroundProcess {
     pub argv0: Option<String>,
     pub argv: Option<Vec<String>>,
     pub cmdline: Option<String>,
+    pub cwd: Option<std::path::PathBuf>,
+    pub started_at: Option<std::time::SystemTime>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForegroundJob {
     pub process_group_id: u32,
     pub processes: Vec<ForegroundProcess>,
+}
+
+fn stable_process_identity(pid: u32) -> Option<(std::path::PathBuf, std::time::SystemTime)> {
+    let started_at = process_started_at(pid)?;
+    let cwd = process_cwd(pid)?;
+    (process_started_at(pid)? == started_at).then_some((cwd, started_at))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,6 +283,15 @@ mod tests {
     fn parse_agent_env_hint_ignores_missing_or_unknown_agents() {
         assert_eq!(parse_agent_env_hint(b"PATH=/bin\0TERM=xterm\0"), None);
         assert_eq!(parse_agent_env_hint(b"HERDR_AGENT=not-an-agent\0"), None);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn stable_process_identity_reads_current_process_once() {
+        let (cwd, started_at) =
+            stable_process_identity(std::process::id()).expect("current process identity");
+        assert!(cwd.is_absolute());
+        assert!(started_at <= std::time::SystemTime::now());
     }
 
     #[test]

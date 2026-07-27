@@ -46,6 +46,11 @@ impl AgentSessionLedger {
     ) -> Option<&AgentSessionLedgerEntry> {
         self.entries.get(&Self::key(workspace_id, tab_id, pane_id))
     }
+
+    pub fn remove_panes(&mut self, pane_ids: &[u32]) {
+        self.entries
+            .retain(|_, entry| !pane_ids.contains(&entry.pane_id));
+    }
 }
 
 pub fn now_millis() -> u128 {
@@ -83,14 +88,20 @@ pub(crate) fn load_from_path(path: &Path) -> AgentSessionLedger {
     }
 }
 
-#[cfg(test)]
-fn save_to_path(path: &Path, ledger: &AgentSessionLedger) -> std::io::Result<()> {
+pub(crate) fn save_to_path(path: &Path, ledger: &AgentSessionLedger) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(ledger)?;
     let tmp_path = path.with_extension("json.tmp");
     std::fs::write(&tmp_path, json)?;
+    #[cfg(windows)]
+    if path.exists() {
+        if let Err(err) = std::fs::remove_file(path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(err);
+        }
+    }
     if let Err(err) = std::fs::rename(&tmp_path, path) {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(err);
@@ -131,5 +142,29 @@ mod tests {
             Some("019f1140-6d40-7883-b6bc-3413eea89323")
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn removing_panes_keeps_unrelated_entries() {
+        let mut ledger = AgentSessionLedger::default();
+        for pane_id in [7, 8] {
+            ledger.upsert(AgentSessionLedgerEntry {
+                pane_id,
+                terminal_id: format!("term_{pane_id}"),
+                workspace_id: "w1".into(),
+                tab_id: "w1:t1".into(),
+                cwd: PathBuf::from("/tmp"),
+                agent: "claude".into(),
+                session_id: format!("session-{pane_id}"),
+                observed_at: 1,
+                source: "herdr:claude".into(),
+                title: None,
+            });
+        }
+
+        ledger.remove_panes(&[7]);
+
+        assert!(ledger.get("w1", "w1:t1", 7).is_none());
+        assert!(ledger.get("w1", "w1:t1", 8).is_some());
     }
 }

@@ -393,6 +393,11 @@ impl App {
         // Try to restore previous session
         let mut restored_terminals = std::collections::HashMap::new();
         let mut restored_terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        let agent_session_ledger = if no_session {
+            crate::persist::agent_ledger::AgentSessionLedger::default()
+        } else {
+            crate::persist::agent_ledger::load()
+        };
         let (
             workspaces,
             active,
@@ -434,6 +439,7 @@ impl App {
                         || config.agent_restore.enabled,
                     agent_restore_commands: &config.agent_restore.commands,
                     agent_start_commands: &config.agent_start.commands,
+                    agent_session_ledger: &agent_session_ledger,
                 },
                 event_tx.clone(),
                 render_notify.clone(),
@@ -722,11 +728,15 @@ impl App {
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
             session_dirty: false,
-            agent_session_ledger: crate::persist::agent_ledger::load(),
+            agent_session_ledger,
+            agent_session_ledger_path: (!no_session).then(crate::persist::agent_ledger::path),
             terminal_runtime_shutdowns: Vec::new(),
         };
 
         state.terminals = restored_terminals;
+        if !no_session {
+            state.sync_agent_session_ledger_from_terminals();
+        }
 
         for ws_idx in 0..state.workspaces.len() {
             let cwd = state.workspaces[ws_idx]
@@ -831,11 +841,13 @@ impl App {
         >,
     ) -> io::Result<Self> {
         let mut app = Self::new(config, true, config_diagnostic, api_rx, event_hub);
+        let agent_session_ledger = crate::persist::agent_ledger::load();
         let (workspaces, terminals, runtimes) = crate::persist::restore_handoff(
             snapshot,
             config.advanced.scrollback_limit_bytes,
             &config.terminal.default_shell,
             config.terminal.shell_mode,
+            &agent_session_ledger,
             imports,
             app.event_tx.clone(),
             app.render_notify.clone(),
@@ -844,6 +856,8 @@ impl App {
         let pane_id_aliases = crate::persist::handoff_pane_aliases(snapshot, &workspaces);
 
         app.no_session = false;
+        app.state.agent_session_ledger = agent_session_ledger;
+        app.state.agent_session_ledger_path = Some(crate::persist::agent_ledger::path());
         app.state.installed_plugins = load_plugin_registry(app.no_session);
         let now = Instant::now();
         if background_update_check_enabled(app.no_session, app.update_version_check_enabled) {
@@ -881,6 +895,7 @@ impl App {
         } else {
             state::Mode::Navigate
         };
+        app.state.sync_agent_session_ledger_from_terminals();
         app.last_focus = app.state.active.and_then(|idx| {
             app.state
                 .workspaces
