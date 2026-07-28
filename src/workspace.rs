@@ -113,7 +113,7 @@ const PUBLIC_ID_ALPHABET: &[u8; 32] = b"123456789ABCDEFGHJKMNPQRSTVWXYZ0";
 
 pub(crate) fn generate_workspace_id() -> String {
     let counter = NEXT_WORKSPACE_ID.fetch_add(1, Ordering::Relaxed);
-    format!("w{}", encode_public_number(counter as usize))
+    format!("s{}", encode_public_number(counter as usize))
 }
 
 pub(crate) fn encode_public_number(mut value: usize) -> String {
@@ -144,7 +144,9 @@ pub(crate) fn decode_public_number(value: &str) -> Option<usize> {
 }
 
 pub(crate) fn public_workspace_number(id: &str) -> Option<usize> {
-    id.strip_prefix('w').and_then(decode_public_number)
+    id.strip_prefix('s')
+        .or_else(|| id.strip_prefix('w'))
+        .and_then(decode_public_number)
 }
 
 pub(crate) fn public_pane_id_for_number(workspace_id: &str, pane_number: usize) -> String {
@@ -1540,8 +1542,8 @@ mod tests {
         let first = generate_workspace_id();
         let second = generate_workspace_id();
 
-        assert!(first.starts_with('w'));
-        assert!(second.starts_with('w'));
+        assert!(first.starts_with('s'));
+        assert!(second.starts_with('s'));
         assert_ne!(first, second);
         assert!(first.len() <= 3, "unexpectedly long workspace id: {first}");
         assert!(
@@ -1568,13 +1570,13 @@ mod tests {
     #[test]
     fn reserving_restored_workspace_ids_prevents_reuse() {
         let mut restored = Workspace::test_new("restored");
-        restored.id = "wZ".to_string();
+        restored.id = "sZ".to_string();
 
         reserve_workspace_ids(&[restored]);
 
         let generated = generate_workspace_id();
-        assert_ne!(generated, "wZ");
-        assert!(public_workspace_number(&generated) > public_workspace_number("wZ"));
+        assert_ne!(generated, "sZ");
+        assert!(public_workspace_number(&generated) > public_workspace_number("sZ"));
     }
 
     #[test]

@@ -3581,6 +3581,36 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         .as_str()
         .unwrap()
         .to_string();
+    assert!(
+        ws1_id.starts_with('s'),
+        "workspace id must use the Space prefix: {ws1_id}"
+    );
+    let root_pane_id = ws1_json["result"]["root_pane"]["pane_id"].as_str().unwrap();
+    let renamed = run_cli(
+        &socket_path,
+        &["agent", "rename", root_pane_id, "global-target"],
+    );
+    assert!(
+        renamed.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&renamed.stderr)
+    );
+    let root_agent = run_cli_json(&socket_path, &["agent", "get", "global-target"]);
+    let root_global_number = root_agent["result"]["agent"]["global_pane_number"]
+        .as_u64()
+        .unwrap();
+    for target in [
+        root_global_number.to_string(),
+        format!("%{root_global_number}"),
+        format!("p{root_global_number}"),
+    ] {
+        let resolved = run_cli_json(&socket_path, &["pane", "get", &target]);
+        assert_eq!(resolved["result"]["pane"]["pane_id"], root_pane_id);
+    }
+    let legacy_ws1_id = format!("w{}", ws1_id.strip_prefix('s').unwrap());
+    let legacy_target = format!("{legacy_ws1_id}:p1");
+    let resolved_legacy = run_cli_json(&socket_path, &["pane", "get", &legacy_target]);
+    assert_eq!(resolved_legacy["result"]["pane"]["pane_id"], root_pane_id);
 
     let split_12_json = run_cli_json(
         &socket_path,
@@ -3608,6 +3638,10 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         .as_str()
         .unwrap()
         .to_string();
+    assert!(
+        ws2_id.starts_with('s'),
+        "workspace id must use the Space prefix: {ws2_id}"
+    );
     assert_ne!(ws2_id, ws1_id);
 
     let ws2_focus = run_cli(&socket_path, &["workspace", "focus", &ws2_id]);
@@ -3634,6 +3668,10 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         .as_str()
         .unwrap()
         .to_string();
+    assert!(
+        ws3_id.starts_with('s'),
+        "workspace id must use the Space prefix: {ws3_id}"
+    );
     assert_ne!(ws3_id, ws1_id);
     assert_ne!(ws3_id, ws2_id);
 
@@ -3661,6 +3699,10 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         .as_str()
         .unwrap()
         .to_string();
+    assert!(
+        new_ws_id.starts_with('s'),
+        "workspace id must use the Space prefix: {new_ws_id}"
+    );
     assert_ne!(new_ws_id, ws1_id);
     assert_ne!(new_ws_id, ws2_id);
     assert_ne!(new_ws_id, ws3_id);
@@ -3746,7 +3788,7 @@ fn pane_shell_gets_herdr_socket_and_pane_env() {
             "run",
             "1-1",
             &format!(
-                "printf '%s\\n%s\\n' \"$HERDR_SOCKET_PATH\" \"$HERDR_PANE_ID\" > {}",
+                "printf '%s\\n%s\\n%s\\n%s\\n' \"$HERDR_SOCKET_PATH\" \"$HERDR_WORKSPACE_ID\" \"$HERDR_TAB_ID\" \"$HERDR_PANE_ID\" > {}",
                 env_capture.display()
             ),
         ],
@@ -3769,7 +3811,22 @@ fn pane_shell_gets_herdr_socket_and_pane_env() {
         text.contains(&socket_path.display().to_string()),
         "env file was: {text:?}"
     );
-    assert!(text.contains(&pane_id), "env file was: {text:?}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 4, "env file was: {text:?}");
+    assert_eq!(lines[0], socket_path.display().to_string());
+    assert!(
+        lines[1].starts_with('s'),
+        "HERDR_WORKSPACE_ID must use the Space prefix: {text:?}"
+    );
+    assert!(
+        lines[2].starts_with(&format!("{}:t", lines[1])),
+        "HERDR_TAB_ID must use the Space prefix: {text:?}"
+    );
+    assert_eq!(lines[3], pane_id);
+    assert!(
+        lines[3].starts_with(&format!("{}:p", lines[1])),
+        "HERDR_PANE_ID must use the Space prefix: {text:?}"
+    );
 
     cleanup_spawned_herdr(herdr, base);
 }
@@ -4954,7 +5011,7 @@ fn agent_wait_rechecks_protocol_before_subscription() {
         assert_eq!(get_request["method"], "agent.get");
         get_stream
             .write_all(
-                br#"{"id":"cli:agent:wait:resolve","result":{"type":"agent_info","agent":{"pane_id":"w1:p1","agent_status":"working"}}}"#,
+                br#"{"id":"cli:agent:wait:resolve","result":{"type":"agent_info","agent":{"pane_id":"s1:p1","agent_status":"working"}}}"#,
             )
             .unwrap();
         get_stream.write_all(b"\n").unwrap();

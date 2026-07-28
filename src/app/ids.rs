@@ -62,6 +62,13 @@ impl App {
             .workspaces
             .iter()
             .position(|workspace| workspace.id == id)
+            .or_else(|| {
+                let legacy_id = format!("s{}", id.strip_prefix('w')?);
+                self.state
+                    .workspaces
+                    .iter()
+                    .position(|workspace| workspace.id == legacy_id)
+            })
             .or_else(|| id.strip_prefix("w_")?.parse::<usize>().ok()?.checked_sub(1))
             .or_else(|| id.parse::<usize>().ok()?.checked_sub(1))
     }
@@ -120,14 +127,29 @@ impl App {
             return self.find_pane(pane_id).map(|(ws_idx, _)| (ws_idx, pane_id));
         }
 
+        if let Ok(raw) = id
+            .strip_prefix('%')
+            .or_else(|| id.strip_prefix('p'))
+            .unwrap_or(id)
+            .parse::<u32>()
+        {
+            if raw == 0 {
+                return None;
+            }
+            let pane_id = self.resolve_raw_pane_id(raw)?;
+            return self.find_pane(pane_id).map(|(ws_idx, _)| (ws_idx, pane_id));
+        }
+
         if let Some((ws_raw, pane_number_raw)) = id.rsplit_once(":p") {
             let ws_idx = self.parse_workspace_id(ws_raw)?;
             let pane_number = crate::workspace::decode_public_number(pane_number_raw)?;
             let ws = self.state.workspaces.get(ws_idx)?;
-            let pane_id = ws
+            let mut pane_ids = ws
                 .public_pane_numbers
                 .iter()
-                .find_map(|(pane_id, number)| (*number == pane_number).then_some(*pane_id))?;
+                .filter_map(|(pane_id, number)| (*number == pane_number).then_some(*pane_id));
+            let pane_id = pane_ids.next()?;
+            pane_ids.next().is_none().then_some(())?;
             return Some((ws_idx, pane_id));
         }
 
@@ -135,10 +157,54 @@ impl App {
         let ws_idx = self.parse_workspace_id(ws_raw)?;
         let pane_number = pane_number_raw.parse::<usize>().ok()?;
         let ws = self.state.workspaces.get(ws_idx)?;
-        let pane_id = ws
+        let mut pane_ids = ws
             .public_pane_numbers
             .iter()
-            .find_map(|(pane_id, number)| (*number == pane_number).then_some(*pane_id))?;
+            .filter_map(|(pane_id, number)| (*number == pane_number).then_some(*pane_id));
+        let pane_id = pane_ids.next()?;
+        pane_ids.next().is_none().then_some(())?;
         Some((ws_idx, pane_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_pane_targets_and_legacy_space_targets_resolve_the_live_pane() {
+        let mut state = crate::app::state::AppState::test_new();
+        let mut workspace = crate::workspace::Workspace::test_new("ids");
+        workspace.id = "sdev1".into();
+        let pane_id = workspace.tabs[0].root_pane;
+        state.workspaces = vec![workspace];
+        state.active = Some(0);
+        state.ensure_test_terminals();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state = state;
+
+        let global = pane_id.raw();
+        assert_eq!(app.parse_pane_id(&format!("%{global}")), Some((0, pane_id)));
+        assert_eq!(app.parse_pane_id(&format!("p{global}")), Some((0, pane_id)));
+        assert_eq!(app.parse_pane_id(&global.to_string()), Some((0, pane_id)));
+        assert_eq!(app.parse_pane_id("wdev1:p1"), Some((0, pane_id)));
+        assert_eq!(app.public_pane_id(0, pane_id).as_deref(), Some("sdev1:p1"));
+        assert_eq!(app.parse_pane_id("p0"), None);
+        assert_eq!(app.parse_pane_id("p4294967296"), None);
+        assert_eq!(app.parse_pane_id("p999999"), None);
+
+        let second_pane =
+            app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces[0]
+            .public_pane_numbers
+            .insert(second_pane, 1);
+        assert_eq!(app.parse_pane_id("sdev1:p1"), None);
     }
 }

@@ -504,7 +504,7 @@ herdr run --label tests -- cargo test
 - `herdr run --label tests -- cargo test` starts a pane-less background job by default.
 - `herdr run list` lists background jobs.
 - `herdr pane current` resolves the exact caller pane.
-- `herdr pane get <target>` accepts stable ids, workspace-local short ids, global numbers, and `%N` pane targets.
+- `herdr pane get <target>` accepts Space pane ids, Space-local short ids, global numbers, `%N`, and `pN` pane targets.
 - `herdr agent <subcommand>` controls agent identity, reads, sends, and restore actions.
 - `herdr workspace`, `herdr tab`, and `herdr pane` manage session layout through the socket API.
 

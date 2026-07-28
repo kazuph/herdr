@@ -386,7 +386,12 @@ fn restore_workspace(
     let mut terminal_runtimes = HashMap::new();
     let workspace_id = snap
         .id
-        .clone()
+        .as_deref()
+        .map(|id| {
+            id.strip_prefix('w')
+                .map(|suffix| format!("s{suffix}"))
+                .unwrap_or_else(|| id.to_string())
+        })
         .unwrap_or_else(crate::workspace::generate_workspace_id);
     let mut next_public_pane_number = snap
         .public_pane_numbers
@@ -820,8 +825,26 @@ fn agent_session_from_snapshot_and_ledger(
     tab_id: &str,
     pane_id: u32,
 ) -> Option<PaneAgentSessionSnapshot> {
+    let legacy_workspace_id = workspace_id
+        .strip_prefix('s')
+        .map(|number| format!("w{number}"));
+    let legacy_tab_id = legacy_workspace_id
+        .as_ref()
+        .and_then(|legacy_workspace_id| {
+            tab_id
+                .strip_prefix(workspace_id)
+                .map(|suffix| format!("{legacy_workspace_id}{suffix}"))
+        });
     let Some(ledger_entry) = agent_session_ledger
         .get(workspace_id, tab_id, pane_id)
+        .or_else(|| {
+            legacy_workspace_id
+                .as_deref()
+                .zip(legacy_tab_id.as_deref())
+                .and_then(|(workspace_id, tab_id)| {
+                    agent_session_ledger.get(workspace_id, tab_id, pane_id)
+                })
+        })
         .filter(|entry| crate::agent_sessions::is_safe_session_id(&entry.session_id))
     else {
         return saved_session;
@@ -1282,6 +1305,63 @@ mod tests {
         assert_eq!(session.agent, "claude");
         assert_eq!(session.kind, crate::agent_resume::AgentSessionRefKind::Id);
         assert_eq!(session.value, "24fcd322-987c-427b-9b7c-31bc6bc98005");
+    }
+
+    #[test]
+    fn restore_uses_legacy_space_ledger_for_a_normalized_space_id() {
+        let mut ledger = crate::persist::agent_ledger::AgentSessionLedger::default();
+        ledger.upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
+            pane_id: 7,
+            terminal_id: "term_7".into(),
+            workspace_id: "wdev1".into(),
+            tab_id: "wdev1:t1".into(),
+            cwd: "/tmp".into(),
+            agent: "claude".into(),
+            session_id: "24fcd322-987c-427b-9b7c-31bc6bc98005".into(),
+            observed_at: 1,
+            source: "herdr:claude".into(),
+            title: None,
+        });
+
+        let session =
+            agent_session_from_snapshot_and_ledger(None, &ledger, "sdev1", "sdev1:t1", 7).unwrap();
+
+        assert_eq!(session.value, "24fcd322-987c-427b-9b7c-31bc6bc98005");
+    }
+
+    #[tokio::test]
+    async fn restore_normalizes_legacy_space_id_before_snapshot_capture() {
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot =
+            test_session_snapshot(vec![test_workspace_snapshot(&cwd, "wdev1", 10, Some(132))]);
+
+        let (workspaces, terminals) =
+            restore_for_test(&snapshot, PaneIdRestoreMode::PreserveSnapshotGlobalIds);
+        let workspace = workspaces.first().expect("workspace should restore");
+        let pane_id = workspace.tabs[0].root_pane;
+        assert_eq!(workspace.id, "sdev1");
+        assert_eq!(
+            crate::workspace::public_pane_id_for_number(
+                &workspace.id,
+                workspace.public_pane_number(pane_id).unwrap(),
+            ),
+            "sdev1:p1"
+        );
+
+        let state = crate::app::state::AppState::test_new();
+        let captured = crate::persist::capture(
+            &workspaces,
+            &terminals,
+            &crate::terminal::TerminalRuntimeRegistry::new(),
+            Some(0),
+            0,
+            state.sidebar_width,
+            state.sidebar_section_split,
+            Default::default(),
+            Default::default(),
+            &Default::default(),
+        );
+        assert_eq!(captured.workspaces[0].id.as_deref(), Some("sdev1"));
     }
 
     #[tokio::test]

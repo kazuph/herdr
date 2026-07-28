@@ -981,10 +981,11 @@
 - **status: 本家基盤＋fork差分保持 (B)** — 本家 `fbd20ad`, `d35c642` のstable short handle・schemaを採用し、`%N`互換とAI向けfail-closed helpを残す。
 - **目的**: AIがpane targetを短く確実に読み書きできるようにする。CLI helpも人間向け一覧ではなく、agentが守るべきpane識別ルールを含む再利用可能な指示として読める形にする。
 - **UI挙動**:
-  - pane targetとして `1-2` のようなworkspace-local short id、global pane number `23`、tmux風global pane number `%23`、stable id `w...-2` / `p_...` を受け付ける。
+  - pane targetとしてSpace公開ID、Space内のshort id、global pane number `N`、画面表示の `%N`、およびCLI/API向けの入力alias `pN` を受け付ける。既存のglobal ID出力`p_N`は維持する。存在しない値、0、overflow、複数paneを指す入力は拒否する。
   - `herdr pane list`、pane作成系response、agent infoには短いpane idとglobal idを含める。pane infoは `pane_id`、`short_id`、`global_id`、`global_number`、`workspace_number`、`pane_number` を含む。
   - agent infoは `pane_id` に加え `short_pane_id`、`global_pane_id`、`global_pane_number` を含む。
-  - workspace作成responseは `workspace`、`tab`、`root_pane` を返し、root paneの `short_id` は最初のworkspaceなら `1-1`、`global_id` は `p_<global_number>`。
+  - workspace作成responseは `workspace`、`tab`、`root_pane` を返し、root paneのglobal idは既存の `p_N` 形式で返す。
+  - Space公開IDと、それを含むpane/tab/API/event/env出力は`s` prefixだけを使う。再起動時に保存済みの旧`w` prefixは`s` prefixへ正規化し、旧process/envのpane targetは入力としてのみ解決する。
   - root helpは `herdr help` と `herdr --help` で同一のstdoutを返す。
   - root help先頭はYAML front matter風に `---`、`name: herdr`、`description: Terminal workspace manager for AI coding agents...` を含む。
   - root helpには `## When To Use`、`## Agent Rules`、`## Usage`、`## Commands`、`## Essential Agent Recipes`、`## Options`、`## More Help` を含む。
@@ -992,15 +993,16 @@
   - root helpに内部コマンド `herdr client` を広告しない。
   - protocol bump後、`herdr status` / `herdr status server` / `herdr status client` はprotocolを表示し、client/serverのprotocol不一致時はcompatibleを `no` と判定する。
 - **受け入れ条件**:
-  - 2 pane構成で `herdr pane get 1-2`、`herdr pane get 23`、`herdr pane get %23` が同じpaneを指せる。
+  - 2 pane構成でglobal pane number、`%N`、`pN` が同じpaneを指せる。
   - `herdr pane list` の各paneにshort idとglobal idが出る。
   - `herdr agent list` の各agentに `short_pane_id` と `global_pane_id` が出る。
+  - 旧`w` prefixのsnapshotを復元すると、保存し直したsnapshot、API response、pane launch envは`s` prefixだけを出し、継続中の旧process/envが送るpane targetだけは同じlive paneへ解決する。
   - `herdr help` と `herdr --help` のstdoutが完全一致する。
   - root helpに `HERDR_PANE_ID`、`calling process session`、`Do not infer the requester pane from the focused pane`、`herdr pane current` が含まれる。
   - root helpに `herdr client` が含まれない。
-- **実装方針**: 本家の新APIでpane id体系がある場合はそれに乗る。足りないのは `%23` 形式やshort/global idを全responseへ明示する互換層、そしてAI-readable root helpの本文である。protocol versionはwire/API response shapeが変わる時だけ明示的に上げ、test fixtureも固定値で更新する。
+- **実装方針**: 本家の新APIでpane id体系がある場合はそれに乗る。足りないのは画面表示の`%N`とCLI/APIの`pN`を保存済みglobal pane番号から同じlive paneへ解決する入力alias、Space公開IDの`s`正規化、そしてAI-readable root helpの本文である。protocol versionはwire/API response shapeが変わる時だけ明示的に上げ、test fixtureも固定値で更新する。
 - **デグレ判定**:
-  - AIが画面で見た `%23` をCLI targetとして使えない。
+  - AIが画面で見た `%N` をCLI targetとして使えない。
   - `pane.list` だけにshort idがあり、`agent.list` や作成responseに出ない。
   - root helpが一般的な短いusageに戻り、fail-closed pane識別ルールが消える。
   - `herdr help` がunknown command扱いになる。
@@ -1014,14 +1016,14 @@
   - 保存global pane番号はsession全体で全paneを検証し、欠損、0、重複、layout参照不整合のいずれかがあれば部分採用せず全paneを再採番し、warningを記録する。
   - 保存global pane番号を全採用した復元後の新規paneは、復元番号の最大値より大きい次番号を使う。workspace複製は生存paneとの衝突を避けるため保存番号を採用せず、全paneを再採番する。
 - **受け入れ条件**:
-  - 複数workspace・複数tabのsessionを保存して復元すると、各paneの`p_N`、agent infoの`global_pane_id`、`HERDR_PANE_ID`が保存前と同じpaneを指す。
+  - 複数Space・複数tabのsessionを保存して復元すると、各paneの`p_N`、agent infoの`global_pane_id`、`HERDR_PANE_ID`が保存前と同じpaneを指す。
   - `global_pane_number`を持たない旧session.jsonと、不正な重複番号を含むsession.jsonは読込に成功し、全paneを衝突しない新規番号へ再採番してwarningを記録する。
-  - workspace/tab間moveとpane closeでは既存paneの`p_N`が変わらず、workspace複製だけは元paneと異なる`p_N`になる。
+  - Space/tab間moveとpane closeでは既存paneの`p_N`が変わらず、Space複製だけは元paneと異なる`p_N`になる。
 - **実装方針**: session snapshotのpane記録に任意のglobal pane番号を追加する。復元開始時にsession全体の保存値を検証してから、通常復元・handoffには保存番号を、複製復元には明示的な全再採番方針を渡す。wire protocolは変更しない。
 - **デグレ判定**:
   - 再起動後に`p_N`が別paneを指し、既存のagent宛先や親子報告が誤配送される。
   - 不正snapshotの一部だけを採用して、同じ`p_N`を複数paneへ割り当てる。
-  - workspace複製が元paneの`p_N`を再利用する。
+  - Space複製が元paneの`p_N`を再利用する。
 
 ### agent sendとheadless入力の確実な送信
 - **元コミット**: f87cc86, 60036e2
