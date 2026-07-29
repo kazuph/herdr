@@ -37,30 +37,20 @@ jobs:
   credentials:
     needs: preflight
     runs-on: ubuntu-latest
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           repository: kazuph/homebrew-tap
           ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
           path: tap-credential-check
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-      - name: Prove distribution credentials before building
+      - name: Prove the Homebrew tap deploy credential before building
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$NPM_TOKEN"
-          test "$(npm whoami --registry https://registry.npmjs.org)" = "kazuph"
           git -C tap-credential-check config user.name "github-actions[bot]"
           git -C tap-credential-check config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C tap-credential-check commit --allow-empty -m "verify herdr release credential"
           git -C tap-credential-check push --dry-run origin HEAD:main
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   build:
     needs: [preflight, credentials]
@@ -223,6 +213,8 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      - name: Install the npm CLI required for trusted publishing
+        run: npm install --global npm@11.18.0
       - name: Publish the native package
         shell: bash
         run: |
@@ -236,8 +228,6 @@ jobs:
           else
             npm publish "$ARCHIVE" --access public --provenance
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-wrapper-npm:
     needs: [preflight, package-npm, publish-native-npm]
@@ -254,6 +244,8 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      - name: Install the npm CLI required for trusted publishing
+        run: npm install --global npm@11.18.0
       - name: Publish the wrapper after all native packages
         shell: bash
         run: |
@@ -267,8 +259,6 @@ jobs:
           else
             npm publish "$ARCHIVE" --access public --provenance
           fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   verify-homebrew-formula:
     needs: [preflight, release]

@@ -44,7 +44,7 @@ class FormulaTests(unittest.TestCase):
 
 class NpmPackageTests(unittest.TestCase):
     def test_scoped_wrapper_and_native_package_metadata_are_statically_complete(self) -> None:
-        fork_npm_packages.assert_package_contracts("0.1.0")
+        fork_npm_packages.assert_package_contracts("0.1.1")
         launcher = (ROOT / "npm/packages/herdr/bin/herdr").read_text(encoding="utf-8")
         self.assertTrue(launcher.startswith("#!/bin/sh\n"))
         self.assertIn('while [ -L "$launcher" ]', launcher)
@@ -74,6 +74,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("brew test kazuph/herdr-ci/herdr", workflow)
         self.assertIn("brew install kazuph/tap/herdr", workflow)
         self.assertIn("npm publish \"$ARCHIVE\" --access public --provenance", workflow)
+        self.assertIn("npm install --global npm@11.18.0", workflow)
+        self.assertNotIn("NPM_TOKEN", workflow)
+        self.assertNotIn("NODE_AUTH_TOKEN", workflow)
         self.assertIn("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", workflow)
         self.assertIn("target: aarch64-unknown-linux-musl\n            os: ubuntu-24.04-arm", workflow)
         self.assertNotIn("Configure Linux aarch64 musl toolchain", workflow)
