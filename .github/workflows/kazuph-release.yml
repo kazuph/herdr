@@ -279,9 +279,14 @@ jobs:
           name: kazuph-homebrew-tap-artifact
           path: distribution/tap/Formula
       - name: Install and test the generated Formula against immutable release assets
+        shell: bash
         run: |
-          brew install --formula distribution/tap/Formula/herdr.rb
-          brew test herdr
+          set -euo pipefail
+          brew tap-new kazuph/herdr-ci
+          mkdir -p "$(brew --repository kazuph/herdr-ci)/Formula"
+          cp distribution/tap/Formula/herdr.rb "$(brew --repository kazuph/herdr-ci)/Formula/herdr.rb"
+          brew install kazuph/herdr-ci/herdr
+          brew test kazuph/herdr-ci/herdr
 
   publish-homebrew-tap:
     needs: [preflight, verify-homebrew-formula, publish-wrapper-npm]
