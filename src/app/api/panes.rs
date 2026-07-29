@@ -937,15 +937,6 @@ impl App {
             }
             ResolvedPaneMoveDestination::NewWorkspace { .. } => true,
         };
-        if cross_workspace {
-            if let Some(ws) = self.state.workspaces.get_mut(source_ws_idx) {
-                ws.unregister_moved_pane(source_pane_id);
-            }
-            self.state
-                .public_pane_id_aliases
-                .insert(previous_pane_id.clone(), source_pane_id);
-        }
-
         let mut closed_workspace_id = None;
         if source_workspace_empty && cross_workspace {
             self.state.workspaces.remove(source_ws_idx);
@@ -2829,7 +2820,7 @@ mod tests {
     }
 
     #[test]
-    fn api_pane_move_to_existing_tab_across_workspace_reassigns_public_pane_id() {
+    fn api_pane_move_to_existing_tab_across_workspace_preserves_global_pane_id() {
         let mut app = app_with_linked_worktree();
         app.state.workspaces.push(Workspace::test_new("other"));
         let source = app.state.workspaces[0].tabs[0].root_pane;
@@ -2867,11 +2858,8 @@ mod tests {
         assert_eq!(move_result.previous_pane_id, previous_pane_id);
         assert_eq!(move_result.previous_workspace_id, previous_workspace_id);
         assert_eq!(move_result.closed_workspace_id, Some(previous_workspace_id));
-        assert_ne!(move_result.pane.pane_id, move_result.previous_pane_id);
-        assert!(move_result
-            .pane
-            .pane_id
-            .starts_with(&format!("{target_workspace_id}:p")));
+        assert_eq!(move_result.pane.pane_id, move_result.previous_pane_id);
+        assert!(move_result.pane.pane_id.starts_with('p'));
         assert_eq!(move_result.pane.workspace_id, target_workspace_id);
         assert_eq!(move_result.pane.tab_id, target_tab_id);
         assert_eq!(move_result.pane.terminal_id, source_terminal.to_string());
@@ -3044,7 +3032,7 @@ mod tests {
     }
 
     #[test]
-    fn api_pane_move_to_new_workspace_closes_empty_source_workspace() {
+    fn api_pane_move_to_new_workspace_preserves_global_pane_id_and_closes_empty_source() {
         let mut app = app_with_linked_worktree();
         let source = app.state.workspaces[0].tabs[0].root_pane;
         let source_terminal = app.state.workspaces[0].tabs[0]
@@ -3105,7 +3093,7 @@ mod tests {
             move_result.created_tab.as_ref().map(|tab| tab.focused),
             Some(true)
         );
-        assert_ne!(move_result.pane.pane_id, source_public);
+        assert_eq!(move_result.pane.pane_id, source_public);
         assert_eq!(move_result.pane.terminal_id, source_terminal.to_string());
         assert_eq!(app.state.workspaces.len(), 1);
         assert_eq!(
@@ -3304,7 +3292,7 @@ mod tests {
             Some(&source_terminal)
         );
         assert_eq!(
-            app.parse_pane_id(&format!("{previous_workspace_id}:p1")),
+            app.parse_pane_id(&format!("p{}", source.raw())),
             Some((0, source))
         );
     }

@@ -396,7 +396,7 @@ impl App {
     ) -> Option<(String, String)> {
         let ws = self.state.workspaces.get(ws_idx)?;
         let workspace_label = ws.display_name_from(&self.state.terminals, &self.terminal_runtimes);
-        let title = crate::app::actions::notification_title(&workspace_label, ws_idx);
+        let title = crate::app::actions::notification_title(ws, &workspace_label);
         let context = self
             .state
             .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
@@ -407,7 +407,7 @@ impl App {
                 )
             })
             .unwrap_or_else(|| {
-                crate::app::actions::notification_context(ws, &workspace_label, ws_idx, pane_id)
+                crate::app::actions::notification_context(ws, &workspace_label, pane_id)
             });
         Some((title, context))
     }

@@ -136,7 +136,7 @@ impl crate::app::App {
         for entry in entries {
             let pane_id = self
                 .public_pane_id(entry.ws_idx, entry.pane_id)
-                .unwrap_or_else(|| format!("{}-{}", entry.ws_idx + 1, entry.pane_id.raw()));
+                .unwrap_or_else(|| format!("p{}", entry.pane_id.raw()));
             let action = match entry.outcome {
                 AgentRestoreOutcome::Skip(reason) => {
                     if reason == "agent already running" {

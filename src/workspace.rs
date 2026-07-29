@@ -109,52 +109,24 @@ impl WorkspaceGitStatusSnapshot {
 }
 
 static NEXT_WORKSPACE_ID: AtomicU64 = AtomicU64::new(1);
-const PUBLIC_ID_ALPHABET: &[u8; 32] = b"123456789ABCDEFGHJKMNPQRSTVWXYZ0";
 
 pub(crate) fn generate_workspace_id() -> String {
     let counter = NEXT_WORKSPACE_ID.fetch_add(1, Ordering::Relaxed);
-    format!("s{}", encode_public_number(counter as usize))
-}
-
-pub(crate) fn encode_public_number(mut value: usize) -> String {
-    if value == 0 {
-        return "0".to_string();
-    }
-
-    let mut encoded = Vec::new();
-    while value > 0 {
-        let digit = (value - 1) % PUBLIC_ID_ALPHABET.len();
-        encoded.push(PUBLIC_ID_ALPHABET[digit] as char);
-        value = (value - 1) / PUBLIC_ID_ALPHABET.len();
-    }
-    encoded.iter().rev().collect()
-}
-
-pub(crate) fn decode_public_number(value: &str) -> Option<usize> {
-    let mut decoded = 0usize;
-    for ch in value.chars() {
-        let digit = PUBLIC_ID_ALPHABET
-            .iter()
-            .position(|candidate| *candidate as char == ch)?;
-        decoded = decoded
-            .checked_mul(PUBLIC_ID_ALPHABET.len())?
-            .checked_add(digit + 1)?;
-    }
-    Some(decoded)
+    format!("s{counter}")
 }
 
 pub(crate) fn public_workspace_number(id: &str) -> Option<usize> {
     id.strip_prefix('s')
-        .or_else(|| id.strip_prefix('w'))
-        .and_then(decode_public_number)
+        .and_then(|number| number.parse().ok())
+        .filter(|number| *number > 0)
 }
 
-pub(crate) fn public_pane_id_for_number(workspace_id: &str, pane_number: usize) -> String {
-    format!("{workspace_id}:p{}", encode_public_number(pane_number))
+pub(crate) fn public_pane_id_for_number(_workspace_id: &str, pane_id: u32) -> String {
+    format!("p{pane_id}")
 }
 
 pub(crate) fn public_tab_id_for_number(workspace_id: &str, tab_number: usize) -> String {
-    format!("{workspace_id}:t{}", encode_public_number(tab_number))
+    format!("{workspace_id}:t{tab_number}")
 }
 
 pub(crate) fn reserve_workspace_ids(workspaces: &[Workspace]) {
@@ -203,9 +175,6 @@ pub struct Workspace {
     pub worktree_space: Option<WorktreeSpaceMembership>,
     pub(crate) metadata_tokens: crate::metadata_tokens::MetadataTokens,
     pub(crate) metadata_token_sequences: HashMap<String, u64>,
-    /// Public pane numbers within this workspace. Closed pane numbers are not reused.
-    pub public_pane_numbers: HashMap<PaneId, usize>,
-    pub(crate) next_public_pane_number: usize,
     pub(crate) next_public_tab_number: usize,
     pub tabs: Vec<Tab>,
     pub active_tab: usize,
@@ -250,10 +219,7 @@ impl Workspace {
         render_dirty: Arc<AtomicBool>,
     ) -> Self {
         let id = generate_workspace_id();
-        let root_pane = moved.pane_id;
         let tab = Tab::from_existing_pane(1, tab_label, moved, events, render_notify, render_dirty);
-        let mut public_pane_numbers = HashMap::new();
-        public_pane_numbers.insert(root_pane, 1);
         Self {
             id,
             custom_name: label,
@@ -266,8 +232,6 @@ impl Workspace {
             worktree_space: None,
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
             metadata_token_sequences: HashMap::new(),
-            public_pane_numbers,
-            next_public_pane_number: 2,
             next_public_tab_number: 2,
             tabs: vec![tab],
             active_tab: 0,
@@ -402,14 +366,16 @@ impl Workspace {
         extra_env: Vec<(String, String)>,
     ) -> std::io::Result<(Self, TerminalState, TerminalRuntime)> {
         let id = generate_workspace_id();
+        let root_pane = PaneId::alloc();
         let launch_env = PaneLaunchEnv::from_extra(extra_env).with_identity(
             id.clone(),
             public_tab_id_for_number(&id, 1),
-            public_pane_id_for_number(&id, 1),
+            public_pane_id_for_number(&id, root_pane.raw()),
         );
         let (tab, terminal, runtime) = if let Some(argv) = argv {
             Tab::new_argv_command(
                 1,
+                root_pane,
                 initial_cwd.clone(),
                 rows,
                 cols,
@@ -424,6 +390,7 @@ impl Workspace {
         } else {
             Tab::new(
                 1,
+                root_pane,
                 initial_cwd.clone(),
                 rows,
                 cols,
@@ -436,8 +403,6 @@ impl Workspace {
                 render_dirty,
             )?
         };
-        let mut public_pane_numbers = HashMap::new();
-        public_pane_numbers.insert(tab.root_pane, 1);
         Ok((
             Self {
                 id,
@@ -451,8 +416,6 @@ impl Workspace {
                 worktree_space: None,
                 metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
                 metadata_token_sequences: HashMap::new(),
-                public_pane_numbers,
-                next_public_pane_number: 2,
                 next_public_tab_number: 2,
                 tabs: vec![tab],
                 active_tab: 0,
@@ -485,7 +448,7 @@ impl Workspace {
         Some(
             tab.custom_name
                 .clone()
-                .unwrap_or_else(|| (tab_idx + 1).to_string()),
+                .unwrap_or_else(|| tab.number.to_string()),
         )
     }
 
@@ -557,8 +520,8 @@ impl Workspace {
     ) -> std::io::Result<(usize, TerminalState, TerminalRuntime)> {
         let number = self.next_public_tab_number;
         self.next_public_tab_number += 1;
-        let pane_number = self.next_public_pane_number;
-        let launch_env = self.launch_env_for_new_pane(number, pane_number, extra_env);
+        let root_pane = PaneId::alloc();
+        let launch_env = self.launch_env_for_new_pane(number, root_pane, extra_env);
         let events = self
             .active_tab()
             .map(|tab| tab.events.clone())
@@ -575,6 +538,7 @@ impl Workspace {
         let (tab, terminal, runtime) = if let Some(argv) = argv {
             Tab::new_argv_command(
                 number,
+                root_pane,
                 cwd,
                 rows,
                 cols,
@@ -589,6 +553,7 @@ impl Workspace {
         } else {
             Tab::new(
                 number,
+                root_pane,
                 cwd,
                 rows,
                 cols,
@@ -601,7 +566,6 @@ impl Workspace {
                 render_dirty,
             )?
         };
-        self.register_new_pane_with_number(tab.root_pane, pane_number);
         self.tabs.push(tab);
         Ok((self.tabs.len() - 1, terminal, runtime))
     }
@@ -610,10 +574,7 @@ impl Workspace {
         if self.tabs.len() <= 1 || idx >= self.tabs.len() {
             return false;
         }
-        let tab = self.tabs.remove(idx);
-        for pane_id in tab.panes.keys() {
-            self.unregister_pane(*pane_id);
-        }
+        self.tabs.remove(idx);
         if self.active_tab >= self.tabs.len() {
             self.active_tab = self.tabs.len() - 1;
         } else if idx <= self.active_tab && self.active_tab > 0 {
@@ -664,16 +625,17 @@ impl Workspace {
         shell_config: crate::pane::PaneShellConfig<'_>,
         extra_env: Vec<(String, String)>,
     ) -> std::io::Result<crate::workspace::tab::NewPane> {
-        let pane_number = self.next_public_pane_number;
+        let pane_id = PaneId::alloc();
         let tab_number = self
             .active_tab()
             .map(|tab| tab.number)
             .expect("workspace must always have at least one tab");
-        let launch_env = self.launch_env_for_new_pane(tab_number, pane_number, extra_env);
+        let launch_env = self.launch_env_for_new_pane(tab_number, pane_id, extra_env);
         let new_pane = self
             .active_tab_mut()
             .expect("workspace must always have at least one tab")
             .split_focused(
+                pane_id,
                 direction,
                 rows,
                 cols,
@@ -683,7 +645,6 @@ impl Workspace {
                 shell_config,
                 &launch_env,
             )?;
-        self.register_new_pane_with_number(new_pane.pane_id, pane_number);
         Ok(new_pane)
     }
 
@@ -699,16 +660,17 @@ impl Workspace {
         scrollback_limit_bytes: usize,
         host_terminal_theme: crate::terminal_theme::TerminalTheme,
     ) -> std::io::Result<crate::workspace::tab::NewPane> {
-        let pane_number = self.next_public_pane_number;
+        let pane_id = PaneId::alloc();
         let tab_number = self
             .active_tab()
             .map(|tab| tab.number)
             .expect("workspace must always have at least one tab");
-        let launch_env = self.launch_env_for_new_pane(tab_number, pane_number, extra_env);
+        let launch_env = self.launch_env_for_new_pane(tab_number, pane_id, extra_env);
         let new_pane = self
             .active_tab_mut()
             .expect("workspace must always have at least one tab")
             .split_focused_command(
+                pane_id,
                 direction,
                 rows,
                 cols,
@@ -718,7 +680,6 @@ impl Workspace {
                 scrollback_limit_bytes,
                 host_terminal_theme,
             )?;
-        self.register_new_pane_with_number(new_pane.pane_id, pane_number);
         Ok(new_pane)
     }
 
@@ -860,15 +821,16 @@ impl Workspace {
         argv: Option<&[String]>,
     ) -> Option<std::io::Result<(usize, crate::workspace::tab::NewPane)>> {
         let tab_idx = self.find_tab_index_for_pane(pane_id)?;
-        let pane_number = self.next_public_pane_number;
+        let new_pane_id = PaneId::alloc();
         let tab_number = self.tabs[tab_idx].number;
-        let launch_env = self.launch_env_for_new_pane(tab_number, pane_number, extra_env);
+        let launch_env = self.launch_env_for_new_pane(tab_number, new_pane_id, extra_env);
         let tab = &mut self.tabs[tab_idx];
         let previous_focus = tab.layout.focused();
         tab.layout.focus_pane(pane_id);
         let new_pane = match if let Some(argv) = argv {
             match ratio {
                 Some(ratio) => tab.split_focused_argv_command_with_ratio(
+                    new_pane_id,
                     direction,
                     ratio,
                     rows,
@@ -880,6 +842,7 @@ impl Workspace {
                     host_terminal_theme,
                 ),
                 None => tab.split_focused_argv_command(
+                    new_pane_id,
                     direction,
                     rows,
                     cols,
@@ -893,6 +856,7 @@ impl Workspace {
         } else {
             match ratio {
                 Some(ratio) => tab.split_focused_with_ratio(
+                    new_pane_id,
                     direction,
                     ratio,
                     rows,
@@ -904,6 +868,7 @@ impl Workspace {
                     &launch_env,
                 ),
                 None => tab.split_focused(
+                    new_pane_id,
                     direction,
                     rows,
                     cols,
@@ -924,7 +889,6 @@ impl Workspace {
         if !focus_new_pane {
             tab.layout.focus_pane(previous_focus);
         }
-        self.register_new_pane_with_number(new_pane.pane_id, pane_number);
         Some(Ok((tab_idx, new_pane)))
     }
 
@@ -940,9 +904,7 @@ impl Workspace {
             return tab_count <= 1 || self.close_active_tab_and_report();
         }
 
-        if let Some((removed, _terminal_id)) = self.active_tab_mut().and_then(Tab::close_focused) {
-            self.unregister_pane(removed);
-        }
+        self.active_tab_mut().and_then(Tab::close_focused);
         false
     }
 
@@ -959,7 +921,6 @@ impl Workspace {
                 return true;
             }
             self.tabs.remove(tab_idx);
-            self.unregister_pane(pane_id);
             if self.active_tab >= self.tabs.len() {
                 self.active_tab = self.tabs.len() - 1;
             } else if tab_idx <= self.active_tab && self.active_tab > 0 {
@@ -968,9 +929,7 @@ impl Workspace {
             return false;
         }
 
-        if let Some((removed, _terminal_id)) = self.tabs[tab_idx].remove_pane(pane_id) {
-            self.unregister_pane(removed);
-        }
+        self.tabs[tab_idx].remove_pane(pane_id);
         false
     }
 
@@ -1009,9 +968,6 @@ impl Workspace {
             return Err(moved);
         };
         tab.insert_existing_pane(target_pane_id, moved, direction, ratio)?;
-        if !self.public_pane_numbers.contains_key(&pane_id) {
-            self.register_new_pane_with_number(pane_id, self.next_public_pane_number);
-        }
         Ok(pane_id)
     }
 
@@ -1025,7 +981,6 @@ impl Workspace {
     ) -> usize {
         let number = self.next_public_tab_number;
         self.next_public_tab_number += 1;
-        let pane_id = moved.pane_id;
         let (events, render_notify, render_dirty) = self
             .active_tab()
             .map(|tab| {
@@ -1042,31 +997,24 @@ impl Workspace {
             ));
         let tab =
             Tab::from_existing_pane(number, label, moved, events, render_notify, render_dirty);
-        if !self.public_pane_numbers.contains_key(&pane_id) {
-            self.register_new_pane_with_number(pane_id, self.next_public_pane_number);
-        }
         self.tabs.push(tab);
         self.tabs.len() - 1
     }
 
-    pub(crate) fn unregister_moved_pane(&mut self, pane_id: PaneId) {
-        self.unregister_pane(pane_id);
-    }
-
-    pub fn public_pane_number(&self, pane_id: PaneId) -> Option<usize> {
-        self.public_pane_numbers.get(&pane_id).copied()
+    pub fn public_pane_number(&self, pane_id: PaneId) -> Option<u32> {
+        self.pane_state(pane_id).map(|_| pane_id.raw())
     }
 
     fn launch_env_for_new_pane(
         &self,
         tab_number: usize,
-        pane_number: usize,
+        pane_id: PaneId,
         extra_env: Vec<(String, String)>,
     ) -> PaneLaunchEnv {
         PaneLaunchEnv::from_extra(extra_env).with_identity(
             self.id.clone(),
             public_tab_id_for_number(&self.id, tab_number),
-            public_pane_id_for_number(&self.id, pane_number),
+            public_pane_id_for_number(&self.id, pane_id.raw()),
         )
     }
 
@@ -1210,7 +1158,6 @@ impl Workspace {
                 return true;
             }
             self.tabs.remove(tab_idx);
-            self.unregister_pane(pane_id);
             if self.active_tab >= self.tabs.len() {
                 self.active_tab = self.tabs.len() - 1;
             } else if tab_idx <= self.active_tab && self.active_tab > 0 {
@@ -1219,24 +1166,8 @@ impl Workspace {
             return false;
         }
 
-        if let Some((removed, _terminal_id)) = self.tabs[tab_idx].close_pane(pane_id) {
-            self.unregister_pane(removed);
-        }
+        self.tabs[tab_idx].close_pane(pane_id);
         false
-    }
-
-    #[cfg(test)]
-    fn register_new_pane(&mut self, pane_id: PaneId) {
-        self.register_new_pane_with_number(pane_id, self.next_public_pane_number);
-    }
-
-    fn register_new_pane_with_number(&mut self, pane_id: PaneId, number: usize) {
-        self.public_pane_numbers.insert(pane_id, number);
-        self.next_public_pane_number = self.next_public_pane_number.max(number + 1);
-    }
-
-    fn unregister_pane(&mut self, pane_id: PaneId) {
-        self.public_pane_numbers.remove(&pane_id);
     }
 
     #[cfg(test)]
@@ -1278,8 +1209,6 @@ impl Workspace {
             render_notify,
             render_dirty,
         };
-        let mut public_pane_numbers = HashMap::new();
-        public_pane_numbers.insert(tab.root_pane, 1);
         Self {
             id: generate_workspace_id(),
             custom_name: Some(name.to_string()),
@@ -1292,8 +1221,6 @@ impl Workspace {
             worktree_space: None,
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
             metadata_token_sequences: HashMap::new(),
-            public_pane_numbers,
-            next_public_pane_number: 2,
             next_public_tab_number: 2,
             tabs: vec![tab],
             active_tab: 0,
@@ -1310,7 +1237,6 @@ impl Workspace {
         let new_id = tab.layout.split_focused(direction);
         tab.panes
             .insert(new_id, PaneState::new(TerminalId::alloc()));
-        self.register_new_pane(new_id);
         new_id
     }
 
@@ -1330,7 +1256,6 @@ impl Workspace {
         if !focus_new_pane {
             tab.layout.focus_pane(previous_focus);
         }
-        self.register_new_pane(new_id);
         Some(new_id)
     }
 
@@ -1354,7 +1279,6 @@ impl Workspace {
             render_dirty,
         };
         self.next_public_tab_number += 1;
-        self.register_new_pane(root_id);
         self.tabs.push(tab);
         self.tabs.len() - 1
     }
@@ -1384,10 +1308,10 @@ impl Workspace {
             ws.tabs[ws.active_tab].number,
             "adversarial active tab must distinguish position from public tab number"
         );
-        assert_ne!(
-            later_pane.raw() as usize,
+        assert_eq!(
+            later_pane.raw(),
             ws.public_pane_number(later_pane).unwrap(),
-            "adversarial pane must distinguish raw pane id from public pane number"
+            "pane identity must equal its global raw pane id"
         );
         assert_eq!(ws.find_tab_index_for_pane(final_root), Some(1));
         ws
@@ -1465,12 +1389,6 @@ impl Workspace {
                     pane_id
                 );
                 assert!(
-                    self.public_pane_numbers.contains_key(pane_id),
-                    "workspace {} live pane {:?} has no public pane number",
-                    self.id,
-                    pane_id
-                );
-                assert!(
                     terminal_ids.insert(pane.attached_terminal_id.clone()),
                     "workspace {} terminal {} is attached to multiple panes",
                     self.id,
@@ -1491,45 +1409,6 @@ impl Workspace {
             self.next_public_tab_number,
             max_tab_number
         );
-
-        let public_pane_keys: std::collections::HashSet<_> =
-            self.public_pane_numbers.keys().copied().collect();
-        assert_eq!(
-            public_pane_keys, live_panes,
-            "workspace {} public pane map must exactly match live panes",
-            self.id
-        );
-
-        let mut pane_numbers = std::collections::HashSet::new();
-        let mut max_pane_number = 0usize;
-        for (pane_id, pane_number) in &self.public_pane_numbers {
-            assert!(
-                *pane_number > 0,
-                "workspace {} pane {:?} has invalid public pane number 0",
-                self.id,
-                pane_id
-            );
-            assert!(
-                pane_numbers.insert(*pane_number),
-                "workspace {} duplicate public pane number {} for pane {:?}",
-                self.id,
-                pane_number,
-                pane_id
-            );
-            max_pane_number = max_pane_number.max(*pane_number);
-        }
-        assert!(
-            self.next_public_pane_number > 0,
-            "workspace {} next_public_pane_number must be greater than 0",
-            self.id
-        );
-        assert!(
-            self.next_public_pane_number > max_pane_number,
-            "workspace {} next_public_pane_number {} must be greater than max live public pane number {}",
-            self.id,
-            self.next_public_pane_number,
-            max_pane_number
-        );
     }
 }
 
@@ -1538,45 +1417,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generated_workspace_ids_are_short_base32_handles() {
+    fn generated_workspace_ids_are_decimal_handles() {
         let first = generate_workspace_id();
         let second = generate_workspace_id();
 
         assert!(first.starts_with('s'));
         assert!(second.starts_with('s'));
         assert_ne!(first, second);
-        assert!(first.len() <= 3, "unexpectedly long workspace id: {first}");
-        assert!(
-            second.len() <= 3,
-            "unexpectedly long workspace id: {second}"
-        );
-    }
-
-    #[test]
-    fn public_numbers_round_trip_readable_base32_handles() {
-        assert_eq!(encode_public_number(1), "1");
-        assert_eq!(encode_public_number(9), "9");
-        assert_eq!(encode_public_number(10), "A");
-        assert_eq!(encode_public_number(31), "Z");
-        assert_eq!(encode_public_number(32), "0");
-        assert_eq!(encode_public_number(33), "11");
-
-        for value in [1, 9, 10, 31, 32, 33, 1024, 1025] {
-            let encoded = encode_public_number(value);
-            assert_eq!(decode_public_number(&encoded), Some(value));
-        }
+        assert!(first[1..].chars().all(|ch| ch.is_ascii_digit()));
+        assert!(second[1..].chars().all(|ch| ch.is_ascii_digit()));
     }
 
     #[test]
     fn reserving_restored_workspace_ids_prevents_reuse() {
         let mut restored = Workspace::test_new("restored");
-        restored.id = "sZ".to_string();
+        restored.id = "s40".to_string();
 
         reserve_workspace_ids(&[restored]);
 
         let generated = generate_workspace_id();
-        assert_ne!(generated, "sZ");
-        assert!(public_workspace_number(&generated) > public_workspace_number("sZ"));
+        assert_ne!(generated, "s40");
+        assert!(public_workspace_number(&generated) > public_workspace_number("s40"));
     }
 
     #[test]
@@ -1621,24 +1482,24 @@ mod tests {
     }
 
     #[test]
-    fn pane_public_numbers_are_stable_and_not_reused_after_close() {
+    fn pane_public_numbers_are_global_raw_ids() {
         let mut ws = Workspace::test_new("test");
         let root = ws.tabs[0].root_pane;
         let second = ws.test_split(Direction::Horizontal);
         let third = ws.test_split(Direction::Vertical);
 
-        assert_eq!(ws.public_pane_number(root), Some(1));
-        assert_eq!(ws.public_pane_number(second), Some(2));
-        assert_eq!(ws.public_pane_number(third), Some(3));
+        assert_eq!(ws.public_pane_number(root), Some(root.raw()));
+        assert_eq!(ws.public_pane_number(second), Some(second.raw()));
+        assert_eq!(ws.public_pane_number(third), Some(third.raw()));
 
         assert!(!ws.close_pane(second));
 
-        assert_eq!(ws.public_pane_number(root), Some(1));
+        assert_eq!(ws.public_pane_number(root), Some(root.raw()));
         assert_eq!(ws.public_pane_number(second), None);
-        assert_eq!(ws.public_pane_number(third), Some(3));
+        assert_eq!(ws.public_pane_number(third), Some(third.raw()));
 
         let fourth = ws.test_split(Direction::Horizontal);
-        assert_eq!(ws.public_pane_number(fourth), Some(4));
+        assert_eq!(ws.public_pane_number(fourth), Some(fourth.raw()));
     }
 
     #[test]
@@ -1672,16 +1533,10 @@ mod tests {
 
         let active_public = ws.tabs[ws.active_tab].number;
         assert_ne!(ws.active_tab + 1, active_public);
-        let divergent_pane = ws
-            .public_pane_numbers
-            .iter()
-            .find_map(|(pane_id, public_number)| {
-                (pane_id.raw() as usize != *public_number).then_some(*pane_id)
-            })
-            .expect("adversarial state should contain raw/public pane divergence");
-        assert_ne!(
-            divergent_pane.raw() as usize,
-            ws.public_pane_number(divergent_pane).unwrap()
+        let visible_pane = ws.tabs[ws.active_tab].root_pane;
+        assert_eq!(
+            visible_pane.raw(),
+            ws.public_pane_number(visible_pane).unwrap()
         );
 
         let new_pane = ws.test_split(Direction::Vertical);
@@ -1822,7 +1677,7 @@ mod tests {
         let labels: Vec<_> = (0..ws.tabs.len())
             .map(|tab_idx| ws.tab_display_name(tab_idx).unwrap())
             .collect();
-        assert_eq!(labels, vec!["foo", "2", "3"]);
+        assert_eq!(labels, vec!["foo", "3", "1"]);
         assert_eq!(ws.tabs[0].custom_name.as_deref(), Some("foo"));
         assert!(ws.tabs[1].custom_name.is_none());
         assert!(ws.tabs[2].custom_name.is_none());

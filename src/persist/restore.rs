@@ -146,19 +146,22 @@ pub fn restore_handoff(
     )
 }
 
-#[cfg(unix)]
 pub fn handoff_pane_aliases(
     snapshot: &SessionSnapshot,
     workspaces: &[Workspace],
 ) -> HashMap<u32, PaneId> {
+    if !pane_aliases_are_aligned(snapshot, workspaces) {
+        return HashMap::new();
+    }
+
     let mut aliases = HashMap::new();
     for (ws_snap, workspace) in snapshot.workspaces.iter().zip(workspaces) {
         for (tab_snap, tab) in ws_snap.tabs.iter().zip(&workspace.tabs) {
             let old_ids = collect_snapshot_pane_ids(&tab_snap.layout);
             let new_ids = tab.layout.pane_ids();
             for (old_id, new_id) in old_ids.into_iter().zip(new_ids) {
-                if old_id != new_id.raw() {
-                    aliases.insert(old_id, new_id);
+                if old_id != new_id.raw() && aliases.insert(old_id, new_id).is_some() {
+                    return HashMap::new();
                 }
             }
         }
@@ -166,14 +169,29 @@ pub fn handoff_pane_aliases(
     aliases
 }
 
-#[cfg(unix)]
+fn pane_aliases_are_aligned(snapshot: &SessionSnapshot, workspaces: &[Workspace]) -> bool {
+    snapshot.workspaces.len() == workspaces.len()
+        && snapshot
+            .workspaces
+            .iter()
+            .zip(workspaces)
+            .all(|(workspace_snapshot, workspace)| {
+                workspace_snapshot.tabs.len() == workspace.tabs.len()
+                    && workspace_snapshot.tabs.iter().zip(&workspace.tabs).all(
+                        |(tab_snapshot, tab)| {
+                            collect_snapshot_pane_ids(&tab_snapshot.layout).len()
+                                == tab.layout.pane_ids().len()
+                        },
+                    )
+            })
+}
+
 fn collect_snapshot_pane_ids(node: &LayoutSnapshot) -> Vec<u32> {
     let mut ids = Vec::new();
     collect_snapshot_ids_inner(node, &mut ids);
     ids
 }
 
-#[cfg(unix)]
 fn collect_snapshot_ids_inner(node: &LayoutSnapshot, ids: &mut Vec<u32>) {
     match node {
         LayoutSnapshot::Pane(id) => ids.push(*id),
@@ -184,44 +202,38 @@ fn collect_snapshot_ids_inner(node: &LayoutSnapshot, ids: &mut Vec<u32>) {
     }
 }
 
-fn migrated_public_pane_numbers_by_old_raw(
-    snap: &WorkspaceSnapshot,
-    next_public_pane_number: &mut usize,
-) -> HashMap<u32, usize> {
-    let mut public_numbers = snap.public_pane_numbers.clone();
-    let mut used_numbers: HashSet<usize> = public_numbers.values().copied().collect();
-    for tab in &snap.tabs {
-        let mut pane_ids = Vec::new();
-        collect_layout_snapshot_pane_ids(&tab.layout, &mut pane_ids);
-        for old_raw in pane_ids {
-            if public_numbers.contains_key(&old_raw) {
-                continue;
-            }
-            let saved_number = old_raw as usize;
-            let number = if saved_number > 0 && !used_numbers.contains(&saved_number) {
-                saved_number
-            } else {
-                while used_numbers.contains(next_public_pane_number) {
-                    *next_public_pane_number += 1;
-                }
-                *next_public_pane_number
-            };
-            used_numbers.insert(number);
-            public_numbers.insert(old_raw, number);
-            *next_public_pane_number = (*next_public_pane_number).max(number + 1);
-        }
+/// Restore-only aliases for pane targets emitted before global pane IDs.
+/// They are intentionally absent from current snapshots and public output.
+pub fn legacy_public_pane_aliases(
+    snapshot: &SessionSnapshot,
+    workspaces: &[Workspace],
+) -> HashMap<String, PaneId> {
+    if !pane_aliases_are_aligned(snapshot, workspaces) {
+        return HashMap::new();
     }
-    public_numbers
-}
 
-fn collect_layout_snapshot_pane_ids(node: &LayoutSnapshot, ids: &mut Vec<u32>) {
-    match node {
-        LayoutSnapshot::Pane(id) => ids.push(*id),
-        LayoutSnapshot::Split { first, second, .. } => {
-            collect_layout_snapshot_pane_ids(first, ids);
-            collect_layout_snapshot_pane_ids(second, ids);
+    let mut aliases = HashMap::new();
+    for (workspace_snapshot, workspace) in snapshot.workspaces.iter().zip(workspaces) {
+        let Some(legacy_workspace_id) = workspace_snapshot.legacy_workspace_id.as_deref() else {
+            continue;
+        };
+        for (tab_snapshot, tab) in workspace_snapshot.tabs.iter().zip(&workspace.tabs) {
+            let old_ids = collect_snapshot_pane_ids(&tab_snapshot.layout);
+            let new_ids = tab.layout.pane_ids();
+            for (old_id, pane_id) in old_ids.into_iter().zip(new_ids) {
+                let Some(number) = workspace_snapshot.public_pane_numbers.get(&old_id) else {
+                    continue;
+                };
+                if aliases
+                    .insert(format!("{legacy_workspace_id}:p{number}"), pane_id)
+                    .is_some()
+                {
+                    return HashMap::new();
+                }
+            }
         }
     }
+    aliases
 }
 
 #[cfg(unix)]
@@ -386,37 +398,9 @@ fn restore_workspace(
     let mut terminal_runtimes = HashMap::new();
     let workspace_id = snap
         .id
-        .as_deref()
-        .map(|id| {
-            id.strip_prefix('w')
-                .map(|suffix| format!("s{suffix}"))
-                .unwrap_or_else(|| id.to_string())
-        })
+        .clone()
+        .filter(|id| crate::workspace::public_workspace_number(id).is_some())
         .unwrap_or_else(crate::workspace::generate_workspace_id);
-    let mut next_public_pane_number = snap
-        .public_pane_numbers
-        .values()
-        .copied()
-        .max()
-        .and_then(|max| max.checked_add(1))
-        .unwrap_or(1)
-        .max(snap.next_public_pane_number);
-    let public_pane_numbers_by_old_raw =
-        migrated_public_pane_numbers_by_old_raw(snap, &mut next_public_pane_number);
-    let public_pane_ids_by_old_raw: HashMap<u32, String> = public_pane_numbers_by_old_raw
-        .iter()
-        .map(|(old_raw, public_number)| {
-            (
-                *old_raw,
-                format!(
-                    "{}:p{}",
-                    workspace_id,
-                    crate::workspace::encode_public_number(*public_number)
-                ),
-            )
-        })
-        .collect();
-    let mut public_pane_numbers = HashMap::new();
     let mut next_public_tab_number = snap
         .public_tab_numbers
         .iter()
@@ -434,16 +418,16 @@ fn restore_workspace(
             history.and_then(|history| history.tabs.get(idx)),
             tab_number,
             &workspace_id,
+            snap.legacy_workspace_id.as_deref(),
             rows,
             cols,
             runtime_context,
             saved_global_pane_ids,
             resumed_agent_sessions,
             imported_panes,
-            &public_pane_ids_by_old_raw,
         );
         failed_imports += tab_failed_imports;
-        let Some((mut tab, restored_terminals, restored_runtimes, reverse_id_map)) = restored_tab
+        let Some((mut tab, restored_terminals, restored_runtimes, _reverse_id_map)) = restored_tab
         else {
             continue;
         };
@@ -451,23 +435,6 @@ fn restore_workspace(
             tab.number = public_tab_number;
         }
         next_public_tab_number = next_public_tab_number.max(tab.number + 1);
-        for pane_id in tab.layout.pane_ids() {
-            let public_number = public_pane_numbers_by_old_raw
-                .get(
-                    &reverse_id_map
-                        .get(&pane_id)
-                        .copied()
-                        .unwrap_or(pane_id.raw()),
-                )
-                .copied()
-                .unwrap_or_else(|| {
-                    let number = next_public_pane_number;
-                    next_public_pane_number += 1;
-                    number
-                });
-            public_pane_numbers.insert(pane_id, public_number);
-            next_public_pane_number = next_public_pane_number.max(public_number + 1);
-        }
         terminals.extend(restored_terminals);
         terminal_runtimes.extend(restored_runtimes);
         tabs.push(tab);
@@ -492,8 +459,6 @@ fn restore_workspace(
             worktree_space,
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
             metadata_token_sequences: HashMap::new(),
-            public_pane_numbers,
-            next_public_pane_number,
             next_public_tab_number,
             active_tab: snap.active_tab.min(tabs.len().saturating_sub(1)),
             tabs,
@@ -520,13 +485,13 @@ fn restore_tab(
     history: Option<&TabHistorySnapshot>,
     number: usize,
     workspace_id: &str,
+    legacy_workspace_id: Option<&str>,
     rows: u16,
     cols: u16,
     runtime_context: &RestoreRuntimeContext<'_>,
     saved_global_pane_ids: Option<&HashMap<u32, PaneId>>,
     resumed_agent_sessions: &mut HashSet<String>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
-    public_pane_ids_by_old_raw: &HashMap<u32, String>,
 ) -> RestoreFailures<Option<RestoredTab>> {
     let (node, id_map) = restore_node_remapped(&snap.layout, saved_global_pane_ids);
     let reverse_id_map: HashMap<PaneId, u32> = id_map
@@ -572,6 +537,7 @@ fn restore_tab(
             saved_pane.and_then(|pane| pane.agent_session.clone()),
             runtime_context.agent_session_ledger,
             workspace_id,
+            legacy_workspace_id,
             &crate::workspace::public_tab_id_for_number(workspace_id, number),
             old_pane_id.unwrap_or(id.raw()),
         );
@@ -595,18 +561,11 @@ fn restore_tab(
             .as_ref()
             .and_then(|plan| crate::detect::parse_agent_label(&plan.agent));
 
-        let public_pane_id = old_pane_id
-            .and_then(|old_id| public_pane_ids_by_old_raw.get(&old_id))
-            .map(String::as_str);
-        let launch_env = public_pane_id
-            .map(|pane_id| {
-                PaneLaunchEnv::from_extra(Vec::new()).with_identity(
-                    workspace_id.to_string(),
-                    crate::workspace::public_tab_id_for_number(workspace_id, number),
-                    pane_id.to_string(),
-                )
-            })
-            .unwrap_or_default();
+        let launch_env = PaneLaunchEnv::from_extra(Vec::new()).with_identity(
+            workspace_id.to_string(),
+            crate::workspace::public_tab_id_for_number(workspace_id, number),
+            format!("p{}", id.raw()),
+        );
         let imported_runtime = old_pane_id.and_then(|old_id| imported_panes.remove(&old_id));
         let was_imported = imported_runtime.is_some();
         let pending_native_agent_restore = if was_imported {
@@ -822,24 +781,19 @@ fn agent_session_from_snapshot_and_ledger(
     mut saved_session: Option<PaneAgentSessionSnapshot>,
     agent_session_ledger: &crate::persist::agent_ledger::AgentSessionLedger,
     workspace_id: &str,
+    legacy_workspace_id: Option<&str>,
     tab_id: &str,
     pane_id: u32,
 ) -> Option<PaneAgentSessionSnapshot> {
-    let legacy_workspace_id = workspace_id
-        .strip_prefix('s')
-        .map(|number| format!("w{number}"));
-    let legacy_tab_id = legacy_workspace_id
-        .as_ref()
-        .and_then(|legacy_workspace_id| {
-            tab_id
-                .strip_prefix(workspace_id)
-                .map(|suffix| format!("{legacy_workspace_id}{suffix}"))
-        });
+    let legacy_tab_id = legacy_workspace_id.and_then(|legacy_workspace_id| {
+        tab_id
+            .strip_prefix(workspace_id)
+            .map(|suffix| format!("{legacy_workspace_id}{suffix}"))
+    });
     let Some(ledger_entry) = agent_session_ledger
         .get(workspace_id, tab_id, pane_id)
         .or_else(|| {
             legacy_workspace_id
-                .as_deref()
                 .zip(legacy_tab_id.as_deref())
                 .and_then(|(workspace_id, tab_id)| {
                     agent_session_ledger.get(workspace_id, tab_id, pane_id)
@@ -1075,8 +1029,7 @@ fn validated_saved_global_pane_ids(
 
     for workspace in &snapshot.workspaces {
         for tab in &workspace.tabs {
-            let mut layout_ids = Vec::new();
-            collect_layout_snapshot_pane_ids(&tab.layout, &mut layout_ids);
+            let layout_ids = collect_snapshot_pane_ids(&tab.layout);
             let layout_id_set: HashSet<u32> = layout_ids.iter().copied().collect();
             if layout_id_set.len() != layout_ids.len()
                 || layout_id_set.len() != tab.panes.len()
@@ -1218,12 +1171,12 @@ mod tests {
     ) -> WorkspaceSnapshot {
         WorkspaceSnapshot {
             id: Some(workspace_id.into()),
+            legacy_workspace_id: None,
             custom_name: None,
             section: crate::workspace::WorkspaceSection::None,
             identity_cwd: cwd.to_path_buf(),
             worktree_space: None,
             public_pane_numbers: HashMap::from([(old_pane_id, 1)]),
-            next_public_pane_number: 2,
             public_tab_numbers: vec![1],
             next_public_tab_number: 2,
             tabs: vec![TabSnapshot {
@@ -1253,6 +1206,94 @@ mod tests {
             collapsed_space_keys: Default::default(),
             collapsed_workspace_sections: Default::default(),
         }
+    }
+
+    #[test]
+    fn pane_aliases_fail_closed_when_restore_prunes_a_pane() {
+        let cwd = std::env::current_dir().unwrap();
+        let mut snapshot =
+            test_session_snapshot(vec![test_workspace_snapshot(&cwd, "s1", 10, None)]);
+        let workspace_snapshot = &mut snapshot.workspaces[0];
+        workspace_snapshot.legacy_workspace_id = Some("w1".into());
+        let tab = &mut workspace_snapshot.tabs[0];
+        tab.layout = LayoutSnapshot::Split {
+            direction: super::super::snapshot::DirectionSnapshot::Horizontal,
+            ratio: 0.5,
+            first: Box::new(LayoutSnapshot::Pane(10)),
+            second: Box::new(LayoutSnapshot::Pane(20)),
+        };
+        tab.pane_order = vec![10, 20];
+        tab.panes.insert(20, test_pane_snapshot(cwd, None));
+        workspace_snapshot.public_pane_numbers.insert(20, 2);
+
+        let workspaces = vec![Workspace::test_new("surviving-pane")];
+        assert!(handoff_pane_aliases(&snapshot, &workspaces).is_empty());
+        assert!(legacy_public_pane_aliases(&snapshot, &workspaces).is_empty());
+    }
+
+    #[test]
+    fn pane_aliases_fail_closed_when_workspace_or_tab_counts_differ() {
+        let cwd = std::env::current_dir().unwrap();
+        let workspaces = vec![Workspace::test_new("surviving-pane")];
+
+        let mut workspace_mismatch = test_session_snapshot(vec![
+            test_workspace_snapshot(&cwd, "s1", 10, None),
+            test_workspace_snapshot(&cwd, "s2", 20, None),
+        ]);
+        workspace_mismatch.workspaces[0].legacy_workspace_id = Some("w1".into());
+        assert!(handoff_pane_aliases(&workspace_mismatch, &workspaces).is_empty());
+        assert!(legacy_public_pane_aliases(&workspace_mismatch, &workspaces).is_empty());
+
+        let mut tab_mismatch =
+            test_session_snapshot(vec![test_workspace_snapshot(&cwd, "s1", 10, None)]);
+        tab_mismatch.workspaces[0].legacy_workspace_id = Some("w1".into());
+        let extra_tab = test_workspace_snapshot(&cwd, "s2", 20, None)
+            .tabs
+            .into_iter()
+            .next()
+            .expect("test workspace has one tab");
+        tab_mismatch.workspaces[0].tabs.push(extra_tab);
+        assert!(handoff_pane_aliases(&tab_mismatch, &workspaces).is_empty());
+        assert!(legacy_public_pane_aliases(&tab_mismatch, &workspaces).is_empty());
+    }
+
+    #[test]
+    fn pane_aliases_fail_closed_on_duplicate_keys_across_panes_or_spaces() {
+        const DUPLICATE_OLD_PANE_ID: u32 = 99_999;
+
+        let cwd = std::env::current_dir().unwrap();
+        let mut multi_tab = test_session_snapshot(vec![test_workspace_snapshot(
+            &cwd,
+            "s1",
+            DUPLICATE_OLD_PANE_ID,
+            None,
+        )]);
+        multi_tab.workspaces[0].legacy_workspace_id = Some("w1".into());
+        let duplicate_tab = test_workspace_snapshot(&cwd, "s1", DUPLICATE_OLD_PANE_ID, None)
+            .tabs
+            .into_iter()
+            .next()
+            .expect("test workspace has one tab");
+        multi_tab.workspaces[0].tabs.push(duplicate_tab);
+        let mut multi_tab_workspace = Workspace::test_new("surviving-panes");
+        multi_tab_workspace.test_add_tab(None);
+        let multi_tab_workspaces = vec![multi_tab_workspace];
+        assert!(handoff_pane_aliases(&multi_tab, &multi_tab_workspaces).is_empty());
+        assert!(legacy_public_pane_aliases(&multi_tab, &multi_tab_workspaces).is_empty());
+
+        let mut multi_space = test_session_snapshot(vec![
+            test_workspace_snapshot(&cwd, "s1", DUPLICATE_OLD_PANE_ID, None),
+            test_workspace_snapshot(&cwd, "s2", DUPLICATE_OLD_PANE_ID, None),
+        ]);
+        for workspace in &mut multi_space.workspaces {
+            workspace.legacy_workspace_id = Some("w1".into());
+        }
+        let multi_space_workspaces = vec![
+            Workspace::test_new("first-space"),
+            Workspace::test_new("second-space"),
+        ];
+        assert!(handoff_pane_aliases(&multi_space, &multi_space_workspaces).is_empty());
+        assert!(legacy_public_pane_aliases(&multi_space, &multi_space_workspaces).is_empty());
     }
 
     fn restore_for_test(
@@ -1288,8 +1329,8 @@ mod tests {
         ledger.upsert(crate::persist::agent_ledger::AgentSessionLedgerEntry {
             pane_id: 7,
             terminal_id: "term_7".into(),
-            workspace_id: "w1".into(),
-            tab_id: "w1:t1".into(),
+            workspace_id: "s1".into(),
+            tab_id: "s1:t1".into(),
             cwd: "/tmp".into(),
             agent: "claude".into(),
             session_id: "24fcd322-987c-427b-9b7c-31bc6bc98005".into(),
@@ -1299,7 +1340,7 @@ mod tests {
         });
 
         let session =
-            agent_session_from_snapshot_and_ledger(None, &ledger, "w1", "w1:t1", 7).unwrap();
+            agent_session_from_snapshot_and_ledger(None, &ledger, "s1", None, "s1:t1", 7).unwrap();
 
         assert_eq!(session.source, "herdr:claude");
         assert_eq!(session.agent, "claude");
@@ -1324,28 +1365,40 @@ mod tests {
         });
 
         let session =
-            agent_session_from_snapshot_and_ledger(None, &ledger, "sdev1", "sdev1:t1", 7).unwrap();
+            agent_session_from_snapshot_and_ledger(None, &ledger, "s1", Some("wdev1"), "s1:t1", 7)
+                .unwrap();
 
         assert_eq!(session.value, "24fcd322-987c-427b-9b7c-31bc6bc98005");
     }
 
     #[tokio::test]
-    async fn restore_normalizes_legacy_space_id_before_snapshot_capture() {
+    async fn restore_migrates_legacy_space_id_before_snapshot_capture() {
         let cwd = std::env::current_dir().unwrap();
-        let snapshot =
+        let mut snapshot =
             test_session_snapshot(vec![test_workspace_snapshot(&cwd, "wdev1", 10, Some(132))]);
+        snapshot.version = 4;
+        let mut encoded = serde_json::to_value(&snapshot).expect("snapshot should serialize");
+        encoded["workspaces"][0]["public_pane_numbers"] = serde_json::json!({"10": 1});
+        let snapshot = super::super::snapshot::parse_snapshot(
+            &serde_json::to_string(&encoded).expect("legacy snapshot should encode"),
+        )
+        .expect("legacy snapshot should deserialize");
 
         let (workspaces, terminals) =
             restore_for_test(&snapshot, PaneIdRestoreMode::PreserveSnapshotGlobalIds);
         let workspace = workspaces.first().expect("workspace should restore");
         let pane_id = workspace.tabs[0].root_pane;
-        assert_eq!(workspace.id, "sdev1");
+        assert_eq!(workspace.id, "s1");
         assert_eq!(
             crate::workspace::public_pane_id_for_number(
                 &workspace.id,
                 workspace.public_pane_number(pane_id).unwrap(),
             ),
-            "sdev1:p1"
+            "p132"
+        );
+        assert_eq!(
+            legacy_public_pane_aliases(&snapshot, &workspaces).get("wdev1:p1"),
+            Some(&pane_id)
         );
 
         let state = crate::app::state::AppState::test_new();
@@ -1361,7 +1414,11 @@ mod tests {
             Default::default(),
             &Default::default(),
         );
-        assert_eq!(captured.workspaces[0].id.as_deref(), Some("sdev1"));
+        assert_eq!(captured.workspaces[0].id.as_deref(), Some("s1"));
+        let encoded = serde_json::to_string(&captured).expect("snapshot should serialize");
+        assert!(!encoded.contains("public_pane_numbers"));
+        assert!(!encoded.contains("next_public_pane_number"));
+        assert!(!encoded.contains("legacy_workspace_id"));
     }
 
     #[tokio::test]
@@ -1846,13 +1903,13 @@ mod tests {
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
             workspaces: vec![WorkspaceSnapshot {
-                id: Some("workspace".into()),
+                id: Some("s1".into()),
+                legacy_workspace_id: None,
                 custom_name: None,
                 section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
-                next_public_pane_number: 0,
                 public_tab_numbers: Vec::new(),
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
@@ -1929,18 +1986,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn restore_preserves_public_id_mapping_after_pane_id_remap() {
+    async fn restore_uses_saved_global_pane_ids_after_remap() {
         let cwd = std::env::current_dir().unwrap();
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
             workspaces: vec![WorkspaceSnapshot {
-                id: Some("w1".into()),
+                id: Some("s1".into()),
+                legacy_workspace_id: None,
                 custom_name: None,
                 section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(10, 1), (20, 3)]),
-                next_public_pane_number: 4,
                 public_tab_numbers: vec![5],
                 next_public_tab_number: 6,
                 tabs: vec![TabSnapshot {
@@ -1956,7 +2013,7 @@ mod tests {
                         (
                             10,
                             super::super::snapshot::PaneSnapshot {
-                                global_pane_number: None,
+                                global_pane_number: Some(30),
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
@@ -1968,7 +2025,7 @@ mod tests {
                         (
                             20,
                             super::super::snapshot::PaneSnapshot {
-                                global_pane_number: None,
+                                global_pane_number: Some(40),
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
@@ -2014,10 +2071,6 @@ mod tests {
         );
 
         let workspace = workspaces.first().expect("workspace should restore");
-        let mut public_numbers: Vec<_> = workspace.public_pane_numbers.values().copied().collect();
-        public_numbers.sort_unstable();
-        assert_eq!(public_numbers, vec![1, 3]);
-        assert_eq!(workspace.next_public_pane_number, 4);
         assert_eq!(workspace.tabs[0].number, 5);
         assert_eq!(workspace.next_public_tab_number, 6);
         let logical_public_order: Vec<_> = workspace.tabs[0]
@@ -2026,7 +2079,7 @@ mod tests {
             .into_iter()
             .map(|pane_id| workspace.public_pane_number(pane_id).unwrap())
             .collect();
-        assert_eq!(logical_public_order, vec![3, 1]);
+        assert_eq!(logical_public_order, vec![40, 30]);
     }
 
     #[tokio::test]
@@ -2063,13 +2116,13 @@ mod tests {
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
             workspaces: vec![WorkspaceSnapshot {
-                id: Some("w1".into()),
+                id: Some("s1".into()),
+                legacy_workspace_id: None,
                 custom_name: None,
                 section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(10, 1), (11, 2), (12, 3), (13, 4)]),
-                next_public_pane_number: 5,
                 public_tab_numbers: vec![1, 3, 4, 5],
                 next_public_tab_number: 6,
                 tabs: vec![
@@ -2155,44 +2208,6 @@ mod tests {
         assert_eq!(detail.agent_label, "planner");
     }
 
-    #[test]
-    fn legacy_restore_uses_saved_raw_ids_as_missing_public_pane_numbers() {
-        let cwd = std::env::current_dir().unwrap();
-        let snapshot = WorkspaceSnapshot {
-            id: Some("w1".into()),
-            custom_name: None,
-            section: crate::workspace::WorkspaceSection::None,
-            identity_cwd: cwd,
-            worktree_space: None,
-            public_pane_numbers: HashMap::new(),
-            next_public_pane_number: 0,
-            public_tab_numbers: Vec::new(),
-            next_public_tab_number: 0,
-            tabs: vec![TabSnapshot {
-                custom_name: None,
-                pane_order: vec![10, 20],
-                layout: LayoutSnapshot::Split {
-                    direction: super::super::snapshot::DirectionSnapshot::Horizontal,
-                    ratio: 0.5,
-                    first: Box::new(LayoutSnapshot::Pane(10)),
-                    second: Box::new(LayoutSnapshot::Pane(20)),
-                },
-                panes: HashMap::new(),
-                zoomed: false,
-                focused: Some(10),
-                root_pane: Some(10),
-            }],
-            active_tab: 0,
-        };
-        let mut next_public_pane_number = 1;
-
-        let public_numbers =
-            migrated_public_pane_numbers_by_old_raw(&snapshot, &mut next_public_pane_number);
-
-        assert_eq!(public_numbers, HashMap::from([(10, 10), (20, 20)]));
-        assert_eq!(next_public_pane_number, 21);
-    }
-
     #[tokio::test]
     #[cfg(unix)]
     async fn native_agent_restore_defers_runtime_launch() {
@@ -2200,13 +2215,13 @@ mod tests {
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
             workspaces: vec![WorkspaceSnapshot {
-                id: Some("workspace".into()),
+                id: Some("s1".into()),
+                legacy_workspace_id: None,
                 custom_name: None,
                 section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: cwd.clone(),
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
-                next_public_pane_number: 0,
                 public_tab_numbers: Vec::new(),
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {
@@ -2434,13 +2449,13 @@ mod tests {
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
             workspaces: vec![WorkspaceSnapshot {
-                id: Some("workspace".into()),
+                id: Some("s1".into()),
+                legacy_workspace_id: None,
                 custom_name: None,
                 section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: cwd,
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
-                next_public_pane_number: 0,
                 public_tab_numbers: Vec::new(),
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {

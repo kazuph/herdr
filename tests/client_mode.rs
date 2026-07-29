@@ -843,11 +843,11 @@ fn client_receives_notify_on_agent_state_change() {
     let mut ws_response = String::new();
     reader.read_line(&mut ws_response).unwrap();
 
-    // Extract the workspace ID and pane ID from the response.
-    let ws_id = ws_response
-        .split('"')
-        .find(|s| s.starts_with("w_"))
-        .unwrap_or("w_1")
+    let ws_response: serde_json::Value =
+        serde_json::from_str(&ws_response).expect("workspace.create response should be JSON");
+    let ws_id = ws_response["result"]["workspace"]["workspace_id"]
+        .as_str()
+        .expect("workspace.create should return sN")
         .to_string();
 
     // Get pane list to find a pane ID.
@@ -859,11 +859,11 @@ fn client_receives_notify_on_agent_state_change() {
     let mut pane_response = String::new();
     pane_reader.read_line(&mut pane_response).unwrap();
 
-    // Extract first pane ID (format: p_<ws>_<pane>).
-    let pane_id = pane_response
-        .split('"')
-        .find(|s| s.starts_with("p_"))
-        .unwrap_or("p_1_1")
+    let pane_response: serde_json::Value =
+        serde_json::from_str(&pane_response).expect("pane.list response should be JSON");
+    let pane_id = pane_response["result"]["panes"][0]["pane_id"]
+        .as_str()
+        .expect("pane.list should return pN")
         .to_string();
 
     // Report agent as Blocked via the API — this should trigger a
@@ -916,10 +916,11 @@ fn client_receives_notify_on_agent_state_change() {
     ws2_reader.read_line(&mut ws2_response).unwrap();
 
     // Focus the new workspace (making the first one background).
-    let ws2_id = ws2_response
-        .split('"')
-        .find(|s| s.starts_with("w_"))
-        .unwrap_or("w_2")
+    let ws2_response: serde_json::Value =
+        serde_json::from_str(&ws2_response).expect("workspace.create response should be JSON");
+    let ws2_id = ws2_response["result"]["workspace"]["workspace_id"]
+        .as_str()
+        .expect("workspace.create should return sN")
         .to_string();
     let mut focus_stream = UnixStream::connect(&api_socket).expect("connect to API");
     let focus_request = format!(

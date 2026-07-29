@@ -1384,7 +1384,7 @@ mod tests {
         assert!(workspace.close_tab(removed_tab));
         workspace.active_tab = 1;
 
-        assert_eq!(mobile_tab_status(&workspace), "tab 2 · 2/2");
+        assert_eq!(mobile_tab_status(&workspace), "tab 3 · 2/2");
     }
 
     #[test]
@@ -1423,11 +1423,11 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(
-            rows.iter().any(|row| row.contains("tab 2")),
+            rows.iter().any(|row| row.contains("tab 3")),
             "mobile rows: {rows:?}"
         );
         assert!(
-            rows.iter().all(|row| !row.contains("tab 3")),
+            rows.iter().all(|row| !row.contains("tab 2")),
             "mobile rows: {rows:?}"
         );
     }

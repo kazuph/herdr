@@ -114,16 +114,18 @@ pub struct TileLayout {
 impl TileLayout {
     /// Create a new layout with a single pane (globally unique ID).
     /// Returns (layout, root_pane_id) so the caller can create the pane.
+    #[cfg(test)]
     pub fn new() -> (Self, PaneId) {
         let root_id = PaneId::alloc();
-        (
-            Self {
-                root: Node::Pane(root_id),
-                focus: root_id,
-                order: vec![root_id],
-            },
-            root_id,
-        )
+        (Self::new_with_root(root_id), root_id)
+    }
+
+    pub(crate) fn new_with_root(root_id: PaneId) -> Self {
+        Self {
+            root: Node::Pane(root_id),
+            focus: root_id,
+            order: vec![root_id],
+        }
     }
 
     pub fn focused(&self) -> PaneId {
@@ -149,13 +151,25 @@ impl TileLayout {
     }
 
     /// Split the focused pane. Returns the new pane's id.
+    #[cfg(test)]
     pub fn split_focused(&mut self, direction: Direction) -> PaneId {
         self.split_focused_with_ratio(direction, 0.5)
     }
 
     /// Split the focused pane with a custom first-child ratio.
+    #[cfg(test)]
     pub fn split_focused_with_ratio(&mut self, direction: Direction, ratio: f32) -> PaneId {
         let new_id = PaneId::alloc();
+        self.split_focused_with_id(direction, ratio, new_id);
+        new_id
+    }
+
+    pub(crate) fn split_focused_with_id(
+        &mut self,
+        direction: Direction,
+        ratio: f32,
+        new_id: PaneId,
+    ) {
         let placeholder = PaneId::from_raw(0);
         let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
         self.root = split_at(old, self.focus, direction, new_id, valid_split_ratio(ratio));
@@ -166,7 +180,6 @@ impl TileLayout {
             .map_or(self.order.len(), |index| index + 1);
         self.order.insert(insert_at, new_id);
         self.focus = new_id;
-        new_id
     }
 
     /// Insert an existing pane id next to a target pane without allocating a new

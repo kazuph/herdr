@@ -29,12 +29,8 @@ impl App {
         ws_idx: usize,
         pane_id: crate::layout::PaneId,
     ) -> Option<String> {
-        let ws = self.state.workspaces.get(ws_idx)?;
-        let pane_number = ws.public_pane_number(pane_id)?;
-        Some(crate::workspace::public_pane_id_for_number(
-            &ws.id,
-            pane_number,
-        ))
+        self.state.workspaces.get(ws_idx)?.pane_state(pane_id)?;
+        Some(format!("p{}", pane_id.raw()))
     }
 
     pub(super) fn pane_launch_env(
@@ -84,8 +80,8 @@ impl App {
 
         let (ws_raw, tab_raw) = id.rsplit_once(':')?;
         let ws_idx = self.parse_workspace_id(ws_raw)?;
-        let tab_idx = if let Some(encoded) = tab_raw.strip_prefix('t') {
-            let tab_number = crate::workspace::decode_public_number(encoded)?;
+        let tab_idx = if let Some(number) = tab_raw.strip_prefix('t') {
+            let tab_number = number.parse::<usize>().ok()?;
             self.state
                 .workspaces
                 .get(ws_idx)?
@@ -116,13 +112,6 @@ impl App {
         }
 
         if let Some(rest) = id.strip_prefix("p_") {
-            if let Some((ws_raw, pane_raw)) = rest.rsplit_once('_') {
-                let ws_idx = self.parse_workspace_id(ws_raw)?;
-                let pane_id = self.resolve_raw_pane_id(pane_raw.parse::<u32>().ok()?)?;
-                self.state.workspaces.get(ws_idx)?.pane_state(pane_id)?;
-                return Some((ws_idx, pane_id));
-            }
-
             let pane_id = self.resolve_raw_pane_id(rest.parse::<u32>().ok()?)?;
             return self.find_pane(pane_id).map(|(ws_idx, _)| (ws_idx, pane_id));
         }
@@ -140,30 +129,7 @@ impl App {
             return self.find_pane(pane_id).map(|(ws_idx, _)| (ws_idx, pane_id));
         }
 
-        if let Some((ws_raw, pane_number_raw)) = id.rsplit_once(":p") {
-            let ws_idx = self.parse_workspace_id(ws_raw)?;
-            let pane_number = crate::workspace::decode_public_number(pane_number_raw)?;
-            let ws = self.state.workspaces.get(ws_idx)?;
-            let mut pane_ids = ws
-                .public_pane_numbers
-                .iter()
-                .filter_map(|(pane_id, number)| (*number == pane_number).then_some(*pane_id));
-            let pane_id = pane_ids.next()?;
-            pane_ids.next().is_none().then_some(())?;
-            return Some((ws_idx, pane_id));
-        }
-
-        let (ws_raw, pane_number_raw) = id.rsplit_once('-')?;
-        let ws_idx = self.parse_workspace_id(ws_raw)?;
-        let pane_number = pane_number_raw.parse::<usize>().ok()?;
-        let ws = self.state.workspaces.get(ws_idx)?;
-        let mut pane_ids = ws
-            .public_pane_numbers
-            .iter()
-            .filter_map(|(pane_id, number)| (*number == pane_number).then_some(*pane_id));
-        let pane_id = pane_ids.next()?;
-        pane_ids.next().is_none().then_some(())?;
-        Some((ws_idx, pane_id))
+        None
     }
 }
 
@@ -172,10 +138,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn global_pane_targets_and_legacy_space_targets_resolve_the_live_pane() {
+    fn global_pane_targets_resolve_the_live_pane() {
         let mut state = crate::app::state::AppState::test_new();
-        let mut workspace = crate::workspace::Workspace::test_new("ids");
-        workspace.id = "sdev1".into();
+        let workspace = crate::workspace::Workspace::test_new("ids");
         let pane_id = workspace.tabs[0].root_pane;
         state.workspaces = vec![workspace];
         state.active = Some(0);
@@ -194,17 +159,10 @@ mod tests {
         assert_eq!(app.parse_pane_id(&format!("%{global}")), Some((0, pane_id)));
         assert_eq!(app.parse_pane_id(&format!("p{global}")), Some((0, pane_id)));
         assert_eq!(app.parse_pane_id(&global.to_string()), Some((0, pane_id)));
-        assert_eq!(app.parse_pane_id("wdev1:p1"), Some((0, pane_id)));
-        assert_eq!(app.public_pane_id(0, pane_id).as_deref(), Some("sdev1:p1"));
+        assert_eq!(app.public_pane_id(0, pane_id), Some(format!("p{global}")));
         assert_eq!(app.parse_pane_id("p0"), None);
         assert_eq!(app.parse_pane_id("p4294967296"), None);
         assert_eq!(app.parse_pane_id("p999999"), None);
-
-        let second_pane =
-            app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
-        app.state.workspaces[0]
-            .public_pane_numbers
-            .insert(second_pane, 1);
         assert_eq!(app.parse_pane_id("sdev1:p1"), None);
     }
 }

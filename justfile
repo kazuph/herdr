@@ -61,7 +61,7 @@ fork-spec-contracts:
     just test-one restore_plan_rejects_unsafe_codex_snapshot_id
     just test-one legacy_pane_restore_fields_migrate_to_native_agent_session
     just test-one legacy_pane_restore_without_session_id_stays_fail_closed
-    just test-one legacy_restore_uses_saved_raw_ids_as_missing_public_pane_numbers
+    just test-one restore_migrates_legacy_space_id_before_snapshot_capture
     just test-one native_agent_restore_defers_runtime_launch
     just test-one pending_agent_resume_deadline_uses_configured_restore_delay
     just test-one manual_restore_without_pending_resumes_distinguishes_running_agents

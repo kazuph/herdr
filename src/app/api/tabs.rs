@@ -99,7 +99,10 @@ impl App {
                 if let Some(label) = label {
                     let workspace_id = self.state.workspaces[ws_idx].id.clone();
                     let tab_id = self.public_tab_id(ws_idx, tab_idx).unwrap_or_else(|| {
-                        crate::workspace::public_tab_id_for_number(&workspace_id, tab_idx + 1)
+                        crate::workspace::public_tab_id_for_number(
+                            &workspace_id,
+                            self.state.workspaces[ws_idx].tabs[tab_idx].number,
+                        )
                     });
                     if let Some(tab) = self
                         .state
@@ -143,7 +146,10 @@ impl App {
         };
         let workspace_id = self.state.workspaces[ws_idx].id.clone();
         let tab_id = self.public_tab_id(ws_idx, tab_idx).unwrap_or_else(|| {
-            crate::workspace::public_tab_id_for_number(&workspace_id, tab_idx + 1)
+            crate::workspace::public_tab_id_for_number(
+                &workspace_id,
+                self.state.workspaces[ws_idx].tabs[tab_idx].number,
+            )
         });
         let Some(tab) = self
             .state
@@ -191,9 +197,9 @@ impl App {
             );
         }
 
-        let tab_id = self
-            .public_tab_id(ws_idx, tab_idx)
-            .unwrap_or_else(|| crate::workspace::public_tab_id_for_number(&ws.id, tab_idx + 1));
+        let tab_id = self.public_tab_id(ws_idx, tab_idx).unwrap_or_else(|| {
+            crate::workspace::public_tab_id_for_number(&ws.id, ws.tabs[tab_idx].number)
+        });
         let workspace_id = self.public_workspace_id(ws_idx);
         let insert_index = params.insert_index;
         let moved = self

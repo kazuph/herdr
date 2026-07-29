@@ -9,7 +9,7 @@ use crate::terminal::TerminalRuntimeRegistry;
 use crate::workspace::Workspace;
 
 /// Current snapshot format version.
-pub(super) const SNAPSHOT_VERSION: u32 = 4;
+pub(super) const SNAPSHOT_VERSION: u32 = 5;
 
 /// Serializable snapshot of the entire herdr session.
 #[derive(Serialize, Deserialize)]
@@ -52,6 +52,10 @@ pub struct TabHistorySnapshot {
 pub struct WorkspaceSnapshot {
     #[serde(default)]
     pub id: Option<String>,
+    /// The v4-or-earlier identifier is retained in memory only while restoring
+    /// aliases for long-lived handoff and ledger targets.
+    #[serde(skip)]
+    pub(crate) legacy_workspace_id: Option<String>,
     #[serde(default)]
     pub custom_name: Option<String>,
     #[serde(default)]
@@ -59,10 +63,8 @@ pub struct WorkspaceSnapshot {
     pub identity_cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_space: Option<crate::workspace::WorktreeSpaceMembership>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub public_pane_numbers: HashMap<u32, usize>,
-    #[serde(default)]
-    pub next_public_pane_number: usize,
     #[serde(default)]
     pub public_tab_numbers: Vec<usize>,
     #[serde(default)]
@@ -204,12 +206,12 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
 
         Self {
             id: None,
+            legacy_workspace_id: None,
             custom_name: snap.custom_name,
             section: crate::workspace::WorkspaceSection::None,
             identity_cwd,
             worktree_space: None,
             public_pane_numbers: HashMap::new(),
-            next_public_pane_number: 0,
             public_tab_numbers: Vec::new(),
             next_public_tab_number: 0,
             tabs: vec![tab],
@@ -239,12 +241,16 @@ struct RawSessionSnapshot {
 }
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
+    let legacy_encoded_identity = raw.version < SNAPSHOT_VERSION;
     Ok(SessionSnapshot {
         version: raw.version,
         workspaces: raw
             .workspaces
             .into_iter()
-            .map(migrate_workspace)
+            .enumerate()
+            .map(|(index, workspace)| {
+                migrate_workspace(workspace, legacy_encoded_identity, index + 1)
+            })
             .collect::<Result<Vec<_>, _>>()?,
         active: raw.active,
         selected: raw.selected,
@@ -255,18 +261,36 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
     })
 }
 
-fn migrate_workspace(raw: serde_json::Value) -> Result<WorkspaceSnapshot, String> {
+fn migrate_workspace(
+    raw: serde_json::Value,
+    legacy_encoded_identity: bool,
+    visible_number: usize,
+) -> Result<WorkspaceSnapshot, String> {
     if raw.get("identity_cwd").is_some() {
-        return serde_json::from_value(raw).map_err(|e| e.to_string());
+        let mut workspace: WorkspaceSnapshot =
+            serde_json::from_value(raw).map_err(|e| e.to_string())?;
+        if legacy_encoded_identity || !is_stable_space_id(workspace.id.as_deref()) {
+            workspace.legacy_workspace_id = workspace.id.clone();
+            workspace.id = Some(format!("s{visible_number}"));
+        }
+        return Ok(workspace);
     }
 
     if raw.get("layout").is_some() {
         let legacy =
             serde_json::from_value::<LegacyWorkspaceSnapshot>(raw).map_err(|e| e.to_string())?;
-        return Ok(legacy.into());
+        let mut workspace: WorkspaceSnapshot = legacy.into();
+        workspace.legacy_workspace_id = workspace.id.clone();
+        workspace.id = Some(format!("s{visible_number}"));
+        return Ok(workspace);
     }
 
     Err("workspace snapshot is neither current nor legacy format".to_string())
+}
+
+fn is_stable_space_id(id: Option<&str>) -> bool {
+    id.and_then(crate::workspace::public_workspace_number)
+        .is_some()
 }
 
 fn legacy_identity_cwd(snap: &LegacyWorkspaceSnapshot) -> PathBuf {
@@ -350,18 +374,14 @@ fn capture_workspace(
 ) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
         id: Some(ws.id.clone()),
+        legacy_workspace_id: None,
         custom_name: ws.custom_name.clone(),
         section: ws.section,
         identity_cwd: ws
             .resolved_identity_cwd_from(terminals, terminal_runtimes)
             .unwrap_or_else(|| ws.identity_cwd.clone()),
         worktree_space: ws.worktree_space.clone(),
-        public_pane_numbers: ws
-            .public_pane_numbers
-            .iter()
-            .map(|(pane_id, number)| (pane_id.raw(), *number))
-            .collect(),
-        next_public_pane_number: ws.next_public_pane_number,
+        public_pane_numbers: HashMap::new(),
         public_tab_numbers: ws.tabs.iter().map(|tab| tab.number).collect(),
         next_public_tab_number: ws.next_public_tab_number,
         tabs: ws
@@ -372,7 +392,7 @@ fn capture_workspace(
                 capture_tab(
                     tab,
                     &ws.id,
-                    ws.public_tab_number(tab_idx).unwrap_or(tab_idx + 1),
+                    ws.public_tab_number(tab_idx).unwrap_or(tab.number),
                     terminals,
                     terminal_runtimes,
                     agent_session_ledger,
@@ -740,13 +760,13 @@ mod tests {
 
         let snap = SessionSnapshot {
             workspaces: vec![WorkspaceSnapshot {
-                id: Some("wproj".to_string()),
+                id: Some("s1".to_string()),
+                legacy_workspace_id: None,
                 custom_name: Some("pi-mono".to_string()),
                 section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: PathBuf::from("/home/can/Projects/herdr"),
                 worktree_space: None,
                 public_pane_numbers: HashMap::from([(0, 1), (1, 2)]),
-                next_public_pane_number: 3,
                 public_tab_numbers: vec![1],
                 next_public_tab_number: 2,
                 tabs: vec![TabSnapshot {
@@ -778,7 +798,7 @@ mod tests {
         let restored = parse_snapshot(&json).unwrap();
 
         assert_eq!(restored.workspaces.len(), 1);
-        assert_eq!(restored.workspaces[0].id.as_deref(), Some("wproj"));
+        assert_eq!(restored.workspaces[0].id.as_deref(), Some("s1"));
         assert_eq!(
             restored.workspaces[0].custom_name.as_deref(),
             Some("pi-mono")
@@ -1104,22 +1124,16 @@ mod tests {
     fn capture_contract_tracks_public_id_counters() {
         let mut state = state_with_workspaces(&["one"]);
         let second = state.workspaces[0].test_split(Direction::Horizontal);
-        let third = state.workspaces[0].test_split(Direction::Vertical);
-        let second_tab = state.workspaces[0].test_add_tab(None);
+        let _third = state.workspaces[0].test_split(Direction::Vertical);
+        let _second_tab = state.workspaces[0].test_add_tab(None);
 
         state.workspaces[0].close_pane(second);
 
         let snapshot = capture_from_state(&state);
         let workspace = &snapshot.workspaces[0];
-        assert_eq!(
-            workspace.public_pane_numbers,
-            HashMap::from([
-                (state.workspaces[0].tabs[0].root_pane.raw(), 1),
-                (third.raw(), 3),
-                (state.workspaces[0].tabs[second_tab].root_pane.raw(), 4),
-            ])
-        );
-        assert_eq!(workspace.next_public_pane_number, 5);
+        let encoded = serde_json::to_string(workspace).expect("snapshot should serialize");
+        assert!(!encoded.contains("public_pane_numbers"));
+        assert!(!encoded.contains("next_public_pane_number"));
         assert_eq!(workspace.public_tab_numbers, vec![1, 2]);
         assert_eq!(workspace.next_public_tab_number, 3);
     }
@@ -1426,12 +1440,12 @@ mod tests {
             version: SNAPSHOT_VERSION,
             workspaces: vec![WorkspaceSnapshot {
                 id: Some("test-ws".to_string()),
+                legacy_workspace_id: None,
                 custom_name: Some("fallback test".to_string()),
                 section: crate::workspace::WorkspaceSection::None,
                 identity_cwd: PathBuf::from("/tmp"),
                 worktree_space: None,
                 public_pane_numbers: HashMap::new(),
-                next_public_pane_number: 0,
                 public_tab_numbers: Vec::new(),
                 next_public_tab_number: 0,
                 tabs: vec![TabSnapshot {

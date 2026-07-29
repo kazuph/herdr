@@ -1461,7 +1461,8 @@ fn render_workspace_list(
         let rows = tokens::space_rows(
             &app.sidebar_spaces,
             SpaceTokenContext {
-                workspace_number: i + 1,
+                workspace_number: crate::workspace::public_workspace_number(&ws.id)
+                    .unwrap_or(i + 1),
                 workspace: &display_label,
                 branch: ws.branch().as_deref(),
                 state_text: state_label(display_state, display_seen),
@@ -2625,7 +2626,10 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         set_state(&mut app, 1, second_pane, AgentState::Working);
         set_state(&mut app, 1, urgent_pane, AgentState::Blocked);
 
-        assert_eq!(app.workspaces[1].public_pane_number(urgent_pane), Some(2));
+        assert_eq!(
+            app.workspaces[1].public_pane_number(urgent_pane),
+            Some(urgent_pane.raw())
+        );
         assert_eq!(agent_panel_entries(&app)[0].pane_id, urgent_pane);
 
         let area = Rect::new(0, 0, 4, 16);

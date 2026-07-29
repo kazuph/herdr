@@ -449,7 +449,7 @@ impl App {
             workspace_id: pane.workspace_id,
             tab_id: pane.tab_id,
             short_pane_id: pane.pane_id.clone(),
-            global_pane_id: format!("p_{global_pane_number}"),
+            global_pane_id: format!("p{global_pane_number}"),
             global_pane_number,
             pane_id: pane.pane_id,
             focused: pane.focused,

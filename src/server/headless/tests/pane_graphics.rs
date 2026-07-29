@@ -205,7 +205,7 @@ fn stream_set_has_graphics_only_render_impact() {
     let mut server = test_headless_server();
     let workspace = crate::workspace::Workspace::test_new("graphics");
     let pane_id = workspace.tabs[0].root_pane;
-    let public_pane_id = format!("{}:p1", workspace.id);
+    let public_pane_id = format!("p{}", pane_id.raw());
     server.app.state.workspaces = vec![workspace];
     server.app.state.active = Some(0);
     server.app.state.selected = 0;
@@ -288,7 +288,7 @@ fn rejected_or_stale_requests_do_not_schedule_rendering() {
     let mut server = test_headless_server();
     let workspace = crate::workspace::Workspace::test_new("graphics");
     let pane_id = workspace.tabs[0].root_pane;
-    let public_pane_id = format!("{}:p1", workspace.id);
+    let public_pane_id = format!("p{}", pane_id.raw());
     server.app.state.workspaces = vec![workspace];
     server.app.state.active = Some(0);
     server.app.state.selected = 0;

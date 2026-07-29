@@ -456,8 +456,6 @@ fn workspace_list_and_create_round_trip() {
     let pane_id = panes[0]["pane_id"].as_str().unwrap().to_string();
     assert_eq!(pane_id, root_pane_id);
     assert_eq!(panes[0]["terminal_id"], root_terminal_id);
-    let legacy_pane_id = format!("{workspace_id}-1");
-
     let pane = send_request(
         &socket_path,
         &format!(
@@ -472,7 +470,7 @@ fn workspace_list_and_create_round_trip() {
         &socket_path,
         &format!(
             r#"{{"id":"req_8","method":"pane.read","params":{{"pane_id":"{}","source":"visible"}}}}"#,
-            legacy_pane_id
+            pane_id
         ),
     );
     assert_eq!(read["result"]["read"]["pane_id"], pane_id);
@@ -513,7 +511,7 @@ fn workspace_list_and_create_round_trip() {
         &socket_path,
         &format!(
             r#"{{"id":"req_12","method":"pane.wait_for_output","params":{{"pane_id":"{}","source":"recent","lines":40,"match":{{"type":"substring","value":"gamma"}},"timeout_ms":2000}}}}"#,
-            legacy_pane_id
+            pane_id
         ),
     );
     assert_eq!(waited["result"]["type"], "output_matched");
@@ -2049,11 +2047,7 @@ fn events_subscribe_streams_output_and_agent_status_events() {
             base.display()
         ),
     );
-    let workspace_id = created["result"]["workspace"]["workspace_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
+    assert_eq!(created["result"]["type"], "workspace_created");
     let panes = send_request(
         &socket_path,
         r#"{"id":"req_21","method":"pane.list","params":{}}"#,
@@ -2062,13 +2056,11 @@ fn events_subscribe_streams_output_and_agent_status_events() {
         .as_str()
         .unwrap()
         .to_string();
-    let legacy_pane_id = format!("{workspace_id}-1");
-
     let mut reader = open_subscription(
         &socket_path,
         &format!(
             r#"{{"id":"sub_1","method":"events.subscribe","params":{{"subscriptions":[{{"type":"pane.output_matched","pane_id":"{}","source":"recent","lines":40,"match":{{"type":"substring","value":"hello from socket"}}}},{{"type":"pane.agent_status_changed","pane_id":"{}","agent_status":"idle"}}]}}}}"#,
-            legacy_pane_id, legacy_pane_id,
+            pane_id, pane_id,
         ),
     );
 

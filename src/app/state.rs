@@ -1869,7 +1869,7 @@ impl AppState {
                 let tab_id = workspace
                     .public_tab_number(tab_idx)
                     .map(|number| crate::workspace::public_tab_id_for_number(&workspace.id, number))
-                    .unwrap_or_else(|| format!("{}:t{}", workspace.id, tab_idx + 1));
+                    .unwrap_or_else(|| format!("{}:t{}", workspace.id, tab.number));
                 for (&pane_id, pane) in &tab.panes {
                     let Some(terminal) = self.terminals.get(&pane.attached_terminal_id) else {
                         continue;

@@ -393,6 +393,7 @@ impl App {
         // Try to restore previous session
         let mut restored_terminals = std::collections::HashMap::new();
         let mut restored_terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        let mut restored_public_pane_id_aliases = std::collections::HashMap::new();
         let agent_session_ledger = if no_session {
             crate::persist::agent_ledger::AgentSessionLedger::default()
         } else {
@@ -445,6 +446,8 @@ impl App {
                 render_notify.clone(),
                 render_dirty.clone(),
             );
+            restored_public_pane_id_aliases =
+                crate::persist::legacy_public_pane_aliases(&snap, &ws);
             restored_terminals = terminals;
             restored_terminal_runtimes = terminal_runtimes.into();
             if ws.is_empty() {
@@ -553,7 +556,7 @@ impl App {
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
-            public_pane_id_aliases: std::collections::HashMap::new(),
+            public_pane_id_aliases: restored_public_pane_id_aliases,
             workspaces,
             active,
             previous_pane_focus: None,
@@ -854,6 +857,8 @@ impl App {
             app.render_dirty.clone(),
         )?;
         let pane_id_aliases = crate::persist::handoff_pane_aliases(snapshot, &workspaces);
+        let public_pane_id_aliases =
+            crate::persist::legacy_public_pane_aliases(snapshot, &workspaces);
 
         app.no_session = false;
         app.state.agent_session_ledger = agent_session_ledger;
@@ -872,6 +877,7 @@ impl App {
         }
         app.state.detach_exits = false;
         app.state.pane_id_aliases = pane_id_aliases;
+        app.state.public_pane_id_aliases = public_pane_id_aliases;
         app.state.workspaces = workspaces;
         app.state.terminals = terminals;
         app.terminal_runtimes = runtimes.into();
@@ -3780,14 +3786,14 @@ mod tests {
             id: "req_2".into(),
             method: crate::api::schema::Method::WorkspaceFocus(
                 crate::api::schema::WorkspaceTarget {
-                    workspace_id: "w1".into(),
+                    workspace_id: "s1".into(),
                 },
             ),
         };
         let pane_rename = crate::api::schema::Request {
             id: "req_3".into(),
             method: crate::api::schema::Method::PaneRename(crate::api::schema::PaneRenameParams {
-                pane_id: "w1:p1".into(),
+                pane_id: "p1".into(),
                 label: Some("logs".into()),
             }),
         };
@@ -3806,7 +3812,7 @@ mod tests {
         let pane_swap = crate::api::schema::Request {
             id: "req_6".into(),
             method: crate::api::schema::Method::PaneSwap(crate::api::schema::PaneSwapParams {
-                pane_id: Some("w1:p1".into()),
+                pane_id: Some("p1".into()),
                 direction: Some(crate::api::schema::PaneDirection::Right),
                 ..crate::api::schema::PaneSwapParams::default()
             }),
@@ -3815,7 +3821,7 @@ mod tests {
             id: "req_7".into(),
             method: crate::api::schema::Method::PaneFocusDirection(
                 crate::api::schema::PaneFocusDirectionParams {
-                    pane_id: Some("w1:p1".into()),
+                    pane_id: Some("p1".into()),
                     direction: crate::api::schema::PaneDirection::Right,
                 },
             ),
@@ -3823,7 +3829,7 @@ mod tests {
         let pane_resize = crate::api::schema::Request {
             id: "req_8".into(),
             method: crate::api::schema::Method::PaneResize(crate::api::schema::PaneResizeParams {
-                pane_id: Some("w1:p1".into()),
+                pane_id: Some("p1".into()),
                 direction: crate::api::schema::PaneDirection::Right,
                 amount: Some(0.05),
             }),
@@ -3905,7 +3911,7 @@ mod tests {
 
         assert_eq!(tab.tab_id, format!("{}:t3", app.state.workspaces[0].id));
         assert_eq!(tab.number, 3);
-        assert_eq!(tab.label, "2");
+        assert_eq!(tab.label, "3");
     }
 
     #[test]
@@ -4083,7 +4089,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_target_resolves_legacy_pane_id() {
+    fn terminal_target_resolves_public_pane_id() {
         let mut app = test_app();
         let workspace = Workspace::test_new("terminal-target-pane");
         let pane = workspace.tabs[0].root_pane;
@@ -4185,7 +4191,9 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert!(candidates.iter().all(|candidate| {
             candidate.terminal_id.starts_with("term_")
-                && candidate.pane_id.starts_with(&app.state.workspaces[0].id)
+                && candidate.pane_id.strip_prefix('p').is_some_and(|number| {
+                    !number.is_empty() && number.chars().all(|character| character.is_ascii_digit())
+                })
                 && candidate.workspace_id == app.state.workspaces[0].id
                 && candidate.cwd.is_some()
         }));

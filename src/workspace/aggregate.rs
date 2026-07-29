@@ -116,7 +116,7 @@ impl Workspace {
             .flat_map(|(tab_idx, tab)| {
                 let tab_label = self
                     .tab_display_name(tab_idx)
-                    .unwrap_or_else(|| (tab_idx + 1).to_string());
+                    .unwrap_or_else(|| tab.number.to_string());
                 tab.pane_details(terminals, tab_idx, &tab_label).into_iter()
             })
             .map(|mut detail| {

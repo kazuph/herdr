@@ -358,7 +358,7 @@ fn tab_detail(
         format!(
             "tab: {}",
             ws.tab_display_name(tab_idx)
-                .unwrap_or_else(|| (tab_idx + 1).to_string())
+                .unwrap_or_else(|| tab.number.to_string())
         ),
         format!("{} panes", tab.panes.len()),
     ];
@@ -392,7 +392,7 @@ fn pane_detail(
         parts.push(format!(
             "tab: {}",
             ws.tab_display_name(tab_idx)
-                .unwrap_or_else(|| (tab_idx + 1).to_string())
+                .unwrap_or_else(|| tab.number.to_string())
         ));
     }
     if let Some(pane_number) = ws.public_pane_number(pane_id) {

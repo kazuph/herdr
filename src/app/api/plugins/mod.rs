@@ -2336,7 +2336,7 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
         let active_public_pane_id = app.public_pane_id(0, active_pane_id).unwrap();
         let workspace_id = app.public_workspace_id(0);
         let closed_tab_id = format!("{workspace_id}:t99");
-        let closed_pane_id = format!("{workspace_id}:p99");
+        let closed_pane_id = "p99".to_string();
 
         let tab_context = app.plugin_context_for_event(
             &crate::api::schema::EventEnvelope {

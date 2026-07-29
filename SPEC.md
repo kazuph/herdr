@@ -609,7 +609,7 @@
   - pane死亡後に検出状態が一度消えても、restorable agent paneのsnapshotには同じagent/session idが残り、再度restore planが同じresume commandを作る。
   - 旧fork snapshotの`agent_restore = { agent, session_id }`は、safeなsession idがある場合だけ現本家の`agent_session = { source, agent, kind, value }`へ移行し、同じpaneのnative resume planを作る。
   - 旧fork snapshotの`pane_order`、focused pane、root pane、`title`を移行後も保持する。
-  - 旧fork snapshotに`public_pane_numbers`が無い場合は保存raw pane IDを公開pane番号として維持し、0または重複だけを未使用番号へ割り当てる。
+  - v4以前のsnapshotはworkspace配列順の表示番号を`s1`, `s2`…へ移行し、旧`public_pane_numbers`は旧composite pane targetを復元中だけ解決するalias入力として使う。v5 captureはこのlegacy fieldを保存しない。
   - 既存configの`restore_delay_ms = 3000`では、pending resume deadlineが起動判定時刻から3秒後になり、3秒より前にheadless自動resumeしない。
 - **実装方針**: 本家 `agent_resume` のpending resume plan、official integrationが報告するsession ref、`[session] resume_agents_on_restore` を利用する。足りない差分は、plain process観測からのpane単位session id補完、workspace/tab/pane keyのledger、session fileのcwd+start-time一意一致、`pane.report_agent`の`title/session_id`相当メタデータの保存である。本家に `pane.report_metadata` がある場合、表示用titleはそちらへ寄せ、lifecycle/session stateとは分離する。
 - **デグレ判定**:
@@ -749,7 +749,7 @@
   - 実行中の末尾sampleは最後の 1200 文字だけ保持する。
   - `herdr pane help` に `herdr pane run-notify <pane_id> <command>`、`herdr pane job-log <job_id>`、`pane run-notify streams output in the target pane and reports exit with a Herdr toast plus job log` を表示する。
 - **受け入れ条件**:
-  - `herdr pane run-notify p_2 -- printf '%s' hello` が target pane にrunnerを送信し、target pane上で `hello` が表示される。
+  - `herdr pane run-notify p2 -- printf '%s' hello` が target pane にrunnerを送信し、target pane上で `hello` が表示される。
   - コマンド終了後、parent pane側に title `pane job exited: 0` の toast が出て、context に target pane id、job id、`tail: hello`、`log:` が含まれる。
   - `herdr pane job-log <job_id>` が metadata、stdout/stderr prefix、exit_code を含むlog全文を表示する。
   - `../secret` や空文字の job id は `pane job-log` で拒否される。
@@ -981,11 +981,10 @@
 - **status: 本家基盤＋fork差分保持 (B)** — 本家 `fbd20ad`, `d35c642` のstable short handle・schemaを採用し、`%N`互換とAI向けfail-closed helpを残す。
 - **目的**: AIがpane targetを短く確実に読み書きできるようにする。CLI helpも人間向け一覧ではなく、agentが守るべきpane識別ルールを含む再利用可能な指示として読める形にする。
 - **UI挙動**:
-  - pane targetとしてSpace公開ID、Space内のshort id、global pane number `N`、画面表示の `%N`、およびCLI/API向けの入力alias `pN` を受け付ける。既存のglobal ID出力`p_N`は維持する。存在しない値、0、overflow、複数paneを指す入力は拒否する。
-  - `herdr pane list`、pane作成系response、agent infoには短いpane idとglobal idを含める。pane infoは `pane_id`、`short_id`、`global_id`、`global_number`、`workspace_number`、`pane_number` を含む。
-  - agent infoは `pane_id` に加え `short_pane_id`、`global_pane_id`、`global_pane_number` を含む。
-  - workspace作成responseは `workspace`、`tab`、`root_pane` を返し、root paneのglobal idは既存の `p_N` 形式で返す。
-  - Space公開IDと、それを含むpane/tab/API/event/env出力は`s` prefixだけを使う。再起動時に保存済みの旧`w` prefixは`s` prefixへ正規化し、旧process/envのpane targetは入力としてのみ解決する。
+  - pane targetはglobal pane番号 `N`、画面表示の `%N`、公開/API/event/env/snapshot IDの`pN`を受け付け、すべて同じ `PaneId.raw()` を指す。Space-local short id、base32 pane ID、composite IDは新規出力しない。存在しない値、0、overflowは拒否する。
+  - `herdr pane list`、pane作成response、agent infoは唯一のglobal pane ID `pN` を返す。pane数は全tabのlive pane数である。
+  - workspace作成responseは `workspace`、`tab`、`root_pane` を返し、root paneは `pN` 形式で返す。
+  - Space公開IDは安定十進`sN`、tab locatorは表示と同じSpace-local十進番号をsuffixに持つ`sN:tN`である。UI/API/event/new-pane launch env/snapshotはこの値を共通利用する。v4以前の旧Space IDとcomposite pane targetはledger、handoff、継続processのrestore aliasとしてのみ解決し、新規出力しない。
   - root helpは `herdr help` と `herdr --help` で同一のstdoutを返す。
   - root help先頭はYAML front matter風に `---`、`name: herdr`、`description: Terminal workspace manager for AI coding agents...` を含む。
   - root helpには `## When To Use`、`## Agent Rules`、`## Usage`、`## Commands`、`## Essential Agent Recipes`、`## Options`、`## More Help` を含む。
@@ -994,36 +993,35 @@
   - protocol bump後、`herdr status` / `herdr status server` / `herdr status client` はprotocolを表示し、client/serverのprotocol不一致時はcompatibleを `no` と判定する。
 - **受け入れ条件**:
   - 2 pane構成でglobal pane number、`%N`、`pN` が同じpaneを指せる。
-  - `herdr pane list` の各paneにshort idとglobal idが出る。
-  - `herdr agent list` の各agentに `short_pane_id` と `global_pane_id` が出る。
-  - 旧`w` prefixのsnapshotを復元すると、保存し直したsnapshot、API response、pane launch envは`s` prefixだけを出し、継続中の旧process/envが送るpane targetだけは同じlive paneへ解決する。
+  - `herdr pane list` と `herdr agent list` の各paneが同じ`pN`を返す。
+  - v4以前のsnapshotを復元すると、保存し直したsnapshot、API response、pane launch envは`sN`/`tN`/`pN`だけを出し、継続中の旧process/envが送るcomposite pane targetだけは同じlive paneへ解決する。
   - `herdr help` と `herdr --help` のstdoutが完全一致する。
   - root helpに `HERDR_PANE_ID`、`calling process session`、`Do not infer the requester pane from the focused pane`、`herdr pane current` が含まれる。
   - root helpに `herdr client` が含まれない。
 - **実装方針**: 本家の新APIでpane id体系がある場合はそれに乗る。足りないのは画面表示の`%N`とCLI/APIの`pN`を保存済みglobal pane番号から同じlive paneへ解決する入力alias、Space公開IDの`s`正規化、そしてAI-readable root helpの本文である。protocol versionはwire/API response shapeが変わる時だけ明示的に上げ、test fixtureも固定値で更新する。
 - **デグレ判定**:
   - AIが画面で見た `%N` をCLI targetとして使えない。
-  - `pane.list` だけにshort idがあり、`agent.list` や作成responseに出ない。
+  - `pane.list`、`agent.list`、作成responseで同じ`pN`が出ない。
   - root helpが一般的な短いusageに戻り、fail-closed pane識別ルールが消える。
   - `herdr help` がunknown command扱いになる。
   - protocol不一致がstatusで分からない。
 
 ### global pane番号のsession再起動をまたぐ安定性
 - **分類**: CORE
-- **目的**: `p_N` を再起動前に指定したagent送信・親子報告の宛先として、session復元後も同じpaneへ解決できるようにする。
+- **目的**: `pN` を再起動前に指定したagent送信・親子報告の宛先として、session復元後も同じpaneへ解決できるようにする。
 - **UI挙動**:
   - session保存時に各paneのglobal pane番号を保存し、通常のTUI再起動、server再起動、agent session復元、handoff復元では同じ番号を復元する。
   - 保存global pane番号はsession全体で全paneを検証し、欠損、0、重複、layout参照不整合のいずれかがあれば部分採用せず全paneを再採番し、warningを記録する。
   - 保存global pane番号を全採用した復元後の新規paneは、復元番号の最大値より大きい次番号を使う。workspace複製は生存paneとの衝突を避けるため保存番号を採用せず、全paneを再採番する。
 - **受け入れ条件**:
-  - 複数Space・複数tabのsessionを保存して復元すると、各paneの`p_N`、agent infoの`global_pane_id`、`HERDR_PANE_ID`が保存前と同じpaneを指す。
+  - 複数Space・複数tabのsessionを保存して復元すると、各paneの`pN`、agent infoの`global_pane_id`、`HERDR_PANE_ID`が保存前と同じpaneを指す。
   - `global_pane_number`を持たない旧session.jsonと、不正な重複番号を含むsession.jsonは読込に成功し、全paneを衝突しない新規番号へ再採番してwarningを記録する。
-  - Space/tab間moveとpane closeでは既存paneの`p_N`が変わらず、Space複製だけは元paneと異なる`p_N`になる。
+  - Space/tab間moveとpane closeでは既存paneの`pN`が変わらず、Space複製だけは元paneと異なる`pN`になる。
 - **実装方針**: session snapshotのpane記録に任意のglobal pane番号を追加する。復元開始時にsession全体の保存値を検証してから、通常復元・handoffには保存番号を、複製復元には明示的な全再採番方針を渡す。wire protocolは変更しない。
 - **デグレ判定**:
-  - 再起動後に`p_N`が別paneを指し、既存のagent宛先や親子報告が誤配送される。
-  - 不正snapshotの一部だけを採用して、同じ`p_N`を複数paneへ割り当てる。
-  - Space複製が元paneの`p_N`を再利用する。
+  - 再起動後に`pN`が別paneを指し、既存のagent宛先や親子報告が誤配送される。
+  - 不正snapshotの一部だけを採用して、同じ`pN`を複数paneへ割り当てる。
+  - Space複製が元paneの`pN`を再利用する。
 
 ### agent sendとheadless入力の確実な送信
 - **元コミット**: f87cc86, 60036e2
@@ -1408,14 +1406,14 @@
 - **挙動**:
   - `msg.send` / `msg.inbox` / `msg.history` / `msg.rooms` と対応CLIを提供し、messageはroom、project、sender、recipient、本文、created/delivered/read時刻を持つ。
   - direct sendとroom broadcastを扱い、busy中はqueue、idle時はnudgeする。nudgeにはshell quote済みの正確な `herdr msg inbox --room <room>` を含める。
-  - recipientは登録agent名でもpane ID（`p_N`を含むglobal pane IDとshort pane ID）でも同一paneのmailboxを指す。serverはpaneに解決できるrecipientについて同一paneのrecipientエイリアス集合を使い、nudgeとinboxで同じqueued行を扱う。paneに解決できないrecipientは完全一致で扱い、`claude`や`codex`など個別paneを指さないagent種別名をrecipientエイリアス集合へ加えない。
+  - recipientは登録agent名でもglobal pane ID `pN`でも同一paneのmailboxを指す。serverはpaneに解決できるrecipientについて同一paneのrecipientエイリアス集合を使い、nudgeとinboxで同じqueued行を扱う。paneに解決できないrecipientは完全一致で扱い、`claude`や`codex`など個別paneを指さないagent種別名をrecipientエイリアス集合へ加えない。
   - 全idle agentの未読確認はserver起動時に1回だけ行う。message送信時はそのrecipientとroom、agentがidleへ遷移した時はそのpaneのmailboxだけを確認し、無関係な通常API requestを全agent走査の起点にしない。
   - agentが持つqueued messageはrecipientのactor IDとstatusのindexを使う1回のqueryで取得し、取得結果をroom単位にgroup化する。agentごとに全roomを列挙してqueryしない。
 - **受け入れ条件**:
   - server再起動後も未読messageと履歴が残り、inbox取得で既読化できる。
   - room名に空白やquoteがあってもnudgeのinbox commandが安全に実行できる。
   - busy agentの現在の入力へ割り込まず、idle時だけnudgeする。
-  - `herdr msg send p_N ...` で送ったqueued messageは、同じpaneで登録agent名から実行した `herdr msg inbox --room <room>` に表示され、既読化される。登録agent名宛てのmessageも従来どおり同じinboxで読める。
+  - `herdr msg send pN ...` で送ったqueued messageは、同じpaneで登録agent名から実行した `herdr msg inbox --room <room>` に表示され、既読化される。登録agent名宛てのmessageも従来どおり同じinboxで読める。
   - pane ID宛てのnudgeが示すinbox commandと、そのinboxが取得・既読化するrecipientエイリアス集合は一致する。別paneのagent種別名宛てmessageは取得しない。
   - queued messageがない状態でagent/pane一覧等の通常API requestを反復しても、requestごとの全idle agent走査とagent数×room数のmessage queryを実行しない。
   - server起動時の未読配送、message送信先への即時配送、blockedからidleへ変わったagentへの配送は、通常API request後の全agent走査を削除しても維持される。

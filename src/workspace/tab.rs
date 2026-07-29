@@ -52,8 +52,10 @@ pub struct Tab {
 }
 
 impl Tab {
+    #[allow(clippy::too_many_arguments)] // The caller allocates root_id before deriving HERDR_PANE_ID.
     pub fn new(
         number: usize,
+        root_id: PaneId,
         initial_cwd: PathBuf,
         rows: u16,
         cols: u16,
@@ -67,6 +69,7 @@ impl Tab {
     ) -> std::io::Result<(Self, TerminalState, TerminalRuntime)> {
         Self::new_with_runtime(
             number,
+            root_id,
             initial_cwd,
             rows,
             cols,
@@ -81,8 +84,10 @@ impl Tab {
         )
     }
 
+    #[allow(clippy::too_many_arguments)] // The caller allocates root_id before deriving HERDR_PANE_ID.
     pub fn new_argv_command(
         number: usize,
+        root_id: PaneId,
         initial_cwd: PathBuf,
         rows: u16,
         cols: u16,
@@ -96,6 +101,7 @@ impl Tab {
     ) -> std::io::Result<(Self, TerminalState, TerminalRuntime)> {
         Self::new_with_runtime(
             number,
+            root_id,
             initial_cwd,
             rows,
             cols,
@@ -113,6 +119,7 @@ impl Tab {
     #[allow(clippy::too_many_arguments)]
     fn new_with_runtime(
         number: usize,
+        root_id: PaneId,
         initial_cwd: PathBuf,
         rows: u16,
         cols: u16,
@@ -125,7 +132,7 @@ impl Tab {
         render_dirty: Arc<AtomicBool>,
         argv: Option<&[String]>,
     ) -> std::io::Result<(Self, TerminalState, TerminalRuntime)> {
-        let (layout, root_id) = TileLayout::new();
+        let layout = TileLayout::new_with_root(root_id);
         let runtime = if let Some(argv) = argv {
             TerminalRuntime::spawn_argv_command(
                 root_id,
@@ -196,6 +203,7 @@ impl Tab {
 
     pub fn split_focused(
         &mut self,
+        new_id: PaneId,
         direction: Direction,
         rows: u16,
         cols: u16,
@@ -207,6 +215,7 @@ impl Tab {
     ) -> std::io::Result<NewPane> {
         self.split_focused_with_runtime(
             direction,
+            new_id,
             None,
             rows,
             cols,
@@ -221,6 +230,7 @@ impl Tab {
 
     pub fn split_focused_with_ratio(
         &mut self,
+        new_id: PaneId,
         direction: Direction,
         ratio: f32,
         rows: u16,
@@ -233,6 +243,7 @@ impl Tab {
     ) -> std::io::Result<NewPane> {
         self.split_focused_with_runtime(
             direction,
+            new_id,
             Some(ratio),
             rows,
             cols,
@@ -247,6 +258,7 @@ impl Tab {
 
     pub fn split_focused_command(
         &mut self,
+        new_id: PaneId,
         direction: Direction,
         rows: u16,
         cols: u16,
@@ -258,6 +270,7 @@ impl Tab {
     ) -> std::io::Result<NewPane> {
         self.split_focused_with_runtime(
             direction,
+            new_id,
             None,
             rows,
             cols,
@@ -275,6 +288,7 @@ impl Tab {
 
     pub fn split_focused_argv_command(
         &mut self,
+        new_id: PaneId,
         direction: Direction,
         rows: u16,
         cols: u16,
@@ -286,6 +300,7 @@ impl Tab {
     ) -> std::io::Result<NewPane> {
         self.split_focused_with_runtime(
             direction,
+            new_id,
             None,
             rows,
             cols,
@@ -300,6 +315,7 @@ impl Tab {
 
     pub fn split_focused_argv_command_with_ratio(
         &mut self,
+        new_id: PaneId,
         direction: Direction,
         ratio: f32,
         rows: u16,
@@ -312,6 +328,7 @@ impl Tab {
     ) -> std::io::Result<NewPane> {
         self.split_focused_with_runtime(
             direction,
+            new_id,
             Some(ratio),
             rows,
             cols,
@@ -324,9 +341,11 @@ impl Tab {
         )
     }
 
+    #[allow(clippy::too_many_arguments)] // new_id must match the launch environment before spawning.
     fn split_focused_with_runtime(
         &mut self,
         direction: Direction,
+        new_id: PaneId,
         ratio: Option<f32>,
         rows: u16,
         cols: u16,
@@ -338,10 +357,8 @@ impl Tab {
         command: Option<SplitCommand<'_>>,
     ) -> std::io::Result<NewPane> {
         let previous_focus = self.layout.focused();
-        let new_id = match ratio {
-            Some(ratio) => self.layout.split_focused_with_ratio(direction, ratio),
-            None => self.layout.split_focused(direction),
-        };
+        self.layout
+            .split_focused_with_id(direction, ratio.unwrap_or(0.5), new_id);
         let actual_cwd =
             cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
         let launch_argv = if let Some(SplitCommand::Argv { argv, .. }) = &command {

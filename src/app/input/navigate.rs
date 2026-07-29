@@ -3029,7 +3029,10 @@ navigate_pane_down = "ctrl+j"
         assert!(crate::platform::process_exists(pid));
         assert_eq!(lines[1], app.state.workspaces[0].id);
         assert_eq!(lines[2], format!("{}:t1", app.state.workspaces[0].id));
-        assert_eq!(lines[3], format!("{}:p1", app.state.workspaces[0].id));
+        assert_eq!(
+            lines[3],
+            format!("p{}", app.state.workspaces[0].tabs[0].root_pane.raw())
+        );
         assert_eq!(app.state.mode, Mode::Terminal);
 
         std::fs::write(&release_path, b"release").expect("release command");

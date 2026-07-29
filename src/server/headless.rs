@@ -4852,6 +4852,7 @@ mod tests {
     ) {
         let mut server = test_headless_server();
         let mut workspace = crate::workspace::Workspace::test_new("test");
+        workspace.id = "s1".into();
         let pane_id = workspace.focused_pane_id().expect("focused pane");
         workspace.insert_test_runtime(
             pane_id,
@@ -5213,7 +5214,7 @@ next_tab = ""
         let pane_id = workspace.tabs[0].root_pane;
         let terminal_id = workspace.terminal_id(pane_id).expect("terminal id").clone();
         let terminal_id_string = terminal_id.to_string();
-        let public_pane_id = format!("{}:p1", workspace.id);
+        let public_pane_id = format!("p{}", pane_id.raw());
         server.app.state.workspaces = vec![workspace];
         server.app.state.ensure_test_terminals();
         server.app.terminal_runtimes.insert(
@@ -9375,7 +9376,7 @@ next_tab = ""
         let mut server = test_headless_server();
         let background = crate::workspace::Workspace::test_new("background");
         let pane_id = background.tabs[0].root_pane;
-        let public_pane_id = format!("{}:p1", background.id);
+        let public_pane_id = format!("p{}", pane_id.raw());
         let foreground = crate::workspace::Workspace::test_new("foreground");
         server.app.state.workspaces = vec![background, foreground];
         server.app.state.ensure_test_terminals();

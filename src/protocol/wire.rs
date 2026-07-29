@@ -1034,13 +1034,13 @@ mod tests {
         assert_eq!(tag(&ClientMessage::InputEvents { events: Vec::new() }), 7);
         assert_eq!(
             tag(&ClientMessage::ObserveTerminal {
-                target: "s1:p1".to_owned(),
+                target: "p1".to_owned(),
             }),
             8
         );
         assert_eq!(
             tag(&ClientMessage::ControlTerminal {
-                target: "s1:p1".to_owned(),
+                target: "p1".to_owned(),
                 takeover: false,
             }),
             9
@@ -1175,7 +1175,7 @@ mod tests {
     #[test]
     fn client_observe_terminal_roundtrip() {
         let msg = ClientMessage::ObserveTerminal {
-            target: "s1:p1".to_owned(),
+            target: "p1".to_owned(),
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ClientMessage, _) =
@@ -1186,7 +1186,7 @@ mod tests {
     #[test]
     fn client_control_terminal_roundtrip() {
         let msg = ClientMessage::ControlTerminal {
-            target: "s1:p1".to_owned(),
+            target: "p1".to_owned(),
             takeover: true,
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();

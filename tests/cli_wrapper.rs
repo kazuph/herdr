@@ -857,7 +857,7 @@ fn pane_run_sends_one_send_input_request_with_enter_key() {
         (first_line, second_line)
     });
 
-    let run = run_cli(&socket_path, &["pane", "run", "1-1", "echo hello"]);
+    let run = run_cli(&socket_path, &["pane", "run", "p1", "echo hello"]);
     assert!(
         run.status.success(),
         "stderr: {}",
@@ -867,7 +867,7 @@ fn pane_run_sends_one_send_input_request_with_enter_key() {
     let (first_line, second_line) = server.join().unwrap();
     let first_request: serde_json::Value = serde_json::from_str(&first_line).unwrap();
     assert_eq!(first_request["method"], "pane.send_input");
-    assert_eq!(first_request["params"]["pane_id"], "1-1");
+    assert_eq!(first_request["params"]["pane_id"], "p1");
     assert_eq!(first_request["params"]["text"], "echo hello");
     assert_eq!(
         first_request["params"]["keys"],
@@ -956,7 +956,7 @@ fn pane_report_metadata_sends_presentation_request() {
         &[
             "pane",
             "report-metadata",
-            "1-1",
+            "p1",
             "--source",
             "user:claude-title",
             "--agent",
@@ -986,7 +986,7 @@ fn pane_report_metadata_sends_presentation_request() {
     let line = server.join().unwrap();
     let request: serde_json::Value = serde_json::from_str(&line).unwrap();
     assert_eq!(request["method"], "pane.report_metadata");
-    assert_eq!(request["params"]["pane_id"], "1-1");
+    assert_eq!(request["params"]["pane_id"], "p1");
     assert_eq!(request["params"]["source"], "user:claude-title");
     assert_eq!(request["params"]["agent"], "claude");
     assert!(request["params"]["applies_to_source"].is_null());
@@ -1015,7 +1015,7 @@ fn pane_report_metadata_rejects_blank_source_before_socket_request() {
         &[
             "pane",
             "report-metadata",
-            "1-1",
+            "p1",
             "--source",
             "   ",
             "--token",
@@ -1044,7 +1044,7 @@ fn pane_report_metadata_rejects_blank_applies_to_source_before_socket_request() 
         &[
             "pane",
             "report-metadata",
-            "1-1",
+            "p1",
             "--source",
             "user:claude-title",
             "--applies-to-source",
@@ -1941,20 +1941,28 @@ fn server_start_restores_legacy_session_through_api_identity() {
         .as_array()
         .expect("pane.list should return panes");
     assert_eq!(panes.len(), 2);
-    let root_pane_id = format!("{workspace_id}:p1");
-    let focused_pane_id = format!("{workspace_id}:p2");
-    assert!(panes.iter().any(|pane| {
-        pane["pane_id"] == root_pane_id
-            && pane["tab_id"] == format!("{workspace_id}:t1")
-            && pane["cwd"] == pion_cwd
-            && pane["focused"] == false
-    }));
-    assert!(panes.iter().any(|pane| {
-        pane["pane_id"] == focused_pane_id
-            && pane["tab_id"] == format!("{workspace_id}:t1")
-            && pane["cwd"] == herdr_cwd
-            && pane["focused"] == true
-    }));
+    let root_pane_id = panes
+        .iter()
+        .find(|pane| {
+            pane["tab_id"] == format!("{workspace_id}:t1")
+                && pane["cwd"] == pion_cwd
+                && pane["focused"] == false
+        })
+        .and_then(|pane| pane["pane_id"].as_str())
+        .expect("legacy root pane should have a global id")
+        .to_string();
+    let focused_pane_id = panes
+        .iter()
+        .find(|pane| {
+            pane["tab_id"] == format!("{workspace_id}:t1")
+                && pane["cwd"] == herdr_cwd
+                && pane["focused"] == true
+        })
+        .and_then(|pane| pane["pane_id"].as_str())
+        .expect("legacy focused pane should have a global id")
+        .to_string();
+    assert!(root_pane_id.starts_with('p'));
+    assert!(focused_pane_id.starts_with('p'));
 
     let reported = run_cli(
         &socket_path,
@@ -2039,7 +2047,7 @@ fn workspace_and_pane_management_commands_work() {
 
     let split = run_cli(
         &socket_path,
-        &["pane", "split", "1-1", "--direction", "right"],
+        &["pane", "split", "p1", "--direction", "right"],
     );
     assert!(
         split.status.success(),
@@ -2946,7 +2954,7 @@ fn pane_run_read_and_wait_commands_work() {
         &[
             "pane",
             "run",
-            "1-1",
+            &pane_id,
             "echo alpha && echo beta && printf 'ready\\n'",
         ],
     );
@@ -2958,7 +2966,7 @@ fn pane_run_read_and_wait_commands_work() {
         &[
             "wait",
             "output",
-            "1-1",
+            "p1",
             "--match",
             "ready",
             "--source",
@@ -2984,7 +2992,7 @@ fn pane_run_read_and_wait_commands_work() {
 
     let read = run_cli(
         &socket_path,
-        &["pane", "read", "1-1", "--source", "recent", "--lines", "40"],
+        &["pane", "read", "p1", "--source", "recent", "--lines", "40"],
     );
     assert!(read.status.success());
     let text = String::from_utf8(read.stdout).unwrap();
@@ -3048,10 +3056,10 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
     assert!(created["result"]["workspace"]["workspace_id"].is_string());
     let reported = send_request(
         &socket_path,
-        r#"{"id":"req_run_pane_agent","method":"pane.report_agent","params":{"pane_id":"1-1","source":"test","agent":"codex","state":"idle"}}"#,
+        r#"{"id":"req_run_pane_agent","method":"pane.report_agent","params":{"pane_id":"p1","source":"test","agent":"codex","state":"idle"}}"#,
     );
     assert!(reported["result"].is_object());
-    let caller = run_cli_json(&socket_path, &["pane", "get", "1-1"]);
+    let caller = run_cli_json(&socket_path, &["pane", "get", "p1"]);
     let caller_tab = caller["result"]["pane"]["tab_id"].as_str().unwrap();
 
     let run = run_cli(
@@ -3060,7 +3068,7 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
             "run",
             "--pane",
             "--caller",
-            "1-1",
+            "p1",
             "--label",
             "demo",
             "--split",
@@ -3094,7 +3102,7 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
         &[
             "wait",
             "output",
-            "1-1",
+            "p1",
             "--match",
             "[herdr run] exit=0 label=demo",
             "--source",
@@ -3116,7 +3124,7 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
         &[
             "pane",
             "read",
-            "1-1",
+            "p1",
             "--source",
             "recent-unwrapped",
             "--lines",
@@ -3177,7 +3185,7 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
             "run",
             "--pane",
             "--caller",
-            "1-1",
+            "p1",
             "--label",
             "close-error-demo",
             "--",
@@ -3238,7 +3246,7 @@ fn herdr_run_adds_cwd_node_modules_bin_to_path() {
     assert!(created["result"]["workspace"]["workspace_id"].is_string());
     let reported = send_request(
         &socket_path,
-        r#"{"id":"req_run_agent","method":"pane.report_agent","params":{"pane_id":"1-1","source":"test","agent":"codex","state":"idle"}}"#,
+        r#"{"id":"req_run_agent","method":"pane.report_agent","params":{"pane_id":"p1","source":"test","agent":"codex","state":"idle"}}"#,
     );
     assert!(reported["result"].is_object());
 
@@ -3247,7 +3255,7 @@ fn herdr_run_adds_cwd_node_modules_bin_to_path() {
         &[
             "run",
             "--caller",
-            "1-1",
+            "p1",
             "--cwd",
             project.to_str().unwrap(),
             "--label",
@@ -3309,7 +3317,7 @@ fn herdr_job_cancel_kills_term_ignoring_process_tree_before_marking_cancelled() 
     assert!(created["result"]["workspace"]["workspace_id"].is_string());
     let reported = send_request(
         &socket_path,
-        r#"{"id":"req_cancel_agent","method":"pane.report_agent","params":{"pane_id":"1-1","source":"test","agent":"codex","state":"idle"}}"#,
+        r#"{"id":"req_cancel_agent","method":"pane.report_agent","params":{"pane_id":"p1","source":"test","agent":"codex","state":"idle"}}"#,
     );
     assert!(reported["result"].is_object());
 
@@ -3322,7 +3330,7 @@ fn herdr_job_cancel_kills_term_ignoring_process_tree_before_marking_cancelled() 
         &[
             "run",
             "--caller",
-            "1-1",
+            "p1",
             "--completion",
             "none",
             "--",
@@ -3403,7 +3411,7 @@ fn wait_output_matches_recent_unwrapped_text() {
 
     let run = run_cli(
         &socket_path,
-        &["pane", "run", "1-1", &format!("sh {}", script.display())],
+        &["pane", "run", "p1", &format!("sh {}", script.display())],
     );
     assert!(run.status.success());
 
@@ -3412,7 +3420,7 @@ fn wait_output_matches_recent_unwrapped_text() {
         &[
             "wait",
             "output",
-            "1-1",
+            "p1",
             "--match",
             token,
             "--source",
@@ -3435,7 +3443,7 @@ fn wait_output_matches_recent_unwrapped_text() {
         &[
             "pane",
             "read",
-            "1-1",
+            "p1",
             "--source",
             "recent-unwrapped",
             "--lines",
@@ -3467,7 +3475,7 @@ fn closing_pane_terminates_processes_inside_it() {
 
     let split = run_cli(
         &socket_path,
-        &["pane", "split", "1-1", "--direction", "right"],
+        &["pane", "split", "p1", "--direction", "right"],
     );
     assert!(split.status.success());
     let split_json: serde_json::Value = serde_json::from_slice(&split.stdout).unwrap();
@@ -3531,7 +3539,7 @@ fn closing_workspace_terminates_processes_inside_it() {
         "python3 -c 'import os,time,pathlib; pathlib.Path(r\"{}\").write_text(str(os.getpid())); time.sleep(1000)'",
         pid_file.display()
     );
-    let ran = run_cli(&socket_path, &["pane", "run", "1-1", &command]);
+    let ran = run_cli(&socket_path, &["pane", "run", "p1", &command]);
     assert!(
         ran.status.success(),
         "stderr: {}",
@@ -3607,28 +3615,37 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         let resolved = run_cli_json(&socket_path, &["pane", "get", &target]);
         assert_eq!(resolved["result"]["pane"]["pane_id"], root_pane_id);
     }
-    let legacy_ws1_id = format!("w{}", ws1_id.strip_prefix('s').unwrap());
-    let legacy_target = format!("{legacy_ws1_id}:p1");
-    let resolved_legacy = run_cli_json(&socket_path, &["pane", "get", &legacy_target]);
-    assert_eq!(resolved_legacy["result"]["pane"]["pane_id"], root_pane_id);
-
     let split_12_json = run_cli_json(
         &socket_path,
-        &["pane", "split", "1-1", "--direction", "right", "--no-focus"],
+        &[
+            "pane",
+            "split",
+            root_pane_id,
+            "--direction",
+            "right",
+            "--no-focus",
+        ],
     );
-    assert_eq!(
-        split_12_json["result"]["pane"]["pane_id"],
-        format!("{ws1_id}:p2")
-    );
+    let split_12_id = split_12_json["result"]["pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let split_13_json = run_cli_json(
         &socket_path,
-        &["pane", "split", "1-1", "--direction", "down", "--no-focus"],
+        &[
+            "pane",
+            "split",
+            root_pane_id,
+            "--direction",
+            "down",
+            "--no-focus",
+        ],
     );
-    assert_eq!(
-        split_13_json["result"]["pane"]["pane_id"],
-        format!("{ws1_id}:p3")
-    );
+    let split_13_id = split_13_json["result"]["pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let ws2_json = run_cli_json(
         &socket_path,
@@ -3643,6 +3660,10 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         "workspace id must use the Space prefix: {ws2_id}"
     );
     assert_ne!(ws2_id, ws1_id);
+    let ws2_root_pane_id = ws2_json["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let ws2_focus = run_cli(&socket_path, &["workspace", "focus", &ws2_id]);
     assert!(
@@ -3653,12 +3674,18 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
 
     let ws2_split_json = run_cli_json(
         &socket_path,
-        &["pane", "split", "2-1", "--direction", "right", "--no-focus"],
+        &[
+            "pane",
+            "split",
+            &ws2_root_pane_id,
+            "--direction",
+            "right",
+            "--no-focus",
+        ],
     );
-    assert_eq!(
-        ws2_split_json["result"]["pane"]["pane_id"],
-        format!("{ws2_id}:p2")
-    );
+    assert!(ws2_split_json["result"]["pane"]["pane_id"]
+        .as_str()
+        .is_some_and(|pane_id| pane_id.starts_with('p')));
 
     let ws3_json = run_cli_json(
         &socket_path,
@@ -3674,6 +3701,10 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
     );
     assert_ne!(ws3_id, ws1_id);
     assert_ne!(ws3_id, ws2_id);
+    let ws3_root_pane_id = ws3_json["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let close_ws2 = run_cli(&socket_path, &["workspace", "close", &ws2_id]);
     assert!(
@@ -3710,10 +3741,10 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
     let ws3_panes_json = run_cli_json(&socket_path, &["pane", "list", "--workspace", &ws3_id]);
     assert_eq!(
         ws3_panes_json["result"]["panes"][0]["pane_id"],
-        format!("{ws3_id}:p1")
+        ws3_root_pane_id
     );
 
-    let close_middle = run_cli(&socket_path, &["pane", "close", &format!("{ws1_id}-2")]);
+    let close_middle = run_cli(&socket_path, &["pane", "close", &split_12_id]);
     assert!(
         close_middle.status.success(),
         "stderr: {}",
@@ -3729,10 +3760,10 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         .collect();
     assert_eq!(
         pane_ids,
-        vec![format!("{ws1_id}:p1"), format!("{ws1_id}:p3")]
+        vec![root_pane_id.to_string(), split_13_id.clone()]
     );
 
-    let closed_lookup = run_cli(&socket_path, &["pane", "get", &format!("{ws1_id}:p2")]);
+    let closed_lookup = run_cli(&socket_path, &["pane", "get", &split_12_id]);
     assert!(
         !closed_lookup.status.success(),
         "closed pane id should not retarget: {}",
@@ -3744,16 +3775,15 @@ fn workspace_ids_and_public_pane_ids_are_stable() {
         &[
             "pane",
             "split",
-            &format!("{ws1_id}:p1"),
+            root_pane_id,
             "--direction",
             "right",
             "--no-focus",
         ],
     );
-    assert_eq!(
-        split_14_json["result"]["pane"]["pane_id"],
-        format!("{ws1_id}:p4")
-    );
+    assert!(split_14_json["result"]["pane"]["pane_id"]
+        .as_str()
+        .is_some_and(|pane_id| pane_id.starts_with('p')));
 
     cleanup_spawned_herdr(herdr, base);
 }
@@ -3786,7 +3816,7 @@ fn pane_shell_gets_herdr_socket_and_pane_env() {
         &[
             "pane",
             "run",
-            "1-1",
+            &pane_id,
             &format!(
                 "printf '%s\\n%s\\n%s\\n%s\\n' \"$HERDR_SOCKET_PATH\" \"$HERDR_WORKSPACE_ID\" \"$HERDR_TAB_ID\" \"$HERDR_PANE_ID\" > {}",
                 env_capture.display()
@@ -3815,17 +3845,25 @@ fn pane_shell_gets_herdr_socket_and_pane_env() {
     assert_eq!(lines.len(), 4, "env file was: {text:?}");
     assert_eq!(lines[0], socket_path.display().to_string());
     assert!(
-        lines[1].starts_with('s'),
-        "HERDR_WORKSPACE_ID must use the Space prefix: {text:?}"
+        lines[1].strip_prefix('s').is_some_and(
+            |number| !number.is_empty() && number.chars().all(|ch| ch.is_ascii_digit())
+        ),
+        "HERDR_WORKSPACE_ID must be sN: {text:?}"
     );
+    let (tab_workspace_id, tab_number) = lines[2]
+        .rsplit_once(":t")
+        .expect("HERDR_TAB_ID must be sN:tN");
+    assert_eq!(tab_workspace_id, lines[1]);
     assert!(
-        lines[2].starts_with(&format!("{}:t", lines[1])),
-        "HERDR_TAB_ID must use the Space prefix: {text:?}"
+        !tab_number.is_empty() && tab_number.chars().all(|ch| ch.is_ascii_digit()),
+        "HERDR_TAB_ID must use a decimal tab number: {text:?}"
     );
     assert_eq!(lines[3], pane_id);
     assert!(
-        lines[3].starts_with(&format!("{}:p", lines[1])),
-        "HERDR_PANE_ID must use the Space prefix: {text:?}"
+        lines[3].strip_prefix('p').is_some_and(
+            |number| !number.is_empty() && number.chars().all(|ch| ch.is_ascii_digit())
+        ),
+        "HERDR_PANE_ID must be pN: {text:?}"
     );
 
     cleanup_spawned_herdr(herdr, base);
@@ -3874,7 +3912,7 @@ fn wait_agent_status_exits_when_idle_status_matches() {
     );
     assert!(created["result"]["workspace"]["workspace_id"].is_string());
 
-    let start_pi = run_cli(&socket_path, &["pane", "run", "1-1", "pi"]);
+    let start_pi = run_cli(&socket_path, &["pane", "run", "p1", "pi"]);
     assert!(start_pi.status.success());
 
     let waited = run_cli(
@@ -3882,7 +3920,7 @@ fn wait_agent_status_exits_when_idle_status_matches() {
         &[
             "wait",
             "agent-status",
-            "1-1",
+            "p1",
             "--status",
             "idle",
             "--timeout",
@@ -4887,7 +4925,7 @@ fn cli_rejects_protocol_mismatch_before_wait_agent_status_request() {
         &[
             "wait",
             "agent-status",
-            "1-1",
+            "p1",
             "--status",
             "idle",
             "--timeout",
@@ -4962,7 +5000,7 @@ fn cli_allows_same_protocol_different_version_and_preserves_server_error() {
         &[
             "wait",
             "agent-status",
-            "1-1",
+            "p1",
             "--status",
             "idle",
             "--timeout",
@@ -5011,7 +5049,7 @@ fn agent_wait_rechecks_protocol_before_subscription() {
         assert_eq!(get_request["method"], "agent.get");
         get_stream
             .write_all(
-                br#"{"id":"cli:agent:wait:resolve","result":{"type":"agent_info","agent":{"pane_id":"s1:p1","agent_status":"working"}}}"#,
+                br#"{"id":"cli:agent:wait:resolve","result":{"type":"agent_info","agent":{"pane_id":"p1","agent_status":"working"}}}"#,
             )
             .unwrap();
         get_stream.write_all(b"\n").unwrap();
@@ -5138,11 +5176,10 @@ fn wait_agent_status_exits_immediately_when_status_already_matches() {
             base.display()
         ),
     );
-    let workspace_id = created["result"]["workspace"]["workspace_id"]
+    let pane_id = created["result"]["root_pane"]["pane_id"]
         .as_str()
         .unwrap()
         .to_string();
-    let pane_id = format!("{workspace_id}:p1");
 
     let reported = send_request(
         &socket_path,
@@ -5158,7 +5195,7 @@ fn wait_agent_status_exits_immediately_when_status_already_matches() {
         &[
             "wait",
             "agent-status",
-            "1-1",
+            "p1",
             "--status",
             "idle",
             "--timeout",
@@ -5202,7 +5239,7 @@ fn wait_agent_status_times_out_when_status_does_not_match() {
         &[
             "wait",
             "agent-status",
-            "1-1",
+            "p1",
             "--status",
             "blocked",
             "--timeout",
@@ -5275,7 +5312,7 @@ fn wait_agent_status_exits_when_done_status_matches() {
     );
     assert_eq!(tab_created["result"]["type"], "tab_created");
 
-    let start_pi = run_cli(&socket_path, &["pane", "run", "1-1", "pi"]);
+    let start_pi = run_cli(&socket_path, &["pane", "run", "p1", "pi"]);
     assert!(start_pi.status.success());
 
     let waited = run_cli(
@@ -5283,7 +5320,7 @@ fn wait_agent_status_exits_when_done_status_matches() {
         &[
             "wait",
             "agent-status",
-            "1-1",
+            "p1",
             "--status",
             "done",
             "--timeout",

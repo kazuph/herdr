@@ -31,7 +31,7 @@ fn tab_width(ws: &crate::workspace::Workspace, tab_idx: usize) -> u16 {
 fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String {
     let name = ws
         .tab_display_name(tab_idx)
-        .unwrap_or_else(|| (tab_idx + 1).to_string());
+        .unwrap_or_else(|| ws.tabs[tab_idx].number.to_string());
     if ws.tabs.get(tab_idx).is_some_and(|tab| tab.zoomed) {
         format!("{name} Z")
     } else {

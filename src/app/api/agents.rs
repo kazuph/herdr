@@ -159,7 +159,7 @@ impl App {
                         AgentRestoreActionInfo {
                             pane_id: self
                                 .public_pane_id(ws_idx, pane_id)
-                                .unwrap_or_else(|| format!("p_{}", pane_id.raw())),
+                                .unwrap_or_else(|| format!("p{}", pane_id.raw())),
                             agent: plan.agent.clone(),
                             status,
                             command,

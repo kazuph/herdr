@@ -161,9 +161,12 @@ impl App {
             self.state.mode = Mode::Terminal;
         }
         let workspace_id = self.state.workspaces[ws_idx].id.clone();
-        let tab_id = self
-            .public_tab_id(ws_idx, idx)
-            .unwrap_or_else(|| crate::workspace::public_tab_id_for_number(&workspace_id, idx + 1));
+        let tab_id = self.public_tab_id(ws_idx, idx).unwrap_or_else(|| {
+            crate::workspace::public_tab_id_for_number(
+                &workspace_id,
+                self.state.workspaces[ws_idx].tabs[idx].number,
+            )
+        });
         let root_pane = self.state.workspaces[ws_idx].tabs[idx].root_pane.raw();
         crate::logging::tab_created(&workspace_id, &tab_id, root_pane);
         self.schedule_session_save();
@@ -526,13 +529,13 @@ impl App {
         let (agg_state, seen) = ws.aggregate_state(&self.state.terminals);
         crate::api::schema::WorkspaceInfo {
             workspace_id: self.public_workspace_id(index),
-            number: index + 1,
+            number: crate::workspace::public_workspace_number(&ws.id).unwrap_or(index + 1),
             label: ws.display_name_from(&self.state.terminals, &self.terminal_runtimes),
             focused: self.state.active == Some(index),
-            pane_count: ws.public_pane_numbers.len(),
+            pane_count: ws.tabs.iter().map(|tab| tab.panes.len()).sum(),
             tab_count: ws.tabs.len(),
             active_tab_id: self.public_tab_id(index, ws.active_tab).unwrap_or_else(|| {
-                crate::workspace::public_tab_id_for_number(&ws.id, ws.active_tab + 1)
+                crate::workspace::public_tab_id_for_number(&ws.id, ws.tabs[ws.active_tab].number)
             }),
             agent_status: pane_agent_status(agg_state, seen),
             tokens: ws.metadata_tokens.values(),

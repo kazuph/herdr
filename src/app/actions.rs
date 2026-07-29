@@ -188,8 +188,17 @@ pub fn notification_toast_for_pane_state_update(
     )
 }
 
-pub(crate) fn notification_title(workspace_label: &str, ws_idx: usize) -> String {
-    format!("{} {workspace_label}", ws_idx + 1)
+fn notification_workspace_number(ws: &crate::workspace::Workspace) -> String {
+    crate::workspace::public_workspace_number(&ws.id)
+        .map(|number| number.to_string())
+        .unwrap_or_else(|| ws.id.clone())
+}
+
+pub(crate) fn notification_title(
+    ws: &crate::workspace::Workspace,
+    workspace_label: &str,
+) -> String {
+    format!("{} {workspace_label}", notification_workspace_number(ws))
 }
 
 const NOTIFICATION_BODY_MAX_CHARS: usize = 120;
@@ -343,10 +352,13 @@ fn sound_for_toast_kind(
 pub fn notification_context(
     ws: &crate::workspace::Workspace,
     workspace_label: &str,
-    ws_idx: usize,
     pane_id: PaneId,
 ) -> String {
-    let mut context = format!("{} · {}", workspace_label, ws_idx + 1);
+    let mut context = format!(
+        "{} · {}",
+        workspace_label,
+        notification_workspace_number(ws)
+    );
     if ws.tabs.len() > 1 {
         if let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) {
             if let Some(label) = ws.tab_display_name(tab_idx) {
@@ -667,7 +679,7 @@ impl AppState {
         let tab = &ws.tabs[tab_idx];
         let label = ws
             .tab_display_name(tab_idx)
-            .unwrap_or_else(|| (tab_idx + 1).to_string());
+            .unwrap_or_else(|| tab.number.to_string());
         let (status, seen) = tab_aggregate_state(tab, &self.terminals);
         let activity = tab_activity_summary(tab, &self.terminals);
         let pane_count = tab.panes.len();
@@ -3172,11 +3184,10 @@ impl AppState {
                 .allow(pane_id, kind, std::time::Instant::now());
         let build_toast = || {
             let workspace_label = self.workspaces[ws_idx].display_name();
-            let context =
-                notification_context(&self.workspaces[ws_idx], &workspace_label, ws_idx, pane_id);
+            let context = notification_context(&self.workspaces[ws_idx], &workspace_label, pane_id);
             ToastNotification {
                 kind,
-                title: notification_title(&workspace_label, ws_idx),
+                title: notification_title(&self.workspaces[ws_idx], &workspace_label),
                 context,
                 position: None,
                 target: Some(ToastTarget {
@@ -3484,13 +3495,18 @@ mod tests {
     }
 
     #[test]
-    fn notification_context_formats_resolved_workspace_label() {
-        let state = app_with_workspaces(&["stale"]);
+    fn notifications_use_the_stable_workspace_number() {
+        let mut state = app_with_workspaces(&["stale"]);
+        state.workspaces[0].id = "s41".into();
         let root = state.workspaces[0].tabs[0].root_pane;
 
         assert_eq!(
-            notification_context(&state.workspaces[0], "__herdr_projects__", 0, root),
-            "__herdr_projects__ · 1"
+            notification_title(&state.workspaces[0], "__herdr_projects__"),
+            "41 __herdr_projects__"
+        );
+        assert_eq!(
+            notification_context(&state.workspaces[0], "__herdr_projects__", root),
+            "__herdr_projects__ · 41"
         );
     }
 

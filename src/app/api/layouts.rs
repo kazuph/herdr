@@ -153,7 +153,7 @@ impl App {
                 .unwrap_or_else(|| {
                     crate::workspace::public_tab_id_for_number(
                         &self.public_workspace_id(target_ws_idx),
-                        target_tab_idx + 1,
+                        self.state.workspaces[target_ws_idx].tabs[target_tab_idx].number,
                     )
                 });
             let terminal_ids = self
