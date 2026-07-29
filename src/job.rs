@@ -1,4 +1,21 @@
 use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static NEXT_JOB_ID_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn new_job_id() -> String {
+    new_job_id_from(SystemTime::now())
+}
+
+fn new_job_id_from(now: SystemTime) -> String {
+    let unix_millis = now
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let sequence = NEXT_JOB_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("job-{unix_millis}-{}-{sequence}", std::process::id())
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct JobRecord {
@@ -196,5 +213,16 @@ mod tests {
         assert!(!store.mark_cancelled("finish-wins", 3).unwrap());
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn job_ids_remain_unique_for_the_same_timestamp() {
+        let timestamp = UNIX_EPOCH + std::time::Duration::from_millis(1);
+        let first = new_job_id_from(timestamp);
+        let second = new_job_id_from(timestamp);
+
+        assert_ne!(first, second);
+        assert!(first.starts_with("job-1-"));
+        assert!(second.starts_with("job-1-"));
     }
 }

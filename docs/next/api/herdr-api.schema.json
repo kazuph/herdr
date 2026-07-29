@@ -3299,6 +3299,36 @@
           ],
           "type": "string"
         },
+        "RunStartParams": {
+          "properties": {
+            "argv": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "caller_pane": {
+              "type": "string"
+            },
+            "completion": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "caller_pane",
+            "label",
+            "cwd",
+            "argv",
+            "completion"
+          ],
+          "type": "object"
+        },
         "ServerLiveHandoffParams": {
           "properties": {
             "expected_protocol": {
@@ -4727,6 +4757,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "run.start",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/RunStartParams"
             }
           },
           "required": [
@@ -8583,6 +8629,30 @@
               "required": [
                 "type",
                 "rooms"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "job": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "mode": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "run_started",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "job",
+                "label",
+                "mode"
               ],
               "type": "object"
             },

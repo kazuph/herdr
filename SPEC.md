@@ -741,7 +741,7 @@
   - 引数不足、または `--` の後にコマンドがない場合は stderr に `usage: herdr pane run-notify <pane_id> <command>` を出して exit code 2。
   - 実行元paneは `HERDR_PANE_ID` 優先、なければ呼び出しプロセスのsessionから解決する。解決できない場合は失敗し、別paneへ推測通知しない。
   - 指定した target pane へ、現在の `herdr` 実行ファイルを使った内部runner `__pane-notify-run --parent <parent> --target <target> --job-id <job-id> -- <command>` を入力し、Enterまで送る。target pane上ではコマンド出力が通常の stdout/stderr として流れる。
-  - job id は `job-<unix_ms>-<process_id>` 形式。job id に許可する文字は ASCII 英数字、`-`、`_` のみ。
+  - job id は `job-<unix_ms>-<process_id>-<sequence>` 形式。job id に許可する文字は ASCII 英数字、`-`、`_` のみ。
   - job log は `$XDG_STATE_HOME/herdr/job-logs/<job_id>.log`、または `HOME/.local/state/herdr/job-logs/<job_id>.log` に保存する。先頭に `job_id:`, `target_pane:`, `parent_pane:`, `command:`, `started_unix_ms:` を書き、出力は `[stdout] ` / `[stderr] ` prefix付きで記録し、末尾に `finished_unix_ms:` と `exit_code:` を書く。
   - CLIに `herdr pane job-log <job_id>` を追加する。job id がない、複数ある、または path 文字を含む場合は stderr に `usage: herdr pane job-log <job_id>` を出して exit code 2。正常時は該当log全文を stdout に出す。
   - runner終了時、parent paneに `pane.notify` を送ってクリック可能な Herdr toast を表示する。toast title は `pane job exited: <exit>`、signal終了は `pane job exited: signal`。
@@ -1426,11 +1426,13 @@
 - **目的**: build/test/download等をpaneなしで開始し、呼び出し元を塞がず、終了結果とlogを再起動越しに取得できるようにする。
 - **挙動**:
   - `herdr run`のdefaultはbackgroundで即座にjob IDを返し、job DBにcommand、cwd、caller pane/agent、status、PID、exit code、log pathを保存する。
+  - background開始はCLIからserver socketへ渡し、running serverがjob記録とrunner起動を所有する。CLIはHerdr DBへの書込権限を必要としない。
   - list/status/log/cancelを提供する。cancelはrunner PIDが同じPIDのprocess group leaderであることを確認してからDBの`cancelling`を取得し、process groupへSIGTERMを送る。2秒以内にprocess groupが消滅しなければSIGKILLへ昇格し、消滅を確認した後だけDBを`cancelled`へ遷移する。SIGKILL後も残る時は`cancelling`のままfail closedする。
   - cancelを含むcompletionは正確なcallerへ一行配送し、詳細は`herdr log <job_id>`を指す。
   - `herdr-jobs`のcompletionは直接注入後に既読化し、server起動時にも配送済みentryを未読へ戻さない。
 - **受け入れ条件**:
   - background runはvisible paneを増やさず即時returnし、成功・失敗のexit codeとstdout/stderrをjob logで確認できる。
+  - Herdr DBへの書込権限がないCLIからもbackground開始でき、running serverがjob記録とrunner起動を完了する。
   - caller identityがexactに解決できない時はjobを開始せずfail closedする。
   - completionが一般mailboxの未読clutterにならず、server再起動後もjob status/logが残る。
   - SIGTERMを無視する子processを持つjobでも、cancel完了時にはprocess group全体が消滅し、statusが`cancelled`になる。process groupの所有または消滅を証明できない時に`cancelled`を記録しない。

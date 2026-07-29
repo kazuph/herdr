@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -10,7 +8,8 @@ use serde::Serialize;
 
 use crate::api::schema::{
     EmptyParams, Method, MsgHistoryParams, MsgInboxParams, MsgSendParams, PaneCurrentParams,
-    PaneRenameParams, PaneSendInputParams, PaneSplitParams, PaneTarget, Request, SplitDirection,
+    PaneRenameParams, PaneSendInputParams, PaneSplitParams, PaneTarget, Request, RunStartParams,
+    SplitDirection,
 };
 
 const JOB_LOG_TAIL_CHARS: usize = 20_000;
@@ -559,73 +558,59 @@ fn run_background(
     caller: String,
     completion: String,
 ) -> std::io::Result<i32> {
-    let cwd = cwd
-        .map(std::path::PathBuf::from)
-        .unwrap_or(std::env::current_dir()?);
-    if !cwd.is_dir() {
-        eprintln!("--cwd is not a directory: {}", cwd.display());
-        return Ok(2);
+    let cwd = resolve_background_cwd(cwd)?;
+    let response = super::send_request(&Request {
+        id: "cli:run:start".into(),
+        method: Method::RunStart(RunStartParams {
+            caller_pane: caller,
+            label: label.clone(),
+            cwd: cwd.display().to_string(),
+            argv: command_args.to_vec(),
+            completion,
+        }),
+    })?;
+    if response.get("error").is_some() {
+        eprintln!("{}", serde_json::to_string(&response)?);
+        return Ok(1);
     }
-    let caller_agent = resolve_agent_name(&caller, "cli:run:agent")?;
-    let job = new_job_id();
-    let log_path = job_log_path(&job)?;
-    let record = crate::job::JobRecord {
-        id: job.clone(),
-        label: label.clone(),
-        command: shell_command_from_args(command_args),
-        cwd: cwd.display().to_string(),
-        caller_pane: caller,
-        caller_agent,
-        completion: completion.clone(),
-        status: "queued".into(),
-        runner_pid: None,
-        exit_code: None,
-        started_unix_ms: None,
-        finished_unix_ms: None,
-        log_path: log_path.display().to_string(),
-    };
-    crate::job::JobStore::open_active()
-        .and_then(|store| store.insert(&record))
-        .map_err(std::io::Error::other)?;
-
-    let mut runner = Command::new(std::env::current_exe()?);
-    runner
-        .arg("__background-run")
-        .arg("--job-id")
-        .arg(&job)
-        .arg("--completion")
-        .arg(&completion)
-        .arg("--")
-        .args(command_args)
-        .current_dir(&cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(unix)]
-    unsafe {
-        runner.pre_exec(|| {
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-    if let Err(err) = runner.spawn() {
-        let _ = crate::job::JobStore::open_active()
-            .and_then(|store| store.mark_start_failed(&job, 127, unix_millis(SystemTime::now())));
-        return Err(err);
-    }
+    let result = &response["result"];
+    let job = result["job"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("run.start response did not include job"))?
+        .to_string();
+    let label = result["label"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("run.start response did not include label"))?
+        .to_string();
+    let mode = result["mode"]
+        .as_str()
+        .ok_or_else(|| std::io::Error::other("run.start response did not include mode"))?
+        .to_string();
 
     println!(
         "{}",
         serde_json::to_string(&RunSpawnOutput {
             job,
             label,
-            mode: "background".into(),
+            mode,
             pane: None,
         })?
     );
     Ok(0)
+}
+
+fn resolve_background_cwd(cwd: Option<String>) -> std::io::Result<std::path::PathBuf> {
+    match cwd {
+        Some(cwd) => {
+            let cwd = std::path::PathBuf::from(cwd);
+            if cwd.is_absolute() {
+                Ok(cwd)
+            } else {
+                Ok(std::env::current_dir()?.join(cwd))
+            }
+        }
+        None => std::env::current_dir(),
+    }
 }
 
 fn run_in_pane(
@@ -663,7 +648,7 @@ fn run_in_pane(
         label: Some(label.clone()),
     }));
 
-    let job = new_job_id();
+    let job = crate::job::new_job_id();
     let mut runner_parts = vec![
         shell_quote(&std::env::current_exe()?.display().to_string()),
         "__pane-run".to_string(),
@@ -1124,8 +1109,9 @@ fn send_job_message(
             reply_to,
         }),
     });
-    if matches!(response, Ok(ref value) if value.get("error").is_none()) {
-        return Ok(());
+    let response = response?;
+    if let Some(error) = response.get("error") {
+        return Err(std::io::Error::other(error.to_string()));
     }
     Ok(())
 }
@@ -1498,14 +1484,6 @@ fn exit_code_label(code: Option<i32>) -> String {
         .unwrap_or_else(|| "signal".to_string())
 }
 
-fn new_job_id() -> String {
-    format!(
-        "job-{}-{}",
-        unix_millis(SystemTime::now()),
-        std::process::id()
-    )
-}
-
 fn unix_millis(time: SystemTime) -> u128 {
     time.duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -1604,6 +1582,15 @@ mod tests {
     }
 
     #[test]
+    fn relative_background_cwd_is_resolved_from_cli_directory() {
+        let current_dir = std::env::current_dir().unwrap();
+        let cwd = resolve_background_cwd(Some("relative-workdir".into())).unwrap();
+
+        assert_eq!(cwd, current_dir.join("relative-workdir"));
+        assert!(cwd.is_absolute());
+    }
+
+    #[test]
     fn run_notification_line_is_single_line_and_points_to_job_log() {
         let line =
             pane_run_notification_line("cargo test", "p_2", "job-123", Some(0), "hello\nworld\n");
@@ -1683,5 +1670,62 @@ mod tests {
         assert!(valid_job_id("job-123_abc"));
         assert!(!valid_job_id("../secret"));
         assert!(!valid_job_id(""));
+    }
+
+    #[test]
+    fn completion_falls_back_to_msg_store_when_server_is_unreachable() {
+        let _guard = crate::msg::msg_db_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _config_guard = crate::config::lock_test_config_env();
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-job-completion-fallback-{}-{}",
+            std::process::id(),
+            unix_millis(SystemTime::now())
+        ));
+        let db_path = dir.join("herdr.db");
+        let socket_path = dir.join("missing.sock");
+        let log_path = dir.join("job.log");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&log_path, "completed\n").unwrap();
+
+        let previous_db_path = std::env::var_os(crate::msg::MSG_DB_PATH_ENV_VAR);
+        let previous_socket_path = std::env::var_os(crate::api::SOCKET_PATH_ENV_VAR);
+        std::env::set_var(crate::msg::MSG_DB_PATH_ENV_VAR, &db_path);
+        std::env::set_var(crate::api::SOCKET_PATH_ENV_VAR, &socket_path);
+
+        let job = crate::job::JobRecord {
+            id: "job-fallback".into(),
+            label: "fallback".into(),
+            command: "echo completed".into(),
+            cwd: dir.display().to_string(),
+            caller_pane: "p1".into(),
+            caller_agent: "renamed-caller".into(),
+            completion: "summary".into(),
+            status: "exited".into(),
+            runner_pid: None,
+            exit_code: Some(0),
+            started_unix_ms: None,
+            finished_unix_ms: None,
+            log_path: log_path.display().to_string(),
+        };
+        enqueue_job_completion(&job, Some(0), &log_path).unwrap();
+
+        let mut store = crate::msg::MsgStore::open_at(db_path.clone()).unwrap();
+        let messages = store
+            .unread_for_recipients(crate::msg::JOBS_ROOM, &["renamed-caller".into()])
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].body.contains("job=job-fallback"));
+
+        match previous_db_path {
+            Some(path) => std::env::set_var(crate::msg::MSG_DB_PATH_ENV_VAR, path),
+            None => std::env::remove_var(crate::msg::MSG_DB_PATH_ENV_VAR),
+        }
+        match previous_socket_path {
+            Some(path) => std::env::set_var(crate::api::SOCKET_PATH_ENV_VAR, path),
+            None => std::env::remove_var(crate::api::SOCKET_PATH_ENV_VAR),
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

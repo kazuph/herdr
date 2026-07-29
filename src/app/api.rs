@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 mod agents;
 mod env;
+mod jobs;
 mod layouts;
 mod pane_graphics;
 mod panes;
@@ -1066,6 +1067,7 @@ impl App {
                 Ok(result) => return responses::encode_success(request.id, result),
                 Err(error) => return responses::encode_error_body(request.id, error),
             },
+            Method::RunStart(params) => return self.handle_run_start(request.id, params),
             Method::PaneSplit(params) => return self.handle_pane_split(request.id, params),
             Method::PaneSwap(params) => return self.handle_pane_swap(request.id, params),
             Method::PaneMove(params) => return self.handle_pane_move(request.id, params),

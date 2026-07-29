@@ -3037,6 +3037,252 @@ fn herdr_run_fails_closed_when_caller_is_unresolved() {
 }
 
 #[test]
+fn run_start_rejects_invalid_input_without_creating_a_job() {
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_run_start_workspace","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+    let reported = send_request(
+        &socket_path,
+        r#"{"id":"req_run_start_agent","method":"pane.report_agent","params":{"pane_id":"p1","source":"test","agent":"codex","state":"idle"}}"#,
+    );
+    assert!(reported["result"].is_object());
+
+    for (caller_pane, cwd, label, argv, completion) in [
+        (
+            "p999",
+            base.display().to_string(),
+            "label",
+            vec!["echo"],
+            "summary",
+        ),
+        (
+            "p1",
+            base.join("missing").display().to_string(),
+            "label",
+            vec!["echo"],
+            "summary",
+        ),
+        (
+            "p1",
+            base.display().to_string(),
+            "",
+            vec!["echo"],
+            "summary",
+        ),
+        (
+            "p1",
+            base.display().to_string(),
+            "label",
+            Vec::new(),
+            "summary",
+        ),
+        (
+            "p1",
+            base.display().to_string(),
+            "label",
+            vec!["echo"],
+            "invalid",
+        ),
+        (
+            "p1",
+            "relative-workdir".into(),
+            "label",
+            vec!["echo"],
+            "summary",
+        ),
+    ] {
+        let request = serde_json::json!({
+            "id": "req_run_start_invalid",
+            "method": "run.start",
+            "params": {
+                "caller_pane": caller_pane,
+                "cwd": cwd,
+                "label": label,
+                "argv": argv,
+                "completion": completion,
+            },
+        });
+        let response = send_request(&socket_path, &serde_json::to_string(&request).unwrap());
+        assert!(response["error"].is_object(), "{response}");
+    }
+
+    let jobs = run_named_cli_json(&config_home, &runtime_dir, &["run", "list"]);
+    assert!(jobs["jobs"].as_array().unwrap().is_empty(), "{jobs}");
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
+fn herdr_run_starts_when_client_config_is_read_only() {
+    let base = unique_test_dir();
+    let server_config_home = base.join("server-config");
+    let client_config_home = base.join("client-config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let herdr = spawn_herdr(&server_config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_run_read_only_workspace","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+    let reported = send_request(
+        &socket_path,
+        r#"{"id":"req_run_read_only_agent","method":"pane.report_agent","params":{"pane_id":"p1","source":"test","agent":"codex","state":"idle"}}"#,
+    );
+    assert!(reported["result"].is_object());
+    let renamed = send_request(
+        &socket_path,
+        r#"{"id":"req_run_read_only_rename","method":"agent.rename","params":{"target":"p1","name":"renamed-caller"}}"#,
+    );
+    assert!(renamed["result"].is_object());
+    let split = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_run_read_only_second_pane","method":"pane.split","params":{{"target_pane_id":"p1","direction":"down","ratio":null,"cwd":"{}","focus":false,"env":{{}}}}}}"#,
+            base.display()
+        ),
+    );
+    let other_caller = split["result"]["pane"]["pane_id"].as_str().unwrap();
+    let reported = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_run_read_only_second_agent","method":"pane.report_agent","params":{{"pane_id":"{other_caller}","source":"test","agent":"codex","state":"idle"}}}}"#,
+        ),
+    );
+    assert!(reported["result"].is_object());
+    let relative_cwd = base.join("relative-workdir");
+    fs::create_dir_all(&relative_cwd).unwrap();
+    fs::create_dir_all(&client_config_home).unwrap();
+    let mut permissions = fs::metadata(&client_config_home).unwrap().permissions();
+    permissions.set_mode(0o555);
+    fs::set_permissions(&client_config_home, permissions).unwrap();
+
+    let run = Command::new(env!("CARGO_BIN_EXE_herdr"))
+        .args([
+            "run",
+            "--caller",
+            "p1",
+            "--label",
+            "read-only",
+            "--cwd",
+            "relative-workdir",
+            "--",
+            "sh",
+            "-c",
+            "pwd",
+        ])
+        .current_dir(&base)
+        .env("XDG_CONFIG_HOME", &client_config_home)
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .env("HERDR_SOCKET_PATH", &socket_path)
+        .env_remove("HERDR_CLIENT_SOCKET_PATH")
+        .env_remove("HERDR_ENV")
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "stderr: {} stdout: {}",
+        String::from_utf8_lossy(&run.stderr),
+        String::from_utf8_lossy(&run.stdout)
+    );
+    let run_json: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let job = run_json["job"].as_str().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let status_output = run_named_cli_with_socket_override(
+            &server_config_home,
+            &runtime_dir,
+            &["job", "status", job],
+            Some(&socket_path),
+        );
+        assert!(
+            status_output.status.success(),
+            "stderr: {} stdout: {}",
+            String::from_utf8_lossy(&status_output.stderr),
+            String::from_utf8_lossy(&status_output.stdout)
+        );
+        let status: serde_json::Value = serde_json::from_slice(&status_output.stdout).unwrap();
+        if status["status"] == "exited" {
+            assert_eq!(status["exit_code"], 0);
+            assert_eq!(status["caller_pane"], "p1");
+            assert_eq!(status["caller_agent"], "renamed-caller");
+            break;
+        }
+        assert!(Instant::now() < deadline, "job did not finish: {status}");
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    let log = run_named_cli_with_socket_override(
+        &server_config_home,
+        &runtime_dir,
+        &["log", job],
+        Some(&socket_path),
+    );
+    assert!(log.status.success());
+    assert!(String::from_utf8_lossy(&log.stdout).contains(&relative_cwd.display().to_string()));
+
+    let waited_notice = run_cli(
+        &socket_path,
+        &[
+            "wait",
+            "output",
+            "p1",
+            "--match",
+            &format!("job={job}"),
+            "--source",
+            "recent",
+            "--lines",
+            "80",
+            "--timeout",
+            "5000",
+        ],
+    );
+    assert!(
+        waited_notice.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&waited_notice.stderr)
+    );
+    let other_read = run_cli(
+        &socket_path,
+        &[
+            "pane",
+            "read",
+            other_caller,
+            "--source",
+            "recent-unwrapped",
+            "--lines",
+            "80",
+        ],
+    );
+    assert!(other_read.status.success());
+    assert!(
+        !String::from_utf8_lossy(&other_read.stdout).contains(job),
+        "{}",
+        String::from_utf8_lossy(&other_read.stdout)
+    );
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
 fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
     let base = unique_test_dir();
     let config_home = base.join("config");

@@ -115,6 +115,11 @@ pub enum ResponseResult {
     MsgRooms {
         rooms: Vec<String>,
     },
+    RunStarted {
+        job: String,
+        label: String,
+        mode: String,
+    },
     AgentList {
         agents: Vec<AgentInfo>,
     },

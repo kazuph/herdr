@@ -728,6 +728,29 @@ mod tests {
     }
 
     #[test]
+    fn startup_flush_delivers_queued_job_message_to_named_agent() {
+        with_msg_api_harness(&["alpha", "renamed-caller"], |harness| {
+            harness.report_state("renamed-caller", PaneAgentState::Blocked);
+            let body = "[herdr run] exit=0 label=tests job=job-1 details: herdr log job-1";
+            harness.insert_queued_message(crate::msg::JOBS_ROOM, "renamed-caller", body);
+
+            let db_path = harness.db_path.clone();
+            let mut restarted = MsgApiHarness::new(&["alpha", "renamed-caller"], db_path);
+            restarted.report_state("renamed-caller", PaneAgentState::Idle);
+            restarted.app.flush_msg_nudges_for_all_idle_agents();
+
+            assert_eq!(
+                restarted.received_texts("renamed-caller"),
+                vec![body.to_string(), "\r".to_string()]
+            );
+            let messages = restarted.history(crate::msg::JOBS_ROOM);
+            assert_eq!(messages.len(), 1);
+            assert!(messages[0].delivered_at.is_some());
+            assert!(messages[0].read_at.is_some());
+        });
+    }
+
+    #[test]
     fn blocked_then_idle_does_not_inject_regular_messages() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
             harness.report_state("beta", PaneAgentState::Blocked);

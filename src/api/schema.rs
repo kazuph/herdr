@@ -4,6 +4,7 @@ pub mod agents;
 pub mod common;
 pub mod events;
 pub mod integrations;
+pub mod jobs;
 pub mod messages;
 pub mod panes;
 pub mod plugins;
@@ -18,6 +19,7 @@ pub use agents::*;
 pub use common::*;
 pub use events::*;
 pub use integrations::*;
+pub use jobs::*;
 pub use messages::*;
 pub use panes::*;
 pub use plugins::*;
@@ -131,6 +133,8 @@ pub enum Method {
     MsgHistory(MsgHistoryParams),
     #[serde(rename = "msg.rooms")]
     MsgRooms(EmptyParams),
+    #[serde(rename = "run.start")]
+    RunStart(RunStartParams),
     #[serde(rename = "pane.split")]
     PaneSplit(PaneSplitParams),
     #[serde(rename = "pane.swap")]

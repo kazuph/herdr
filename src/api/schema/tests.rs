@@ -145,6 +145,25 @@ fn request_round_trips_for_server_stop() {
 }
 
 #[test]
+fn request_round_trips_for_run_start() {
+    let request = Request {
+        id: "req_run_start".into(),
+        method: Method::RunStart(RunStartParams {
+            caller_pane: "p1".into(),
+            label: "check".into(),
+            cwd: "/tmp".into(),
+            argv: vec!["just".into(), "check".into()],
+            completion: "summary".into(),
+        }),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "run.start");
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+}
+
+#[test]
 fn request_round_trips_for_server_restart() {
     let request = Request {
         id: "req_restart".into(),
