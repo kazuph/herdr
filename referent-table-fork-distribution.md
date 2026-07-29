@@ -1,0 +1,11 @@
+| 出典 | 目的 | 具体対象 | 役割 | 前後関係 | 初出定義 | 候補語 |
+|---|---|---|---|---|---|---|
+| ユーザー「本家の邪魔にならないように改名」 | upstream の公式配布とfork配布を区別する | GitHub repository、Homebrew tap、release pageでfork所有者を示す配布識別 | 値 | fork所有者を明示してからbrew等で導入する | 配布名とは、実行ファイル名を変えずにfork版の公開元を識別する名前を指す | @kazuph/herdr |
+| ユーザー「brew等でinstallして自然に使える」 | 一つのコマンドで導入・更新・削除できるようにする | GitHub ReleaseのOS・CPU別assetを取得して`herdr`として配置するHomebrew Formulaとtap | 手段 | GitHub Releaseのasset公開後にbrewが取得する | 導入経路とは、利用者がfork版を取得・更新・削除するパッケージ管理経路を指す | kazuph/tap/herdr |
+| ユーザー「releaseごとにCIでビルド」 | tagから再現可能な配布物を作る | macOS arm64/x86_64とLinux arm64/x86_64をCIでビルドしchecksumを生成するworkflow | 手段 | release tag作成後、Release公開前に全assetを生成する | リリースビルドとは、tagに対応する配布用バイナリとchecksumをCIで生成する処理を指す | kazuph-v0.1.0 |
+| AGENTS.md Release Channels | upstreamのrelease運用をforkへ誤送信しない | fork repositoryだけを対象にtag、GitHub Release、release metadataを更新する境界 | 条件 | repository ownerを確認してからrelease処理を開始する | fork release条件とは、対象repositoryがfork所有者であることをCIと手動操作の両方で確認できた状態を指す |  |
+| 現行forkのG8方針 | upstream向け自動更新先を誤利用しない | 実行中forkが参照する更新manifest、asset名、repository URL、channel | 値 | 配布名決定後、self-updateを有効化する前にfork専用値へ分離する | 更新経路とは、インストール済みfork版が新しいversionとbinaryを発見・取得する参照先を指す | brew upgrade kazuph/tap/herdr |
+| ユーザー訂正「CLI名はherdrでいい」 | fork版を通常の`herdr`コマンドとして使う | Homebrewが配置する実行ファイル名と利用者が入力するコマンド名 | 値 | 配布元を選んでinstallした後に利用する | 実行名とは、fork版を起動するため利用者が入力するコマンド名を指す | herdr |
+| GitHub Actionsのrepository境界 | GitHub Releaseを作成した同じworkflowからtapだけを更新する | `kazuph/homebrew-tap`だけへFormulaをcommit・pushできるwrite deploy key | 値 | Release前にpush dry-runで権限を証明し、Formulaの実install/test成功後にtap checkoutへ使用する | tap更新credentialとは、fork release workflowがtap repositoryだけへ書き込むためのActions secretを指す | HOMEBREW_TAP_DEPLOY_KEY |
+| npm公開境界 | native packageを先に、wrapperを最後に公開する | npm registryへprovenance付きで公開できるcredential | 値 | pack/testとGitHub Release成功後にだけnpm publishへ使用する | npm公開credentialとは、fork release workflowが`@kazuph`配下の対象packageだけを公開するためのActions secretを指す | NPM_TOKEN |
+| 継承元0.7.4のplugin contract | forkの独立配布version 0.1.0が既存pluginの最低Herdr version判定を壊さない | plugin manifestの`min_herdr_version`と比較する継承済みAPI互換version | 値 | plugin manifestを解析した後、link可能性を判定する前 | plugin互換versionとは、forkの配布versionとは別に、継承元Herdrのどのplugin contractまで実装しているかを示すversionを指す | PLUGIN_COMPATIBILITY_VERSION |

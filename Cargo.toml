@@ -1,12 +1,12 @@
 [package]
 name = "herdr"
-version = "0.7.4"
+version = "0.1.0"
 edition = "2021"
 build = "build.rs"
 description = "terminal workspace manager for AI coding agents"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/ogulcancelik/herdr"
-homepage = "https://herdr.dev"
+repository = "https://github.com/kazuph/herdr"
+homepage = "https://github.com/kazuph/herdr"
 keywords = ["terminal", "tui", "ai", "agents", "multiplexer"]
 categories = ["command-line-utilities"]
 include = [

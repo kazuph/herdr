@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+launcher=$0
+while [ -L "$launcher" ]; do
+  launcher_dir=$(CDPATH= cd -- "$(dirname -- "$launcher")" && pwd)
+  target=$(readlink "$launcher")
+  case "$target" in
+    /*) launcher=$target ;;
+    *) launcher=$launcher_dir/$target ;;
+  esac
+done
+package_dir=$(CDPATH= cd -- "$(dirname -- "$launcher")/.." && pwd)
+case "$(uname -s)" in
+  Darwin) os=darwin ;;
+  Linux) os=linux ;;
+  *)
+    echo "@kazuph/herdr does not support $(uname -s)/$(uname -m)" >&2
+    exit 1
+    ;;
+esac
+case "$(uname -m)" in
+  arm64|aarch64) cpu=arm64 ;;
+  x86_64|amd64) cpu=x64 ;;
+  *)
+    echo "@kazuph/herdr does not support $os/$(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+binary="$package_dir/../herdr-$os-$cpu/bin/herdr"
+if [ ! -x "$binary" ]; then
+  echo "@kazuph/herdr could not load @kazuph/herdr-$os-$cpu; reinstall @kazuph/herdr" >&2
+  exit 1
+fi
+exec "$binary" "$@"

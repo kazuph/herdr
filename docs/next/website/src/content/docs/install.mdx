@@ -3,11 +3,25 @@ title: Install Herdr
 description: Build, install, and verify Herdr on Linux and macOS.
 ---
 
-The kazuph/herdr fork is installed from source. A manually selected binary from [fork releases](https://github.com/kazuph/herdr/releases) is also supported. Do not use upstream release binaries, `herdr.dev` installers, Homebrew, mise, or automatic release downloads for this fork runtime.
+Install the kazuph/herdr fork with Homebrew or npm. The installed command remains `herdr`.
 
 ## Install
 
-Build the fork and install the resulting binary:
+Install the published binary with Homebrew:
+
+```bash
+brew install kazuph/tap/herdr
+```
+
+Or run the scoped npm wrapper without a global install:
+
+```bash
+npx @kazuph/herdr --version
+# or
+bunx @kazuph/herdr --version
+```
+
+Build the fork from source for local development:
 
 ```bash
 git clone https://github.com/kazuph/herdr
@@ -26,17 +40,25 @@ For alternate-binary testing, copy the same build under another name such as `he
 
 ## Verify
 
-Start Herdr:
+Start a Homebrew or source installation:
 
 ```bash
 herdr
+```
+
+For the no-install npm paths, keep the package runner in the command:
+
+```bash
+npx @kazuph/herdr
+# or
+bunx @kazuph/herdr
 ```
 
 If your shell cannot find `herdr`, restart the terminal or check that the install directory is on your PATH.
 
 ## Update
 
-Self-update is disabled in this fork. Update by rebuilding from the fork checkout and replacing the local binary explicitly:
+Self-update is disabled in this fork. Update a Homebrew installation with `brew upgrade kazuph/tap/herdr`, an npm invocation by selecting the desired package version, or a source build by rebuilding and replacing the local binary explicitly:
 
 ```bash
 just build

@@ -41,6 +41,21 @@ REQUIRED = {
         "git clone https://github.com/kazuph/herdr",
         "https://github.com/kazuph/herdr/releases",
     ),
+    "docs/next/website/src/content/docs/install.mdx": (
+        "brew install kazuph/tap/herdr",
+        "npx @kazuph/herdr",
+        "bunx @kazuph/herdr",
+    ),
+    "docs/next/website/src/content/docs/ja/install.mdx": (
+        "brew install kazuph/tap/herdr",
+        "npx @kazuph/herdr",
+        "bunx @kazuph/herdr",
+    ),
+    "docs/next/website/src/content/docs/zh-cn/install.mdx": (
+        "brew install kazuph/tap/herdr",
+        "npx @kazuph/herdr",
+        "bunx @kazuph/herdr",
+    ),
 }
 
 

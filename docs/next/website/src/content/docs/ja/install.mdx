@@ -3,11 +3,25 @@ title: Herdr のインストール
 description: kazuph/herdr fork のビルド、インストール、動作確認。
 ---
 
-kazuph/herdr fork はソースからインストールします。[fork releases](https://github.com/kazuph/herdr/releases) から明示的に選んだバイナリも利用できます。この fork の runtime には、upstream のリリースバイナリ、`herdr.dev` のインストーラー、Homebrew、mise、自動release downloadを使わないでください。
+kazuph/herdr fork は Homebrew または npm からインストールできます。インストール後のコマンド名は `herdr` のままです。
 
 ## インストール
 
-fork をビルドし、生成されたバイナリを配置します:
+公開済みバイナリを Homebrew でインストールします:
+
+```bash
+brew install kazuph/tap/herdr
+```
+
+または、scoped npm wrapper をグローバルインストールせずに実行します:
+
+```bash
+npx @kazuph/herdr --version
+# または
+bunx @kazuph/herdr --version
+```
+
+ローカル開発では fork をビルドして生成バイナリを配置します:
 
 ```bash
 git clone https://github.com/kazuph/herdr
@@ -26,17 +40,25 @@ codesign -s - -f ~/.local/bin/herdr
 
 ## 動作確認
 
-Herdr を起動します:
+Homebrew またはsourceからインストールしたHerdrを起動します:
 
 ```bash
 herdr
+```
+
+installしないnpm経路では、package runnerを付けて起動します:
+
+```bash
+npx @kazuph/herdr
+# または
+bunx @kazuph/herdr
 ```
 
 シェルが `herdr` を見つけられない場合は、ターミナルを再起動するか、インストール先ディレクトリが PATH に含まれているか確認してください。
 
 ## アップデート
 
-この fork では self-update は無効です。更新は fork checkout から再ビルドし、ローカルバイナリを明示的に置き換えてください:
+この fork では self-update は無効です。Homebrew は `brew upgrade kazuph/tap/herdr`、npm 実行は必要なpackage versionの指定、source build は fork checkout から再ビルドしてローカルバイナリを明示的に置き換えて更新します:
 
 ```bash
 just build

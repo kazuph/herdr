@@ -3,7 +3,7 @@
 # Run tests
 test:
     cargo nextest run --locked --status-level fail --final-status-level fail --failure-output final --success-output never
-    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_preview scripts.test_spec_contract_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
+    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_fork_distribution scripts.test_preview scripts.test_spec_contract_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
     python3 scripts/fork_distribution_docs_check.py
     just integration-assets-test
     just plugin-marketplace-test
@@ -122,7 +122,7 @@ windows-lint:
 
 # Check formatting + run unit tests + Windows target lint + maintenance script tests
 check: ci windows-lint
-    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_preview scripts.test_spec_contract_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
+    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_fork_distribution scripts.test_preview scripts.test_spec_contract_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
     python3 scripts/fork_distribution_docs_check.py
     @echo "docs reminder: if this changes user-facing behavior, make sure the relevant release docs are updated or called out before release."
 
@@ -136,6 +136,20 @@ install-hooks:
 # Build release binary
 build:
     cargo build --release --locked
+
+# Pack all four CI-built native artifacts and the wrapper.
+fork-npm-pack artifacts output:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+    python3 scripts/fork_npm_packages.py --version "$version" pack --artifacts "{{artifacts}}" --output "{{output}}"
+
+# Execute packed local npx and bunx installs without lifecycle scripts.
+fork-npm-test output:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+    python3 scripts/fork_npm_packages.py --version "$version" test --output "{{output}}"
 
 # Build, ad-hoc sign, and install to ~/.local/bin/herdr (macOS dev workflow)
 install-local: build

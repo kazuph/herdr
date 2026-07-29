@@ -3,11 +3,25 @@ title: 安装 Herdr
 description: 构建、安装并验证 kazuph/herdr fork。
 ---
 
-kazuph/herdr fork 从源码安装。也可以明确选择 [fork releases](https://github.com/kazuph/herdr/releases) 中的二进制。不要把上游发布二进制、`herdr.dev` 安装器、Homebrew、mise 或自动 release download 用于这个 fork runtime。
+kazuph/herdr fork 可通过 Homebrew 或 npm 安装。安装后的命令仍然是 `herdr`。
 
 ## 安装
 
-构建 fork 并安装生成的二进制:
+使用 Homebrew 安装已发布的二进制:
+
+```bash
+brew install kazuph/tap/herdr
+```
+
+或者不进行全局安装，直接运行 scoped npm wrapper:
+
+```bash
+npx @kazuph/herdr --version
+# 或
+bunx @kazuph/herdr --version
+```
+
+本地开发时，构建 fork 并安装生成的二进制:
 
 ```bash
 git clone https://github.com/kazuph/herdr
@@ -26,17 +40,25 @@ codesign -s - -f ~/.local/bin/herdr
 
 ## 验证
 
-启动 Herdr:
+启动通过 Homebrew 或 source 安装的 Herdr:
 
 ```bash
 herdr
+```
+
+使用不安装的 npm 方式时,命令中保留 package runner:
+
+```bash
+npx @kazuph/herdr
+# 或
+bunx @kazuph/herdr
 ```
 
 如果 shell 找不到 `herdr`,重启终端,或检查安装目录是否在 PATH 上。
 
 ## 更新
 
-这个 fork 禁用 self-update。更新时从 fork checkout 重新构建,并显式替换本地二进制:
+这个 fork 禁用 self-update。Homebrew 使用 `brew upgrade kazuph/tap/herdr` 更新；npm 执行时选择需要的 package version；source build 从 fork checkout 重新构建并显式替换本地二进制:
 
 ```bash
 just build

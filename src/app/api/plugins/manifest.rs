@@ -225,11 +225,14 @@ fn validate_min_herdr_version(value: Option<&str>) -> Result<String, (&'static s
             ),
         )
     })?;
-    let current = crate::update::Version::current();
+    let current = crate::update::Version::parse(crate::build_info::PLUGIN_COMPATIBILITY_VERSION)
+        .expect("invalid PLUGIN_COMPATIBILITY_VERSION");
     if required > current {
         return Err((
             "plugin_requires_newer_herdr",
-            format!("plugin requires Herdr {required} or newer; current Herdr is {current}"),
+            format!(
+                "plugin requires Herdr compatibility {required} or newer; current compatibility is {current}"
+            ),
         ));
     }
     Ok(required.to_string())
@@ -586,4 +589,23 @@ fn normalize_local_identifier(value: &str, max_chars: usize) -> Option<String> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-')))
     .then(|| value.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_min_herdr_version;
+
+    #[test]
+    fn plugin_requirement_uses_the_inherited_compatibility_version() {
+        assert_eq!(
+            validate_min_herdr_version(Some(crate::build_info::PLUGIN_COMPATIBILITY_VERSION)),
+            Ok(crate::build_info::PLUGIN_COMPATIBILITY_VERSION.to_string())
+        );
+        assert_eq!(
+            validate_min_herdr_version(Some("0.7.5"))
+                .expect_err("newer plugin contract must be rejected")
+                .0,
+            "plugin_requires_newer_herdr"
+        );
+    }
 }

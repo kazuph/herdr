@@ -1,6 +1,8 @@
 //! Build identity helpers.
 
 pub const BASE_VERSION: &str = env!("CARGO_PKG_VERSION");
+// Fork release versions are independent; bump this when the fork adopts a newer upstream plugin contract.
+pub const PLUGIN_COMPATIBILITY_VERSION: &str = "0.7.4";
 
 pub fn channel() -> &'static str {
     non_empty(option_env!("HERDR_BUILD_CHANNEL")).unwrap_or("stable")
@@ -40,5 +42,10 @@ mod tests {
     #[test]
     fn stable_version_defaults_to_cargo_version() {
         assert!(!super::version().is_empty());
+    }
+
+    #[test]
+    fn plugin_compatibility_version_is_valid_semver() {
+        assert!(crate::update::Version::parse(super::PLUGIN_COMPATIBILITY_VERSION).is_some());
     }
 }
