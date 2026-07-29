@@ -73,6 +73,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("npm publish \"$ARCHIVE\" --access public --provenance", workflow)
         self.assertIn("oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", workflow)
         self.assertIn("exec zig cc -target aarch64-linux-musl", workflow)
+        self.assertIn("--target=aarch64-unknown-linux-musl) ;;", workflow)
         self.assertIn("CC_aarch64_unknown_linux_musl=", workflow)
         self.assertNotIn("aarch64-linux-gnu-gcc", workflow)
         for forbidden in ("website/latest.json", "issues: write", "close-released-issues", "ogulcancelik/herdr"):
