@@ -73,7 +73,7 @@ jobs:
             os: ubuntu-latest
             asset: herdr-linux-x86_64
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             asset: herdr-linux-aarch64
           - target: x86_64-apple-darwin
             os: macos-latest
@@ -103,25 +103,6 @@ jobs:
         run: |
           HOMEBREW_NO_AUTO_UPDATE=1 brew install zig@0.15 cmake ninja
           echo "$(brew --prefix zig@0.15)/bin" >> "$GITHUB_PATH"
-      - name: Configure Linux aarch64 musl toolchain
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > "$RUNNER_TEMP/aarch64-linux-musl-zig" <<'EOF'
-          #!/usr/bin/env bash
-          args=()
-          for arg in "$@"; do
-            case "$arg" in
-              --target=aarch64-unknown-linux-musl) ;;
-              *) args+=("$arg") ;;
-            esac
-          done
-          exec zig cc -target aarch64-linux-musl "${args[@]}"
-          EOF
-          chmod +x "$RUNNER_TEMP/aarch64-linux-musl-zig"
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=$RUNNER_TEMP/aarch64-linux-musl-zig" >> "$GITHUB_ENV"
-          echo "CC_aarch64_unknown_linux_musl=$RUNNER_TEMP/aarch64-linux-musl-zig" >> "$GITHUB_ENV"
       - name: Build the tagged native asset
         run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Name the release asset
