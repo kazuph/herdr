@@ -14,7 +14,7 @@
   <a href="https://github.com/kazuph/herdr/releases"><img src="https://img.shields.io/github/downloads/kazuph/herdr/total?labelColor=333333&color=666666" alt="total GitHub release downloads" /></a>
   <a href="https://github.com/kazuph/herdr/stargazers"><img src="https://img.shields.io/github/stars/kazuph/herdr?labelColor=333333&color=666666&logo=github" alt="GitHub stars" /></a>
   <a href="https://github.com/kazuph/herdr/releases/latest"><img src="https://img.shields.io/github/v/release/kazuph/herdr?label=release&labelColor=333333&color=666666" alt="latest stable release" /></a>
-  <a href="https://formulae.brew.sh/formula/herdr"><img src="https://img.shields.io/homebrew/v/herdr?label=homebrew&labelColor=333333&color=666666" alt="Homebrew version" /></a>
+  <a href="https://github.com/kazuph/homebrew-tap"><img src="https://img.shields.io/badge/homebrew-kazuph%2Ftap%2Fherdr-666666?labelColor=333333" alt="Homebrew tap" /></a>
   <a href="https://x.com/herdrdev"><img src="https://img.shields.io/badge/follow-%40herdrdev-000000?logo=x&logoColor=white" alt="follow @herdrdev on X" /></a>
 </p>
 
@@ -35,14 +35,30 @@ https://github.com/user-attachments/assets/043ec09f-4bdd-41d5-aee0-8fda6b83e267
 
 ## install
 
+install the published binary with Homebrew:
+
+```bash
+brew install kazuph/tap/herdr
+```
+
+or run it without a global install:
+
+```bash
+npx @kazuph/herdr
+# or
+bunx @kazuph/herdr
+```
+
+prebuilt Linux and macOS binaries are available from [releases](https://github.com/kazuph/herdr/releases).
+
+to build from source:
+
 ```bash
 git clone https://github.com/kazuph/herdr
 cd herdr
 just build
 install -m 0755 target/release/herdr ~/.local/bin/herdr
 ```
-
-or download the binary from [releases](https://github.com/kazuph/herdr/releases). requires linux or macos.
 
 ## quick start
 
