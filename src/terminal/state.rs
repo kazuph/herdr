@@ -263,7 +263,7 @@ impl TerminalState {
         agent: Option<Agent>,
         fallback_state: AgentState,
         visible_blocker: bool,
-        _visible_idle: bool,
+        visible_idle: bool,
         _visible_working: bool,
         process_exited: bool,
         now: Instant,
@@ -276,8 +276,9 @@ impl TerminalState {
         let previous_session = self.current_session_identity_for_persistence();
         if matches!(agent, Some(Agent::Claude | Agent::Codex))
             && fallback_state == AgentState::Idle
+            && visible_idle
             && self.hook_authority.as_ref().is_some_and(|authority| {
-                authority.state == AgentState::Working
+                matches!(authority.state, AgentState::Working | AgentState::Blocked)
                     && !crate::detect::full_lifecycle_hook_authority(
                         &authority.source,
                         &authority.agent_label,
@@ -1739,14 +1740,78 @@ mod tests {
         let session_ref =
             crate::agent_resume::AgentSessionRef::id("019f9324-9a56-72a2-b628-938c64479f65")
                 .expect("valid Codex session id");
+        for authority_state in [AgentState::Working, AgentState::Blocked] {
+            let mut terminal = test_terminal();
+            terminal.set_detected_state(Some(Agent::Codex), AgentState::Working);
+            terminal.set_hook_authority_at(
+                "herdr:codex".into(),
+                "codex".into(),
+                authority_state,
+                None,
+                Some(session_ref.clone()),
+                Some(1),
+                now,
+            );
+
+            terminal.set_detected_state_with_screen_signals_at(
+                Some(Agent::Codex),
+                AgentState::Idle,
+                false,
+                true,
+                false,
+                false,
+                now + AGENT_ACTIVITY_STALE_AFTER - Duration::from_millis(1),
+            );
+
+            assert_eq!(terminal.state, authority_state);
+            assert!(terminal.hook_authority.is_some());
+
+            terminal.set_detected_state_with_screen_signals_at(
+                Some(Agent::Codex),
+                AgentState::Idle,
+                false,
+                false,
+                false,
+                false,
+                now + AGENT_ACTIVITY_STALE_AFTER,
+            );
+
+            assert_eq!(terminal.state, authority_state);
+            assert!(terminal.hook_authority.is_some());
+
+            terminal.set_detected_state_with_screen_signals_at(
+                Some(Agent::Codex),
+                AgentState::Idle,
+                false,
+                true,
+                false,
+                false,
+                now + AGENT_ACTIVITY_STALE_AFTER + Duration::from_millis(1),
+            );
+
+            assert_eq!(terminal.state, AgentState::Idle);
+            assert!(terminal.hook_authority.is_none());
+            assert_eq!(
+                terminal.persisted_agent_session,
+                Some(crate::agent_resume::PersistedAgentSession {
+                    source: "herdr:codex".into(),
+                    agent: "codex".into(),
+                    session_ref: session_ref.clone(),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn stale_visible_idle_does_not_clear_different_agent_blocked_hook() {
+        let now = Instant::now();
         let mut terminal = test_terminal();
-        terminal.set_detected_state(Some(Agent::Codex), AgentState::Working);
         terminal.set_hook_authority_at(
-            "herdr:codex".into(),
-            "codex".into(),
-            AgentState::Working,
+            "custom:agent".into(),
+            "custom-agent".into(),
+            AgentState::Blocked,
             None,
-            Some(session_ref.clone()),
+            None,
             Some(1),
             now,
         );
@@ -1758,32 +1823,11 @@ mod tests {
             true,
             false,
             false,
-            now + AGENT_ACTIVITY_STALE_AFTER - Duration::from_millis(1),
-        );
-
-        assert_eq!(terminal.state, AgentState::Working);
-        assert!(terminal.hook_authority.is_some());
-
-        terminal.set_detected_state_with_screen_signals_at(
-            Some(Agent::Codex),
-            AgentState::Idle,
-            false,
-            true,
-            false,
-            false,
             now + AGENT_ACTIVITY_STALE_AFTER,
         );
 
-        assert_eq!(terminal.state, AgentState::Idle);
-        assert!(terminal.hook_authority.is_none());
-        assert_eq!(
-            terminal.persisted_agent_session,
-            Some(crate::agent_resume::PersistedAgentSession {
-                source: "herdr:codex".into(),
-                agent: "codex".into(),
-                session_ref,
-            })
-        );
+        assert_eq!(terminal.state, AgentState::Blocked);
+        assert!(terminal.hook_authority.is_some());
     }
 
     #[test]
@@ -1834,30 +1878,32 @@ mod tests {
     #[test]
     fn stale_screen_idle_does_not_clear_full_lifecycle_hook() {
         let now = Instant::now();
-        let mut terminal = test_terminal();
-        terminal.set_detected_state(Some(Agent::Pi), AgentState::Working);
-        terminal.set_hook_authority_at(
-            "herdr:pi".into(),
-            "pi".into(),
-            AgentState::Working,
-            None,
-            None,
-            Some(1),
-            now,
-        );
+        for authority_state in [AgentState::Working, AgentState::Blocked] {
+            let mut terminal = test_terminal();
+            terminal.set_detected_state(Some(Agent::Pi), AgentState::Working);
+            terminal.set_hook_authority_at(
+                "herdr:pi".into(),
+                "pi".into(),
+                authority_state,
+                None,
+                None,
+                Some(1),
+                now,
+            );
 
-        terminal.set_detected_state_with_screen_signals_at(
-            Some(Agent::Pi),
-            AgentState::Idle,
-            false,
-            true,
-            false,
-            false,
-            now + AGENT_ACTIVITY_STALE_AFTER,
-        );
+            terminal.set_detected_state_with_screen_signals_at(
+                Some(Agent::Pi),
+                AgentState::Idle,
+                false,
+                true,
+                false,
+                false,
+                now + AGENT_ACTIVITY_STALE_AFTER,
+            );
 
-        assert_eq!(terminal.state, AgentState::Working);
-        assert!(terminal.full_lifecycle_hook_authority_active());
+            assert_eq!(terminal.state, authority_state);
+            assert!(terminal.full_lifecycle_hook_authority_active());
+        }
     }
 
     #[test]

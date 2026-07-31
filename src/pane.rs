@@ -35,9 +35,10 @@ mod xtgettcap;
 use self::agent_detection::{
     decide_detection_screen_read, decide_screen_detection_publish,
     detection_update_for_publish_with_osc, mark_detection_content_changed,
-    observe_detection_content_change, DetectionPublishDecision, DetectionScreenReadDecision,
-    DetectionScreenReadInput, PendingIdleConfirmation, ScreenDetectionPublishInput,
-    AGENT_PENDING_IDLE_RECHECK, AGENT_STARTUP_GRACE_WINDOW,
+    observe_detection_content_change, stable_visible_signal_refresh_due, DetectionPublishDecision,
+    DetectionPublishState, DetectionScreenReadDecision, DetectionScreenReadInput,
+    PendingIdleConfirmation, ScreenDetectionPublishInput, AGENT_PENDING_IDLE_RECHECK,
+    AGENT_STARTUP_GRACE_WINDOW,
 };
 use self::terminal::{GhosttyPaneTerminal, PaneTerminal};
 pub(crate) use self::terminal::{
@@ -174,6 +175,7 @@ async fn publish_state_changed_event(
     agent: Option<Agent>,
     state: AgentState,
     visible_blocker: bool,
+    visible_idle: bool,
     visible_working: bool,
     process_exited: bool,
     observed_at: std::time::Instant,
@@ -187,6 +189,7 @@ async fn publish_state_changed_event(
             agent,
             state,
             visible_blocker,
+            visible_idle,
             visible_working,
             process_exited,
             observed_at,
@@ -253,11 +256,12 @@ async fn apply_agent_detection_publish_update(
     *last_visible_idle = update.visible_idle;
     *last_visible_blocker = update.visible_blocker;
     *last_visible_working = update.visible_working;
-    *last_visible_signal_refresh = if update.visible_blocker || update.visible_working {
-        Some(observed_at)
-    } else {
-        None
-    };
+    *last_visible_signal_refresh =
+        if update.visible_idle || update.visible_blocker || update.visible_working {
+            Some(observed_at)
+        } else {
+            None
+        };
     if update.process_exited {
         *foreground_shell_exit_reported = true;
     }
@@ -267,6 +271,7 @@ async fn apply_agent_detection_publish_update(
         agent,
         update.state,
         update.visible_blocker,
+        update.visible_idle,
         update.visible_working,
         update.process_exited,
         observed_at,
@@ -842,6 +847,7 @@ fn spawn_basic_detection_task(
                                 false,
                                 false,
                                 false,
+                                false,
                                 now,
                             )
                             .await;
@@ -883,12 +889,25 @@ fn spawn_basic_detection_task(
             } else {
                 None
             };
+            let current_publish = DetectionPublishState {
+                state,
+                visible_idle: last_visible_idle,
+                visible_blocker: last_visible_blocker,
+                visible_working: last_visible_working,
+            };
+            let stable_visible_signal_refresh_due = stable_visible_signal_refresh_due(
+                current_publish,
+                current_publish,
+                last_visible_signal_refresh,
+                now,
+            );
             match decide_detection_screen_read(DetectionScreenReadInput {
                 state,
                 agent,
                 pending_idle_active: pending_idle.active(),
                 agent_changed,
                 process_exited,
+                stable_visible_signal_refresh_due,
                 current_detection_content_seq,
                 last_screen_scan_detection_content_seq,
             }) {
@@ -2315,6 +2334,7 @@ impl PaneRuntime {
                                             false,
                                             false,
                                             false,
+                                            false,
                                             now,
                                         )
                                         .await;
@@ -2385,12 +2405,25 @@ impl PaneRuntime {
                     } else {
                         None
                     };
+                    let current_publish = DetectionPublishState {
+                        state,
+                        visible_idle: last_visible_idle,
+                        visible_blocker: last_visible_blocker,
+                        visible_working: last_visible_working,
+                    };
+                    let stable_visible_signal_refresh_due = stable_visible_signal_refresh_due(
+                        current_publish,
+                        current_publish,
+                        last_visible_signal_refresh,
+                        now,
+                    );
                     match decide_detection_screen_read(DetectionScreenReadInput {
                         state,
                         agent,
                         pending_idle_active: pending_idle.active(),
                         agent_changed,
                         process_exited,
+                        stable_visible_signal_refresh_due,
                         current_detection_content_seq,
                         last_screen_scan_detection_content_seq,
                     }) {
@@ -4201,6 +4234,7 @@ mod tests {
             Some(Agent::Pi),
             AgentState::Idle,
             false,
+            true,
             false,
             false,
             std::time::Instant::now(),
@@ -4239,10 +4273,77 @@ mod tests {
                 agent: Some(Agent::Pi),
                 state: AgentState::Idle,
                 visible_blocker: false,
+                visible_idle: true,
                 visible_working: false,
                 process_exited: false,
                 observed_at: _,
             } if delivered_pane == pane_id
         ));
+    }
+
+    #[tokio::test]
+    async fn visible_idle_publish_records_refresh_and_skips_the_next_unchanged_scan() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let pane_id = PaneId::from_raw(42);
+        let observed_at = std::time::Instant::now();
+        let mut state = AgentState::Blocked;
+        let mut last_visible_idle = false;
+        let mut last_visible_blocker = true;
+        let mut last_visible_working = false;
+        let mut last_visible_signal_refresh = None;
+        let mut foreground_shell_exit_reported = false;
+
+        apply_agent_detection_publish_update(
+            tx,
+            pane_id,
+            Some(Agent::Codex),
+            AgentDetectionPublishUpdate {
+                state: AgentState::Idle,
+                visible_idle: true,
+                visible_blocker: false,
+                visible_working: false,
+                process_exited: false,
+            },
+            observed_at,
+            &mut state,
+            &mut last_visible_idle,
+            &mut last_visible_blocker,
+            &mut last_visible_working,
+            &mut last_visible_signal_refresh,
+            &mut foreground_shell_exit_reported,
+        )
+        .await;
+
+        assert!(rx.recv().await.is_some());
+        assert_eq!(state, AgentState::Idle);
+        assert_eq!(last_visible_signal_refresh, Some(observed_at));
+        assert_eq!(
+            decide_detection_screen_read(DetectionScreenReadInput {
+                state,
+                agent: Some(Agent::Codex),
+                pending_idle_active: false,
+                agent_changed: false,
+                process_exited: false,
+                stable_visible_signal_refresh_due: stable_visible_signal_refresh_due(
+                    DetectionPublishState {
+                        state,
+                        visible_idle: last_visible_idle,
+                        visible_blocker: last_visible_blocker,
+                        visible_working: last_visible_working,
+                    },
+                    DetectionPublishState {
+                        state,
+                        visible_idle: last_visible_idle,
+                        visible_blocker: last_visible_blocker,
+                        visible_working: last_visible_working,
+                    },
+                    last_visible_signal_refresh,
+                    observed_at + std::time::Duration::from_millis(1),
+                ),
+                current_detection_content_seq: Some(10),
+                last_screen_scan_detection_content_seq: Some(10),
+            }),
+            DetectionScreenReadDecision::Skip
+        );
     }
 }

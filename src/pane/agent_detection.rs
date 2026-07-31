@@ -84,6 +84,7 @@ pub(super) struct IdleScreenScanSkipInput {
     pub(super) pending_idle_active: bool,
     pub(super) agent_changed: bool,
     pub(super) process_exited: bool,
+    pub(super) stable_visible_signal_refresh_due: bool,
     pub(super) current_detection_content_seq: Option<u64>,
     pub(super) last_screen_scan_detection_content_seq: Option<u64>,
 }
@@ -94,6 +95,7 @@ pub(super) fn should_skip_idle_screen_scan(input: IdleScreenScanSkipInput) -> bo
         || input.pending_idle_active
         || input.agent_changed
         || input.process_exited
+        || input.stable_visible_signal_refresh_due
     {
         return false;
     }
@@ -115,6 +117,7 @@ pub(super) struct DetectionScreenReadInput {
     pub(super) pending_idle_active: bool,
     pub(super) agent_changed: bool,
     pub(super) process_exited: bool,
+    pub(super) stable_visible_signal_refresh_due: bool,
     pub(super) current_detection_content_seq: Option<u64>,
     pub(super) last_screen_scan_detection_content_seq: Option<u64>,
 }
@@ -128,6 +131,7 @@ pub(super) fn decide_detection_screen_read(
         pending_idle_active: input.pending_idle_active,
         agent_changed: input.agent_changed,
         process_exited: input.process_exited,
+        stable_visible_signal_refresh_due: input.stable_visible_signal_refresh_due,
         current_detection_content_seq: input.current_detection_content_seq,
         last_screen_scan_detection_content_seq: input.last_screen_scan_detection_content_seq,
     }) {
@@ -150,7 +154,9 @@ pub(super) fn should_publish_detection_update(
         || next.visible_working != previous.visible_working
         || agent_changed
         || process_exited
-        || (stable_visible_signal_refresh_due && next.visible_blocker && previous.visible_blocker)
+        || (stable_visible_signal_refresh_due
+            && ((next.visible_blocker && previous.visible_blocker)
+                || (next.visible_idle && previous.visible_idle)))
 }
 
 pub(super) fn stable_visible_signal_refresh_due(
@@ -159,12 +165,14 @@ pub(super) fn stable_visible_signal_refresh_due(
     last_refresh: Option<std::time::Instant>,
     now: std::time::Instant,
 ) -> bool {
-    let stable_visible_signal = next.visible_blocker && previous.visible_blocker;
+    let stable_visible_blocker = next.visible_blocker && previous.visible_blocker;
+    let stable_visible_idle = next.visible_idle && previous.visible_idle;
 
-    stable_visible_signal
-        && last_refresh.is_none_or(|last_refresh| {
-            now.duration_since(last_refresh) >= STABLE_VISIBLE_SIGNAL_REFRESH
-        })
+    last_refresh.is_none_or(|last_refresh| {
+        let elapsed = now.duration_since(last_refresh);
+        (stable_visible_blocker && elapsed >= STABLE_VISIBLE_SIGNAL_REFRESH)
+            || (stable_visible_idle && elapsed >= crate::terminal::AGENT_ACTIVITY_STALE_AFTER)
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,6 +382,7 @@ mod tests {
             pending_idle_active: false,
             agent_changed: false,
             process_exited: false,
+            stable_visible_signal_refresh_due: false,
             current_detection_content_seq: Some(current_seq),
             last_screen_scan_detection_content_seq: Some(10),
         }
@@ -413,6 +422,13 @@ mod tests {
 
         let mut input = screen_read_input(AgentState::Idle, 10);
         input.process_exited = true;
+        assert_eq!(
+            decide_detection_screen_read(input),
+            DetectionScreenReadDecision::Read
+        );
+
+        let mut input = screen_read_input(AgentState::Idle, 10);
+        input.stable_visible_signal_refresh_due = true;
         assert_eq!(
             decide_detection_screen_read(input),
             DetectionScreenReadDecision::Read
@@ -466,6 +482,46 @@ mod tests {
         let mut pending = PendingIdleConfirmation::default();
 
         assert!(!pending.should_hold_working_to_idle(previous, next, false, false, now));
+    }
+
+    #[test]
+    fn stable_visible_idle_refreshes_at_agent_activity_stale_threshold() {
+        let now = std::time::Instant::now();
+        let mut idle = publish_state(AgentState::Idle);
+        idle.visible_idle = true;
+
+        assert!(!stable_visible_signal_refresh_due(
+            idle,
+            idle,
+            Some(now),
+            now + crate::terminal::AGENT_ACTIVITY_STALE_AFTER - std::time::Duration::from_millis(1),
+        ));
+        assert!(stable_visible_signal_refresh_due(
+            idle,
+            idle,
+            Some(now),
+            now + crate::terminal::AGENT_ACTIVITY_STALE_AFTER,
+        ));
+    }
+
+    #[test]
+    fn stable_visible_blocker_keeps_fast_refresh_interval() {
+        let now = std::time::Instant::now();
+        let mut blocked = publish_state(AgentState::Blocked);
+        blocked.visible_blocker = true;
+
+        assert!(!stable_visible_signal_refresh_due(
+            blocked,
+            blocked,
+            Some(now),
+            now + STABLE_VISIBLE_SIGNAL_REFRESH - std::time::Duration::from_millis(1),
+        ));
+        assert!(stable_visible_signal_refresh_due(
+            blocked,
+            blocked,
+            Some(now),
+            now + STABLE_VISIBLE_SIGNAL_REFRESH,
+        ));
     }
 
     #[test]

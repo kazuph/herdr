@@ -274,6 +274,9 @@
   - workspace名は custom name が無い場合、cwd由来名を使う。root pane がOSC title `0` / `1` / `2` でtitleを報告し、それがcwd由来名と異なる場合は `<cwd由来名>-<pane title>` と表示する。
   - full/slimのどちらもworkspace名直下にgit情報用の2行目を描画し、branchが無ければ`nogit`を表示する。slimのclick/hit rectだけは高さ1とする（`74d5512`, `4c9cc42`）。
   - workspace density toggle の `[full]` / `[slim]` は workspace panel最上段の` spaces` title行右端に表示し、`▾ spaces`等のsection headerとは別の行に置く（`b1d8526`）。
+  - workspace panel最上段の` spaces` title行の直上には水平線を描画せず、直下だけに水平線を描画する。
+  - desktop sidebarの各section headerは直上・直下に水平線を描画する。最初のsection headerの上線は` spaces` title行の下線と同じ1行を共有し、二重線にしない。それ以降のsection headerは直上に専用の1行を確保する。
+  - 水平線の行はsection header、`[new]`、workspace card、section変更、workspace並べ替えのclick/drop targetに含めない。section末尾のdrop slotは最後のcard直下かつsidebar footerより上に残す。
 - **受け入れ条件**:
   - `⭐ favorites` のheaderは `💼 work` より上に表示され、`💼 work` は `🏠 personal` より上、未分類は `spaces` として最後に表示される。
   - `⭐ favorites` を折りたたむと、そのsectionのworkspace cardは消え、headerだけ残る。
@@ -288,6 +291,8 @@
   - `ui.sidebar_start_collapsed = true` で起動するとsidebarはcollapsedになり、その後config reloadしても利用者が切り替えた現在状態を維持する。
   - root paneがOSC title `planner` を出し、cwd由来名が `pion` の時、workspace表示名が `pion-planner` になる。
   - workspace panel最上段では左に` spaces`、右端に`[slim]` / `[full]`を表示し、section headerとは同じ高さにしない。
+  - ` spaces` title行は上線なし・下線ありで表示され、各section headerは上下線付きで表示される。最初のsection header上線と` spaces`下線の間に余分な水平線を挟まない。
+  - 上下の水平線をclickまたはdragしてもsectionの折りたたみ、`[new]`、section変更、workspace並べ替えは発火しない。
 - **実装方針**: 本家に `WorkspaceSection` 相当が無いため CORE-UI として移植する。既存workspace modelとsnapshotにsectionを保存し、sidebar/mobile switcher/agent panelの表示対象計算を section aware にする。本家の `pane.report_metadata` は将来的にpane title由来のworkspace名更新を縮小できる可能性があるが、section分類・折りたたみ・D&Dは本家APIだけでは足りない。
 - **デグレ判定**:
   - section headerが出ない、または表示順が `⭐ favorites`、`💼 work`、`🏠 personal`、`spaces` から変わる。
@@ -295,6 +300,8 @@
   - section headerクリック、mobile header tap、右クリックsection割り当て、sectionへのdrag&dropのいずれかが動かない。
   - drag中のdrop targetがsection境界をまたぎ、別sectionの下端へ誤挿入される。
   - section headerとカードの間の空行、カードhit areaのsidebar全幅、1列インデントのいずれかが失われる。
+  - ` spaces` title行の直上に水平線が出る、直下の水平線が消える、section headerの上線または下線が消える、または最初のsection境界が二重線になる。
+  - 水平線上のclick/dropでsectionの折りたたみ、`[new]`、section変更、workspace並べ替えのいずれかが発火する。
   - OSC titleがworkspace identityへ反映されず、`pion-planner` のような区別ができなくなる。
   - density toggleがsection header行へ移る、slimのgit/`nogit`行が消える、または次workspaceと重なる。
 
@@ -715,6 +722,9 @@
   - live spinnerはglyphや経過時間counterが毎秒変わるため、fingerprintが変化し続ける限り`working`のまま。
   - fingerprintが変化した新ターンは即座に`working`へ戻る。
   - Claude/Codex以外のagent、Claude/Codexでもfingerprintのないworking理由、またはraw stateがworking以外の場合は、この15秒失効を適用しない。
+  - Claude/Codexの非full-lifecycle hook authorityが`working`または`blocked`のまま残り、同じagentのscreen detectionが明示的なvisible idleを15秒間示した場合、そのstale hook authorityだけを解除してscreenの`idle`を採用する。保存済みの公式agent sessionは解除後も保持する。
+  - visible idleがfalseの場合、screen detectionとhook authorityのagentが異なる場合、またはfull-lifecycle hook authorityの場合は、15秒経過だけでhook authorityを解除しない。
+  - terminal内容が変わらないvisible idleでも15秒ごとに再評価し、stale hook authorityの解除判定へ到達する。再評価直後は次の15秒まで同じidle scanを省略する。
   - `✻ Cooked for 13m 55s` のような完了summaryだけではworking扱いしない。
 - **受け入れ条件**:
   - 完了済みtranscriptに `✢ ...… (13m 47s · thinking)` とprompt boxが残っている画面は、初回はworkingでも15秒後にidleへ落ちる。
@@ -722,11 +732,15 @@
   - 一度idleへ落ちた化石の下に新しいspinner行が増えてfingerprintが変わったら、次の検出でworkingへ戻る。
   - 最新Codex prompt直前の `• Working (37s • esc to interrupt)` は初回にworkingとなり、同じ表示のまま15秒後にidleへ落ちる。
   - GeminiなどClaude/Codex以外のworking検出はこのfilterでidleへ落ちない。
+  - 同一Codex/Claudeの非full-lifecycle `blocked` hook authorityと公式sessionがある状態でvisible idleが15秒続くと、paneはidleになり、公式session IDは同じ値のまま残る。
+  - visible idleがない報告、別agentの報告、full-lifecycle authorityのいずれでも既存authorityは維持される。
 - **実装方針**: 本家に同等のactivity fingerprintがない場合、screen detection層にClaude/Codex用のtime-based stale filterを追加する。本家側のagent state/reporting APIはそのまま使い、表示状態の最終確定前にfilterする。
 - **デグレ判定**:
   - Claude paneが完了後15秒を超えても古いspinner行だけでworkingのままなら劣化。
   - Codex paneが完了後15秒を超えても固定した最新prompt直前statusだけでworkingのままなら劣化。
   - live spinner中のClaude paneが15秒でidleへ落ちたら劣化。
+  - 同一Codex/Claudeのvisible idleが15秒続いても非full-lifecycleのstale `working` / `blocked` authorityが残る、または解除時に公式sessionが失われるなら劣化。
+  - visible idleなし、別agent、full-lifecycle authorityのいずれかを15秒だけで解除するなら劣化。
   - 完了summary行だけでworking表示になるなら劣化。
 
 ## G4. 通知

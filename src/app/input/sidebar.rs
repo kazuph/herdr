@@ -421,6 +421,9 @@ impl AppState {
         col: u16,
         row: u16,
     ) -> Option<crate::workspace::WorkspaceSection> {
+        if self.workspace_separator_at_list_row(col, row) {
+            return None;
+        }
         let headers = if self.view.workspace_section_header_areas.is_empty() {
             crate::ui::compute_workspace_section_header_areas(self, self.view.sidebar_rect)
         } else {
@@ -447,6 +450,30 @@ impl AppState {
                 .map(|next| next.rect.y)
                 .unwrap_or_else(|| self.sidebar_footer_rect().y);
             (row < next_section_y).then_some(header.section)
+        })
+    }
+
+    fn workspace_separator_at_list_row(&self, col: u16, row: u16) -> bool {
+        let area = self.workspace_list_rect();
+        if area != Rect::default()
+            && col >= area.x
+            && col < area.x + area.width
+            && row == area.y.saturating_add(1)
+            && row < area.y + area.height
+        {
+            return true;
+        }
+
+        let headers = if self.view.workspace_section_header_areas.is_empty() {
+            crate::ui::compute_workspace_section_header_areas(self, self.view.sidebar_rect)
+        } else {
+            self.view.workspace_section_header_areas.clone()
+        };
+        headers.iter().any(|header| {
+            col >= header.rect.x
+                && col < header.rect.x + header.rect.width
+                && (row == header.rect.y.saturating_sub(1)
+                    || row == header.rect.y + header.rect.height)
         })
     }
 
@@ -548,7 +575,9 @@ impl AppState {
         if area == Rect::default() || row < area.y || row >= footer.y {
             return None;
         }
-        if self.workspace_section_at(area.x, row).is_some() {
+        if self.workspace_separator_at_list_row(area.x, row)
+            || self.workspace_section_at(area.x, row).is_some()
+        {
             return None;
         }
 
@@ -684,7 +713,9 @@ mod tests {
 
     use super::super::{app_for_mouse_test, capture_snapshot, mouse, unique_temp_path};
     use crate::{
-        app::state::{AgentPanelSort, ContextMenuKind, DragTarget, Mode, ViewLayout},
+        app::state::{
+            AgentPanelSort, ContextMenuKind, DragTarget, Mode, ViewLayout, WorkspacePressState,
+        },
         config::SidebarCollapsedModeConfig,
         detect::{Agent, AgentState},
         workspace::{Workspace, WorkspaceSection},
@@ -886,6 +917,82 @@ mod tests {
             .state
             .collapsed_workspace_sections
             .contains(&WorkspaceSection::Work));
+    }
+
+    #[test]
+    fn clicking_section_separator_does_not_toggle_the_section() {
+        let mut app = app_for_mouse_test();
+        let mut work = Workspace::test_new("work");
+        work.section = WorkspaceSection::Work;
+        app.state.workspaces = vec![work];
+        app.state.sidebar_width = app.state.sidebar_min_width;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+        let header_rect = app
+            .state
+            .view
+            .workspace_section_header_areas
+            .iter()
+            .find(|header| header.section == WorkspaceSection::Work)
+            .expect("work section header")
+            .rect;
+
+        for row in [
+            header_rect.y.saturating_sub(1),
+            header_rect.y + header_rect.height,
+        ] {
+            app.handle_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                header_rect.x,
+                row,
+            ));
+        }
+
+        assert!(!app
+            .state
+            .collapsed_workspace_sections
+            .contains(&WorkspaceSection::Work));
+    }
+
+    #[test]
+    fn workspace_separators_are_not_drop_targets() {
+        let mut app = app_for_mouse_test();
+        let mut work = Workspace::test_new("work");
+        work.section = WorkspaceSection::Work;
+        app.state.workspaces = vec![Workspace::test_new("spaces"), work];
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 30));
+        let list = app.state.workspace_list_rect();
+        let work_header = app
+            .state
+            .view
+            .workspace_section_header_areas
+            .iter()
+            .find(|header| header.section == WorkspaceSection::Work)
+            .expect("work section header");
+        app.state.workspace_press = Some(WorkspacePressState {
+            ws_idx: 0,
+            start_col: list.x,
+            start_row: list.y,
+        });
+
+        for (row, section) in [
+            (list.y + 1, WorkspaceSection::Work),
+            (work_header.rect.y.saturating_sub(1), WorkspaceSection::Work),
+            (
+                work_header.rect.y + work_header.rect.height,
+                WorkspaceSection::Work,
+            ),
+        ] {
+            assert_eq!(app.state.workspace_drop_index_at_row(row), None);
+            assert_eq!(
+                app.state
+                    .workspace_drop_index_at_row_in_section(row, section),
+                None
+            );
+            assert_eq!(
+                app.state.workspace_section_drop_target_at(list.x, row),
+                None
+            );
+        }
     }
 
     #[test]
@@ -1589,7 +1696,7 @@ mod tests {
         app.state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
         app.state.active = Some(0);
         app.state.selected = 0;
-        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 24));
         let target_row = app.state.view.workspace_card_areas[1].rect.y;
 
         app.handle_mouse(mouse(
@@ -1782,7 +1889,7 @@ mod tests {
         let selected_id = app.state.workspaces[2].id.clone();
         app.state.active = Some(1);
         app.state.selected = 2;
-        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 24));
         let packed_boundary_row = app.state.view.workspace_card_areas[1].rect.y;
         assert_eq!(
             app.state.workspace_drop_index_at_row(packed_boundary_row),
@@ -2061,6 +2168,10 @@ mod tests {
         let last = cards.last().unwrap().rect;
         assert_eq!(bottom_slot, last.y + last.height);
         assert!(bottom_slot < app.state.sidebar_footer_rect().y);
+        assert_eq!(
+            app.state.workspace_drop_index_at_row(bottom_slot),
+            Some(cards.len())
+        );
     }
 
     #[test]

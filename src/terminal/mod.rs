@@ -7,6 +7,7 @@ mod title;
 pub use id::TerminalId;
 pub use runtime::TerminalRuntime;
 pub(crate) use runtime_registry::TerminalRuntimeRegistry;
+pub(crate) use state::AGENT_ACTIVITY_STALE_AFTER;
 pub use state::{
     AgentMetadataReport, EffectivePresentation, EffectiveStateChange, TerminalState,
     TerminalStateMutation,
