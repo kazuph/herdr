@@ -185,9 +185,11 @@ width = "80%"
 height = "80%"
 ```
 
-`type = "popup"` opens a session-modal popup without changing the tab layout.
-The popup receives all terminal input, including Escape, until its command
-exits. `width` and `height` are optional; omit them for the default half-size
+`type = "popup"` opens a popup in the current workspace without changing the tab layout.
+Herdr direct and prefix keybindings still take precedence, so switching workspaces hides
+the popup while its command keeps running and returning to its workspace restores it.
+Mouse drag selection copies text like a tiled pane. All other terminal input, including
+Escape, goes to the popup until its command exits. `width` and `height` are optional; omit them for the default half-size
 popup, use numbers for terminal cells, or use strings like `"80%"` for a
 percentage of the terminal area. Dimensions include the popup border, and
 values smaller than the popup minimum are clamped. Popup commands do not receive

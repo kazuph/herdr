@@ -212,8 +212,45 @@ impl App {
     }
 
     fn prepare_popup_key_forward(&mut self, key: TerminalKey) -> PreparedPopupInput {
-        if self.state.popup_pane.is_none() {
+        if !self.state.popup_pane_is_visible() {
             return PreparedPopupInput::NotOpen;
+        }
+        self.state.clear_selection();
+        self.selection_autoscroll_deadline = None;
+        self.state.update_dismissed = true;
+
+        let key_event = key.as_key_event();
+        if let Some(action) = super::terminal_direct_non_indexed_navigation_action(&self.state, key)
+        {
+            debug!(
+                code = ?key_event.code,
+                modifiers = ?key_event.modifiers,
+                kind = ?key_event.kind,
+                action = ?action,
+                "intercepted popup direct keybinding before forwarding to terminal"
+            );
+            if action == super::navigate::NavigateAction::EditScrollback {
+                self.launch_focused_scrollback_editor();
+            } else {
+                self.execute_tui_navigate_action(action, super::navigate::ActionContext::Direct);
+            }
+            return PreparedPopupInput::Consumed;
+        }
+        if let Some(binding) = super::navigate::command_for_key(
+            &self.state,
+            key,
+            super::navigate::BindingDispatch::Direct,
+        ) {
+            self.launch_custom_command(binding, super::navigate::ActionContext::Direct);
+            return PreparedPopupInput::Consumed;
+        }
+        if let Some(action) = super::terminal_direct_indexed_navigation_action(&self.state, key) {
+            self.execute_tui_navigate_action(action, super::navigate::ActionContext::Direct);
+            return PreparedPopupInput::Consumed;
+        }
+        if self.state.is_prefix_key(key) {
+            self.state.mode = Mode::Prefix;
+            return PreparedPopupInput::Consumed;
         }
         let Some(rt) = self.popup_runtime() else {
             self.close_popup_pane();
@@ -261,7 +298,9 @@ mod tests {
     #[cfg(unix)]
     use super::super::{unique_temp_path, wait_for_file};
     use super::*;
-    use crate::{config::Config, events::AppEvent, workspace::Workspace};
+    use crate::{
+        config::Config, events::AppEvent, terminal::TerminalRuntime, workspace::Workspace,
+    };
 
     #[cfg(unix)]
     fn app_with_spawned_workspace() -> App {
@@ -1351,6 +1390,106 @@ mod tests {
 
         shutdown_test_runtimes(&mut app);
         let _ = std::fs::remove_file(output_path);
+    }
+
+    #[tokio::test]
+    async fn popup_direct_workspace_navigation_hides_and_restores_owner_popup() {
+        let mut app = app_for_mouse_test();
+        let owner_workspace = Workspace::test_new("one");
+        let mut other_workspace = Workspace::test_new("two");
+        let other_pane = other_workspace.focused_pane_id().unwrap();
+        let (other_runtime, mut other_rx) = TerminalRuntime::test_with_channel(40, 12);
+        other_workspace.insert_test_runtime(other_pane, other_runtime);
+        app.state.workspaces = vec![owner_workspace, other_workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.keybinds.next_workspace = crate::config::ActionKeybinds::direct("cmd+j");
+        app.state.keybinds.previous_workspace = crate::config::ActionKeybinds::direct("cmd+k");
+        let (runtime, mut popup_rx) = TerminalRuntime::test_with_channel(40, 12);
+        app.install_test_popup_runtime(runtime);
+
+        assert!(app.state.popup_pane_is_visible());
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Char('j'), KeyModifiers::SUPER));
+
+        assert_eq!(app.state.active, Some(1));
+        assert!(app.state.popup_pane.is_some());
+        assert!(!app.state.popup_pane_is_visible());
+        assert!(popup_rx.try_recv().is_err());
+
+        app.handle_terminal_key_headless(TerminalKey::new(
+            KeyCode::Char('x'),
+            KeyModifiers::empty(),
+        ));
+        assert_eq!(other_rx.try_recv().unwrap(), Bytes::from_static(b"x"));
+        assert!(popup_rx.try_recv().is_err());
+
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Char('k'), KeyModifiers::SUPER));
+
+        assert_eq!(app.state.active, Some(0));
+        assert!(app.state.popup_pane_is_visible());
+        assert!(popup_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn popup_mouse_drag_copies_terminal_text() {
+        let mut app = app_for_mouse_test();
+        let (runtime, mut popup_rx) =
+            TerminalRuntime::test_with_channel_and_scrollback_bytes(40, 12, 1024, b"alpha beta", 4);
+        app.install_test_popup_runtime(runtime);
+        let (_, inner) =
+            crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area).unwrap();
+        let row = inner.y;
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), inner.x, row));
+        app.handle_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            inner.x + 4,
+            row,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            inner.x + 4,
+            row,
+        ));
+
+        assert_eq!(clipboard_write_content(&mut app), b"alpha");
+        assert!(app.state.selection.is_none());
+        assert!(popup_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn popup_selection_autoscrolls_at_the_top_edge() {
+        let mut app = app_for_mouse_test();
+        let runtime = TerminalRuntime::test_with_scrollback_bytes(
+            40,
+            12,
+            1024 * 1024,
+            &numbered_lines_bytes(40),
+        );
+        app.install_test_popup_runtime(runtime);
+        let (_, inner) =
+            crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area).unwrap();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            inner.x,
+            inner.y + 4,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            inner.x,
+            inner.y,
+        ));
+
+        assert!(app.state.selection_autoscroll.is_some());
+        let deadline = app
+            .selection_autoscroll_deadline
+            .expect("popup drag should schedule autoscroll");
+        app.tick_selection_autoscroll(deadline);
+        assert!(app
+            .popup_runtime()
+            .and_then(TerminalRuntime::scroll_metrics)
+            .is_some_and(|metrics| metrics.offset_from_bottom > 0));
     }
 
     #[tokio::test]

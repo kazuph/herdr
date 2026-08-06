@@ -404,6 +404,9 @@ pub(super) fn render_panes(
 }
 
 pub(crate) fn popup_pane_rects(app: &AppState, area: Rect) -> Option<(Rect, Rect)> {
+    if !app.popup_pane_is_visible() {
+        return None;
+    }
     let popup = app.popup_pane.as_ref()?;
     resolve_popup_geometry(popup.width, popup.height, area)
         .map(|geometry| (geometry.outer, geometry.inner))
@@ -462,6 +465,15 @@ pub(super) fn render_popup_pane(
     frame.render_widget(Clear, outer);
     frame.render_widget(block, outer);
     rt.render(frame, inner, !pane_is_scrolled_back(rt));
+    render_selection_highlight(
+        &app.selection,
+        frame,
+        popup.pane_id,
+        inner,
+        rt.scroll_metrics(),
+        &app.palette,
+        app.host_terminal_theme,
+    );
 }
 
 #[derive(Clone, Copy, Default)]

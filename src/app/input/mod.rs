@@ -71,7 +71,7 @@ use super::App;
 
 impl App {
     pub(super) async fn handle_key(&mut self, key: TerminalKey) {
-        if self.state.popup_pane.is_some() {
+        if self.state.popup_pane_is_visible() && self.state.mode == Mode::Terminal {
             self.handle_terminal_key(key).await;
             return;
         }
@@ -117,7 +117,7 @@ impl App {
     }
 
     pub(super) async fn handle_paste(&mut self, text: String) {
-        if self.state.popup_pane.is_some() {
+        if self.state.popup_pane_is_visible() && self.state.mode == Mode::Terminal {
             if let Some(runtime) = self.popup_runtime() {
                 let _ = runtime.send_paste(text).await;
             } else {
@@ -253,8 +253,9 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
-        if self.state.popup_pane.is_some() {
+        if self.state.popup_pane_is_visible() && self.state.mode == Mode::Terminal {
             self.handle_popup_mouse(mouse);
+            self.sync_selection_autoscroll_deadline();
             return;
         }
         if self.handle_overlay_mouse(mouse) {
@@ -399,18 +400,14 @@ impl App {
             self.save_workspace_panel_density(self.state.workspace_panel_density);
         }
 
-        if let Some(content) = self.state.request_clipboard_write.take() {
-            if self
-                .event_tx
-                .try_send(crate::events::AppEvent::ClipboardWrite { content })
-                .is_err()
-            {
-                tracing::warn!("failed to queue clipboard write event");
-            }
-        }
+        self.dispatch_pending_clipboard_write();
 
         // Sync autoscroll deadline with state (mouse handler may have
         // set or cleared selection_autoscroll during handle_mouse).
+        self.sync_selection_autoscroll_deadline();
+    }
+
+    fn sync_selection_autoscroll_deadline(&mut self) {
         if self.state.selection_autoscroll.is_none() {
             self.selection_autoscroll_deadline = None;
         } else if self.selection_autoscroll_deadline.is_none() {
@@ -425,20 +422,85 @@ impl App {
         else {
             return;
         };
-        if mouse.column < inner.x
-            || mouse.column >= inner.x.saturating_add(inner.width)
-            || mouse.row < inner.y
-            || mouse.row >= inner.y.saturating_add(inner.height)
-        {
+        let Some((popup_pane_id, popup_terminal_id)) = self
+            .state
+            .popup_pane
+            .as_ref()
+            .map(|popup| (popup.pane_id, popup.terminal_id.clone()))
+        else {
+            return;
+        };
+        let inside = mouse.column >= inner.x
+            && mouse.column < inner.x.saturating_add(inner.width)
+            && mouse.row >= inner.y
+            && mouse.row < inner.y.saturating_add(inner.height);
+        let selecting_popup = self
+            .state
+            .selection
+            .as_ref()
+            .is_some_and(|selection| selection.pane_id == popup_pane_id);
+        if !inside && !selecting_popup {
             return;
         }
-        let Some(rt) = self.popup_runtime() else {
+        let Some(rt) = self.terminal_runtimes.get(&popup_terminal_id) else {
             self.close_popup_pane();
             return;
         };
+
+        if selecting_popup {
+            match mouse.kind {
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    self.state.update_selection_drag_in_rect(
+                        &self.terminal_runtimes,
+                        popup_pane_id,
+                        inner,
+                        mouse.column,
+                        mouse.row,
+                    );
+                    return;
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    self.state.selection_autoscroll = None;
+                    if self
+                        .state
+                        .selection
+                        .as_ref()
+                        .is_some_and(crate::selection::Selection::was_just_click)
+                    {
+                        self.state.selection = None;
+                    } else {
+                        self.state.copy_selection(&self.terminal_runtimes);
+                        self.dispatch_pending_clipboard_write();
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        if !inside {
+            return;
+        }
         let column = mouse.column.saturating_sub(inner.x);
         let row = mouse.row.saturating_sub(inner.y);
         let bytes = match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(bytes) =
+                    rt.encode_mouse_button(mouse.kind, column, row, mouse.modifiers)
+                {
+                    Some(bytes)
+                } else {
+                    if self.state.copy_on_select && mouse.modifiers.is_empty() {
+                        self.state.selection = Some(crate::selection::Selection::anchor(
+                            popup_pane_id,
+                            row,
+                            column,
+                            rt.scroll_metrics(),
+                        ));
+                    }
+                    None
+                }
+            }
             MouseEventKind::ScrollUp
             | MouseEventKind::ScrollDown
             | MouseEventKind::ScrollLeft
@@ -472,6 +534,19 @@ impl App {
         rt.scroll_reset();
         if let Err(err) = rt.try_send_bytes(Bytes::from(bytes)) {
             warn!(err = %err, kind = ?mouse.kind, "failed to forward popup mouse event");
+        }
+    }
+
+    fn dispatch_pending_clipboard_write(&mut self) {
+        let Some(content) = self.state.request_clipboard_write.take() else {
+            return;
+        };
+        if self
+            .event_tx
+            .try_send(crate::events::AppEvent::ClipboardWrite { content })
+            .is_err()
+        {
+            tracing::warn!("failed to queue clipboard write event");
         }
     }
 

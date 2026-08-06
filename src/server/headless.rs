@@ -3507,7 +3507,7 @@ impl HeadlessServer {
 
     fn retained_pty_update_allowed_by_app_state(&self) -> bool {
         self.app.state.mode == app::Mode::Terminal
-            && self.app.state.popup_pane.is_none()
+            && !self.app.state.popup_pane_is_visible()
             && self.app.state.selection.is_none()
             && self.app.state.copy_mode.is_none()
             && self.app.state.context_menu.is_none()

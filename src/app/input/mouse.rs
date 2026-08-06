@@ -1655,11 +1655,8 @@ impl AppState {
         pane_id: crate::layout::PaneId,
         lines: usize,
     ) {
-        if let Some(ws_idx) = self.active {
-            if let Some(rt) = self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, pane_id)
-            {
-                rt.scroll_up(lines);
-            }
+        if let Some(rt) = self.runtime_for_selection_pane(terminal_runtimes, pane_id) {
+            rt.scroll_up(lines);
         }
     }
 
@@ -1669,11 +1666,8 @@ impl AppState {
         pane_id: crate::layout::PaneId,
         lines: usize,
     ) {
-        if let Some(ws_idx) = self.active {
-            if let Some(rt) = self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, pane_id)
-            {
-                rt.scroll_down(lines);
-            }
+        if let Some(rt) = self.runtime_for_selection_pane(terminal_runtimes, pane_id) {
+            rt.scroll_down(lines);
         }
     }
 
@@ -1682,8 +1676,7 @@ impl AppState {
         terminal_runtimes: &TerminalRuntimeRegistry,
         pane_id: crate::layout::PaneId,
     ) -> Option<crate::pane::ScrollMetrics> {
-        self.active
-            .and_then(|i| self.runtime_for_pane_in_workspace(terminal_runtimes, i, pane_id))
+        self.runtime_for_selection_pane(terminal_runtimes, pane_id)
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
     }
 

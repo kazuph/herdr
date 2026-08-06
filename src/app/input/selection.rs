@@ -16,9 +16,26 @@ impl AppState {
         let Some(info) = self.pane_info_by_id(pane_id).cloned() else {
             return;
         };
+        self.update_selection_cursor_in_rect(
+            terminal_runtimes,
+            pane_id,
+            info.inner_rect,
+            screen_col,
+            screen_row,
+        );
+    }
+
+    pub(crate) fn update_selection_cursor_in_rect(
+        &mut self,
+        terminal_runtimes: &TerminalRuntimeRegistry,
+        pane_id: crate::layout::PaneId,
+        inner_rect: ratatui::layout::Rect,
+        screen_col: u16,
+        screen_row: u16,
+    ) {
         let metrics = self.pane_scroll_metrics(terminal_runtimes, pane_id);
         if let Some(selection) = self.selection.as_mut() {
-            selection.drag(screen_col, screen_row, info.inner_rect, metrics);
+            selection.drag(screen_col, screen_row, inner_rect, metrics);
         }
     }
 
@@ -38,9 +55,25 @@ impl AppState {
         let Some(info) = self.pane_info_by_id(pane_id).cloned() else {
             return;
         };
+        self.update_selection_drag_in_rect(
+            terminal_runtimes,
+            pane_id,
+            info.inner_rect,
+            screen_col,
+            screen_row,
+        );
+    }
 
-        let top = info.inner_rect.y;
-        let bottom = info.inner_rect.y + info.inner_rect.height.saturating_sub(1);
+    pub(super) fn update_selection_drag_in_rect(
+        &mut self,
+        terminal_runtimes: &TerminalRuntimeRegistry,
+        pane_id: crate::layout::PaneId,
+        inner_rect: ratatui::layout::Rect,
+        screen_col: u16,
+        screen_row: u16,
+    ) {
+        let top = inner_rect.y;
+        let bottom = inner_rect.y + inner_rect.height.saturating_sub(1);
 
         // Only activate autoscroll when the user is actively dragging.
         // An anchored click in the hot zone should not start the timer.
@@ -54,7 +87,7 @@ impl AppState {
             // comparison, check whether the mouse is on a different
             // cell than the anchor's screen position.
             let (ar, ac) = s.anchor_screen_pos(
-                info.inner_rect,
+                inner_rect,
                 self.pane_scroll_metrics(terminal_runtimes, s.pane_id),
             );
             ar != screen_row || ac != screen_col
@@ -62,7 +95,13 @@ impl AppState {
         let is_dragging = was_dragging || anchor_differs_from_mouse;
 
         // Advance the selection cursor.
-        self.update_selection_cursor(terminal_runtimes, pane_id, screen_col, screen_row);
+        self.update_selection_cursor_in_rect(
+            terminal_runtimes,
+            pane_id,
+            inner_rect,
+            screen_col,
+            screen_row,
+        );
 
         // If the mouse is on a different cell than the anchor but drag()
         // didn't transition (cursor clamped to edge == anchor), force
@@ -84,12 +123,18 @@ impl AppState {
                     Self::selection_edge_scroll_lines(top - screen_row),
                 );
                 // Re-advance cursor after scroll so it reflects the new viewport position
-                self.update_selection_cursor(terminal_runtimes, pane_id, screen_col, screen_row);
+                self.update_selection_cursor_in_rect(
+                    terminal_runtimes,
+                    pane_id,
+                    inner_rect,
+                    screen_col,
+                    screen_row,
+                );
                 self.selection_autoscroll = Some(SelectionAutoscroll {
                     direction: SelectionAutoscrollDirection::Up,
                     last_mouse_screen_col: screen_col,
                     last_mouse_screen_row: screen_row,
-                    inner_rect: info.inner_rect,
+                    inner_rect,
                 });
             }
         } else if screen_row > bottom {
@@ -101,12 +146,18 @@ impl AppState {
                     Self::selection_edge_scroll_lines(screen_row - bottom),
                 );
                 // Re-advance cursor after scroll so it reflects the new viewport position
-                self.update_selection_cursor(terminal_runtimes, pane_id, screen_col, screen_row);
+                self.update_selection_cursor_in_rect(
+                    terminal_runtimes,
+                    pane_id,
+                    inner_rect,
+                    screen_col,
+                    screen_row,
+                );
                 self.selection_autoscroll = Some(SelectionAutoscroll {
                     direction: SelectionAutoscrollDirection::Down,
                     last_mouse_screen_col: screen_col,
                     last_mouse_screen_row: screen_row,
-                    inner_rect: info.inner_rect,
+                    inner_rect,
                 });
             }
         } else if screen_row == top {
@@ -116,7 +167,7 @@ impl AppState {
                     direction: SelectionAutoscrollDirection::Up,
                     last_mouse_screen_col: screen_col,
                     last_mouse_screen_row: screen_row,
-                    inner_rect: info.inner_rect,
+                    inner_rect,
                 });
             } else {
                 self.selection_autoscroll = None;
@@ -128,7 +179,7 @@ impl AppState {
                     direction: SelectionAutoscrollDirection::Down,
                     last_mouse_screen_col: screen_col,
                     last_mouse_screen_row: screen_row,
-                    inner_rect: info.inner_rect,
+                    inner_rect,
                 });
             } else {
                 self.selection_autoscroll = None;

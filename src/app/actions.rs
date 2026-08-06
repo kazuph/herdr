@@ -1827,6 +1827,7 @@ impl AppState {
         for idx in close_indices.iter().rev() {
             self.workspaces.remove(*idx);
         }
+        self.close_popup_with_missing_owner();
         self.remove_unattached_terminal_ids(terminal_ids);
         if self.workspaces.is_empty() {
             self.active = None;
@@ -1846,6 +1847,31 @@ impl AppState {
             self.tab_scroll_follow_active = true;
             self.refresh_tab_bar_view();
         }
+    }
+
+    pub(crate) fn close_popup_with_missing_owner(&mut self) {
+        let owner_missing = self.popup_pane.as_ref().is_some_and(|popup| {
+            !self
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == popup.workspace_id)
+        });
+        if !owner_missing {
+            return;
+        }
+        let Some(popup) = self.popup_pane.take() else {
+            return;
+        };
+        if self
+            .selection
+            .as_ref()
+            .is_some_and(|selection| selection.pane_id == popup.pane_id)
+        {
+            self.clear_selection();
+        }
+        self.direct_attach_resize_locks.remove(&popup.terminal_id);
+        self.terminals.remove(&popup.terminal_id);
+        self.terminal_runtime_shutdowns.push(popup.terminal_id);
     }
 
     pub(crate) fn refresh_tab_bar_view(&mut self) {
@@ -2311,14 +2337,22 @@ impl AppState {
             return;
         }
 
-        let ws_idx = match self.active {
-            Some(ws_idx) if self.workspaces.get(ws_idx).is_some() => ws_idx,
-            _ => return,
+        let text = if let Some(popup) = self
+            .popup_pane
+            .as_ref()
+            .filter(|popup| popup.pane_id == sel.pane_id)
+        {
+            terminal_runtimes
+                .get(&popup.terminal_id)
+                .and_then(|rt| rt.extract_selection(&sel))
+        } else {
+            self.active
+                .filter(|ws_idx| self.workspaces.get(*ws_idx).is_some())
+                .and_then(|ws_idx| {
+                    self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, sel.pane_id)
+                })
+                .and_then(|rt| rt.extract_selection(&sel))
         };
-
-        let text = self
-            .runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, sel.pane_id)
-            .and_then(|rt| rt.extract_selection(&sel));
         if let Some(text) = text {
             if !text.is_empty() {
                 self.request_clipboard_write = Some(text.into_bytes());
@@ -3317,6 +3351,7 @@ impl AppState {
 
         if should_close_workspace {
             self.workspaces.remove(ws_idx);
+            self.close_popup_with_missing_owner();
             self.remove_unattached_terminal_ids(workspace_terminal_ids);
             if self.workspaces.is_empty() {
                 self.active = None;

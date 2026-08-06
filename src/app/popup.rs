@@ -22,6 +22,14 @@ impl App {
         let Some(popup) = self.state.popup_pane.take() else {
             return false;
         };
+        if self
+            .state
+            .selection
+            .as_ref()
+            .is_some_and(|selection| selection.pane_id == popup.pane_id)
+        {
+            self.state.clear_selection();
+        }
         self.state
             .direct_attach_resize_locks
             .remove(&popup.terminal_id);
@@ -41,7 +49,7 @@ impl App {
     }
 
     pub(crate) fn try_route_paste_to_popup(&mut self, text: &str) -> bool {
-        if self.state.popup_pane.is_none() {
+        if !self.state.popup_pane_is_visible() || self.state.mode != Mode::Terminal {
             return false;
         }
         let Some(runtime) = self.popup_runtime() else {
@@ -142,6 +150,7 @@ impl App {
             .workspaces
             .get(ws_idx)
             .ok_or_else(|| std::io::Error::other("active workspace disappeared"))?;
+        let workspace_id = ws.id.clone();
         let active_tab = ws
             .active_tab()
             .ok_or_else(|| std::io::Error::other("active tab disappeared"))?;
@@ -180,6 +189,7 @@ impl App {
         self.state.popup_pane = Some(crate::app::state::PopupPaneState {
             pane_id,
             terminal_id,
+            workspace_id,
             width: geometry.width,
             height: geometry.height,
         });
@@ -194,6 +204,13 @@ impl App {
         &mut self,
         runtime: TerminalRuntime,
     ) -> (PaneId, TerminalId) {
+        if self.state.workspaces.is_empty() {
+            self.state
+                .workspaces
+                .push(crate::workspace::Workspace::test_new("popup"));
+            self.state.active = Some(0);
+            self.state.selected = 0;
+        }
         let pane_id = PaneId::alloc();
         let terminal_id = TerminalId::alloc();
         self.terminal_runtimes.insert(terminal_id.clone(), runtime);
@@ -204,6 +221,9 @@ impl App {
         self.state.popup_pane = Some(crate::app::state::PopupPaneState {
             pane_id,
             terminal_id: terminal_id.clone(),
+            workspace_id: self.state.workspaces[self.state.active.expect("active workspace")]
+                .id
+                .clone(),
             width: None,
             height: None,
         });
@@ -235,6 +255,7 @@ mod tests {
         app.state.popup_pane = Some(crate::app::state::PopupPaneState {
             pane_id: PaneId::alloc(),
             terminal_id,
+            workspace_id: app.state.workspaces[0].id.clone(),
             width: None,
             height: None,
         });
@@ -279,12 +300,33 @@ mod tests {
     #[test]
     fn popup_survives_background_workspace_removal() {
         let mut app = app_with_popup();
-        app.state.workspaces.clear();
-        app.state.active = None;
+        let owner_workspace_id = app.state.workspaces[0].id.clone();
+        app.state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("background"));
+
+        app.state.workspaces.remove(1);
+
+        assert_eq!(
+            app.state
+                .popup_pane
+                .as_ref()
+                .map(|popup| popup.workspace_id.as_str()),
+            Some(owner_workspace_id.as_str())
+        );
+    }
+
+    #[test]
+    fn closing_popup_owner_workspace_removes_popup_state() {
+        let mut app = app_with_popup();
+        let terminal_id = app.state.popup_pane.as_ref().unwrap().terminal_id.clone();
+
+        app.state.close_selected_workspace();
 
         app.state.assert_invariants_for_test();
-
-        assert!(app.state.popup_pane.is_some());
+        assert!(app.state.popup_pane.is_none());
+        assert!(!app.state.terminals.contains_key(&terminal_id));
+        assert!(app.state.terminal_runtime_shutdowns.contains(&terminal_id));
     }
 
     #[test]

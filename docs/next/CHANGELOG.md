@@ -7,6 +7,7 @@
 - Added macOS support for the `HERDR_AGENT=<agent>` foreground-process hint, allowing agents hidden behind host-visible wrappers such as `nono` to use the named agent's screen manifest. (#679)
 
 ### Fixed
+- Popup terminals now belong to the workspace where they were opened: workspace keybindings can switch away while the popup keeps running, returning restores it, and mouse drag selection copies text like a tiled pane.
 - Claude panes now save the current runtime session id after native resume instead of repeatedly restoring the older id from the launch command.
 - Live handoff now preserves installed plugins and no longer lets the next plugin installation overwrite the existing registry. (#893)
 - Codex and Claude session restore now preserve each configured `[agent_start.commands]` argv before appending native resume arguments, avoid Unix alias expansion, and safely carry literal argv through Windows cmd and PowerShell.
@@ -17,7 +18,7 @@
 ## [0.7.4] - 2026-07-15
 
 ### Added
-- Added session-modal popup floating terminal panes for `type = "popup"` custom command keybindings and plugin panes, with optional cell or percentage sizing and no changes to the tiled tab layout. (#1125)
+- Added workspace-scoped popup floating terminal panes for `type = "popup"` custom command keybindings and plugin panes, with optional cell or percentage sizing and no changes to the tiled tab layout. (#1125)
 - Added `ui.copy_on_select` to disable automatic clipboard copying after mouse selection while keeping the selection visible.
 - Added configurable row layouts and per-occurrence foreground, bold, and dim styles for expanded Space and Agent sidebar entries, including built-in display tokens, per-agent overrides, custom metadata tokens, and pane/workspace metadata reporting through the CLI and socket API.
 - Added independent `row_gap` settings for expanded Space and Agent sidebar entries.

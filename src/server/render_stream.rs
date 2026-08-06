@@ -291,7 +291,7 @@ pub(crate) fn render_virtual_with_runtime_registry(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) -> (ratatui::buffer::Buffer, Option<CursorState>) {
-    let popup_visible = app_state.popup_pane.is_some();
+    let popup_visible = app_state.popup_pane_is_visible();
     let pre_compute_suppresses_focused_terminal_cursor =
         !popup_visible && focused_terminal_suppresses_host_cursor(app_state, terminal_runtimes);
     if resize_panes {

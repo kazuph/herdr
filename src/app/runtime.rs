@@ -60,6 +60,16 @@ impl App {
     }
 
     pub(crate) fn shutdown_detached_terminal_runtimes(&mut self) {
+        let popup_owner_missing = self.state.popup_pane.as_ref().is_some_and(|popup| {
+            !self
+                .state
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == popup.workspace_id)
+        });
+        if popup_owner_missing {
+            self.close_popup_pane();
+        }
         let terminal_ids = std::mem::take(&mut self.state.terminal_runtime_shutdowns);
         for terminal_id in terminal_ids {
             if let Some(runtime) = self.terminal_runtimes.remove(&terminal_id) {
@@ -142,7 +152,7 @@ impl App {
                 let key_id = repeat_key_identity(&key);
                 match key.kind {
                     crossterm::event::KeyEventKind::Press => {
-                        if self.state.popup_pane.is_some() || self.state.mode == Mode::Terminal {
+                        if self.state.mode == Mode::Terminal {
                             self.suppressed_repeat_keys.remove(&key_id);
                         } else {
                             self.suppressed_repeat_keys.insert(key_id);
@@ -151,7 +161,7 @@ impl App {
                         true
                     }
                     crossterm::event::KeyEventKind::Repeat => {
-                        if (self.state.popup_pane.is_some() || self.state.mode == Mode::Terminal)
+                        if self.state.mode == Mode::Terminal
                             && !self.suppressed_repeat_keys.contains(&key_id)
                         {
                             self.handle_key(key).await;
@@ -171,7 +181,13 @@ impl App {
                 true
             }
             crate::raw_input::RawInputEvent::LineFeed => {
-                if self.state.mode == Mode::Terminal {
+                if self.state.popup_pane_is_visible() && self.state.mode == Mode::Terminal {
+                    if let Some(runtime) = self.popup_runtime() {
+                        let _ = runtime.try_send_bytes(bytes::Bytes::from_static(b"\n"));
+                    } else {
+                        self.close_popup_pane();
+                    }
+                } else if self.state.mode == Mode::Terminal {
                     if let Some(ws_idx) = self.state.active {
                         if let Some(ws) = self.state.workspaces.get(ws_idx) {
                             if let Some(focused) = ws.focused_pane_id() {
@@ -196,7 +212,7 @@ impl App {
                 true
             }
             crate::raw_input::RawInputEvent::Mouse(mouse) => {
-                if self.state.popup_pane.is_some() || self.state.mouse_capture {
+                if self.state.popup_pane_is_visible() || self.state.mouse_capture {
                     self.handle_mouse(mouse);
                 } else {
                     self.state
@@ -447,10 +463,19 @@ impl App {
         }
 
         // Rect-change detection: if inner_rect changed since drag, stop
-        let current_rect = self
+        let current_rect = if self
             .state
-            .pane_info_by_id(pane_id)
-            .map(|info| info.inner_rect);
+            .popup_pane
+            .as_ref()
+            .is_some_and(|popup| popup.pane_id == pane_id)
+        {
+            crate::ui::popup_pane_rects(&self.state, self.state.view.terminal_area)
+                .map(|(_, inner)| inner)
+        } else {
+            self.state
+                .pane_info_by_id(pane_id)
+                .map(|info| info.inner_rect)
+        };
         if current_rect != Some(autoscroll.inner_rect) {
             self.stop_selection_autoscroll();
             return;
@@ -486,9 +511,10 @@ impl App {
         }
 
         // Extend selection cursor to last known mouse position
-        self.state.update_selection_cursor(
+        self.state.update_selection_cursor_in_rect(
             &self.terminal_runtimes,
             pane_id,
+            autoscroll.inner_rect,
             autoscroll.last_mouse_screen_col,
             autoscroll.last_mouse_screen_row,
         );

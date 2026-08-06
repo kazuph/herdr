@@ -1654,8 +1654,7 @@ impl App {
                     let key_id = repeat_key_identity(&key);
                     match key.kind {
                         crossterm::event::KeyEventKind::Press => {
-                            if self.state.popup_pane.is_some() || self.state.mode == Mode::Terminal
-                            {
+                            if self.state.mode == Mode::Terminal {
                                 self.suppressed_repeat_keys.remove(&key_id);
                                 self.handle_terminal_key_headless(key);
                             } else {
@@ -1664,8 +1663,7 @@ impl App {
                             }
                         }
                         crossterm::event::KeyEventKind::Repeat => {
-                            if (self.state.popup_pane.is_some()
-                                || self.state.mode == Mode::Terminal)
+                            if self.state.mode == Mode::Terminal
                                 && !self.suppressed_repeat_keys.contains(&key_id)
                             {
                                 self.handle_terminal_key_headless(key);
@@ -1679,7 +1677,7 @@ impl App {
                     }
                 }
                 crate::raw_input::RawInputEvent::Mouse(mouse) => {
-                    if self.state.popup_pane.is_some() || self.state.mouse_capture {
+                    if self.state.popup_pane_is_visible() || self.state.mouse_capture {
                         self.handle_mouse_event_headless(mouse);
                     } else {
                         self.state
@@ -1705,7 +1703,13 @@ impl App {
                     }
                 }
                 crate::raw_input::RawInputEvent::LineFeed => {
-                    if self.state.mode == Mode::Terminal {
+                    if self.state.popup_pane_is_visible() && self.state.mode == Mode::Terminal {
+                        if let Some(runtime) = self.popup_runtime() {
+                            let _ = runtime.try_send_bytes(bytes::Bytes::from_static(b"\n"));
+                        } else {
+                            self.close_popup_pane();
+                        }
+                    } else if self.state.mode == Mode::Terminal {
                         if let Some(ws_idx) = self.state.active {
                             if let Some(ws) = self.state.workspaces.get(ws_idx) {
                                 if let Some(focused) = ws.focused_pane_id() {
@@ -5308,7 +5312,6 @@ last_pane = "prefix+tab"
         );
         assert!(tiled_rx.try_recv().is_err());
 
-        app.state.mode = Mode::Settings;
         assert!(
             app.handle_raw_input_event(raw_key(
                 KeyCode::Char('y'),
@@ -5347,6 +5350,7 @@ last_pane = "prefix+tab"
             app.state.popup_pane = Some(state::PopupPaneState {
                 pane_id: crate::layout::PaneId::alloc(),
                 terminal_id: popup_terminal_id,
+                workspace_id: app.state.workspaces[0].id.clone(),
                 width: None,
                 height: None,
             });
@@ -5425,6 +5429,47 @@ last_pane = "prefix+tab"
         );
         assert!(popup_rx.try_recv().is_ok());
         assert!(tiled_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn route_client_events_keeps_modal_input_out_of_visible_popup() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("tiled")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+
+        let (popup_runtime, mut popup_rx) = TerminalRuntime::test_with_channel(40, 12);
+        popup_runtime.test_process_pty_bytes(b"\x1b[?1000h\x1b[?1006h");
+        app.install_test_popup_runtime(popup_runtime);
+        let (_, inner) =
+            crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area).unwrap();
+
+        app.state.mode = Mode::Settings;
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Mouse(
+                crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::Down(
+                        crossterm::event::MouseButton::Left,
+                    ),
+                    column: inner.x,
+                    row: inner.y,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                },
+            )],
+            true,
+        );
+        app.route_client_events(vec![crate::raw_input::RawInputEvent::LineFeed], true);
+        assert!(popup_rx.try_recv().is_err());
+
+        app.state.mode = Mode::RenameWorkspace;
+        app.state.name_input = "old".into();
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Paste("-new".into())],
+            true,
+        );
+        assert_eq!(app.state.name_input, "old-new");
+        assert!(popup_rx.try_recv().is_err());
     }
 
     #[test]

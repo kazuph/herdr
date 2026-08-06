@@ -227,7 +227,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Custom commands use the same binding syntax.
 # type = "shell" runs detached in the background.
 # type = "pane" opens a temporary pane and closes it when the command exits.
-# type = "popup" opens a session-modal terminal without changing the tab layout.
+# type = "popup" opens a workspace-scoped terminal without changing the tab layout.
 # Popup width and height accept terminal cells or percentages such as "80%".
 # On Windows, command strings run through cmd.exe /d /c.
 # [[keys.command]]

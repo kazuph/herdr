@@ -57,6 +57,7 @@ fn pane_graphics_data_fingerprint(data: &[u8]) -> u64 {
 pub(crate) struct PopupPaneState {
     pub pane_id: PaneId,
     pub terminal_id: crate::terminal::TerminalId,
+    pub workspace_id: String,
     pub width: Option<crate::popup_size::PopupSize>,
     pub height: Option<crate::popup_size::PopupSize>,
 }
@@ -1826,7 +1827,7 @@ pub struct AppState {
     pub(crate) pane_graphics_streams: std::collections::HashMap<PaneId, String>,
     /// Monotonic marker for accepted pane graphics mutations.
     pub(crate) pane_graphics_revision: u64,
-    /// Session-modal terminal popup. This is intentionally outside workspace layouts.
+    /// Workspace-scoped terminal popup kept outside tiled workspace layouts.
     pub(crate) popup_pane: Option<PopupPaneState>,
     /// Recent plugin action/event command executions.
     pub(crate) plugin_command_logs: Vec<crate::api::schema::PluginCommandLogInfo>,
@@ -2068,8 +2069,16 @@ impl AppState {
         terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
     ) -> bool {
         self.mouse_capture
-            || self.popup_pane.is_some()
+            || self.popup_pane_is_visible()
             || self.focused_pane_requests_mouse_capture_from(terminal_runtimes)
+    }
+
+    pub(crate) fn popup_pane_is_visible(&self) -> bool {
+        self.popup_pane.as_ref().is_some_and(|popup| {
+            self.active
+                .and_then(|ws_idx| self.workspaces.get(ws_idx))
+                .is_some_and(|workspace| workspace.id == popup.workspace_id)
+        })
     }
 
     pub fn is_prefix_key(&self, key: crate::input::TerminalKey) -> bool {
@@ -2137,6 +2146,22 @@ impl AppState {
     ) -> Option<&'a crate::terminal::TerminalRuntime> {
         let ws = self.workspaces.get(ws_idx)?;
         let pane_id = ws.focused_pane_id()?;
+        self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, pane_id)
+    }
+
+    pub(crate) fn runtime_for_selection_pane<'a>(
+        &'a self,
+        terminal_runtimes: &'a crate::terminal::TerminalRuntimeRegistry,
+        pane_id: crate::layout::PaneId,
+    ) -> Option<&'a crate::terminal::TerminalRuntime> {
+        if let Some(popup) = self
+            .popup_pane
+            .as_ref()
+            .filter(|popup| popup.pane_id == pane_id)
+        {
+            return terminal_runtimes.get(&popup.terminal_id);
+        }
+        let ws_idx = self.active?;
         self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, pane_id)
     }
 
@@ -2477,6 +2502,10 @@ impl AppState {
                 "empty app state must not keep plugin pane records"
             );
             assert!(
+                self.popup_pane.is_none(),
+                "empty app state must not keep a popup without an owner workspace"
+            );
+            assert!(
                 self.pending_agent_notifications.is_empty(),
                 "empty app state must not keep pending agent notifications"
             );
@@ -2642,6 +2671,14 @@ impl AppState {
         }
         if let Some(popup) = &self.popup_pane {
             assert!(
+                self.workspaces
+                    .iter()
+                    .any(|workspace| workspace.id == popup.workspace_id),
+                "popup {:?} references missing workspace {}",
+                popup.pane_id,
+                popup.workspace_id
+            );
+            assert!(
                 self.terminals.contains_key(&popup.terminal_id),
                 "popup {:?} references missing terminal {}",
                 popup.pane_id,
@@ -2663,7 +2700,13 @@ impl AppState {
             assert_live_pane(pane_id, "rename pane target");
         }
         if let Some(selection) = &self.selection {
-            assert_live_pane(selection.pane_id, "text selection");
+            if !self
+                .popup_pane
+                .as_ref()
+                .is_some_and(|popup| popup.pane_id == selection.pane_id)
+            {
+                assert_live_pane(selection.pane_id, "text selection");
+            }
         } else {
             assert!(
                 self.selection_autoscroll.is_none(),
