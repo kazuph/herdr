@@ -7,6 +7,7 @@
 - Added macOS support for the `HERDR_AGENT=<agent>` foreground-process hint, allowing agents hidden behind host-visible wrappers such as `nono` to use the named agent's screen manifest. (#679)
 
 ### Fixed
+- Claude panes now save the current runtime session id after native resume instead of repeatedly restoring the older id from the launch command.
 - Live handoff now preserves installed plugins and no longer lets the next plugin installation overwrite the existing registry. (#893)
 - Codex and Claude session restore now preserve each configured `[agent_start.commands]` argv before appending native resume arguments, avoid Unix alias expansion, and safely carry literal argv through Windows cmd and PowerShell.
 - Pane borders again show `saved session` when Herdr has an agent conversation reference available for the next restore.

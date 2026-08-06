@@ -218,7 +218,7 @@ async fn publish_agent_session_observed_event(
             agent_label,
             seq: None,
             session_ref: crate::agent_resume::AgentSessionRef::id(session_id),
-            session_start_source: None,
+            session_start_source: (agent == Agent::Claude).then(|| "resume".into()),
         })
         .await
     {
@@ -601,8 +601,31 @@ fn observed_agent_session_from_foreground_job(
     job: &crate::platform::ForegroundJob,
     agent: Agent,
 ) -> Option<String> {
+    observed_agent_session_from_foreground_job_with(job, agent, |process| {
+        let cwd = process.cwd.as_deref()?;
+        let started_at = process.started_at?;
+        match agent {
+            Agent::Claude => crate::agent_sessions::session_id_from_claude_process_record(
+                process.pid,
+                cwd,
+                started_at,
+            )
+            .or_else(|| {
+                crate::agent_sessions::claude_session_id_from_session_files(cwd, started_at)
+            }),
+            _ => None,
+        }
+    })
+}
+
+fn observed_agent_session_from_foreground_job_with(
+    job: &crate::platform::ForegroundJob,
+    agent: Agent,
+    runtime_session_id: impl Fn(&crate::platform::ForegroundProcess) -> Option<String>,
+) -> Option<String> {
     let agent_label = crate::detect::agent_label(agent);
-    let mut session_ids = std::collections::BTreeSet::new();
+    let mut runtime_session_ids = std::collections::BTreeSet::new();
+    let mut command_session_ids = std::collections::BTreeSet::new();
     for process in &job.processes {
         let single_process_job = crate::platform::ForegroundJob {
             process_group_id: process.pid,
@@ -615,31 +638,23 @@ fn observed_agent_session_from_foreground_job(
             continue;
         }
 
-        let observed = process
-            .cmdline
-            .as_deref()
-            .and_then(|cmdline| {
-                crate::agent_sessions::session_id_from_cmdline(agent_label, cmdline)
-            })
-            .or_else(|| {
-                let cwd = process.cwd.as_deref()?;
-                let started_at = process.started_at?;
-                match agent {
-                    Agent::Claude => crate::agent_sessions::session_id_from_claude_process_record(
-                        process.pid,
-                        cwd,
-                        started_at,
-                    )
-                    .or_else(|| {
-                        crate::agent_sessions::claude_session_id_from_session_files(cwd, started_at)
-                    }),
-                    _ => None,
-                }
-            });
-        if let Some(session_id) = observed {
-            session_ids.insert(session_id);
+        if let Some(session_id) = runtime_session_id(process) {
+            runtime_session_ids.insert(session_id);
+            continue;
+        }
+
+        if let Some(session_id) = process.cmdline.as_deref().and_then(|cmdline| {
+            crate::agent_sessions::session_id_from_cmdline(agent_label, cmdline)
+        }) {
+            command_session_ids.insert(session_id);
         }
     }
+
+    let mut session_ids = if runtime_session_ids.is_empty() {
+        command_session_ids
+    } else {
+        runtime_session_ids
+    };
     (session_ids.len() == 1)
         .then(|| session_ids.pop_first())
         .flatten()
@@ -3637,6 +3652,54 @@ mod tests {
             observed_agent_session_from_foreground_job(&job, Agent::Claude),
             None
         );
+    }
+
+    #[test]
+    fn observed_claude_session_prefers_current_runtime_id_over_resume_argument() {
+        let mut claude = foreground_process(100, "claude");
+        claude.cmdline = Some("claude --resume stale-session".into());
+        let mut wrapper = foreground_process(101, "claude");
+        wrapper.cmdline = Some("node claude --resume stale-session".into());
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 100,
+            processes: vec![claude, wrapper],
+        };
+
+        assert_eq!(
+            observed_agent_session_from_foreground_job_with(&job, Agent::Claude, |process| {
+                (process.pid == 100).then(|| "current-session".into())
+            }),
+            Some("current-session".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn observed_claude_session_is_reported_as_resume_replacement() {
+        let (tx, mut rx) = mpsc::channel(1);
+
+        publish_agent_session_observed_event(
+            tx,
+            PaneId::from_raw(42),
+            Agent::Claude,
+            "current-session".into(),
+        )
+        .await;
+
+        assert!(matches!(
+            rx.recv().await,
+            Some(AppEvent::AgentSessionReported {
+                pane_id,
+                source,
+                agent_label,
+                session_ref: Some(crate::agent_resume::AgentSessionRef { value, .. }),
+                session_start_source: Some(session_start_source),
+                ..
+            }) if pane_id == PaneId::from_raw(42)
+                && source == "herdr:claude"
+                && agent_label == "claude"
+                && value == "current-session"
+                && session_start_source == "resume"
+        ));
     }
 
     #[test]
