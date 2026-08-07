@@ -44,7 +44,7 @@ class FormulaTests(unittest.TestCase):
 
 class NpmPackageTests(unittest.TestCase):
     def test_scoped_wrapper_and_native_package_metadata_are_statically_complete(self) -> None:
-        fork_npm_packages.assert_package_contracts("0.1.3")
+        fork_npm_packages.assert_package_contracts("0.1.4")
         launcher = (ROOT / "npm/packages/herdr/bin/herdr").read_text(encoding="utf-8")
         self.assertTrue(launcher.startswith("#!/bin/sh\n"))
         self.assertIn('while [ -L "$launcher" ]', launcher)

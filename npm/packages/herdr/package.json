@@ -1,15 +1,15 @@
 {
   "name": "@kazuph/herdr",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Kazuph Herdr launcher",
   "license": "AGPL-3.0-or-later",
   "repository": "https://github.com/kazuph/herdr",
   "bin": { "herdr": "bin/herdr" },
   "files": ["bin/herdr"],
   "optionalDependencies": {
-    "@kazuph/herdr-darwin-arm64": "0.1.3",
-    "@kazuph/herdr-darwin-x64": "0.1.3",
-    "@kazuph/herdr-linux-arm64": "0.1.3",
-    "@kazuph/herdr-linux-x64": "0.1.3"
+    "@kazuph/herdr-darwin-arm64": "0.1.4",
+    "@kazuph/herdr-darwin-x64": "0.1.4",
+    "@kazuph/herdr-linux-arm64": "0.1.4",
+    "@kazuph/herdr-linux-x64": "0.1.4"
   }
 }
