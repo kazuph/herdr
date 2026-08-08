@@ -76,8 +76,6 @@ When the change is ready, fast-forward the shared checkout at `../herdr` to the 
 
 If the current session is already inside an isolated task worktree, keep using it. Do not create nested worktrees.
 
-Before committing, propose the commit message and get alignment.
-
 After the change is integrated, remove the task worktree and delete the task branch locally and remotely.
 
 ## Testing
@@ -164,7 +162,7 @@ Put local PRDs, planning notes, and exploratory specs under `.local/prd/`; `.loc
 
 Use lowercase conventional commits, no emojis, and no AI co-author lines. Commit subjects feed preview release notes, so keep them descriptive.
 
-Before committing, propose the commit message and get alignment.
+Commit only when the user explicitly requests or has already authorized it. When a commit is authorized, choose an appropriate commit message and commit without asking for separate message approval.
 
 When a normal feature or fix commit relates to a GitHub issue, add a commit body line `refs #<issue-number>` after the subject:
 
