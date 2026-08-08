@@ -143,6 +143,10 @@ impl MsgStore {
     pub(crate) fn mark_delivered(&self, room: &str, to_agent: &str) -> rusqlite::Result<usize> {
         self.store.mark_messages_delivered(room, to_agent)
     }
+
+    pub(crate) fn mark_nudged(&self, room: &str, to_agent: &str) -> rusqlite::Result<usize> {
+        self.store.mark_messages_nudged(room, to_agent)
+    }
 }
 
 impl From<crate::dispatch::MessageRecord> for MsgMessage {
@@ -252,6 +256,99 @@ mod tests {
             .pending_nudge_for(DEFAULT_ROOM, "bob")
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn replying_to_a_read_message_preserves_its_read_at() {
+        let mut store = test_store("reply-preserves-read-at");
+        let original = store
+            .insert_message_with_reply(DEFAULT_ROOM, "", "alice", "bob", "question", None)
+            .unwrap();
+        store.mark_delivered(DEFAULT_ROOM, "bob").unwrap();
+        let read_at = store.history(DEFAULT_ROOM, None, 10).unwrap()[0]
+            .read_at
+            .clone();
+        assert!(read_at.is_some());
+
+        store
+            .insert_message_with_reply(
+                DEFAULT_ROOM,
+                "",
+                "bob",
+                "alice",
+                "answer",
+                Some(original.id),
+            )
+            .unwrap();
+
+        let original_after_reply = store
+            .history(DEFAULT_ROOM, None, 10)
+            .unwrap()
+            .into_iter()
+            .find(|message| message.id == original.id)
+            .unwrap();
+        assert_eq!(original_after_reply.read_at, read_at);
+    }
+
+    #[test]
+    fn migration_backfills_read_at_for_existing_delivered_messages() {
+        let path = std::env::temp_dir().join(format!(
+            "herdr-msg-test-{}-read-at-migration.db",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let legacy_schema = crate::dispatch::SCHEMA_DDL.replace("  read_at       TEXT,\n", "");
+        conn.execute_batch(&legacy_schema).unwrap();
+        conn.execute(
+            "INSERT INTO actors (id, kind, name, first_seen_at, last_seen_at) VALUES (1, 'agent', 'alice', '2026-08-08T00:00:00Z', '2026-08-08T00:00:00Z'), (2, 'agent', 'bob', '2026-08-08T00:00:00Z', '2026-08-08T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO dispatches (id, kind, room, project, from_actor, to_actor, body, created_at, delivered_at, status) VALUES (1, 'message', 'default', '', 1, 2, 'old', '2026-08-08T00:00:00Z', '2026-08-08T01:00:00Z', 'delivered')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let store = MsgStore::open_at(path.clone()).unwrap();
+        let message = store.history(DEFAULT_ROOM, None, 10).unwrap().remove(0);
+
+        assert_eq!(message.read_at, message.delivered_at);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reopening_current_schema_does_not_backfill_live_read_at() {
+        let path = std::env::temp_dir()
+            .join(format!(
+                "herdr-msg-test-{}-read-at-migration-runs-once",
+                std::process::id()
+            ))
+            .join("herdr.db");
+        let _ = std::fs::remove_file(&path);
+        let mut store = MsgStore::open_at(path.clone()).unwrap();
+        let message = store
+            .insert_message_with_reply(DEFAULT_ROOM, "", "alice", "bob", "old", None)
+            .unwrap();
+        store.mark_delivered(DEFAULT_ROOM, "bob").unwrap();
+        drop(store);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE dispatches SET status='replied', read_at=NULL WHERE id=?1",
+            rusqlite::params![message.id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let reopened = MsgStore::open_at(path.clone()).unwrap();
+        let message = reopened.history(DEFAULT_ROOM, None, 10).unwrap().remove(0);
+
+        assert!(message.delivered_at.is_some());
+        assert!(message.read_at.is_none());
+        drop(reopened);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

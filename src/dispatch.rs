@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS dispatches (
   label         TEXT,
   created_at    TEXT NOT NULL,
   delivered_at  TEXT,
+  read_at       TEXT,
   started_at    TEXT,
   finished_at   TEXT,
   exit_code     INTEGER,
@@ -117,6 +118,7 @@ impl DispatchStore {
         self.ensure_dispatch_column("external_id", "TEXT")?;
         self.ensure_dispatch_column("completion", "TEXT")?;
         self.ensure_dispatch_column("runner_pid", "INTEGER")?;
+        self.migrate_read_at()?;
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_dispatch_external ON dispatches(kind, external_id)",
             [],
@@ -137,6 +139,30 @@ impl DispatchStore {
             [],
         )?;
         Ok(())
+    }
+
+    fn migrate_read_at(&self) -> rusqlite::Result<()> {
+        let transaction = self.conn.unchecked_transaction()?;
+        let read_at_exists = {
+            let mut stmt = transaction.prepare("PRAGMA table_info(dispatches)")?;
+            let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            let mut exists = false;
+            for column in columns {
+                if column? == "read_at" {
+                    exists = true;
+                    break;
+                }
+            }
+            exists
+        };
+        if !read_at_exists {
+            transaction.execute("ALTER TABLE dispatches ADD COLUMN read_at TEXT", [])?;
+            transaction.execute(
+                "UPDATE dispatches SET read_at=delivered_at WHERE delivered_at IS NOT NULL AND status IN ('delivered', 'replied')",
+                [],
+            )?;
+        }
+        transaction.commit()
     }
 
     pub(crate) fn schema() -> &'static str {
@@ -251,7 +277,7 @@ impl DispatchStore {
             .join(", ");
         let sql = format!(
             r#"
-            SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.delivered_at
+            SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.read_at
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             JOIN actors ta ON ta.id=d.to_actor
@@ -280,7 +306,7 @@ impl DispatchStore {
     ) -> rusqlite::Result<Vec<MessageRecord>> {
         self.select_messages(
             r#"
-            SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.delivered_at
+            SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.read_at
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             JOIN actors ta ON ta.id=d.to_actor
@@ -288,6 +314,7 @@ impl DispatchStore {
               AND d.room=?1
               AND d.to_actor=(SELECT id FROM actors WHERE kind='agent' AND name=?2)
               AND d.status='queued'
+              AND d.delivered_at IS NULL
             ORDER BY d.id ASC
             "#,
             params![room, to_agent],
@@ -300,13 +327,14 @@ impl DispatchStore {
     ) -> rusqlite::Result<Vec<MessageRecord>> {
         self.select_messages(
             r#"
-            SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.delivered_at
+            SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.read_at
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             JOIN actors ta ON ta.id=d.to_actor
             WHERE d.kind='message'
               AND d.to_actor=(SELECT id FROM actors WHERE kind='agent' AND name=?1)
               AND d.status='queued'
+              AND d.delivered_at IS NULL
             ORDER BY d.room ASC, d.id ASC
             "#,
             params![to_agent],
@@ -323,7 +351,7 @@ impl DispatchStore {
         let (sql, values): (&str, Vec<String>) = match (room, project) {
             (Some(room), Some(project)) => (
                 r#"
-                SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.delivered_at
+                SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.read_at
                 FROM dispatches d
                 JOIN actors fa ON fa.id=d.from_actor
                 JOIN actors ta ON ta.id=d.to_actor
@@ -334,7 +362,7 @@ impl DispatchStore {
             ),
             (Some(room), None) => (
                 r#"
-                SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.delivered_at
+                SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.read_at
                 FROM dispatches d
                 JOIN actors fa ON fa.id=d.from_actor
                 JOIN actors ta ON ta.id=d.to_actor
@@ -345,7 +373,7 @@ impl DispatchStore {
             ),
             (None, _) => (
                 r#"
-                SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.delivered_at
+                SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.read_at
                 FROM dispatches d
                 JOIN actors fa ON fa.id=d.from_actor
                 JOIN actors ta ON ta.id=d.to_actor
@@ -407,12 +435,37 @@ impl DispatchStore {
             r#"
             UPDATE dispatches
             SET delivered_at = COALESCE(delivered_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                read_at = COALESCE(read_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
                 status = 'delivered'
             WHERE id IN (
               SELECT d.id
               FROM dispatches d
               JOIN actors ta ON ta.id=d.to_actor
               WHERE d.kind='message' AND d.room=?1 AND ta.name=?2 AND d.status='queued'
+            )
+            "#,
+            params![room, to_agent],
+        )
+    }
+
+    pub(crate) fn mark_messages_nudged(
+        &self,
+        room: &str,
+        to_agent: &str,
+    ) -> rusqlite::Result<usize> {
+        self.conn.execute(
+            r#"
+            UPDATE dispatches
+            SET delivered_at = COALESCE(delivered_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+            WHERE id IN (
+              SELECT d.id
+              FROM dispatches d
+              JOIN actors ta ON ta.id=d.to_actor
+              WHERE d.kind='message'
+                AND d.room=?1
+                AND ta.name=?2
+                AND d.status='queued'
+                AND d.delivered_at IS NULL
             )
             "#,
             params![room, to_agent],
@@ -434,6 +487,7 @@ impl DispatchStore {
             r#"
             UPDATE dispatches
             SET delivered_at = COALESCE(delivered_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                read_at = COALESCE(read_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
                 status = 'delivered'
             WHERE id IN (
               SELECT d.id
@@ -551,7 +605,7 @@ impl DispatchStore {
     fn message_by_id(&self, id: i64) -> rusqlite::Result<MessageRecord> {
         self.conn.query_row(
             r#"
-            SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.delivered_at
+            SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.read_at
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             JOIN actors ta ON ta.id=d.to_actor
