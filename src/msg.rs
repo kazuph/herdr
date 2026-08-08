@@ -90,6 +90,15 @@ impl MsgStore {
             .map(|messages| messages.into_iter().map(Into::into).collect())
     }
 
+    pub(crate) fn pending_messages_for_agent_in_creation_order(
+        &self,
+        to_agent: &str,
+    ) -> rusqlite::Result<Vec<MsgMessage>> {
+        self.store
+            .pending_messages_for_agent_in_creation_order(to_agent, JOBS_ROOM)
+            .map(|messages| messages.into_iter().map(Into::into).collect())
+    }
+
     pub(crate) fn history(
         &self,
         room: &str,
@@ -144,8 +153,8 @@ impl MsgStore {
         self.store.mark_messages_delivered(room, to_agent)
     }
 
-    pub(crate) fn mark_nudged(&self, room: &str, to_agent: &str) -> rusqlite::Result<usize> {
-        self.store.mark_messages_nudged(room, to_agent)
+    pub(crate) fn mark_message_delivered(&self, id: i64) -> rusqlite::Result<bool> {
+        self.store.mark_message_delivered(id)
     }
 }
 

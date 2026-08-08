@@ -109,7 +109,7 @@ impl App {
     }
 
     fn flush_msg_nudges_for_idle_agent(&mut self, agent: &AgentInfo) {
-        if let Err(err) = self.flush_msg_nudges_for_agent(&agent.global_pane_id, false) {
+        if let Err(err) = self.flush_regular_messages_for_idle_agent(agent) {
             tracing::warn!(
                 recipient = %agent.global_pane_id,
                 err = %err.message,
@@ -126,6 +126,27 @@ impl App {
                 "failed to flush herdr msg nudges"
             );
         }
+    }
+
+    fn flush_regular_messages_for_idle_agent(
+        &mut self,
+        agent: &AgentInfo,
+    ) -> Result<(), ErrorBody> {
+        let store = open_msg_store()?;
+        let messages = store
+            .pending_messages_for_agent_in_creation_order(&agent.global_pane_id)
+            .map_err(msg_store_error)?;
+        drop(store);
+        if messages.is_empty() {
+            return Ok(());
+        }
+        let Ok(resolved) = self.resolve_terminal_target(&agent.global_pane_id) else {
+            return Ok(());
+        };
+        let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id) else {
+            return Ok(());
+        };
+        deliver_regular_messages(runtime, messages).map(|_| ())
     }
 
     fn flush_msg_nudges_for_agent(
@@ -189,25 +210,19 @@ impl App {
         if messages.is_empty() {
             return Ok(false);
         }
-        let message = if nudge.room == crate::msg::JOBS_ROOM {
-            messages
+        if nudge.room == crate::msg::JOBS_ROOM {
+            let message = messages
                 .iter()
                 .map(|message| message.body.as_str())
                 .collect::<Vec<_>>()
-                .join("\n")
-        } else {
-            inbox_nudge_message(&nudge.room)
-        };
-        inject_text_and_enter(runtime, &message)?;
-        let store = open_msg_store()?;
-        if nudge.room == crate::msg::JOBS_ROOM {
+                .join("\n");
+            inject_text_and_enter(runtime, &message)?;
+            let store = open_msg_store()?;
             store
                 .mark_delivered(&nudge.room, &nudge.to_agent)
                 .map_err(msg_store_error)?;
         } else {
-            store
-                .mark_nudged(&nudge.room, &nudge.to_agent)
-                .map_err(msg_store_error)?;
+            return deliver_regular_messages(runtime, messages);
         }
         Ok(true)
     }
@@ -325,8 +340,24 @@ fn inject_text_and_enter(
     Ok(())
 }
 
-fn inbox_nudge_message(room: &str) -> String {
-    format!("herdr msg inbox --room '{}'", room.replace('\'', "'\\''"))
+fn deliver_regular_messages(
+    runtime: &crate::terminal::TerminalRuntime,
+    messages: Vec<crate::api::schema::MsgMessage>,
+) -> Result<bool, ErrorBody> {
+    for message in messages {
+        inject_text_and_enter(runtime, &message.body)?;
+        let store = open_msg_store()?;
+        let marked = store
+            .mark_message_delivered(message.id)
+            .map_err(msg_store_error)?;
+        if !marked {
+            return Err(ErrorBody {
+                code: "msg_delivery_not_pending".into(),
+                message: format!("message {} was no longer pending after submit", message.id),
+            });
+        }
+    }
+    Ok(true)
 }
 
 fn is_global_pane_id(value: &str) -> bool {
@@ -740,75 +771,85 @@ mod tests {
     }
 
     #[test]
-    fn idle_direct_message_nudges_inbox_without_injecting_its_body() {
+    fn idle_direct_message_submits_its_exact_body_without_an_inbox_command() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
             harness.report_state("beta", PaneAgentState::Idle);
             let room = "idle direct's inbox";
-            let body = "wake up";
+            let body = "wake up\nwith every line intact\n`do not reinterpret`";
 
             let nudged = harness.send("alpha", "beta", room, body);
 
             assert_eq!(nudged, vec![harness.global_pane_id("beta")]);
             let texts = harness.received_texts("beta");
-            assert_eq!(
-                texts,
-                vec![
-                    "herdr msg inbox --room 'idle direct'\\''s inbox'".to_string(),
-                    "\r".to_string(),
-                ]
-            );
-            assert!(!texts[0].contains(body));
+            assert_eq!(texts, vec![body.to_string(), "\r".to_string()]);
+            assert!(!texts[0].contains("herdr msg inbox"));
             let queued = harness.history(room);
             assert_eq!(queued.len(), 1);
             assert!(queued[0].delivered_at.is_some());
-            assert!(queued[0].read_at.is_none());
+            assert!(queued[0].read_at.is_some());
 
             harness.report_state("beta", PaneAgentState::Working);
             harness.report_state("beta", PaneAgentState::Idle);
 
             assert!(harness.received_texts("beta").is_empty());
-            assert_eq!(
-                harness
-                    .inbox("beta", room)
-                    .iter()
-                    .map(|message| message.body.as_str())
-                    .collect::<Vec<_>>(),
-                vec![body]
-            );
-            assert!(harness.history(room)[0].read_at.is_some());
+            assert!(harness.inbox("beta", room).is_empty());
         });
     }
 
     #[test]
-    fn regular_message_batch_nudges_inbox_once_without_injecting_bodies() {
+    fn regular_message_batch_submits_every_body_in_creation_order() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
             harness.report_state("beta", PaneAgentState::Blocked);
             let room = "review ui's notifications";
             for index in 0..6 {
                 harness.send("alpha", "beta", room, &format!("wake up {index}"));
             }
+            assert!(harness.received_texts("beta").is_empty());
+            let queued = harness.history(room);
+            assert!(queued.iter().all(|message| message.delivered_at.is_none()));
+            assert!(queued.iter().all(|message| message.read_at.is_none()));
+
             harness.report_state("beta", PaneAgentState::Idle);
 
             let texts = harness.received_texts("beta");
             assert_eq!(
                 texts,
+                (0..6)
+                    .flat_map(|index| [format!("wake up {index}"), "\r".to_string()])
+                    .collect::<Vec<_>>()
+            );
+            let queued = harness.history(room);
+            assert!(queued.iter().all(|message| message.delivered_at.is_some()));
+            assert!(queued.iter().all(|message| message.read_at.is_some()));
+
+            assert!(harness.inbox("beta", room).is_empty());
+        });
+    }
+
+    #[test]
+    fn idle_transition_submits_regular_messages_in_global_creation_order() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Blocked);
+            harness.send("alpha", "beta", "z-last-room", "first");
+            harness.send("alpha", "beta", "a-first-room", "second");
+
+            harness.report_state("beta", PaneAgentState::Idle);
+
+            assert_eq!(
+                harness.received_texts("beta"),
                 vec![
-                    "herdr msg inbox --room 'review ui'\\''s notifications'".to_string(),
+                    "first".to_string(),
+                    "\r".to_string(),
+                    "second".to_string(),
                     "\r".to_string(),
                 ]
             );
-            assert!(texts.iter().all(|text| !text.contains("wake up")));
-            let queued = harness.history(room);
-            assert!(queued.iter().all(|message| message.delivered_at.is_some()));
-            assert!(queued.iter().all(|message| message.read_at.is_none()));
-
-            let unread = harness.inbox("beta", room);
-            assert_eq!(unread.len(), 6);
-            let delivered = harness.history(room);
-            assert!(delivered
-                .iter()
-                .all(|message| message.delivered_at.is_some()));
-            assert!(delivered.iter().all(|message| message.read_at.is_some()));
+            for room in ["z-last-room", "a-first-room"] {
+                let messages = harness.history(room);
+                assert_eq!(messages.len(), 1);
+                assert!(messages[0].delivered_at.is_some());
+                assert!(messages[0].read_at.is_some());
+            }
         });
     }
 
@@ -872,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn working_then_idle_nudges_regular_messages_once_and_keeps_them_in_inbox() {
+    fn working_then_idle_submits_regular_message_once() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
             harness.report_state("beta", PaneAgentState::Working);
             let pane_id = harness.global_pane_id("beta");
@@ -888,31 +929,20 @@ mod tests {
 
             assert_eq!(
                 harness.received_texts("beta"),
-                vec![
-                    "herdr msg inbox --room 'status-flush'".to_string(),
-                    "\r".to_string(),
-                ]
+                vec!["one".to_string(), "\r".to_string()]
             );
             let messages = harness.history("status-flush");
             assert_eq!(messages.len(), 1);
             assert!(messages
                 .iter()
                 .all(|message| message.delivered_at.is_some()));
-            assert!(messages.iter().all(|message| message.read_at.is_none()));
+            assert!(messages.iter().all(|message| message.read_at.is_some()));
 
             harness.report_state("beta", PaneAgentState::Working);
             harness.report_state("beta", PaneAgentState::Idle);
 
             assert!(harness.received_texts("beta").is_empty());
-            assert_eq!(
-                harness
-                    .inbox("beta", "status-flush")
-                    .iter()
-                    .map(|message| message.body.as_str())
-                    .collect::<Vec<_>>(),
-                vec!["one"]
-            );
-            assert!(harness.history("status-flush")[0].read_at.is_some());
+            assert!(harness.inbox("beta", "status-flush").is_empty());
         });
     }
 
@@ -943,7 +973,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_flush_nudges_current_regular_mail_once() {
+    fn startup_flush_submits_current_regular_mail_once() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
             let room = "startup-flush";
             let pane_id = harness.global_pane_id("beta");
@@ -954,16 +984,14 @@ mod tests {
 
             assert_eq!(
                 harness.received_texts("beta"),
-                vec![
-                    "herdr msg inbox --room 'startup-flush'".to_string(),
-                    "\r".to_string(),
-                ]
+                vec!["one".to_string(), "\r".to_string()]
             );
             let reopened = crate::msg::MsgStore::open_at(harness.db_path.clone()).unwrap();
             assert!(reopened
                 .pending_nudges_for_agent(&pane_id)
                 .unwrap()
                 .is_empty());
+            assert!(harness.history(room)[0].read_at.is_some());
             harness.app.flush_msg_nudges_for_all_idle_agents();
 
             assert!(harness.received_texts("beta").is_empty());

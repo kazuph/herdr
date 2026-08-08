@@ -341,6 +341,28 @@ impl DispatchStore {
         )
     }
 
+    pub(crate) fn pending_messages_for_agent_in_creation_order(
+        &self,
+        to_agent: &str,
+        excluded_room: &str,
+    ) -> rusqlite::Result<Vec<MessageRecord>> {
+        self.select_messages(
+            r#"
+            SELECT d.id, d.room, d.project, fa.name, ta.name, d.body, d.created_at, d.delivered_at, d.read_at
+            FROM dispatches d
+            JOIN actors fa ON fa.id=d.from_actor
+            JOIN actors ta ON ta.id=d.to_actor
+            WHERE d.kind='message'
+              AND d.to_actor=(SELECT id FROM actors WHERE kind='agent' AND name=?1)
+              AND d.room<>?2
+              AND d.status='queued'
+              AND d.delivered_at IS NULL
+            ORDER BY d.created_at ASC, d.id ASC
+            "#,
+            params![to_agent, excluded_room],
+        )
+    }
+
     pub(crate) fn history(
         &self,
         room: Option<&str>,
@@ -448,28 +470,18 @@ impl DispatchStore {
         )
     }
 
-    pub(crate) fn mark_messages_nudged(
-        &self,
-        room: &str,
-        to_agent: &str,
-    ) -> rusqlite::Result<usize> {
-        self.conn.execute(
+    pub(crate) fn mark_message_delivered(&self, id: i64) -> rusqlite::Result<bool> {
+        let changed = self.conn.execute(
             r#"
             UPDATE dispatches
-            SET delivered_at = COALESCE(delivered_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-            WHERE id IN (
-              SELECT d.id
-              FROM dispatches d
-              JOIN actors ta ON ta.id=d.to_actor
-              WHERE d.kind='message'
-                AND d.room=?1
-                AND ta.name=?2
-                AND d.status='queued'
-                AND d.delivered_at IS NULL
-            )
+            SET delivered_at = COALESCE(delivered_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                read_at = COALESCE(read_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                status = 'delivered'
+            WHERE id=?1 AND kind='message' AND status='queued' AND delivered_at IS NULL
             "#,
-            params![room, to_agent],
-        )
+            params![id],
+        )?;
+        Ok(changed == 1)
     }
 
     pub(crate) fn mark_messages_delivered_for_recipients(

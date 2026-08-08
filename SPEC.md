@@ -1419,16 +1419,16 @@
 - **目的**: busyなagentの入力を壊さず、room単位のmessageをSQLiteへ永続化し、idleになった正確なagentへ通知する。
 - **挙動**:
   - `msg.send` / `msg.inbox` / `msg.history` / `msg.rooms` と対応CLIを提供し、messageはroom、project、sender、recipient、本文、created/delivered/read時刻を持つ。
-  - direct sendとroom broadcastを扱い、busy中はqueue、idle時はnudgeする。nudgeにはshell quote済みの正確な `herdr msg inbox --room <room>` を含める。
+  - direct sendとroom broadcastを扱い、busy中はqueue、idle時は通常mailの全roomのqueued本文をcreated時刻・同時刻ならmessage ID順に、そのまま1本文ずつtext+Enterで直接submitする。通常自動配送で`herdr msg inbox` commandを注入したり、受信側に本文の取得・要約・再解釈を要求したりしない。各本文のsubmit成功後にそのmessage IDだけを`delivered`・`read`へ遷移する。
   - recipientは登録agent名でもglobal pane ID `pN`でも同一paneのmailboxを指す。serverはpaneに解決できるrecipientについて同一paneのrecipientエイリアス集合を使い、nudgeとinboxで同じqueued行を扱う。paneに解決できないrecipientは完全一致で扱い、`claude`や`codex`など個別paneを指さないagent種別名をrecipientエイリアス集合へ加えない。
   - 全idle agentの未読確認はserver起動時に1回だけ行う。message送信時はそのrecipientとroom、agentがidleへ遷移した時はそのpaneのmailboxだけを確認し、無関係な通常API requestを全agent走査の起点にしない。
-  - agentが持つqueued messageはrecipientのactor IDとstatusのindexを使う1回のqueryで取得し、取得結果をroom単位にgroup化する。agentごとに全roomを列挙してqueryしない。
+  - 通常mailはrecipientのactor IDとstatusのindexを使う1回のqueryで全roomをcreated時刻・message ID順に取得して直接配送する。`herdr-jobs`だけは既存のroom単位group配送を使う。agentごとに全roomを列挙してqueryしない。
 - **受け入れ条件**:
-  - server再起動後も未読messageと履歴が残り、inbox取得で既読化できる。
-  - room名に空白やquoteがあってもnudgeのinbox commandが安全に実行できる。
+  - server再起動後もqueued messageと履歴が残り、Idleになった正確なrecipientへ本文が直接submitされる。
+  - room名に空白やquoteがあっても、本文は送信時の文字列のまま直接submitされる。
   - busy agentの現在の入力へ割り込まず、idle時だけnudgeする。
-  - `herdr msg send pN ...` で送ったqueued messageは、同じpaneで登録agent名から実行した `herdr msg inbox --room <room>` に表示され、既読化される。登録agent名宛てのmessageも従来どおり同じinboxで読める。
-  - pane ID宛てのnudgeが示すinbox commandと、そのinboxが取得・既読化するrecipientエイリアス集合は一致する。別paneのagent種別名宛てmessageは取得しない。
+  - `herdr msg send pN ...` で送ったqueued messageは、同じpaneのIdle遷移で直接submitされ、delivery後は既読化される。登録agent名宛てのmessageも同じpaneへ直接配送される。
+  - pane IDと登録agent名のrecipientエイリアスは同じpaneのqueued messageを指し、別paneのagent種別名宛てmessageは取得も配送もしない。inboxはbusy中のqueued messageの手動確認・回復に使えるが、通常自動配送の前提ではない。
   - queued messageがない状態でagent/pane一覧等の通常API requestを反復しても、requestごとの全idle agent走査とagent数×room数のmessage queryを実行しない。
   - server起動時の未読配送、message送信先への即時配送、blockedからidleへ変わったagentへの配送は、通常API request後の全agent走査を削除しても維持される。
 - **デグレ判定**: 各API requestの完了時に全idle agentのmailboxを走査する。各agentについてroom一覧を取得してroomごとに未読queryする。recipient/status indexを使わずmessage全体を走査する。
