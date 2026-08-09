@@ -1416,22 +1416,22 @@
 - **該当コミット**: aacd871, 3660b51
 - **分類**: CORE-UI
 - **status: fork独自・保持 (C)** — 本家にmailbox、room、durable deliveryの代替がないため保持する。
-- **目的**: busyなagentの入力を壊さず、room単位のmessageをSQLiteへ永続化し、idleになった正確なagentへ通知する。
+- **目的**: room単位のmessageをSQLiteへ永続化し、待機中のagentには新しいturnとして、作業中のagentには現在の作業への追加指示として、送信時点で全文を届ける。
 - **挙動**:
   - `msg.send` / `msg.inbox` / `msg.history` / `msg.rooms` と対応CLIを提供し、messageはroom、project、sender、recipient、本文、created/delivered/read時刻を持つ。
-  - direct sendとroom broadcastを扱い、busy中はqueue、idle時は通常mailの全roomのqueued本文をcreated時刻・同時刻ならmessage ID順に、そのまま1本文ずつtext+Enterで直接submitする。通常自動配送で`herdr msg inbox` commandを注入したり、受信側に本文の取得・要約・再解釈を要求したりしない。各本文のsubmit成功後にそのmessage IDだけを`delivered`・`read`へ遷移する。
+  - direct sendとroom broadcastを扱い、通常mailはSQLiteへ保存した直後、recipientがIdleまたはDoneなら新しいturn、Workingなら現在の作業へのsteeringとして、全roomのqueued本文をcreated時刻・同時刻ならmessage ID順に、そのまま1本文ずつtext+Enterで直接submitする。Working中のmessageをIdleまで保留せず、処理順や作業変更の判断は全文を受け取ったagentへ委ねる。Blocked、Unknown、runtime不在ではqueueを維持し、次にIdle、Working、Doneのいずれかとして利用可能になった時に同じ順序でsubmitする。通常自動配送で`herdr msg inbox` commandを注入したり、受信側に本文の取得・要約・再解釈を要求したりしない。各本文のsubmit成功後にそのmessage IDだけを`delivered`・`read`へ遷移する。
   - recipientは登録agent名でもglobal pane ID `pN`でも同一paneのmailboxを指す。serverはpaneに解決できるrecipientについて同一paneのrecipientエイリアス集合を使い、nudgeとinboxで同じqueued行を扱う。paneに解決できないrecipientは完全一致で扱い、`claude`や`codex`など個別paneを指さないagent種別名をrecipientエイリアス集合へ加えない。
-  - 全idle agentの未読確認はserver起動時に1回だけ行う。message送信時はそのrecipientとroom、agentがidleへ遷移した時はそのpaneのmailboxだけを確認し、無関係な通常API requestを全agent走査の起点にしない。
+  - 全利用可能agentの未読確認はserver起動時に1回だけ行う。message送信時はそのrecipient、agentがIdle、Working、Doneへ遷移した時、runtime復旧後にagentが同じ状態を再報告した時は、そのpaneのmailboxだけを確認し、無関係な通常API requestを全agent走査の起点にしない。
   - 通常mailはrecipientのactor IDとstatusのindexを使う1回のqueryで全roomをcreated時刻・message ID順に取得して直接配送する。`herdr-jobs`だけは既存のroom単位group配送を使う。agentごとに全roomを列挙してqueryしない。
 - **受け入れ条件**:
-  - server再起動後もqueued messageと履歴が残り、Idleになった正確なrecipientへ本文が直接submitされる。
+  - server再起動後もqueued messageと履歴が残り、Idle、Working、Doneとして利用可能な正確なrecipientへ本文が直接submitされる。
   - room名に空白やquoteがあっても、本文は送信時の文字列のまま直接submitされる。
-  - busy agentの現在の入力へ割り込まず、idle時だけnudgeする。
-  - `herdr msg send pN ...` で送ったqueued messageは、同じpaneのIdle遷移で直接submitされ、delivery後は既読化される。登録agent名宛てのmessageも同じpaneへ直接配送される。
+  - Working agentへ送ったmessageはIdle遷移を待たず、送信時点で全文が現在のagent sessionへの追加指示としてsubmitされる。recipient側runtimeが次の安全な処理区切りで取り込み、Herdrは内容の優先度や作業変更を推測しない。
+  - `herdr msg send pN ...` で送ったqueued messageは、同じpaneがIdle、Working、Doneなら直ちに直接submitされ、delivery後は既読化される。登録agent名宛てのmessageも同じpaneへ直接配送される。
   - pane IDと登録agent名のrecipientエイリアスは同じpaneのqueued messageを指し、別paneのagent種別名宛てmessageは取得も配送もしない。inboxはbusy中のqueued messageの手動確認・回復に使えるが、通常自動配送の前提ではない。
-  - queued messageがない状態でagent/pane一覧等の通常API requestを反復しても、requestごとの全idle agent走査とagent数×room数のmessage queryを実行しない。
-  - server起動時の未読配送、message送信先への即時配送、blockedからidleへ変わったagentへの配送は、通常API request後の全agent走査を削除しても維持される。
-- **デグレ判定**: 各API requestの完了時に全idle agentのmailboxを走査する。各agentについてroom一覧を取得してroomごとに未読queryする。recipient/status indexを使わずmessage全体を走査する。
+  - queued messageがない状態でagent/pane一覧等の通常API requestを反復しても、requestごとの全利用可能agent走査とagent数×room数のmessage queryを実行しない。
+  - server起動時の未読配送、message送信先への即時配送、Blocked/UnknownからIdle、Working、Doneへ変わったagentへの配送、runtime復旧後の同一状態再報告による再配送は、通常API request後の全agent走査を削除しても維持される。
+- **デグレ判定**: Working recipientへのmessageをIdleまで保留する。各API requestの完了時に全利用可能agentのmailboxを走査する。各agentについてroom一覧を取得してroomごとに未読queryする。recipient/status indexを使わずmessage全体を走査する。
 
 ### pane-less background jobs
 - **該当コミット**: 92f6bd6, 287c32d, 9255326, 03fc5eb, 8b3ae29

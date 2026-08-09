@@ -1,4 +1,15 @@
-# P428 non-vacuity plan — current RED versus repaired candidate
+# P428 non-vacuity plan — immediate steering and historical candidates
+
+## Approved immediate-steering model
+
+| Property | Positive path | Non-vacuity evidence |
+| --- | --- | --- |
+| `workingSteeringIsImmediate` | Initial Working recipient performs `sendAvailable → acceptAvailable`. | `job-1786253401212-76555-352` violates `notWorkingSteeringReachable`; the compact ITF contains only the two production actions. |
+| `unavailableNeverAccepts` | Blocked recipient performs `sendUnavailable` and retains `Queued` with no event. | `job-1786253401240-76555-353` violates `notUnavailableQueueReachable`; the compact ITF is `becomeBlocked → sendUnavailable`. |
+| `availableQueueHasDeliveryEvent` | `sendAvailable`, `becomeWorkingWithQueued`, `becomeIdleWithQueued`, `becomeDoneWithQueued`, and `restartAvailableWithQueued` create delivery events; `submitFails` creates the named same-status-report retry boundary. | The six-property run `job-1786253401191-76555-351` explores these paths. This is bounded liveness-as-safety, not infinite scheduler fairness. |
+| Same-status retry after failed submit | Working recipient performs `sendAvailable → submitFails → sameAvailableStatusReported`. | `job-1786253401259-76555-354` violates `notSameStatusRetryReachable`; the compact ITF proves the queued/no-event recovery state and its report-driven retry are both reachable. |
+
+## Historical wait-for-Idle investigation
 
 Do not run these checks before p428 approves. Use only
 `npx @informalsystems/quint@0.32.0` after approval.

@@ -4,6 +4,22 @@ All commands use the fixed executable `npx @informalsystems/quint@0.32.0` with
 the Rust backend.  Exit 1 is expected only for a deliberately negated witness
 or a current/temporary-mutation RED property.
 
+## Approved immediate-steering contract
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Typecheck | GREEN | `job-1786253401191-76555-351` |
+| Six safety properties | GREEN | `job-1786253401191-76555-351`: available queues retain a named delivery or same-status-report retry event; Working does not wait for Idle; unavailable states never accept; acceptance is at most once in the model; presentation and unrelated APIs do not change the acceptance count. |
+| Working send reachability | expected RED witness | `job-1786253401212-76555-352`; [immediate-working-steering.itf.json](immediate-working-steering.itf.json) is exactly `sendAvailable → acceptAvailable` while Working. |
+| Unavailable queue reachability | expected RED witness | `job-1786253401240-76555-353`; [immediate-unavailable-queue.itf.json](immediate-unavailable-queue.itf.json) is exactly `becomeBlocked → sendUnavailable`. |
+| Same-Working retry reachability | expected RED witness | `job-1786253401259-76555-354`; [immediate-same-status-retry.itf.json](immediate-same-status-retry.itf.json) is exactly `sendAvailable → submitFails → sameAvailableStatusReported`. |
+| Rust Working delivery | RED → GREEN | `job-1786251855817-76555-328` stored only (`nudged=[]`); `job-1786251933355-76555-329` submits the full body immediately. |
+| Mailbox focused regressions | GREEN | `job-1786253701043-76555-358`: 26/26 passed after Working broadcast, Blocked→Working/Done with an asserted Done state, runtime-ready re-report, immediate Done delivery, startup Working, identity, jobs, presentation-only updates, and no-duplicate expectations were aligned. |
+
+The sections below preserve the historical wait-for-Idle counterexample and
+the rejected one-prompt-per-Idle-turn candidate. They explain how the contract
+decision was discovered; they are not the current production model.
+
 ## Type checking
 
 | Model | Herdr job | Result |
@@ -59,7 +75,7 @@ or a current/temporary-mutation RED property.
 | Regression | Evidence |
 | --- | --- |
 | Immediate normal send with an older queued row in another room | `job-1786230496604-76555-163` RED injected room B first; the retained pN-wide query is covered by `idle_send_selects_oldest_regular_message_across_rooms`, which submits room A then B. |
-| Idle transition sends all queued normal bodies in global creation order | `regular_message_batch_submits_every_body_in_creation_order` and `idle_transition_submits_regular_messages_in_global_creation_order` keep the current SPEC behavior while using one atomic body+Enter write per body. |
+| Available recipient receives all queued normal bodies in global creation order | `regular_message_batch_submits_every_body_in_creation_order` and `idle_transition_submits_regular_messages_in_global_creation_order` preserve atomic body+Enter and global ordering; Working sends are covered by the immediate-steering tests. |
 | New App and reopened SQLite store for the same stable pN | `job-1786231132003-76555-207`: the reopened App resolves the original global pN, delivers the persisted row once, and a second reflush does not duplicate it. |
 | Ordinary list APIs and presentation-only updates | `agent_and_pane_list_do_not_flush_queued_regular_messages` and `presentation_only_idle_update_does_not_flush_regular_messages` cover the no-flush contracts without a per-request all-agent scan. |
 
@@ -71,12 +87,7 @@ but not a repaired GREEN contract. Likewise an external runtime write and the
 subsequent SQLite mark cannot be one atomic transaction: `noDuplicateTurn`
 remains a documented RED limit, not a falsely claimed exactly-once proof.
 
-The one-prompt-per-observed-turn repair remains a formal candidate only. Its
-production runtime gate and gate-only Rust tests were removed because the
-current SPEC requires all queued normal bodies to be submitted in one Idle
-opportunity; adoption requires explicit user approval.
-
-Consequently, the current `noBusySecondPrompt` RED is an unresolved SPEC
-contradiction rather than a production fix claimed by this pilot. The retained
-Rust batch test characterizes the current all-queued behavior; it does not
-prove that the external recipient remains Idle between submitted bodies.
+The user resolved the historical contract conflict by requiring delivery at
+message arrival. Working delivery is now intentional steering: the recipient
+agent, not Herdr, decides whether the new information changes current work. The
+one-prompt-per-observed-turn runtime gate remains rejected historical evidence.

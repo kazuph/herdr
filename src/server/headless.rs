@@ -491,7 +491,7 @@ impl HeadlessServer {
         // No input_rx needed — server doesn't read stdin.
         // We use None for input_rx so the event loop doesn't try to read from stdin.
         self.app.input_rx = None;
-        self.app.flush_msg_nudges_for_all_idle_agents();
+        self.app.flush_msg_nudges_for_all_available_agents();
 
         let mut needs_render = true;
         let mut needs_full_render = true;

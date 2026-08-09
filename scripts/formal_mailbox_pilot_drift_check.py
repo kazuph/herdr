@@ -19,9 +19,12 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 MAILBOX_SECTION = "herdr msg durable mailbox"
 CONTRACT_EVIDENCE = {
-    "G9-a78d994a68": {
-        "quint": (("formal/p428_mailbox_delivery.qnt", "startupAtMostOncePerLifetime"),),
-        "rust": ("reopened_app_with_same_stable_pane_id_delivers_regular_mail_once",),
+    "G9-f86e9d2db8": {
+        "quint": (("formal/p428_mailbox_immediate_steering.qnt", "availableQueueHasDeliveryEvent"),),
+        "rust": (
+            "reopened_app_with_same_stable_pane_id_delivers_regular_mail_once",
+            "startup_flush_submits_current_working_regular_mail_once",
+        ),
     },
     "G9-97e894730a": {
         "quint": (("formal/p428_mailbox_input_repaired.qnt", "noPartialPrompt"),),
@@ -30,19 +33,17 @@ CONTRACT_EVIDENCE = {
             "idle_direct_message_submits_its_exact_body_without_an_inbox_command",
         ),
     },
-    "G9-98418f84fb": {
-        "quint": (("formal/p428_mailbox_delivery.qnt", "noBusySecondPrompt"),),
+    "G9-6462664a8c": {
+        "quint": (("formal/p428_mailbox_immediate_steering.qnt", "workingSteeringIsImmediate"),),
         "rust": (
-            "working_then_idle_submits_regular_message_once",
-            "regular_message_batch_submits_every_body_in_creation_order",
+            "working_recipient_receives_regular_message_as_immediate_steering",
+            "working_send_submits_immediately_and_idle_does_not_duplicate",
         ),
     },
-    "G9-186325da28": {
-        "quint": (
-            ("formal/p428_mailbox_repaired.qnt", "bothDeliveredReachable"),
-        ),
+    "G9-cafbb89bc7": {
+        "quint": (("formal/p428_mailbox_immediate_steering.qnt", "workingSteeringIsImmediate"),),
         "rust": (
-            "idle_transition_submits_regular_messages_in_global_creation_order",
+            "working_recipient_receives_regular_message_as_immediate_steering",
             "idle_direct_message_submits_its_exact_body_without_an_inbox_command",
         ),
     },
@@ -53,23 +54,27 @@ CONTRACT_EVIDENCE = {
             "inbox_reads_pane_id_and_agent_name_recipients_for_the_same_pane",
         ),
     },
-    "G9-62309951e0": {
+    "G9-b23748e9e3": {
         "quint": (
-            ("formal/p428_mailbox_delivery.qnt", "noUnrelatedApiFlush"),
-            ("formal/p428_mailbox_repaired.qnt", "noUnrelatedApiFlush"),
+            ("formal/p428_mailbox_immediate_steering.qnt", "unrelatedApiDoesNotDeliver"),
         ),
         "rust": ("agent_and_pane_list_do_not_flush_queued_regular_messages",),
     },
-    "G9-eba86d3f7b": {
+    "G9-a3caf10402": {
         "quint": (
-            ("formal/p428_mailbox_delivery.qnt", "startupAtMostOncePerLifetime"),
-            ("formal/p428_mailbox_repaired.qnt", "noPresentationOnlyIdleFlush"),
+            ("formal/p428_mailbox_immediate_steering.qnt", "availableQueueHasDeliveryEvent"),
+            ("formal/p428_mailbox_immediate_steering.qnt", "presentationDoesNotDeliver"),
         ),
         "rust": (
-            "startup_flush_submits_current_regular_mail_once",
+            "startup_flush_submits_current_working_regular_mail_once",
             "idle_direct_message_submits_its_exact_body_without_an_inbox_command",
             "idle_transition_submits_regular_messages_in_global_creation_order",
             "unknown_then_idle_submits_queued_regular_message",
+            "blocked_message_submits_when_recipient_returns_to_working",
+            "repeated_working_report_retries_regular_message_after_runtime_is_ready",
+            "done_recipient_receives_regular_message_immediately",
+            "blocked_message_submits_when_recipient_transitions_to_done",
+            "presentation_only_working_update_does_not_flush_regular_messages",
         ),
     },
 }

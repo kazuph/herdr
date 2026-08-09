@@ -1,13 +1,28 @@
-# P428 mailbox translation review — current RED / repaired candidate GREEN
+# P428 mailbox translation review — immediate steering contract
 
 `npx @informalsystems/quint@0.32.0` runs these models.
-`p428_mailbox_delivery.qnt` is the historical pre-fix Rust model, so its SPEC
-properties are deliberately RED candidates; `p428_mailbox_repaired.qnt` is a
-candidate protocol model for a proposed runtime gate, not current production.
+`p428_mailbox_immediate_steering.qnt` is the approved current contract:
+Working recipients receive the full message as steering without waiting for
+Idle. `p428_mailbox_delivery.qnt` and `p428_mailbox_repaired.qnt` preserve the
+historical counterexample and the rejected wait-for-Idle candidate; they are no
+longer current production models.
+
+## Approved current mapping
+
+| User-visible rule | Quint action/property | Rust evidence |
+| --- | --- | --- |
+| Working receives the message at send time. | `sendAvailable → acceptAvailable`; `workingSteeringIsImmediate` | `working_recipient_receives_regular_message_as_immediate_steering` |
+| Idle also receives immediately. | The same available path with `status == Idle`. | `idle_direct_message_submits_its_exact_body_without_an_inbox_command` |
+| Blocked/Unknown retain the durable row instead of writing into another prompt. | `sendUnavailable`; `unavailableNeverAccepts` | `regular_message_batch_submits_every_body_in_creation_order`; `unknown_then_idle_submits_queued_regular_message` |
+| Idle/Working/Done transitions, including runtime-ready same-status reports, release a queued row without a global scan. Done is already available and does not wait for focus. | `becomeWorkingWithQueued` / `becomeIdleWithQueued` / `becomeDoneWithQueued` / `sameAvailableStatusReported`; `availableQueueHasDeliveryEvent` permits only a named delivery event or a named report retry after `submitFails`. | `blocked_message_submits_when_recipient_returns_to_working`; `unknown_then_idle_submits_queued_regular_message`; `repeated_working_report_retries_regular_message_after_runtime_is_ready`; `done_recipient_receives_regular_message_immediately`; `blocked_message_submits_when_recipient_transitions_to_done` |
+| Presentation and unrelated APIs do not invent delivery. | `presentationDoesNotDeliver`; `unrelatedApiDoesNotDeliver` | `presentation_only_idle_update_does_not_flush_regular_messages`; `presentation_only_working_update_does_not_flush_regular_messages`; `agent_and_pane_list_do_not_flush_queued_regular_messages` |
+| Startup includes Working recipients and preserves stable pN identity. | `restartAvailableWithQueued`; `availableQueueHasDeliveryEvent` | `startup_flush_submits_current_working_regular_mail_once`; `reopened_app_with_same_stable_pane_id_delivers_regular_mail_once` |
+
+## Historical discovery evidence
 
 | SPEC G9 / concern | Current Rust and current-model action | Status | Repaired candidate |
 | --- | --- | --- | --- |
-| Idle starts delivery; busy queues. | Historical pre-fix model first reaches an existing recipient Working observation, queues `sendFirst` and `sendSecond`, then uses `recipientBecomesIdle → observedWorkingToIdle → beginFromIdleTransition` to snapshot the two rows. Idle-origin sends are separate synchronous one-row API actions and cannot be coalesced across API calls. | The pre-read batch then does `acceptFirstWholePrompt → markFirstDeliveredRead → recipientStartsFirstTurn → acceptSecondWholePrompt`, accepting prompt two while App remains Idle and recipient is Working. `noBusySecondPrompt` / `onePromptPerTurn` are RED on that real queue-to-Idle path. | A named event creates one attempt and `accepted` permits one prompt only. This is a candidate-spec finding only; no one-turn runtime gate is in production without user approval. |
+| Idle starts delivery; busy queues. | Historical pre-fix model first reaches an existing recipient Working observation, queues `sendFirst` and `sendSecond`, then uses `recipientBecomesIdle → observedWorkingToIdle → beginFromIdleTransition` to snapshot the two rows. Idle-origin sends are separate synchronous one-row API actions and cannot be coalesced across API calls. | The pre-read batch then does `acceptFirstWholePrompt → markFirstDeliveredRead → recipientStartsFirstTurn → acceptSecondWholePrompt`, accepting prompt two while App remains Idle and recipient is Working. `noBusySecondPrompt` / `onePromptPerTurn` are RED on that real queue-to-Idle path. | This wait-for-Idle candidate was rejected after the user required message-arrival delivery; no one-turn runtime gate is in production. |
 | Channel acceptance is not turn start. | `accept*WholePrompt` is external channel acceptance; SQLite `mark*DeliveredRead` is a distinct synchronous action; `recipientStarts*Turn` is a later external action. | Current breaks `marksRequireBusyStartEvidence`: mark may precede process Working. This is expected RED, not an assertion about real terminal completion. | This remains a guarantee-impossible observation gap / contract decision, not a required GREEN invariant. |
 | Durable queued row can retry after side effect. | `acceptFirstWholePrompt → failFirstMark/crash → restart → beginFromStartup → acceptFirstWholePrompt` increments `firstAccepts` twice for one queued row. | Current breaks `noDuplicateTurn` RED. SQLite cannot atomically commit an external runtime write; exactly-once turn delivery is therefore not guaranteed. | Repair can constrain duplicate enqueue attempts, not prove exactly-once external consumption. |
 | Created order is preserved across normal-mail rooms. | Historical current immediate send reads `pending_messages_for_agent(&nudge.room, ...)`; `queueOlderRoomA → sendNewerRoomB → acceptSecondFromNudgedRoom` selects B without reading older A. | Current breaks `creationOrder` RED. `herdr-jobs` remains a deliberate room-grouped path. | Quint does not prove production ordering because First-before-Second is encoded in the candidate guard. The production evidence is the pN-wide ordered SQLite query and Rust cross-room regressions. |
@@ -39,13 +54,13 @@ human review responsibility.
 
 | G9 content ID | Quint property | Rust regression test |
 | --- | --- | --- |
-| `G9-a78d994a68` | `startupAtMostOncePerLifetime` | `reopened_app_with_same_stable_pane_id_delivers_regular_mail_once` |
+| `G9-f86e9d2db8` | `availableQueueHasDeliveryEvent` | `reopened_app_with_same_stable_pane_id_delivers_regular_mail_once`; `startup_flush_submits_current_working_regular_mail_once` |
 | `G9-97e894730a` | `noPartialPrompt` | `regular_message_delivery_submits_body_and_enter_atomically`; `idle_direct_message_submits_its_exact_body_without_an_inbox_command` |
-| `G9-98418f84fb` | `noBusySecondPrompt` (current RED; contract conflict) | `working_then_idle_submits_regular_message_once`; `regular_message_batch_submits_every_body_in_creation_order` |
-| `G9-186325da28` | `bothDeliveredReachable` | `idle_transition_submits_regular_messages_in_global_creation_order`; `idle_direct_message_submits_its_exact_body_without_an_inbox_command` |
+| `G9-6462664a8c` | `workingSteeringIsImmediate` | `working_recipient_receives_regular_message_as_immediate_steering`; `working_send_submits_immediately_and_idle_does_not_duplicate` |
+| `G9-cafbb89bc7` | `workingSteeringIsImmediate` | `working_recipient_receives_regular_message_as_immediate_steering`; `idle_direct_message_submits_its_exact_body_without_an_inbox_command` |
 | `G9-edb5ccfcdc` | `noAliasFallback` | `restarted_same_name_does_not_nudge_or_read_old_regular_mail`; `inbox_reads_pane_id_and_agent_name_recipients_for_the_same_pane` |
-| `G9-62309951e0` | `noUnrelatedApiFlush` | `agent_and_pane_list_do_not_flush_queued_regular_messages` |
-| `G9-eba86d3f7b` | `startupAtMostOncePerLifetime`; `noPresentationOnlyIdleFlush` | `startup_flush_submits_current_regular_mail_once`; `idle_direct_message_submits_its_exact_body_without_an_inbox_command`; `idle_transition_submits_regular_messages_in_global_creation_order`; `unknown_then_idle_submits_queued_regular_message` |
+| `G9-b23748e9e3` | `unrelatedApiDoesNotDeliver` | `agent_and_pane_list_do_not_flush_queued_regular_messages` |
+| `G9-a3caf10402` | `availableQueueHasDeliveryEvent`; `presentationDoesNotDeliver` | `startup_flush_submits_current_working_regular_mail_once`; `idle_direct_message_submits_its_exact_body_without_an_inbox_command`; `idle_transition_submits_regular_messages_in_global_creation_order`; `unknown_then_idle_submits_queued_regular_message`; `blocked_message_submits_when_recipient_returns_to_working`; `repeated_working_report_retries_regular_message_after_runtime_is_ready`; `done_recipient_receives_regular_message_immediately`; `blocked_message_submits_when_recipient_transitions_to_done`; `presentation_only_working_update_does_not_flush_regular_messages` |
 
 ## Non-vacuity and limits
 
@@ -61,11 +76,11 @@ model omits broadcasts, `herdr-jobs`, exact terminal parser behavior, SQLite
 error taxonomy, arbitrary rooms/rows, and detector timing. It cannot prove
 external exactly-once turn consumption.
 
-`G9-98418f84fb` is intentionally not reported GREEN: the acceptance condition
-forbids writing into a busy recipient, while the current behavior paragraph
-requires every queued body to be submitted in one Idle opportunity. The current
-model reaches the recipient-Working/App-Idle gap between two accepted bodies.
-Resolving that contradiction requires the user's explicit product decision.
+The historical `noBusySecondPrompt` RED exposed that waiting for Idle cannot
+decide whether a late message is still useful. The approved resolution changes
+the contract: delivery to Working is intentional steering, and the recipient
+agent decides whether to change its current work. The one-prompt-per-Idle-turn
+candidate remains historical evidence only.
 
 Created/id ordering is traced separately against the G9 normal-mail behavior,
 not against an acceptance-condition content ID. The candidate model's
@@ -79,7 +94,7 @@ the exact-string Rust test above.
 ## Query-path boundary
 
 For a normal `handle_msg_send`, the code resolves the recipient, checks its
-Idle state, and calls `pending_messages_for_agent_in_creation_order(pN)` once
+Idle, Working, or Done state, and calls `pending_messages_for_agent_in_creation_order(pN)` once
 before submitting every returned normal row in created/id order. It does not
 call `pending_nudge_for` or a room-scoped pending-message query on that path.
 `herdr-jobs` alone uses

@@ -89,7 +89,7 @@ impl App {
         Ok(ResponseResult::MsgRooms { rooms })
     }
 
-    pub(super) fn flush_msg_nudges_for_idle_pane(
+    pub(super) fn flush_msg_nudges_for_available_pane(
         &mut self,
         ws_idx: usize,
         pane_id: crate::layout::PaneId,
@@ -97,24 +97,24 @@ impl App {
         let Some(agent) = self.agent_info(ws_idx, pane_id) else {
             return;
         };
-        if agent.agent_status != AgentStatus::Idle {
+        if !regular_mail_can_submit(agent.agent_status) {
             return;
         }
-        self.flush_msg_nudges_for_idle_agent(&agent);
+        self.flush_msg_nudges_for_available_agent(&agent);
     }
 
-    pub(crate) fn flush_msg_nudges_for_all_idle_agents(&mut self) {
+    pub(crate) fn flush_msg_nudges_for_all_available_agents(&mut self) {
         let agents = self.collect_agent_infos();
         for agent in agents {
-            if agent.agent_status != AgentStatus::Idle {
+            if !regular_mail_can_submit(agent.agent_status) {
                 continue;
             }
-            self.flush_msg_nudges_for_idle_agent(&agent);
+            self.flush_msg_nudges_for_available_agent(&agent);
         }
     }
 
-    fn flush_msg_nudges_for_idle_agent(&mut self, agent: &AgentInfo) {
-        if let Err(err) = self.flush_regular_messages_for_idle_agent(agent) {
+    fn flush_msg_nudges_for_available_agent(&mut self, agent: &AgentInfo) {
+        if let Err(err) = self.flush_regular_messages_for_available_agent(agent) {
             tracing::warn!(
                 recipient = %agent.global_pane_id,
                 err = %err.message,
@@ -133,7 +133,7 @@ impl App {
         }
     }
 
-    fn flush_regular_messages_for_idle_agent(
+    fn flush_regular_messages_for_available_agent(
         &mut self,
         agent: &AgentInfo,
     ) -> Result<bool, ErrorBody> {
@@ -161,10 +161,10 @@ impl App {
         let Some(agent) = self.agent_info(resolved.ws_idx, resolved.pane_id) else {
             return Ok(false);
         };
-        if agent.agent_status != AgentStatus::Idle {
+        if !regular_mail_can_submit(agent.agent_status) {
             return Ok(false);
         }
-        self.flush_regular_messages_for_idle_agent(&agent)
+        self.flush_regular_messages_for_available_agent(&agent)
     }
 
     fn flush_job_msg_nudges_for_agent(&mut self, to_agent: &str) -> Result<(), ErrorBody> {
@@ -396,6 +396,13 @@ fn is_global_pane_id(value: &str) -> bool {
         .strip_prefix('p')
         .and_then(|number| number.parse::<u32>().ok())
         .is_some_and(|raw| raw > 0 && value == format!("p{raw}"))
+}
+
+fn regular_mail_can_submit(status: AgentStatus) -> bool {
+    matches!(
+        status,
+        AgentStatus::Idle | AgentStatus::Working | AgentStatus::Done
+    )
 }
 
 fn open_msg_store() -> Result<crate::msg::MsgStore, ErrorBody> {
@@ -705,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn broadcast_persists_for_recipients_without_automatic_pane_injection() {
+    fn broadcast_submits_immediately_to_working_recipients() {
         with_msg_api_harness(&["alpha", "beta", "gamma"], |harness| {
             let nudged = harness.send("alpha", "*", "broadcast", "hello everyone");
             let expected_recipients = [
@@ -725,9 +732,16 @@ mod tests {
                     .collect::<Vec<_>>()
             );
             assert!(messages.iter().all(|message| message.from_agent == "alpha"));
-            assert!(nudged.is_empty());
-            assert!(harness.received_texts("beta").is_empty());
-            assert!(harness.received_texts("gamma").is_empty());
+            assert_eq!(nudged, expected_recipients);
+            assert_eq!(
+                harness.received_texts("beta"),
+                vec!["hello everyone\r".to_string()]
+            );
+            assert_eq!(
+                harness.received_texts("gamma"),
+                vec!["hello everyone\r".to_string()]
+            );
+            assert!(messages.iter().all(|message| message.read_at.is_some()));
         });
 
         with_msg_api_harness(&["alpha"], |harness| {
@@ -964,6 +978,46 @@ mod tests {
     }
 
     #[test]
+    fn presentation_only_working_update_does_not_flush_regular_messages() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            let room = "presentation-only-working";
+            let pane_id = harness.agents.get("beta").unwrap().pane_id;
+            let recipient = harness.global_pane_id("beta");
+            harness.insert_queued_message(room, &recipient, "must stay queued");
+
+            harness
+                .app
+                .emit_pane_state_update(&crate::app::actions::PaneStateUpdate {
+                    pane_id,
+                    ws_idx: 0,
+                    previous_agent_label: Some("beta".into()),
+                    previous_known_agent: None,
+                    previous_state: crate::detect::AgentState::Working,
+                    previous_seen: true,
+                    previous_presentation: crate::terminal::EffectivePresentation {
+                        title: None,
+                        display_agent: None,
+                        state_labels: HashMap::new(),
+                    },
+                    agent_label: Some("beta".into()),
+                    known_agent: None,
+                    state: crate::detect::AgentState::Working,
+                    seen: true,
+                    presentation: crate::terminal::EffectivePresentation {
+                        title: Some("presentation changed".into()),
+                        display_agent: None,
+                        state_labels: HashMap::new(),
+                    },
+                });
+
+            assert!(harness.received_texts("beta").is_empty());
+            let messages = harness.history(room);
+            assert_eq!(messages.len(), 1);
+            assert!(messages[0].delivered_at.is_none());
+        });
+    }
+
+    #[test]
     fn regular_message_delivery_submits_body_and_enter_atomically() {
         with_msg_api_harness_with_channel_capacity(&["alpha", "beta"], 1, |harness| {
             harness.report_state("beta", PaneAgentState::Idle);
@@ -1053,7 +1107,7 @@ mod tests {
             let db_path = harness.db_path.clone();
             let mut restarted = MsgApiHarness::new(&["alpha", "renamed-caller"], db_path, 16);
             restarted.report_state("renamed-caller", PaneAgentState::Idle);
-            restarted.app.flush_msg_nudges_for_all_idle_agents();
+            restarted.app.flush_msg_nudges_for_all_available_agents();
 
             assert_eq!(
                 restarted.received_texts("renamed-caller"),
@@ -1067,20 +1121,13 @@ mod tests {
     }
 
     #[test]
-    fn working_then_idle_submits_regular_message_once() {
+    fn working_send_submits_immediately_and_idle_does_not_duplicate() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
             harness.report_state("beta", PaneAgentState::Working);
             let pane_id = harness.global_pane_id("beta");
             let nudged = harness.send("alpha", &pane_id, "status-flush", "one");
 
-            assert!(nudged.is_empty());
-            assert!(harness.received_texts("beta").is_empty());
-            let queued = harness.history("status-flush");
-            assert_eq!(queued.len(), 1);
-            assert!(queued[0].delivered_at.is_none());
-
-            harness.report_state("beta", PaneAgentState::Idle);
-
+            assert_eq!(nudged, vec![pane_id]);
             assert_eq!(harness.received_texts("beta"), vec!["one\r".to_string()]);
             let messages = harness.history("status-flush");
             assert_eq!(messages.len(), 1);
@@ -1089,7 +1136,6 @@ mod tests {
                 .all(|message| message.delivered_at.is_some()));
             assert!(messages.iter().all(|message| message.read_at.is_some()));
 
-            harness.report_state("beta", PaneAgentState::Working);
             harness.report_state("beta", PaneAgentState::Idle);
 
             assert!(harness.received_texts("beta").is_empty());
@@ -1098,11 +1144,30 @@ mod tests {
     }
 
     #[test]
+    fn working_recipient_receives_regular_message_as_immediate_steering() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Working);
+            let pane_id = harness.global_pane_id("beta");
+
+            let nudged = harness.send("alpha", &pane_id, "working-steering", "tell me now");
+
+            assert_eq!(nudged, vec![pane_id]);
+            assert_eq!(
+                harness.received_texts("beta"),
+                vec!["tell me now\r".to_string()]
+            );
+            assert!(harness.history("working-steering")[0].read_at.is_some());
+        });
+    }
+
+    #[test]
     fn unknown_then_idle_submits_queued_regular_message() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
             harness.report_state("beta", PaneAgentState::Unknown);
             let pane_id = harness.global_pane_id("beta");
-            harness.insert_queued_message("unknown-to-idle", &pane_id, "queued");
+            let nudged = harness.send("alpha", &pane_id, "unknown-to-idle", "queued");
+            assert!(nudged.is_empty());
+            assert!(harness.received_texts("beta").is_empty());
 
             harness.report_state("beta", PaneAgentState::Idle);
 
@@ -1112,19 +1177,115 @@ mod tests {
     }
 
     #[test]
+    fn blocked_message_submits_when_recipient_returns_to_working() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Blocked);
+            let pane_id = harness.global_pane_id("beta");
+
+            let nudged = harness.send("alpha", &pane_id, "blocked-to-working", "continue now");
+            assert!(nudged.is_empty());
+            assert!(harness.received_texts("beta").is_empty());
+
+            harness.report_state("beta", PaneAgentState::Working);
+
+            assert_eq!(
+                harness.received_texts("beta"),
+                vec!["continue now\r".to_string()]
+            );
+            assert!(harness.history("blocked-to-working")[0].read_at.is_some());
+        });
+    }
+
+    #[test]
+    fn repeated_working_report_retries_regular_message_after_runtime_is_ready() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            let room = "runtime-ready";
+            let pane_id = harness.global_pane_id("beta");
+            harness.insert_queued_message(room, &pane_id, "runtime is ready");
+
+            harness.report_state("beta", PaneAgentState::Working);
+
+            assert_eq!(
+                harness.received_texts("beta"),
+                vec!["runtime is ready\r".to_string()]
+            );
+            assert!(harness.history(room)[0].read_at.is_some());
+        });
+    }
+
+    #[test]
+    fn done_recipient_receives_regular_message_immediately() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Idle);
+            let room = "done-immediate";
+            let beta_internal_pane_id = harness.agents.get("beta").unwrap().pane_id;
+            let beta_recipient = harness.global_pane_id("beta");
+            harness.app.state.workspaces[0].tabs[0]
+                .panes
+                .get_mut(&beta_internal_pane_id)
+                .unwrap()
+                .seen = false;
+
+            let nudged = harness.send("alpha", &beta_recipient, room, "new turn now");
+
+            assert_eq!(nudged, vec![beta_recipient]);
+            assert_eq!(
+                harness.received_texts("beta"),
+                vec!["new turn now\r".to_string()]
+            );
+            let messages = harness.history(room);
+            assert_eq!(messages.len(), 1);
+            assert!(messages[0].read_at.is_some());
+        });
+    }
+
+    #[test]
+    fn blocked_message_submits_when_recipient_transitions_to_done() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Blocked);
+            let room = "blocked-to-done";
+            let internal_pane_id = harness.agents.get("beta").unwrap().pane_id;
+            let recipient = harness.global_pane_id("beta");
+            let nudged = harness.send("alpha", &recipient, room, "new turn from done");
+            assert!(nudged.is_empty());
+            harness.app.state.workspaces[0].tabs[0]
+                .panes
+                .get_mut(&internal_pane_id)
+                .unwrap()
+                .seen = false;
+            harness.app.state.outer_terminal_focus = Some(false);
+
+            harness.report_state("beta", PaneAgentState::Idle);
+
+            assert_eq!(
+                harness
+                    .app
+                    .agent_info(0, internal_pane_id)
+                    .unwrap()
+                    .agent_status,
+                AgentStatus::Done
+            );
+            assert_eq!(
+                harness.received_texts("beta"),
+                vec!["new turn from done\r".to_string()]
+            );
+            assert!(harness.history(room)[0].read_at.is_some());
+        });
+    }
+
+    #[test]
     fn restarted_same_name_does_not_nudge_or_read_old_regular_mail() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
-            harness.report_state("beta", PaneAgentState::Working);
             let room = "restart-flush";
             let old_pane_id = harness.global_pane_id("beta");
-            harness.send("alpha", &old_pane_id, room, "old pane");
+            harness.insert_queued_message(room, &old_pane_id, "old pane");
             harness.insert_queued_message(room, "beta", "old name");
 
             let db_path = harness.db_path.clone();
             let mut restarted = MsgApiHarness::new(&["alpha", "beta"], db_path, 16);
             assert_ne!(restarted.global_pane_id("beta"), old_pane_id);
             restarted.report_state("beta", PaneAgentState::Idle);
-            restarted.app.flush_msg_nudges_for_all_idle_agents();
+            restarted.app.flush_msg_nudges_for_all_available_agents();
 
             assert!(restarted.received_texts("beta").is_empty());
             assert!(restarted.inbox("beta", room).is_empty());
@@ -1138,14 +1299,13 @@ mod tests {
     }
 
     #[test]
-    fn startup_flush_submits_current_regular_mail_once() {
+    fn startup_flush_submits_current_working_regular_mail_once() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
             let room = "startup-flush";
             let pane_id = harness.global_pane_id("beta");
-            harness.report_state("beta", PaneAgentState::Idle);
             harness.insert_queued_message(room, &pane_id, "one");
 
-            harness.app.flush_msg_nudges_for_all_idle_agents();
+            harness.app.flush_msg_nudges_for_all_available_agents();
 
             assert_eq!(harness.received_texts("beta"), vec!["one\r".to_string()]);
             let reopened = crate::msg::MsgStore::open_at(harness.db_path.clone()).unwrap();
@@ -1154,7 +1314,7 @@ mod tests {
                 .unwrap()
                 .is_empty());
             assert!(harness.history(room)[0].read_at.is_some());
-            harness.app.flush_msg_nudges_for_all_idle_agents();
+            harness.app.flush_msg_nudges_for_all_available_agents();
 
             assert!(harness.received_texts("beta").is_empty());
         });
@@ -1176,8 +1336,8 @@ mod tests {
                 Some(stable_pane_id),
             );
             assert_eq!(restarted.global_pane_id("beta"), recipient);
-            restarted.report_state("beta", PaneAgentState::Idle);
-            restarted.app.flush_msg_nudges_for_all_idle_agents();
+            restarted.report_state("beta", PaneAgentState::Working);
+            restarted.app.flush_msg_nudges_for_all_available_agents();
             assert_eq!(
                 restarted.received_texts("beta"),
                 vec!["persisted\r".to_string()]
@@ -1188,7 +1348,7 @@ mod tests {
                 MsgApiHarness::new_with_root_pane_id(&["beta"], db_path, 16, Some(stable_pane_id));
             assert_eq!(reopened.global_pane_id("beta"), recipient);
             reopened.report_state("beta", PaneAgentState::Idle);
-            reopened.app.flush_msg_nudges_for_all_idle_agents();
+            reopened.app.flush_msg_nudges_for_all_available_agents();
             assert!(reopened.received_texts("beta").is_empty());
         });
     }

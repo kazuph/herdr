@@ -1327,7 +1327,7 @@ impl App {
         id: String,
         params: PaneReportAgentParams,
     ) -> String {
-        let Some((_ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
         let Some(agent_label) = normalize_reported_agent_label(&params.agent) else {
@@ -1396,6 +1396,7 @@ impl App {
             message: params.message,
             seq: params.seq,
         });
+        self.flush_msg_nudges_for_available_pane(ws_idx, pane_id);
         if let (Some(source), Some(session_ref)) = (agent_session_source, agent_session_ref) {
             self.handle_internal_event(crate::events::AppEvent::AgentSessionReported {
                 pane_id,

@@ -622,10 +622,14 @@ impl App {
                     state_labels: presentation.state_labels,
                 },
             });
-            if agent_status == crate::api::schema::AgentStatus::Idle
-                && previous_agent_status != crate::api::schema::AgentStatus::Idle
+            if matches!(
+                agent_status,
+                crate::api::schema::AgentStatus::Idle
+                    | crate::api::schema::AgentStatus::Working
+                    | crate::api::schema::AgentStatus::Done
+            ) && previous_agent_status != agent_status
             {
-                self.flush_msg_nudges_for_idle_pane(update.ws_idx, update.pane_id);
+                self.flush_msg_nudges_for_available_pane(update.ws_idx, update.pane_id);
             }
         }
     }
