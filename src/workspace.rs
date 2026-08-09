@@ -1189,11 +1189,15 @@ pub(crate) struct TakenPane {
 #[cfg(test)]
 impl Workspace {
     pub(crate) fn test_new(name: &str) -> Self {
+        Self::test_new_with_root_pane_id(name, PaneId::alloc())
+    }
+
+    pub(crate) fn test_new_with_root_pane_id(name: &str, root_id: PaneId) -> Self {
         let (events, _) = mpsc::channel(64);
         let render_notify = Arc::new(Notify::new());
         let render_dirty = Arc::new(AtomicBool::new(false));
         let identity_cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
-        let (layout, root_id) = TileLayout::new();
+        let layout = TileLayout::new_with_root(root_id);
         let terminal_id = TerminalId::alloc();
         let mut panes = HashMap::new();
         panes.insert(root_id, PaneState::new(terminal_id));

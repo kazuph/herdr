@@ -622,7 +622,9 @@ impl App {
                     state_labels: presentation.state_labels,
                 },
             });
-            if agent_status == crate::api::schema::AgentStatus::Idle {
+            if agent_status == crate::api::schema::AgentStatus::Idle
+                && previous_agent_status != crate::api::schema::AgentStatus::Idle
+            {
                 self.flush_msg_nudges_for_idle_pane(update.ws_idx, update.pane_id);
             }
         }
