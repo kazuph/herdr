@@ -696,11 +696,20 @@ impl App {
     fn drain_internal_events_up_to(&mut self, limit: usize) -> bool {
         let mut had_event = false;
         for _ in 0..limit {
-            let Ok(ev) = self.event_rx.try_recv() else {
+            let mut drained = false;
+            if let Ok(completion) = self.mailbox_write_rx.try_recv() {
+                had_event = true;
+                drained = true;
+                self.handle_mailbox_write_finished(completion.message_id, completion.result);
+            }
+            if let Ok(ev) = self.event_rx.try_recv() {
+                had_event = true;
+                drained = true;
+                self.handle_internal_event_with_prefix_sync(ev);
+            }
+            if !drained {
                 break;
-            };
-            had_event = true;
-            self.handle_internal_event_with_prefix_sync(ev);
+            }
         }
         had_event
     }

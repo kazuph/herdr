@@ -268,6 +268,7 @@ impl DispatchStore {
         &self,
         room: &str,
         recipients: &[String],
+        excluded_ids: &std::collections::HashSet<i64>,
     ) -> rusqlite::Result<Vec<MessageRecord>> {
         if recipients.is_empty() {
             return Ok(Vec::new());
@@ -286,15 +287,36 @@ impl DispatchStore {
               AND ta.kind='agent'
               AND ta.name IN ({placeholders})
               AND d.status='queued'
+              {excluded}
             ORDER BY d.id ASC
             "#,
+            excluded = if excluded_ids.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " AND d.id NOT IN ({})",
+                    std::iter::repeat_n("?", excluded_ids.len())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
         );
         let values = std::iter::once(room.to_string())
             .chain(recipients.iter().cloned())
+            .chain(excluded_ids.iter().map(ToString::to_string))
             .collect::<Vec<_>>();
         let messages = self.select_messages(&sql, params_from_iter(values.iter()))?;
         if !messages.is_empty() {
-            self.mark_messages_delivered_for_recipients(room, recipients)?;
+            let placeholders = std::iter::repeat_n("?", messages.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "UPDATE dispatches SET delivered_at=COALESCE(delivered_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')), read_at=COALESCE(read_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')), status='delivered' WHERE id IN ({placeholders}) AND kind='message' AND status='queued' AND delivered_at IS NULL"
+            );
+            self.conn.execute(
+                &sql,
+                params_from_iter(messages.iter().map(|message| message.id)),
+            )?;
         }
         Ok(messages)
     }
@@ -482,41 +504,6 @@ impl DispatchStore {
             params![id],
         )?;
         Ok(changed == 1)
-    }
-
-    pub(crate) fn mark_messages_delivered_for_recipients(
-        &self,
-        room: &str,
-        recipients: &[String],
-    ) -> rusqlite::Result<usize> {
-        if recipients.is_empty() {
-            return Ok(0);
-        }
-        let placeholders = std::iter::repeat_n("?", recipients.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            r#"
-            UPDATE dispatches
-            SET delivered_at = COALESCE(delivered_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-                read_at = COALESCE(read_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-                status = 'delivered'
-            WHERE id IN (
-              SELECT d.id
-              FROM dispatches d
-              JOIN actors ta ON ta.id=d.to_actor
-              WHERE d.kind='message'
-                AND d.room=?
-                AND ta.kind='agent'
-                AND ta.name IN ({placeholders})
-                AND d.status='queued'
-            )
-            "#,
-        );
-        let values = std::iter::once(room.to_string())
-            .chain(recipients.iter().cloned())
-            .collect::<Vec<_>>();
-        self.conn.execute(&sql, params_from_iter(values.iter()))
     }
 
     pub(crate) fn command_rows(&self) -> rusqlite::Result<Vec<crate::job::JobRecord>> {

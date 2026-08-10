@@ -55,7 +55,7 @@ use tokio::sync::{mpsc, Notify};
 use tracing::info;
 
 use crate::config::Config;
-use crate::events::AppEvent;
+use crate::events::{AppEvent, MailboxWriteCompletion};
 
 pub use state::{AppState, Mode, ToastKind, ViewState};
 
@@ -98,6 +98,8 @@ pub struct App {
     pub(crate) terminal_runtimes: crate::terminal::TerminalRuntimeRegistry,
     pub event_tx: mpsc::Sender<AppEvent>,
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
+    pub(crate) mailbox_write_tx: mpsc::UnboundedSender<MailboxWriteCompletion>,
+    pub(crate) mailbox_write_rx: mpsc::UnboundedReceiver<MailboxWriteCompletion>,
     pub(crate) api_rx: tokio::sync::mpsc::UnboundedReceiver<crate::api::ApiRequestMessage>,
     pub(crate) event_hub: crate::api::EventHub,
     pub(crate) last_focus: Option<(usize, crate::layout::PaneId)>,
@@ -110,6 +112,7 @@ pub struct App {
     pub(crate) last_api_notification_at: Option<Instant>,
     pub(crate) last_git_remote_status_refresh: Instant,
     pub(crate) git_refresh_in_flight: bool,
+    pub(crate) regular_mail_in_flight: HashSet<i64>,
     pub(crate) git_refresh_due_after_in_flight: bool,
     pub(crate) git_status_cache: HashMap<std::path::PathBuf, crate::workspace::GitStatusCacheEntry>,
     pub(crate) pending_api_worktree_creates: HashMap<std::path::PathBuf, u64>,
@@ -157,6 +160,7 @@ pub(crate) const APP_EVENT_DRAIN_LIMIT: usize = 64;
 pub(crate) enum LoopEvent {
     Timer,
     Internal(AppEvent),
+    MailboxWrite(MailboxWriteCompletion),
     Api(Box<crate::api::ApiRequestMessage>),
     RawInput(crate::raw_input::RawInputEvent),
     InputClosed,
@@ -387,6 +391,7 @@ impl App {
         let (prefix_code, prefix_mods) = config.prefix_key();
         crate::kitty_graphics::set_enabled(config.experimental.kitty_graphics);
         let (event_tx, event_rx) = mpsc::channel::<AppEvent>(APP_EVENT_CHANNEL_CAPACITY);
+        let (mailbox_write_tx, mailbox_write_rx) = mpsc::unbounded_channel();
         let render_notify = Arc::new(Notify::new());
         let render_dirty = Arc::new(AtomicBool::new(false));
 
@@ -782,8 +787,11 @@ impl App {
             terminal_runtimes: restored_terminal_runtimes,
             event_tx,
             event_rx,
+            mailbox_write_tx,
+            mailbox_write_rx,
             last_git_remote_status_refresh: Instant::now() - GIT_REMOTE_STATUS_REFRESH_INTERVAL,
             git_refresh_in_flight: false,
+            regular_mail_in_flight: HashSet::new(),
             git_refresh_due_after_in_flight: false,
             git_status_cache: HashMap::new(),
             pending_api_worktree_creates: HashMap::new(),
@@ -1188,6 +1196,10 @@ impl App {
                         Some(ev) => LoopEvent::Internal(ev),
                         None => LoopEvent::Timer,
                     },
+                    maybe_completion = self.mailbox_write_rx.recv() => match maybe_completion {
+                        Some(completion) => LoopEvent::MailboxWrite(completion),
+                        None => LoopEvent::Timer,
+                    },
                     maybe_input = recv_raw_input_or_pending(input_rx) => match maybe_input {
                         Some(input) => LoopEvent::RawInput(input),
                         None => LoopEvent::InputClosed,
@@ -1202,6 +1214,9 @@ impl App {
                 LoopEvent::Internal(ev) => {
                     self.handle_internal_event_with_prefix_sync(ev);
                     needs_render = true;
+                }
+                LoopEvent::MailboxWrite(completion) => {
+                    self.handle_mailbox_write_finished(completion.message_id, completion.result);
                 }
                 LoopEvent::Api(msg) => {
                     if self.handle_api_request_message(*msg) {

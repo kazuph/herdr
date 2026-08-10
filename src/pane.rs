@@ -1230,6 +1230,33 @@ impl PaneRuntimeIo {
             PaneRuntimeIo::TestChannel { sender, .. } => sender.try_send(bytes),
         }
     }
+
+    fn try_write_mailbox_bytes(
+        &self,
+        bytes: Bytes,
+        completion: Box<dyn FnOnce(std::io::Result<()>) + Send>,
+    ) -> std::io::Result<()> {
+        match self {
+            PaneRuntimeIo::Actor(actor) => actor.try_write_mailbox_input(bytes, completion),
+            #[cfg(test)]
+            PaneRuntimeIo::TestChannel { sender, .. } => match sender.try_send(bytes) {
+                Ok(()) => {
+                    completion(Ok(()));
+                    Ok(())
+                }
+                Err(err) => {
+                    let kind = match err {
+                        mpsc::error::TrySendError::Full(_) => std::io::ErrorKind::WouldBlock,
+                        mpsc::error::TrySendError::Closed(_) => std::io::ErrorKind::BrokenPipe,
+                    };
+                    Err(std::io::Error::new(
+                        kind,
+                        "test terminal input channel is unavailable",
+                    ))
+                }
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2807,6 +2834,14 @@ impl PaneRuntime {
         self.io.try_send_bytes(bytes)
     }
 
+    pub fn try_write_mailbox_bytes(
+        &self,
+        bytes: Bytes,
+        completion: Box<dyn FnOnce(std::io::Result<()>) + Send>,
+    ) -> std::io::Result<()> {
+        self.io.try_write_mailbox_bytes(bytes, completion)
+    }
+
     pub async fn send_paste(&self, text: String) -> Result<(), mpsc::error::SendError<Bytes>> {
         self.send_bytes(self.paste_payload(text)).await
     }
@@ -2960,6 +2995,49 @@ impl PaneRuntime {
 impl PaneRuntime {
     pub(crate) fn test_with_channel(cols: u16, rows: u16) -> (Self, mpsc::Receiver<Bytes>) {
         Self::test_with_channel_and_scrollback_bytes(cols, rows, 0, &[], 4)
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn test_with_socket_pty_actor(
+        cols: u16,
+        rows: u16,
+    ) -> (Self, std::os::unix::net::UnixStream) {
+        let (actor_socket, peer) =
+            std::os::unix::net::UnixStream::pair().expect("test socket pair");
+        let master_fd: std::os::fd::OwnedFd = actor_socket.into();
+        let (response_tx, _response_rx) = mpsc::channel(1);
+        let terminal = crate::ghostty::Terminal::new(cols, rows, 0).expect("test terminal");
+        let terminal = Arc::new(PaneTerminal::new(
+            GhosttyPaneTerminal::new(terminal, response_tx).expect("test pane terminal"),
+        ));
+        let actor = PtyIoActor::spawn(PtyIoActorConfig {
+            pane_id: 0,
+            master_fd,
+            initially_quiesced: false,
+            on_read: Box::new(|_| PtyReadResult {
+                terminal_responses: Vec::new(),
+            }),
+            on_reader_exit: None,
+        })
+        .expect("closed PTY actor starts");
+
+        let runtime = Self {
+            pane_id: PaneId::from_raw(0),
+            terminal,
+            io: PaneRuntimeIo::Actor(actor),
+            current_size: Cell::new((rows, cols, 0, 0)),
+            child_pid: Arc::new(AtomicU32::new(0)),
+            reported_cwd: Arc::new(Mutex::new(None)),
+            child_wait_completed: None,
+            kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
+            detection_content_seq: Arc::new(AtomicU64::new(0)),
+            full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
+            detect_reset_notify: Arc::new(Notify::new()),
+            pending_release: Arc::new(Mutex::new(None)),
+            preserve_processes_on_drop: true,
+            detect_handle: Some(tokio::spawn(async {}).abort_handle()),
+        };
+        (runtime, peer)
     }
 
     pub(crate) fn test_with_channel_capacity(

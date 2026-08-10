@@ -37,7 +37,7 @@ use bytes::Bytes;
 use crate::api;
 use crate::app;
 use crate::config;
-use crate::events::AppEvent;
+use crate::events::{AppEvent, MailboxWriteCompletion};
 use crate::ipc::{
     bind_local_listener, remove_socket_file_if_owned, socket_file_identity, LocalListener,
     SocketFileIdentity,
@@ -126,6 +126,7 @@ fn non_empty_body(value: &str) -> Option<String> {
 enum LoopEvent {
     Timer,
     Internal(AppEvent),
+    MailboxWrite(MailboxWriteCompletion),
     Api(Box<api::ApiRequestMessage>),
     ServerEvent(ServerEvent),
     RenderRequested,
@@ -680,6 +681,10 @@ impl HeadlessServer {
                         Some(ev) => LoopEvent::Internal(ev),
                         None => LoopEvent::Timer,
                     },
+                    maybe_completion = self.app.mailbox_write_rx.recv() => match maybe_completion {
+                        Some(completion) => LoopEvent::MailboxWrite(completion),
+                        None => LoopEvent::Timer,
+                    },
                     maybe_server_ev = self.server_event_rx.recv() => match maybe_server_ev {
                         Some(ev) => LoopEvent::ServerEvent(ev),
                         None => LoopEvent::Timer,
@@ -697,6 +702,10 @@ impl HeadlessServer {
                         needs_full_render = true;
                         needs_graphics_render = false;
                     }
+                }
+                LoopEvent::MailboxWrite(completion) => {
+                    self.app
+                        .handle_mailbox_write_finished(completion.message_id, completion.result);
                 }
                 LoopEvent::Api(msg) => {
                     if self.pane_graphics_runtime_active() {
@@ -2362,11 +2371,21 @@ impl HeadlessServer {
         let mut had_event = false;
         let mut changed = false;
         for _ in 0..limit {
-            let Ok(ev) = self.app.event_rx.try_recv() else {
+            let mut drained = false;
+            if let Ok(completion) = self.app.mailbox_write_rx.try_recv() {
+                had_event = true;
+                drained = true;
+                self.app
+                    .handle_mailbox_write_finished(completion.message_id, completion.result);
+            }
+            if let Ok(ev) = self.app.event_rx.try_recv() {
+                had_event = true;
+                drained = true;
+                changed |= self.handle_internal_event_with_forwarding(ev);
+            }
+            if !drained {
                 break;
-            };
-            had_event = true;
-            changed |= self.handle_internal_event_with_forwarding(ev);
+            }
         }
         (had_event, changed)
     }

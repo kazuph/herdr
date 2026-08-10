@@ -74,9 +74,10 @@ impl MsgStore {
         &mut self,
         room: &str,
         recipients: &[String],
+        excluded_ids: &std::collections::HashSet<i64>,
     ) -> rusqlite::Result<Vec<MsgMessage>> {
         self.store
-            .messages_for_inbox_recipients(room, recipients)
+            .messages_for_inbox_recipients(room, recipients, excluded_ids)
             .map(|messages| messages.into_iter().map(Into::into).collect())
     }
 
@@ -212,7 +213,7 @@ mod tests {
 
         let recipients = ["bob".to_string()];
         let unread = store
-            .unread_for_recipients(DEFAULT_ROOM, &recipients)
+            .unread_for_recipients(DEFAULT_ROOM, &recipients, &std::collections::HashSet::new())
             .unwrap();
         assert_eq!(
             unread
@@ -224,7 +225,7 @@ mod tests {
         assert!(unread.iter().all(|message| message.read_at.is_none()));
 
         let after = store
-            .unread_for_recipients(DEFAULT_ROOM, &recipients)
+            .unread_for_recipients(DEFAULT_ROOM, &recipients, &std::collections::HashSet::new())
             .unwrap();
         assert!(after.is_empty());
     }
@@ -413,7 +414,7 @@ mod tests {
         let mut reopened = MsgStore::open_at(path).unwrap();
         let recipients = ["bob".to_string()];
         assert!(reopened
-            .unread_for_recipients(JOBS_ROOM, &recipients)
+            .unread_for_recipients(JOBS_ROOM, &recipients, &std::collections::HashSet::new())
             .unwrap()
             .is_empty());
         let history = reopened.history(JOBS_ROOM, None, 10).unwrap();

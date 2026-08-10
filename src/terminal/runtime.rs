@@ -396,6 +396,14 @@ impl TerminalRuntime {
         self.0.try_send_bytes(bytes)
     }
 
+    pub fn try_write_mailbox_bytes(
+        &self,
+        bytes: Bytes,
+        completion: Box<dyn FnOnce(std::io::Result<()>) + Send>,
+    ) -> std::io::Result<()> {
+        self.0.try_write_mailbox_bytes(bytes, completion)
+    }
+
     pub async fn send_paste(&self, text: String) -> Result<(), mpsc::error::SendError<Bytes>> {
         self.0.send_paste(text).await
     }
@@ -471,6 +479,15 @@ impl TerminalRuntime {
     pub(crate) fn test_with_channel(cols: u16, rows: u16) -> (Self, mpsc::Receiver<Bytes>) {
         let (runtime, rx) = crate::pane::PaneRuntime::test_with_channel(cols, rows);
         (Self(runtime), rx)
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn test_with_socket_pty_actor(
+        cols: u16,
+        rows: u16,
+    ) -> (Self, std::os::unix::net::UnixStream) {
+        let (runtime, peer) = crate::pane::PaneRuntime::test_with_socket_pty_actor(cols, rows);
+        (Self(runtime), peer)
     }
 
     pub(crate) fn test_with_channel_capacity(

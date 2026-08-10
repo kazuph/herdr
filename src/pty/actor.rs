@@ -6,7 +6,7 @@ pub(crate) use unix::*;
 
 #[cfg(windows)]
 mod windows {
-    use std::io::{Read, Write};
+    use std::io::{self, Read, Write};
     use std::sync::{mpsc as std_mpsc, Arc, Mutex};
     use std::time::Duration;
 
@@ -21,6 +21,9 @@ mod windows {
 
     type ReadCallback = Box<dyn FnMut(&[u8]) -> PtyReadResult + Send + 'static>;
     type ReaderExitCallback = Box<dyn FnOnce() + Send + 'static>;
+    type MailboxCallback = Box<dyn FnOnce(io::Result<()>) + Send>;
+    type MailboxCompletion = Arc<Mutex<Option<MailboxCallback>>>;
+    type PendingMailboxCompletions = Arc<Mutex<Vec<MailboxCompletion>>>;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     struct PtyResize {
@@ -48,40 +51,115 @@ mod windows {
         Shutdown,
     }
 
+    enum PtyIoDataCommand {
+        WriteUserInput(Bytes),
+        WriteMailboxInput(Bytes, MailboxCompletion),
+    }
+
     #[derive(Clone)]
     pub(crate) struct PtyIoActorHandle {
-        data_tx: mpsc::Sender<Bytes>,
+        data_tx: mpsc::Sender<PtyIoDataCommand>,
         control_tx: std_mpsc::Sender<PtyIoControlCommand>,
         accepting: Arc<Mutex<bool>>,
+        pending_mailbox_completions: PendingMailboxCompletions,
     }
 
     impl PtyIoActorHandle {
+        pub(crate) fn try_write_mailbox_input(
+            &self,
+            bytes: Bytes,
+            completion: Box<dyn FnOnce(io::Result<()>) + Send>,
+        ) -> io::Result<()> {
+            let accepting = self
+                .accepting
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !*accepting {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "PTY actor is not accepting input",
+                ));
+            }
+            let completion = Arc::new(Mutex::new(Some(completion)));
+            self.pending_mailbox_completions
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(Arc::clone(&completion));
+            if let Err(err) = self.data_tx.try_send(PtyIoDataCommand::WriteMailboxInput(
+                bytes,
+                Arc::clone(&completion),
+            )) {
+                remove_pending_mailbox_completion(&self.pending_mailbox_completions, &completion);
+                return Err(match err {
+                    mpsc::error::TrySendError::Full(_) => {
+                        io::Error::new(io::ErrorKind::WouldBlock, "PTY actor input queue is full")
+                    }
+                    mpsc::error::TrySendError::Closed(_) => {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "PTY actor closed")
+                    }
+                });
+            }
+            Ok(())
+        }
+
         pub(crate) async fn write_user_input(
             &self,
             bytes: Bytes,
         ) -> Result<(), mpsc::error::SendError<Bytes>> {
-            if !*self
+            {
+                let accepting = self
+                    .accepting
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if !*accepting {
+                    return Err(mpsc::error::SendError(bytes));
+                }
+            }
+
+            let permit = match self.data_tx.reserve().await {
+                Ok(permit) => permit,
+                Err(_) => return Err(mpsc::error::SendError(bytes)),
+            };
+            let accepting = self
                 .accepting
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-            {
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !*accepting {
                 return Err(mpsc::error::SendError(bytes));
             }
-            self.data_tx.send(bytes).await
+            permit.send(PtyIoDataCommand::WriteUserInput(bytes));
+            Ok(())
         }
 
         pub(crate) fn try_write_user_input(
             &self,
             bytes: Bytes,
         ) -> Result<(), mpsc::error::TrySendError<Bytes>> {
-            if !*self
+            let accepting = self
                 .accepting
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-            {
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !*accepting {
                 return Err(mpsc::error::TrySendError::Closed(bytes));
             }
-            self.data_tx.try_send(bytes)
+            self.data_tx
+                .try_send(PtyIoDataCommand::WriteUserInput(bytes))
+                .map_err(|err| match err {
+                    mpsc::error::TrySendError::Full(PtyIoDataCommand::WriteUserInput(bytes)) => {
+                        mpsc::error::TrySendError::Full(bytes)
+                    }
+                    mpsc::error::TrySendError::Closed(PtyIoDataCommand::WriteUserInput(bytes)) => {
+                        mpsc::error::TrySendError::Closed(bytes)
+                    }
+                    mpsc::error::TrySendError::Full(PtyIoDataCommand::WriteMailboxInput(
+                        bytes,
+                        _,
+                    )) => mpsc::error::TrySendError::Full(bytes),
+                    mpsc::error::TrySendError::Closed(PtyIoDataCommand::WriteMailboxInput(
+                        bytes,
+                        _,
+                    )) => mpsc::error::TrySendError::Closed(bytes),
+                })
         }
 
         pub(crate) fn resize(
@@ -106,9 +184,7 @@ mod windows {
         }
 
         pub(crate) fn shutdown(&self) {
-            if let Ok(mut accepting) = self.accepting.lock() {
-                *accepting = false;
-            }
+            fail_windows_writer(&self.accepting, &self.pending_mailbox_completions);
             let _ = self.control_tx.send(PtyIoControlCommand::Shutdown);
         }
     }
@@ -132,16 +208,37 @@ mod windows {
                 .take_writer()
                 .map_err(|err| std::io::Error::other(err.to_string()))?;
             let writer = Arc::new(Mutex::new(writer));
-            let (data_tx, mut data_rx) = mpsc::channel::<Bytes>(1024);
+            let (data_tx, mut data_rx) = mpsc::channel::<PtyIoDataCommand>(1024);
             let (control_tx, control_rx) = std_mpsc::channel::<PtyIoControlCommand>();
             let accepting = Arc::new(Mutex::new(!initially_quiesced));
+            let pending_mailbox_completions = Arc::new(Mutex::new(Vec::new()));
 
             {
                 let writer = Arc::clone(&writer);
+                let accepting = Arc::clone(&accepting);
+                let pending_mailbox_completions = Arc::clone(&pending_mailbox_completions);
                 std::thread::spawn(move || {
-                    while let Some(bytes) = data_rx.blocking_recv() {
-                        if write_all_locked(&writer, &bytes).is_err() {
-                            break;
+                    while let Some(command) = data_rx.blocking_recv() {
+                        match command {
+                            PtyIoDataCommand::WriteUserInput(bytes) => {
+                                if write_all_locked(&writer, &bytes).is_err() {
+                                    fail_windows_writer(&accepting, &pending_mailbox_completions);
+                                    break;
+                                }
+                            }
+                            PtyIoDataCommand::WriteMailboxInput(bytes, completion) => {
+                                let result = write_all_locked(&writer, &bytes);
+                                let failed = result.is_err();
+                                finish_mailbox_write(
+                                    &pending_mailbox_completions,
+                                    &completion,
+                                    result,
+                                );
+                                if failed {
+                                    fail_windows_writer(&accepting, &pending_mailbox_completions);
+                                    break;
+                                }
+                            }
                         }
                     }
                     debug!(pane_id, "windows pty writer thread exiting");
@@ -150,6 +247,8 @@ mod windows {
 
             {
                 let writer = Arc::clone(&writer);
+                let accepting = Arc::clone(&accepting);
+                let pending_mailbox_completions = Arc::clone(&pending_mailbox_completions);
                 std::thread::spawn(move || {
                     let mut buf = [0u8; 8192];
                     loop {
@@ -169,6 +268,7 @@ mod windows {
                             }
                         }
                     }
+                    fail_windows_writer(&accepting, &pending_mailbox_completions);
                     if let Some(on_reader_exit) = on_reader_exit {
                         on_reader_exit();
                     }
@@ -208,6 +308,7 @@ mod windows {
                 data_tx,
                 control_tx,
                 accepting,
+                pending_mailbox_completions,
             })
         }
     }
@@ -223,8 +324,104 @@ mod windows {
         writer.flush()
     }
 
+    fn remove_pending_mailbox_completion(
+        pending: &PendingMailboxCompletions,
+        target: &MailboxCompletion,
+    ) {
+        pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|completion| !Arc::ptr_eq(completion, target));
+    }
+
+    fn finish_mailbox_write(
+        pending: &PendingMailboxCompletions,
+        target: &MailboxCompletion,
+        result: io::Result<()>,
+    ) {
+        let callback = {
+            let mut pending = pending
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            pending.retain(|completion| !Arc::ptr_eq(completion, target));
+            target
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+        };
+        if let Some(callback) = callback {
+            callback(result);
+        }
+    }
+
+    fn fail_windows_writer(accepting: &Arc<Mutex<bool>>, pending: &PendingMailboxCompletions) {
+        let mut accepting = accepting
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *accepting = false;
+        let callbacks = {
+            let mut pending = pending
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            pending
+                .drain(..)
+                .filter_map(|completion| {
+                    completion
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .take()
+                })
+                .collect::<Vec<_>>()
+        };
+        drop(accepting);
+        for callback in callbacks {
+            callback(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "windows PTY writer stopped before mailbox write completed",
+            )));
+        }
+    }
+
     #[allow(dead_code)]
     fn _assert_duration_send(_: Duration) {}
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn shutdown_fails_pending_mailbox_completion_once() {
+            let (data_tx, _data_rx) = mpsc::channel(1);
+            let (control_tx, control_rx) = std_mpsc::channel();
+            let accepting = Arc::new(Mutex::new(true));
+            let pending_mailbox_completions = Arc::new(Mutex::new(Vec::new()));
+            let (result_tx, result_rx) = std_mpsc::channel();
+            let completion = Arc::new(Mutex::new(Some(Box::new(move |result| {
+                let _ = result_tx.send(result);
+            }) as MailboxCallback)));
+            pending_mailbox_completions
+                .lock()
+                .expect("pending mailbox lock")
+                .push(Arc::clone(&completion));
+            let handle = PtyIoActorHandle {
+                data_tx,
+                control_tx,
+                accepting: Arc::clone(&accepting),
+                pending_mailbox_completions: Arc::clone(&pending_mailbox_completions),
+            };
+
+            handle.shutdown();
+            finish_mailbox_write(&pending_mailbox_completions, &completion, Ok(()));
+
+            assert!(result_rx.recv().expect("shutdown completion").is_err());
+            assert!(result_rx.try_recv().is_err());
+            assert!(!*accepting.lock().expect("accepting lock"));
+            assert!(matches!(
+                control_rx.recv().expect("shutdown command"),
+                PtyIoControlCommand::Shutdown
+            ));
+        }
+    }
 }
 
 #[cfg(windows)]

@@ -1420,6 +1420,7 @@
 - **挙動**:
   - `msg.send` / `msg.inbox` / `msg.history` / `msg.rooms` と対応CLIを提供し、messageはroom、project、sender、recipient、本文、created/delivered/read時刻を持つ。
   - direct sendとroom broadcastを扱い、通常mailはSQLiteへ保存した直後、recipientがIdleまたはDoneなら新しいturn、Workingなら現在の作業へのsteeringとして、全roomのqueued本文をcreated時刻・同時刻ならmessage ID順に、そのまま1本文ずつtext+Enterで直接submitする。Working中のmessageをIdleまで保留せず、処理順や作業変更の判断は全文を受け取ったagentへ委ねる。Blocked、Unknown、runtime不在ではqueueを維持し、次にIdle、Working、Doneのいずれかとして利用可能になった時に同じ順序でsubmitする。通常自動配送で`herdr msg inbox` commandを注入したり、受信側に本文の取得・要約・再解釈を要求したりしない。各本文のsubmit成功後にそのmessage IDだけを`delivered`・`read`へ遷移する。
+  - 通常mailのsubmit成功は、内部channelへの投入ではなく、本文とEnterの全byteをrecipientのPTY masterへ書き終えた時点とする。PTY完了は共有AppEventの容量を予約せず、mailbox専用eventでApp loopを待機させずに反映し、書き込み中のmessageは重複submitとmanual inbox取得から除外する。内部channelへ投入できてもPTY書き込みが失敗したmessageは`queued`を維持し、後続の利用可能eventで再試行する。
   - recipientは登録agent名でもglobal pane ID `pN`でも同一paneのmailboxを指す。serverはpaneに解決できるrecipientについて同一paneのrecipientエイリアス集合を使い、nudgeとinboxで同じqueued行を扱う。paneに解決できないrecipientは完全一致で扱い、`claude`や`codex`など個別paneを指さないagent種別名をrecipientエイリアス集合へ加えない。
   - 全利用可能agentの未読確認はserver起動時に1回だけ行う。message送信時はそのrecipient、agentがIdle、Working、Doneへ遷移した時、runtime復旧後にagentが同じ状態を再報告した時は、そのpaneのmailboxだけを確認し、無関係な通常API requestを全agent走査の起点にしない。
   - 通常mailはrecipientのactor IDとstatusのindexを使う1回のqueryで全roomをcreated時刻・message ID順に取得して直接配送する。`herdr-jobs`だけは既存のroom単位group配送を使う。agentごとに全roomを列挙してqueryしない。

@@ -1713,7 +1713,11 @@ mod tests {
 
         let mut store = crate::msg::MsgStore::open_at(db_path.clone()).unwrap();
         let messages = store
-            .unread_for_recipients(crate::msg::JOBS_ROOM, &["renamed-caller".into()])
+            .unread_for_recipients(
+                crate::msg::JOBS_ROOM,
+                &["renamed-caller".into()],
+                &std::collections::HashSet::new(),
+            )
             .unwrap();
         assert_eq!(messages.len(), 1);
         assert!(messages[0].body.contains("job=job-fallback"));

@@ -11,6 +11,34 @@ use crate::api::schema::{
 };
 
 impl App {
+    pub(crate) fn handle_mailbox_write_finished(
+        &mut self,
+        message_id: i64,
+        result: Result<(), String>,
+    ) {
+        if !self.regular_mail_in_flight.remove(&message_id) {
+            return;
+        }
+        if let Err(err) = result {
+            tracing::warn!(message_id, err, "mailbox PTY write failed");
+            return;
+        }
+        match open_msg_store().and_then(|store| {
+            store
+                .mark_message_delivered(message_id)
+                .map_err(msg_store_error)
+        }) {
+            Ok(true) => {}
+            Ok(false) => tracing::warn!(
+                message_id,
+                "mailbox write completed for a non-pending message"
+            ),
+            Err(err) => {
+                tracing::warn!(message_id, err = %err.message, "failed to record mailbox write completion")
+            }
+        }
+    }
+
     pub(super) fn handle_msg_send(
         &mut self,
         params: MsgSendParams,
@@ -66,7 +94,7 @@ impl App {
         let recipients = self.mailbox_recipient_aliases(&room, &to_agent);
         let mut store = open_msg_store()?;
         let messages = store
-            .unread_for_recipients(&room, &recipients)
+            .unread_for_recipients(&room, &recipients, &self.regular_mail_in_flight)
             .map_err(msg_store_error)?;
         Ok(ResponseResult::MsgInbox { messages })
     }
@@ -148,10 +176,17 @@ impl App {
         let Ok(resolved) = self.resolve_terminal_target(&agent.global_pane_id) else {
             return Ok(false);
         };
-        let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id) else {
-            return Ok(false);
+        let mut in_flight = std::mem::take(&mut self.regular_mail_in_flight);
+        let result = {
+            let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id)
+            else {
+                self.regular_mail_in_flight = in_flight;
+                return Ok(false);
+            };
+            deliver_regular_messages(&self.mailbox_write_tx, &mut in_flight, runtime, messages)
         };
-        deliver_regular_messages(runtime, messages)
+        self.regular_mail_in_flight = in_flight;
+        result
     }
 
     fn flush_regular_message_for_recipient(&mut self, to_agent: &str) -> Result<bool, ErrorBody> {
@@ -338,13 +373,24 @@ fn inject_text_and_enter(
 }
 
 fn inject_regular_message_and_enter(
+    completion_tx: &tokio::sync::mpsc::UnboundedSender<crate::events::MailboxWriteCompletion>,
     runtime: &crate::terminal::TerminalRuntime,
     message: &str,
+    message_id: i64,
 ) -> Result<(), ErrorBody> {
     let (mut input, enter) = encode_text_and_enter(runtime, message)?;
     input.extend(enter);
+    let completion_tx = completion_tx.clone();
     runtime
-        .try_send_bytes(Bytes::from(input))
+        .try_write_mailbox_bytes(
+            Bytes::from(input),
+            Box::new(move |result| {
+                let _ = completion_tx.send(crate::events::MailboxWriteCompletion {
+                    message_id,
+                    result: result.map_err(|err| err.to_string()),
+                });
+            }),
+        )
         .map_err(|err| ErrorBody {
             code: "msg_nudge_failed".into(),
             message: err.to_string(),
@@ -370,21 +416,22 @@ fn encode_text_and_enter(
 }
 
 fn deliver_regular_messages(
+    completion_tx: &tokio::sync::mpsc::UnboundedSender<crate::events::MailboxWriteCompletion>,
+    in_flight: &mut std::collections::HashSet<i64>,
     runtime: &crate::terminal::TerminalRuntime,
     messages: Vec<crate::api::schema::MsgMessage>,
 ) -> Result<bool, ErrorBody> {
     let mut delivered = false;
     for message in messages {
-        inject_regular_message_and_enter(runtime, &message.body)?;
-        let store = open_msg_store()?;
-        let marked = store
-            .mark_message_delivered(message.id)
-            .map_err(msg_store_error)?;
-        if !marked {
-            return Err(ErrorBody {
-                code: "msg_delivery_not_pending".into(),
-                message: format!("message {} was no longer pending after submit", message.id),
-            });
+        if in_flight.contains(&message.id) {
+            continue;
+        }
+        in_flight.insert(message.id);
+        if let Err(err) =
+            inject_regular_message_and_enter(completion_tx, runtime, &message.body, message.id)
+        {
+            in_flight.remove(&message.id);
+            return Err(err);
         }
         delivered = true;
     }
@@ -608,6 +655,7 @@ mod tests {
                 }),
             });
             success_result(&response);
+            self.drain_events();
         }
 
         fn send(&mut self, from_agent: &str, to: &str, room: &str, body: &str) -> Vec<String> {
@@ -623,6 +671,7 @@ mod tests {
                 }),
             });
             let result = success_result(&response);
+            self.drain_events();
             match result.result {
                 ResponseResult::MsgSend { messages, nudged } => {
                     assert_eq!(
@@ -680,6 +729,17 @@ mod tests {
                 .unwrap();
         }
 
+        #[cfg(unix)]
+        fn replace_runtime_with_socket_pty(
+            &mut self,
+            name: &str,
+        ) -> std::os::unix::net::UnixStream {
+            let pane_id = self.agents.get(name).expect("test agent").pane_id;
+            let (runtime, peer) = TerminalRuntime::test_with_socket_pty_actor(80, 24);
+            self.app.state.insert_test_runtime(pane_id, runtime);
+            peer
+        }
+
         fn received_texts(&mut self, name: &str) -> Vec<String> {
             let rx = &mut self.agents.get_mut(name).unwrap().rx;
             let mut texts = Vec::new();
@@ -687,6 +747,16 @@ mod tests {
                 texts.push(String::from_utf8_lossy(&bytes).into_owned());
             }
             texts
+        }
+
+        fn drain_events(&mut self) {
+            while let Ok(completion) = self.app.mailbox_write_rx.try_recv() {
+                self.app
+                    .handle_mailbox_write_finished(completion.message_id, completion.result);
+            }
+            while let Ok(event) = self.app.event_rx.try_recv() {
+                self.app.handle_internal_event(event);
+            }
         }
 
         fn public_pane_id(&self, name: &str) -> String {
@@ -1038,6 +1108,110 @@ mod tests {
     }
 
     #[test]
+    fn backpressured_regular_delivery_does_not_block_state_report_or_mark_second_message() {
+        with_msg_api_harness_with_channel_capacity(&["alpha", "beta"], 1, |harness| {
+            harness.report_state("beta", PaneAgentState::Blocked);
+            let pane_id = harness.global_pane_id("beta");
+            harness.insert_queued_message("backpressure", &pane_id, "first");
+            harness.insert_queued_message("backpressure", &pane_id, "second");
+            harness.report_state("beta", PaneAgentState::Idle);
+            assert_eq!(harness.received_texts("beta"), vec!["first\r".to_string()]);
+            let messages = harness.history("backpressure");
+            assert!(messages[0].delivered_at.is_some());
+            assert!(messages[1].delivered_at.is_none());
+        });
+    }
+
+    #[test]
+    fn full_shared_event_channel_does_not_block_mailbox_completion() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Idle);
+            let pane_id = harness.global_pane_id("beta");
+            while harness
+                .app
+                .event_tx
+                .try_send(crate::events::AppEvent::PrefixInputSource { active: false })
+                .is_ok()
+            {}
+            assert!(matches!(
+                harness
+                    .app
+                    .event_tx
+                    .try_send(crate::events::AppEvent::PrefixInputSource { active: false }),
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_))
+            ));
+
+            let nudged = harness.send("alpha", "beta", "event-capacity", "body");
+
+            assert_eq!(nudged, vec![pane_id]);
+            let message = harness.history("event-capacity").pop().unwrap();
+            assert!(message.delivered_at.is_some());
+            assert!(message.read_at.is_some());
+        });
+    }
+
+    #[test]
+    fn in_flight_regular_message_is_not_resubmitted_on_repeat_flush() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Blocked);
+            let pane_id = harness.global_pane_id("beta");
+            harness.insert_queued_message("in-flight-repeat", &pane_id, "hold");
+            let message_id = harness.history("in-flight-repeat")[0].id;
+            harness.app.regular_mail_in_flight.insert(message_id);
+            harness.report_state("beta", PaneAgentState::Idle);
+            harness.app.flush_msg_nudges_for_all_available_agents();
+            assert!(harness.received_texts("beta").is_empty());
+            assert!(harness.history("in-flight-repeat")[0]
+                .delivered_at
+                .is_none());
+        });
+    }
+
+    #[test]
+    fn inbox_excludes_in_flight_regular_message_without_marking_it_read() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            let pane_id = harness.global_pane_id("beta");
+            harness.insert_queued_message("in-flight-inbox", &pane_id, "hold");
+            let message_id = harness.history("in-flight-inbox")[0].id;
+            harness.app.regular_mail_in_flight.insert(message_id);
+            assert!(harness.inbox("beta", "in-flight-inbox").is_empty());
+            let message = harness.history("in-flight-inbox").pop().unwrap();
+            assert!(message.delivered_at.is_none());
+            assert!(message.read_at.is_none());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_pty_write_keeps_regular_message_queued() {
+        with_msg_api_harness(&["alpha", "beta"], |harness| {
+            harness.report_state("beta", PaneAgentState::Idle);
+            let pane_id = harness.global_pane_id("beta");
+            let peer = harness.replace_runtime_with_socket_pty("beta");
+
+            let body = "x".repeat(4 * 1024 * 1024);
+            let nudged = harness.send("alpha", "beta", "closed-pty", &body);
+            assert_eq!(nudged, vec![pane_id]);
+            drop(peer);
+            let completion = tokio::runtime::Handle::current()
+                .block_on(tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    harness.app.mailbox_write_rx.recv(),
+                ))
+                .expect("closed peer completion timeout")
+                .expect("closed peer completes the in-flight write");
+            harness
+                .app
+                .handle_mailbox_write_finished(completion.message_id, completion.result);
+
+            let messages = harness.history("closed-pty");
+            assert_eq!(messages.len(), 1);
+            assert!(messages[0].delivered_at.is_none());
+            assert!(messages[0].read_at.is_none());
+        });
+    }
+
+    #[test]
     fn idle_transition_submits_regular_messages_in_global_creation_order() {
         with_msg_api_harness(&["alpha", "beta"], |harness| {
             harness.report_state("beta", PaneAgentState::Blocked);
@@ -1306,6 +1480,7 @@ mod tests {
             harness.insert_queued_message(room, &pane_id, "one");
 
             harness.app.flush_msg_nudges_for_all_available_agents();
+            harness.drain_events();
 
             assert_eq!(harness.received_texts("beta"), vec!["one\r".to_string()]);
             let reopened = crate::msg::MsgStore::open_at(harness.db_path.clone()).unwrap();

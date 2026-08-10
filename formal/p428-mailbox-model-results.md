@@ -70,6 +70,17 @@ decision was discovered; they are not the current production model.
 | Current-before-fix `noPartialPrompt` | RED | `job-1786231732683-76555-273`; [atomic-current.itf.json](atomic-current.itf.json) reaches `BodyOnly`. |
 | Repaired `noPartialPrompt` | GREEN | `job-1786231740622-76555-274`. |
 
+## PTY write acknowledgement
+
+| Model property | Result | Evidence |
+| --- | --- | --- |
+| Model typecheck | GREEN | `job-1786336580794-84957-154`; Quint 0.32.0 accepted [p428_mailbox_write_ack.qnt](p428_mailbox_write_ack.qnt), including partial write, dedicated completion event, shared-event saturation, manual inbox, retry, and fatal actor states. |
+| Queue acceptance permits a false delivery mark | RED | `job-1786334525164-84957-64`; [current-write-ack.itf.json](current-write-ack.itf.json) reaches `Delivered` while the PTY write is still only `ActorQueued`. |
+| Synchronous completion wait blocks the App | RED | `job-1786334525156-84957-63`; [current-sync-block.itf.json](current-sync-block.itf.json) reaches `appBlocked=true` immediately after actor queue acceptance. |
+| Repaired delivery and failure state | GREEN | `job-1786336737925-84957-160` and `job-1786336737914-84957-159`; 200,000 traces up to 40 steps found no false-delivery or failed-write queue violation. |
+| Repaired event-driven safety | GREEN | `job-1786336737932-84957-161`, `job-1786336737943-84957-162`, and `job-1786336737960-84957-163`; App non-blocking, completion/in-flight correspondence, and at-most-one mark each held for 200,000 traces up to 40 steps. |
+| Mailbox completion does not reserve shared AppEvent capacity | GREEN | `job-1786336580802-84957-155`; the dedicated completion path held zero shared-event reservations for 200,000 traces up to 40 steps, including states where the shared channel was full. |
+
 ## Production regression evidence
 
 | Regression | Evidence |
@@ -78,14 +89,19 @@ decision was discovered; they are not the current production model.
 | Available recipient receives all queued normal bodies in global creation order | `regular_message_batch_submits_every_body_in_creation_order` and `idle_transition_submits_regular_messages_in_global_creation_order` preserve atomic body+Enter and global ordering; Working sends are covered by the immediate-steering tests. |
 | New App and reopened SQLite store for the same stable pN | `job-1786231132003-76555-207`: the reopened App resolves the original global pN, delivers the persisted row once, and a second reflush does not duplicate it. |
 | Ordinary list APIs and presentation-only updates | `agent_and_pane_list_do_not_flush_queued_regular_messages` and `presentation_only_idle_update_does_not_flush_regular_messages` cover the no-flush contracts without a per-request all-agent scan. |
+| PTY completion, shared-event saturation, and failed-write retry state | `job-1786336988980-84957-167`: 31/31 mailbox tests passed, including a full shared AppEvent channel and a real socket write that fails only after successful enqueue; the failed row remains queued and unread. |
+| Unix fatal write, stop race, and handoff lifecycle | `job-1786336988976-84957-166`: 18/18 actor tests passed after serializing the accepting check with enqueue, including deterministic peer-close completion and a fatal handoff write that stays `Released` and rejects rollback. |
+| Full native regression | `job-1786337119279-84957-173`: native clippy passed with warnings denied, 2,968/2,968 Rust tests passed, integration assets 2/2 passed, and plugin marketplace 12/12 passed. Maintenance contracts passed 87/87 in `job-1786337044799-84957-169`; fork docs passed in `job-1786337044803-84957-170`. |
+| Windows cross-lint environment | `job-1786336839766-84957-164` stopped in the bundled `libsqlite3-sys` C build before compiling Herdr's Windows source because the macOS cross toolchain cannot find `stdlib.h`; Windows-native compilation remains unverified in this environment. |
 
 ## Guarantee limits
 
-`try_send_bytes` acceptance and the recipient's actual turn start are separate
-boundaries. `marksRequireBusyStartEvidence` is therefore a useful current RED,
-but not a repaired GREEN contract. Likewise an external runtime write and the
-subsequent SQLite mark cannot be one atomic transaction: `noDuplicateTurn`
-remains a documented RED limit, not a falsely claimed exactly-once proof.
+PTY write completion and the recipient's actual turn start are separate
+boundaries. `marksRequireBusyStartEvidence` is therefore a useful observational
+RED, but not a repaired GREEN contract. Likewise a completed external runtime
+write and the subsequent SQLite mark cannot be one atomic transaction:
+`noDuplicateTurn` remains a documented at-least-once limit, not a falsely
+claimed exactly-once proof.
 
 The user resolved the historical contract conflict by requiring delivery at
 message arrival. Working delivery is now intentional steering: the recipient

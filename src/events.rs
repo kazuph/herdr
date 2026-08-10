@@ -158,3 +158,9 @@ pub enum AppEvent {
     /// Background `git worktree remove` completed.
     WorktreeRemoveFinished(Box<WorktreeRemoveResult>),
 }
+
+#[derive(Debug)]
+pub struct MailboxWriteCompletion {
+    pub message_id: i64,
+    pub result: Result<(), String>,
+}
