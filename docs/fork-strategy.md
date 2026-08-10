@@ -1,6 +1,12 @@
 # herdr fork 運用戦略（fork-strategy）
 
-このドキュメントは kazuph/herdr fork の公式運用戦略。本家 [ogulcancelik/herdr](https://github.com/ogulcancelik/herdr) との関係、fork独自機能の維持方針、植え替え（re-plant）計画を1本にまとめたもの。AI はこのドキュメントと `docs/SPEC.md`（Phase 1 で作成）を読めば、いつでも最新の本家から kazuph 好みの herdr を再構築できる状態を目指す。
+このドキュメントは kazuph/herdr fork の運用戦略と過去の判断記録。本家との現行差分・active contract・段階取込の正本はrootの `SPEC.md` とする。
+
+## 現行方針（2026-08-10、以下の植え替え計画を置換）
+
+現状forkを振る舞いの正本として維持し、本家を丸ごと受け入れてからfork機能を再実装する方式は採らない。本家機能は、`SPEC.md` のactive contractを取込前後で検証できる独立packetへ分割し、限定source採用・抽象概念の移植・競合変更の不採用を選ぶ。全量merge/rebase、re-plant、旧`pane run-notify`復活、retiredのvim mode復活は現行計画ではない。
+
+以下の2026-07-02植え替え計画、図、commit分類、plugin候補は歴史的監査資料であり、現行実装指示やactive受け入れ条件には使わない。
 
 ## 決定事項（2026-07-02 レビューで確定）
 

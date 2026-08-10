@@ -1,15 +1,15 @@
 # SPEC.md — kazuph/herdr fork 追加仕様カタログ
 
-このファイルは **kazuph/herdr fork が本家 (ogulcancelik/herdr) に対して追加・変更している仕様の正本**。
+このファイルは **現状の kazuph/herdr fork が持つ観測可能な挙動を保護し、本家 (herdrdev/herdr) の最新安定版との差分を管理する仕様の正本**。安定版の比較基準は、特に断りがない限り本家 `v0.8.0` とする。
 戦略・経緯・監査結果は `docs/fork-strategy.md` を参照。
 
 ## このファイルの使い方（AI向け）
 
-- **ゴール**: AIがこのSPECと最新のupstream/masterだけを材料に、「本家＋kazuph仕様」のherdrをいつでも再構築（植え替え）できる状態を保つこと。
+- **ゴール**: 現状forkを振る舞いの正本として固定し、本家の変更を独立した小さな取込packetごとに評価・検証して加える。本家を全量採用した後にfork機能を再実装する方式は採らない。本家 `upstream/master` の未リリース差分はG10のpreview欄で別管理する。
 - 各エントリは fork実装の内部構造ではなく**観測可能な挙動**（キー・メニュー文言・config key・表示・CLI）で書かれている。移植時は最新本家のAPI/構造に合わせて実装してよいが、**受け入れ条件とデグレ判定を満たすこと**が完了条件。
 - 新しいこだわり・機能を足すときは、**実装より先にこのSPECへエントリを追記**する。
 - エントリの正確さに疑問があれば、元コミット（fork master上のsha）を `git show` して確認する。
-- 各エントリの `status` は、upstream取り込み後の修復方針を示す。マージ時はstatusに従って本家採用範囲とfork保持差分を分離し、受け入れ条件で回帰を判定する。
+- 各エントリの `status` は、upstream変更を取込packetとして評価するときの採否方針を示す。取込前後で同じ受け入れ条件を実行し、active contractの観測結果が変わらないことを確認する。
 
 ## 分類の意味
 
@@ -22,19 +22,29 @@
 
 ### status の意味
 
-| status | 判定 | マージ後の扱い |
+| status | 判定 | upstream取込時の扱い |
 |---|---:|---|
-| 本家採用へ移行 | A | 重複するfork実装を捨てて本家実装を採用する。status行に明記したfork固有差分だけは保持する |
-| 本家基盤＋fork差分保持 | B | 本家の基盤・API・状態管理へ載せ替え、status行に明記した観測可能なfork差分を修復する |
-| fork独自・保持 | C | 本家に代替がないため、既存の受け入れ条件を満たす形で再実装・保持する |
-| 破棄 | 破棄 | ユーザー判断により本家取り込み後は再実装しない。経緯だけをSPECに残す |
+| 本家採用へ移行 | A | 本家実装を `source_accept` 候補にできる。ただし取込前後のactive contractが等価であることを先に証明し、等価でない場合は採用しない |
+| 本家基盤＋fork差分保持 | B | 本家の概念または限定sourceを `semantic_port` し、forkの既存所有境界と観測可能な挙動を維持する |
+| fork独自・保持 | C | 本家と競合する変更を `reject_hold` とし、現状forkの実装と受け入れ条件をそのまま保護する |
+| 破棄 | 破棄 | active contractから除外した歴史的仕様。経緯確認にだけ使い、復活・再実装しない |
 
 ## 全体運用ルール
 
 1. **fail-closed原則**: pane解決・session復元で、根拠（明示されたID・観測済みsession）がないとき推測・fallbackで成功させない。`--last`・cwd最新・focused pane推測は全面禁止
 2. **デグレ絶対禁止**: 移植・プラグイン化で現forkの使い心地から劣化する選択をしない。各エントリのデグレ判定が基準
 3. **本家へのPRをAIが自発的に作成・送信することを禁止**（詳細は `docs/fork-strategy.md`）
-4. 変更を完了扱いにする前に release binary を rebuild し `~/.local/bin/herdr` を差し替える（macOSは `just install-local` で署名込み）
+4. Rust/runtimeを変更した取込packetは、完了前にrelease binaryをrebuildし `~/.local/bin/herdr` を差し替えてlive検証する（macOSは `just install-local` で署名込み）。SPEC・形式モデル・inventoryだけの変更ではbinaryを差し替えない
+5. **競合解決の優先順**: 全G1〜G9のactive contractを同列の保護対象とし、その上でidentity/ownership、fail-closed、exact delivery、永続化の安全条件を、本家の便利なfallbackやUI置換より優先する。active contract同士が衝突した場合は実装へ進まず、正本・retired・supersededの選択をSPECで確定する
+6. **検証の分離**: Leanは有限決定・丸め、Alloyはidentity/ownership/一意性、Quintは順序・並行・retry・restart・cancel、Rust contract testは実装結線、live acceptanceはOS/PTY/UIを担当する。モデルに無い次元と未実施live項目は未検証のまま明記する
+
+## 形式検証・証拠台帳
+
+- `formal/spec-evidence-manifest.json` は全active contractを、検証次元、具体的なmodel/test/live経路、実装source anchor、未表現次元へ対応させる。active contractの追加・文言変更・retireでcontent IDが変わった時、欠落・未知ID・dead anchorをdrift errorにする。
+- `formal/ForkDecisionSpec.lean` は有限pane count、正のhalf-up cell丸め、invalid sidebar bound、packet dispositionを検査する。列挙外の画面寸法・無限pane数・浮動小数点誤差一般は証明範囲外とする。
+- `formal/fork-ownership.als` はglobal pane ID、pane generation付きledger、popup workspace ownerの構造的一意性を検査し、安全assertがUNSAT、複数workspace/pane/ledger/popup witnessがSATであることを必要とする。
+- `formal/fork-contract-lifecycle.qnt` と既存のmailbox Quint群は、PTY write ack、retry、restart、cancel、PaneDied、ledger cleanupを検査する。全invariantがGREENであることに加え、Delivered到達とrestorable pane保持の意図的RED witnessを残す。
+- 実行版、完全なcommand、scope、seed、assert/witness、未表現次元は `formal/formal-verification-results.json` に残す。形式モデルGREENはRust実装・実PTY・対象OS・配布物・human acceptanceを代替しない。
 
 ---
 
@@ -65,8 +75,8 @@
   - `Move to right split` は右クリックされた pane を focus して、既存の他 pane 群を左側に残し、対象 pane を root の右側 split に移動する。
   - `Move to upper split` は右クリックされた pane を focus して、既存の他 pane 群を下側に残し、対象 pane を root の上側 split に移動する。
   - `Move to lower split` は右クリックされた pane を focus して、既存の他 pane 群を上側に残し、対象 pane を root の下側 split に移動する。
-  - 対象 pane を root split へ移動するとき、対象 pane 以外の pane の相対順と内側レイアウトは維持する。対象 pane のサイズ比は全 pane 数を N として 1/N、残り pane 群は (N-1)/N。
-  - `Equalize pane sizes` は現在の split 方向を変えず、leaf pane 数に応じて各 split の比率を再計算し、表示面積を均等化する。
+  - 対象 pane を root split へ移動するとき、対象 pane 以外の pane の相対順と内側レイアウトは維持する。対象 pane のサイズ比は全 pane 数を N として 1/N、残り pane 群は (N-1)/N。cell数は対象軸長×root ratioをf32で計算し、正のちょうどx.5は大きい整数側へroundしてfirst側へ割り当て、second側が残余cellを所有する。
+  - `Equalize pane sizes` は現在のsplit treeと各split方向を変えず、各nodeのratioを`first subtreeのleaf数 / 両subtreeのleaf総数`へ再帰的に設定する。描画時は各nodeで正のx.5を大きい整数側へroundしてfirst subtreeへ割り当て、second subtreeが残余cellを受け取るため、割り切れない余りの所有順は既存treeのfirst/second構造で決まる。
   - zoom 中の pane 右クリックメニューは `Zoom` ではなく `Unzoom` を表示し、選択すると通常表示へ戻る。
   - どの右クリック操作も適用後は terminal mode に戻り、session は dirty になる。
 - **受け入れ条件**:
@@ -96,7 +106,7 @@
   - pane が 1 枚以下のときは何も変えない。
   - 2 paneではpreset巡回を行わず、一様な左右分割から上下分割へ、それ以外から左右分割へ切り替え、論理順とfocusを維持する（`bdbd3c1`）。
   - 3 pane以上の巡回順は、横一列 → 縦一列 → 均等2行grid → 左メイン + 右側 2 行グリッド → 右メイン + 左側 2 行グリッド → 上メイン + 下側横一列 → 下メイン + 上側横一列 → 横一列。
-  - 均等2行gridは上段を `ceil(N/2)`、下段を `floor(N/2)` とし、上下比率0.5、各段を横方向へ均等分割する（`f286ec9`, `b452173`）。メイン pane は保存された論理順の先頭 pane。メイン領域と残り領域の split 比率は 0.5。
+  - 均等2行gridは上段を整数の `N.div_ceil(2)`、下段を残りとし、上下比率0.5、各段を横方向へ均等分割する（`f286ec9`, `b452173`）。奇数cellの0.5 splitはfirst側をroundしたcell数、second側を残余cell数とする。メイン pane は保存された論理順の先頭 pane。メイン領域と残り領域の split 比率も同じ0.5丸め規則を使う。
   - 手動resizeや混合splitで既知presetに一致しないtreeは、次回cycleで論理順を維持した横一列へ正規化する（`634fc6e`, `b452173`）。
 - **受け入れ条件**:
   - 9 pane を横一列にして `Cycle pane layout` を 1 回実行すると縦一列になる。180x45 では先頭 pane が y=0 高さ 5、最後 pane が y=40 高さ 5 になる。
@@ -208,7 +218,7 @@
   - pane close後は論理順上の次pane、末尾なら直前paneへfocusし、親splitを畳んで空洞・重複なく全面reflowする。残存論理順を維持する（`f286ec9`）。
   - split境界のhit areaは左右splitなら境界列＋first側1列、上下splitなら境界行＋first側1行とし、second側の最初の本文cellへ侵入しない。drag ratioは0.1〜0.9へclampする（`f286ec9`）。
   - terminal領域のleft-downはaction bar → split境界 → pane scrollbar → pane title → pane本文の順で判定し、先頭の1操作だけを実行する（`8cb716c`, `80da299`）。
-  - pane本文は同じpane・同じcellを500ms以内に2回left-clickした時だけ、2回目の座標へpane menuを開く（`5b13801`）。
+  - pane本文のdouble left-clickは、copy-on-selectが有効な通常paneで、mouse-reporting applicationへ転送されない時に限り、同じpane・同じcellを500ms以内に2回clickし、2回目のbutton releaseまで完了した座標へpane menuを開く（`5b13801`）。
 - **デグレ判定**:
   - titleの幅基準が表示幅へ変わる、ellipsis/paddingが消える、または幅4以下でborder角を上書きする。
   - 極小paneでterminal領域がborderだけになる、single/zoomだけframe/gutter契約が変わる、またはscrollbar出現時にterminalがreflowする。
@@ -348,7 +358,7 @@
   - 確認ボタンには `↵` hint、cancelボタンには `esc` hintと `cancel` labelを表示する。
   - Enter/confirmで `Stop server` はserver quitを要求する。`Restart` はrestart要求とserver quitを両方立てる。`Restore agents...` はagent restore要求だけを立て、server quitはしない。
   - Esc/cancel、またはconfirm/cancel button外のクリックでは pending dangerous action を消して元のmodeへ戻る。
-  - agent restore実行後のtoastは title `agent restore`。contextは対象が無ければ `no pending agent sessions`、dry-run相当のwould launchがあれば `would launch <N>, skipped <N>`、実行時は `launched <N>, skipped <N>`。
+  - agent restore実行後のtoastは title `agent restore`。actionが0件なら実行中agent数に応じて `no pending restore` または `no pending restore, <N> already running`、dry-run相当のwould launchがあれば `would launch <N>, skipped <N>`、実行時は `launched <N>, skipped <N>`。
   - restart要求でserverがclientへshutdownを通知する時のreasonは `restart`。通常shutdownは `server is shutting down`。
 - **受け入れ条件**:
   - workspace list・agent panelの空白を右クリックまたはダブルクリックしてもcontext menuが開かず、footer `[menu]`からglobal menuを開ける。
@@ -482,7 +492,7 @@
   - inactive workspace card をクリックした場合は従来どおりその workspace に切り替える。
   - workspace panel の footer は左に `[menu]`、右に `[new]` を表示する。
   - footer `[new]` は section 未指定の通常 workspace を作成する。
-  - footer `[menu]` は global menu を開く。global menu の主な表示順は `New workspace`, `New tab`, `settings`, `keybinds`, `reload config`, `vim mode on/off`, `what's new` または `update ready`, `Restore agents...`, `detach`, `Stop server`, `Restart`。
+  - footer `[menu]` は global menu を開く。global menu の主な表示順は `new workspace`, `new tab`, `--`, `settings`, `keybinds`, `reload config`, `sidebar narrow`, `sidebar normal`, `sidebar wide`, `what's new` または `update ready`, `--`, `restore agents...`, `--`, `detach`, `--`, `stop server`, `restart`。retiredのvim mode項目は表示しない。
   - global menu に attention badge がある場合、footer `[menu]` の左に accent 色の `● ` を付ける。
   - workspace list や agents panel の空白部分を右クリックまたはダブルクリックしても、旧 sidebar blank context menu は開かない。
 - **受け入れ条件**:
@@ -510,17 +520,17 @@
   - 空の `⭐ favorites` / `💼 work` / `🏠 personal` section は、`[new]` を見せるためだけには表示しない。
   - section に workspace が 1 件以上ある場合、header 右端に underlined bold の `[new]` を表示する。クリックすると、その section に所属する新規 workspace 作成を要求する。
   - section header と配下 workspace card の間には 1 blank row を置く。workspace card の highlight と hit area は section header 幅と同じ full width を保つ。
-  - workspace context menu には section 割り当てとして `Favorite`, `Work`, `Personal`, `No section` を持たせ、section actions は separator の後ろにまとめる。
+  - workspace context menu には section 割り当てとして `⭐ favorite`, `💼 work`, `🏠 personal`, `No section` を持たせ、section actions は separator の後ろにまとめる。section headerの複数形labelとは用途を分ける。
   - agents panel footer 左端に幅プリセットボタンを表示する。button rect は幅 8、label は ` NARROW `、` NORMAL `、` WIDE `。
   - 幅プリセットボタンをクリックすると、現在幅が narrow 以下なら normal、normal 以下なら wide、それ以外なら narrow に切り替える。
-  - narrow 幅は `sidebar_min_width`、normal 幅は `default_sidebar_width` を min/max に clamp した値、wide 幅は `ceil(sidebar_max_width * 2 / 3)` と `normal + 1` の大きい方を min/max に clamp した値にする。
+  - narrow 幅は `sidebar_min_width`、normal 幅は `default_sidebar_width` をmin/maxにclampした値、wide 幅は `sidebar_max_width` にする。`sidebar_min_width > sidebar_max_width`はinvalid configとしてdiagnosticを出し、runtimeでは組込みbound `(18, 72)`へ戻してpanicを防ぐ。
 - **受け入れ条件**:
   - favorite と work の workspace がある場合、`⭐ favorites` header が `💼 work` header より上に出る。
   - work section に workspace がある場合、work header の右端 `[new]` click で requested section が Work になる。
   - section header幅6列以上では右端5列を`[new]`の表示とhit areaに使い、`[new]` clickはheader全体のcollapse/expand判定より先に処理する。幅5列以下では表示もhit areaも作らない。
   - personal section に workspace が無い場合、personal header は表示されない。
   - collapsed section の workspace card は表示されず、その section の agents も agents panel から消える。
-  - `sidebar_min_width = 18`, `default_sidebar_width = 26`, `sidebar_max_width = 36`, 現在幅 26 の時、幅プリセット click は 27、次に 18、次に 26 へ遷移する。
+  - `sidebar_min_width = 18`, `default_sidebar_width = 26`, `sidebar_max_width = 36`, 現在幅 26 の時、幅プリセット click は 36、次に18、次に26へ遷移する。
 - **実装方針**: 本家に workspace metadata や section/collapse 相当がある場合はその state に乗せる。足りない場合は workspace に section 属性、collapsed section set、section header hit area、新規 workspace 作成時の target section、sidebar width preset state を追加する。
 - **デグレ判定**:
   - section 順序が favorites/work/personal/spaces 以外になる。
@@ -555,7 +565,7 @@
   - `Copied N lines` が sidebar 最下行以外に出る、または消えずに残る。
 
 ### sidebar・mobile・dragの微細契約
-- **元コミット**: a31d120, 4c9cc42, 845a538, 6b5e3ac, a1dedf2, 54e57e0, 6c0cf33, 142cc7d, 249b743, d5a853a, 5b13801
+- **元コミット**: a31d120, 4c9cc42, 845a538, 6b5e3ac, a1dedf2, 54e57e0, 6c0cf33, 142cc7d, 249b743, d5a853a, 5b13801, fd532c8, 8937a6b, 5ff4d86
 - **分類**: CORE-UI
 - **status: fork独自・保持 (C)** — section、workspace/agent row、footer、mobile switcherとdrag/releaseの細かな表示・hit-test契約を保持する。
 - **受け入れ条件**:
@@ -565,7 +575,7 @@
   - collapsed section内workspaceをscrollbarのtotal/offsetから除外し、各表示section headerはheader1行＋blank1行の2行をviewportで消費する（`6b5e3ac`）。
   - copy statusはsidebar最下行左側`width - 1`列で幅presetより前面に出し、収まらなければ末尾`…`、幅1以下または高さ0では描画しない。右端1列は上書きしない（`a1dedf2`）。
   - agents footer左端8列に幅preset buttonをaccent色の太字＋下線で置く。幅8列未満では描画/hit areaとも無効にし、agent row/scrollbarはfooter最下行へ侵入しない（`845a538`, `54e57e0`）。
-  - agent primary labelはglobal pane ID`%N`と周辺4列を先に予約する。`workspace · tab`はseparatorを保ち、十分な幅ではtabへ最低4文字、残りのおよそ2/3をworkspaceへ割り当て、余りを相互に戻す（`6c0cf33`）。
+  - agent rowはstate iconやglobal pane ID等の固定tokenとseparator幅を先に予約する。workspace/tab等の可変tokenは各1 display cellを最低budgetとして、設定行の左から右へ1 cellずつround-robinで増やし、各tokenのdisplay widthへ達したtokenは以後増やさない。最小幅にも入らない時は可変tokenを一旦全て外し、右端側から収まるtokenだけを戻す。`workspace · tab`のseparatorは両tokenが表示される時だけ保持する（`6c0cf33`）。
   - mobile section headerはexpanded`▾ <label>`、collapsed`▸ <label>`を`overlay0`・`panel_bg`・太字で1行表示し、直後に空行1行を置く。tap対象はheader行だけ（`d5a853a`）。
   - mobile workspace 1行目は2列indent後にstatus、1-based番号、workspace名を置き、番号を`overlay0`太字、名前を`text`太字にする。名前は固定領域を除いた残幅で末尾`…`にする（`d5a853a`）。
   - mobile workspace 2行目は4列indent後にupstream labels → diff labels → branchの順で置き、labelsを先に確保してbranchだけを省略する。branchなしは`shell`、activeは`mauve`、inactiveは`overlay0`（`d5a853a`）。
@@ -579,10 +589,34 @@
   - mobile headerの矢印/空行/tap範囲が変わる、番号が0-based/非表示になる、git labelsがbranchより先に消える。
   - drag後にmenuが併発する、1 cell移動後もclick扱いになる、またはdivider double clickがpreset cycle/dragとして残る。
 
+### workspace ownerにスコープされたpopup terminal
+- **元コミット**: 6b913e4; 本家基盤 `2c7c8be`
+- **分類**: CORE-UI
+- **status: 本家基盤＋fork差分保持 (B)** — 本家のpopup terminal基盤を採用するが、popupを作成したworkspaceへの所有権、workspace切替時の非表示、owner削除時のcleanupはforkの追加契約として保持する。
+- **目的**: popup terminalをworkspace配列の位置や現在選択中のpaneに誤結合せず、作成元workspaceのruntimeとして扱う。別workspaceを操作中はpopupの入力を奪わず、ownerへ戻った時だけ同じpopup processを再表示する。
+- **挙動**:
+  - popup生成時にactive workspaceの安定IDを`PopupPaneState.workspace_id`へ保存する。表示判定はworkspace配列のindexではなく、このowner IDとの一致で行う。
+  - owner workspaceから別workspaceへ切り替えるとpopupは描画・key・paste・line feed・mouse routingの対象外になるが、popup terminal process/runtime、pane ID、selection状態は破棄しない。切替先workspaceの通常paneが入力を受ける。
+  - owner workspaceへ戻ると同じpopup runtimeを再表示し、popupの最新width/height、mouse reporting、wheel、selection drag/release、copy対象をpopup terminalへ戻す。popup pane IDをtile paneのruntime lookupへ流用しない。
+  - popupがactiveな間はpopupのinner rectを基準にcell座標を変換し、mouse reporting無効時のpress/drag/release、autoscroll、clipboard extractionをpopup runtimeとpopup pane IDへ限定する。mouse reporting有効時はterminalへそのまま転送する。
+  - owner以外のbackground workspaceを削除してもpopupを維持する。owner workspaceを削除する時だけpopup state、popup selection、direct-attach resize lock、terminal map entryを同期して消し、popup runtime shutdownをqueueする。
+  - `popup.close`は現在保持しているpopupだけを閉じ、二重closeまたはpopup不在時は`popup_not_open` / `no popup is open`で失敗する。別workspaceからもowner IDで保持中のpopupを一意に扱う。
+- **受け入れ条件**:
+  - workspace Aでpopupを作成後にBへ切り替えると、popupが見えずBのtile paneへkey/paste/line feed/mouseが届き、Aへ戻ると同じpopup processへ復帰する。
+  - AとBのworkspace配列順を変更しても、popupのownerがIDで維持され、表示先・入力先が別workspaceへ移らない。
+  - Bを削除してもAのpopup、terminal、selectionが残り、Aを削除するとpopup state/selection/resize lock/terminalが消えてruntime shutdownが一度だけqueueされる。
+  - popupのmouse reporting有効/無効、selection drag、wheel、autoscroll、copyがpopupのinner rectとpopup pane IDを使い、tile paneのruntimeや座標へ混入しない。
+  - `popup.close`の成功後に再度closeすると`popup_not_open`になり、popup processとstateが残らない。
+- **実装方針**: `PopupPaneState`へworkspace owner IDを持たせ、visibility・input・mouse・cleanupの全分岐をowner IDで統一する。popup runtimeの起動/終了と通常paneのruntime lookupを分離し、既存のpopup API/error codeを再利用する。
+- **デグレ判定**:
+  - workspace切替だけでpopup processをkillする、別workspaceでもpopupが入力を奪う、またはpopupのpane IDをtile runtimeとして解決する。
+  - workspace配列indexやfocused paneでpopup ownerを再計算し、並び替え・削除後にpopupが別workspaceへ移る。
+  - owner削除時にselection、resize lock、terminal map、runtime shutdownのいずれかが残る、またはbackground workspace削除でpopupを誤って閉じる。
+
 ## G3. Agent復元（exact session restore・fail-closed）
 
 ### paneごとのexact agent session復元
-- **元コミット**: 7cf02fa, 573f85e, 6ee56ec, 0c8f7f0
+- **元コミット**: 7cf02fa, 573f85e, 6ee56ec, 0c8f7f0, e5d677f, bb61e75, d626f8f, 3e8b725, 0c0a97a
 - **分類**: PARTIAL
 - **status: 本家基盤＋fork差分保持 (B)** — 本家 `db67e9d`, `36a4608`, `48641e2`, `92a10fc` のsession reference・resume・invalid/stale/duplicate拒否を採用する。`d4c94b0`, `ec2ceb0`, `b713fb0`, `99dbba3`, `427714f` のhook非依存session file検出・submit遅延、pane-session ledger、全pane exact ID証明、`--last`/cwd-latest/focus推測の全面禁止は必ず残す。
 - **目的**: 同じcwdから起動した複数のClaude Code/Codex paneを、cwd単位の「最新セッション」ではなく、それぞれのpaneで最後に動いていた会話へ戻す。session idが確定できないpaneは復元しないことで、別paneの会話を誤って起動する事故を防ぐ。
@@ -595,10 +629,11 @@
   - custom状態報告sourceをclear/releaseしても、異なるnative agent session sourceが所有する同じagentのsession idは削除しない。
   - Codexの復元コマンドは、`[agent_start.commands].codex`が設定されている場合、その構造化argvを順序どおり保持し、末尾へ`resume`とpane固有session idだけを追加する。新規pane起動とrestoreでsandbox・approval・network・wrapper等の起動オプションを変えず、shell aliasや`sh -lc`へ依存しない。
   - `[agent_start.commands].codex`が無い場合だけ、既存のagent別restore templateを使う。templateには`{session_id}`を必須とし、fork時点のbuiltinは`claude = "claude --resume {session_id}"`と`codex = "codex resume {session_id}"`。
-  - session idは、明示報告が最優先。明示報告がないplain processでは、実行中processのcmdlineから `claude --resume <id>` / `claude --resume=<id>` / `codex resume <id>` を読む。
+  - session idは、trustedな明示報告が最優先。明示報告がないplain processでは、現在のruntime/session fileで一意に観測した現行IDを優先し、それが無い場合だけ実行中processのcmdlineから `claude --resume <id>` / `claude --resume=<id>` / `codex resume <id>` を読む。cmdlineは起動形状のfallbackであり、resume後の現行session identityを上書きしない。
   - plain Claude/Codexでcmdlineにresume idがない場合だけ、実行中processのcwdとprocess start timeに一致するsession fileを探す。Codexは `$HOME/.codex/sessions/**/*.jsonl` の先頭 `session_meta.payload.id` または `session_meta.payload.session_id`、`payload.cwd`、`payload.timestamp` を使う。Claudeは `$HOME/.claude/projects/**/*.jsonl` の先頭64行以内にある `sessionId`、`cwd`、`timestamp` を使う。
+  - Claude processのcmdlineにある `claude --resume <old-id>` は、現在実行中processへ対応するClaude session file/runtimeで観測したIDより優先しない。runtime/session fileの現行IDをpane sessionとして報告し、`session_start_source = "resume"`を付けて「resume引数からの復元ではなく、resume後に観測した現行sessionへの置換」であることを保持する。
   - session file recoveryは、session timestampとprocess start timeの差が120秒以内で、候補が1件だけのときだけ採用する。0件または2件以上ならsession id未確定として扱う。
-  - session idはpaneのsession snapshotにも保存し、別途pane ledgerにも保存する。ledger entryはpane id、terminal id、workspace id、tab id、cwd、agent、session id、observed_at、source、titleを持ち、pane/workspace/tabを閉じたら対応entryを削除する。
+  - session idはpaneのsession snapshotにも保存し、別途pane ledgerにも保存する。ledger entryはpane id、terminal id、workspace id、tab id、cwd、agent、session id、observed_at、source、titleを持つ。paneを明示closeした時、PaneDiedでpaneを永久削除した時、または所有tab/workspaceを閉じた時は対応entryを削除する。runtime processだけが停止してpaneがrestorable ownerとして残る時はledgerを保持する。stale ledger単独では別世代・再利用paneを復元対象にしない。
   - 同じcwdにある複数paneは、snapshot上もledger上も別session idを保持する。pane idやtab/workspaceが違うsession idを混ぜない。
   - `herdr agent restore [--dry-run]` は復元対象paneごとの結果を返す。action itemは `pane_id`、`agent`、`status`、任意の `command`、任意の `reason` を持ち、`status` は `launched` / `would_launch` / `skipped`。
   - `[agent_restore].restore_delay_ms`はserver起動後の自動resume待機時間として使う。本家のhost theme取得待機より短い値では本家待機を維持し、長い値では設定値まで自動resumeしない。手動の`herdr agent restore`はこの起動時待機を要求しない。
@@ -608,6 +643,7 @@
   - 同一cwdの3つのCodex paneにそれぞれ別session idが記録されている状態でsnapshot/restoreしても、3paneが同じ「cwd最新」会話へ潰れない。
   - `[agent_start.commands].codex = ["codex", "--sandbox", "workspace-write", "--config", "sandbox_workspace_write.network_access=true", "--dangerously-bypass-approvals-and-sandbox"]`の時、restore planは同じ6要素の後ろへ`resume`, `<session-id>`だけを追加し、legacyの`codex resume {session_id}`が併存しても`["sh", "-lc", ...]`へ変換しない。
   - `herdr agent restore --dry-run` が `codex resume 019ef3a2-749c-7b52-b324-2c20cb0b2379` のようにpane固有id入りコマンドを返す。
+  - Claude processが `claude --resume <old-id>` を持ち、runtime/session fileから `<current-id>` を観測した場合、snapshot・pane ledger・restore planのsession idは`<current-id>`になり、`<old-id>`を現行sessionとして保存しない。
   - `pane.report-agent ... --session-id bad;id` のようなunsafe idは記録されず、session dirtyにもならない。
   - `pane.report-agent ... --source custom:tool --agent codex --state working --title "restore pane sessions" --custom-status "checking parity" --session-id ID` の1回の報告で、状態・title・custom statusとnative restore用session idの両方が保持される。
   - native `herdr:codex` sessionを復元済みのpaneへ`--source custom:tool --agent codex --state working`を報告しても、公開状態はworkingになり、次のsnapshotに同じnative session idが残る。
@@ -679,10 +715,10 @@
 - **UI挙動**:
   - pane死亡時に保護するのは、terminalのeffective agent labelがあるpaneで、かつledgerまたはrestorable session情報がある場合だけ。
   - terminalに過去のagent session id/agent/ledgerが残っていても、現在のeffective agent labelがないshell paneは保護しない。既存のpane close/workspace close処理に進む。
-  - shell paneを閉じても、古いledger entry自体はこのcleanup条件だけでは削除しない。ledger削除はpane/tab/workspaceの明示close操作に従う。
+  - effective agent labelがないshell paneをPaneDiedで永久削除した場合、そのpaneの古いledger entryも同じ削除境界で消す。明示close、PaneDiedによる永久削除、所有tab/workspace closeで同じownership cleanupを適用する。
 - **受け入れ条件**:
   - 2workspaceある状態で、1つ目のroot paneがshell状態、かつ古いCodex session id/ledgerだけを持っている場合、PaneDiedで1つ目workspaceが閉じ、2つ目workspaceだけが残る。
-  - 同条件でledger entryは残る。
+  - 同条件で削除されたpaneのledger entryも残らない。
   - effective agent labelがあるrestorable paneは、前項どおりPaneDiedで残る。
 - **実装方針**: 本家のagent resume shell fallbackと通常pane lifecycleに、保護判定の境界を追加する。保護条件は「過去にagentだった」ではなく「今agent paneとして扱う根拠がある」に限定する。
 - **デグレ判定**:
@@ -748,7 +784,7 @@
 ### paneコマンド終了通知
 - **元コミット**: 2650c3b
 - **分類**: PLUGIN-ABLE
-- **status: 本家基盤＋fork差分保持 (B)** — 本家 `4001fd2`, `fbd20ad` のnotification API・eventを採用し、prompt再出現検出とcommand単位の一回通知を残す。
+- **status: 破棄** — 旧`pane run-notify` / `pane job-log`はserver-owned `herdr run` / `herdr job log`へ置換済み。以下は廃止対象を識別する歴史的記録であり、active受け入れ条件には使わず、CLIを復活させない。
 - **目的**: 長時間コマンドを別paneで実行したまま、依頼元paneへ終了・exit code・末尾ログ・job log参照を戻せるようにする。AIが別paneへ作業を投げたあと、完了確認のために目視巡回しなくてよい状態を作る。
 - **UI挙動**:
   - CLIに `herdr pane run-notify <pane_id> <command>` を追加する。`<command>` は `<pane_id>` 以降の引数を空白結合した文字列で、`herdr pane run-notify <pane_id> -- <command>` のように先頭 `--` がある場合はそれを区切りとして無視する。
@@ -785,13 +821,13 @@
   - agent状態変化通知は active tab では抑制する。background paneで `Blocked` になった時は `NeedsAttention`、作業中から `Idle` へ完了遷移した時は `Finished` のtoast/desktop通知を出す。
   - 通知タイトルは agent label ではなく `<workspace番号> <workspace表示名>`。例: 2番目のworkspace `herdr` のroot pane OSC title が `planner` なら `2 herdr-planner`。
   - workspace表示名にroot pane OSC titleを足す時は `workspace-OSC title` 形式で、hyphenの前後に空白を入れない。
-  - 通知本文は対象paneの recent unwrapped text 直近80行から作る。本文最大長は120文字で、超過時は最後の1文字を `…` にする。
+  - 通知本文は対象paneの recent unwrapped text 直近80行から作る。本文最大長はUnicode scalar valueを数えるRust `chars()`基準で120文字とし、超過時は先頭119 scalar valueと`…`にする。UTF-8 byte境界やgrapheme/display cell数では切らない。
   - 本文抽出ではまず各行の連続空白を1つに畳み、box drawing / block element文字を行頭行末から取り除く。`────…` のような罫線だけの行は空行扱い。
   - composer prompt 行 `❯`、`›`、`>` が見つかったら、その行以降を入力欄・statusline chrome として丸ごと捨てる。
   - Codexの `• ` と Claude Codeの `⏺ ` をagent応答markerとして扱い、最後のmarkerから始まる本文を最優先で使う。marker prefix は本文から外し、後続行を空白区切りで連結する。次のagent応答markerまたはchrome行に当たったら収集を止める。
   - 応答markerが見つからない場合は、最後の非空blockからchromeではない最初の行を本文にする。
   - chromeとして本文から除外する行は、通知タイトルと完全一致する行、`gpt-` で始まる行、`›` / `❯` / `>` / `⎿` / `└` / `⏵⏵` / `※` で始まる行、Claude spinner/summary先頭文字 `✻✽✶✢✳✣✤❋✺` の行、`<数字> task(s) (` 形式のtask summary、`worked for `、`% left`、`esc to interrupt`、`ctrl+c to interrupt`、`ctrl+o to expand`、`? for shortcuts`、`/ps to view`、`tokens used`、`disable recaps in /config` を含む行。
-  - Herdr内toastは枠付きの4行高で右下に表示する。title行は状態色の `●` と太字title、context行は本文または fallback context を表示する。
+  - Herdr内toastは枠付きの4行高で右上に表示する。title行は状態色の `●` と太字title、context行は本文または fallback context を表示する。
   - `[ui.toast] delivery = "off"` がdefault。`herdr` はHerdr内toast、`terminal` は外側terminal通知、`system` はOS通知。legacy `[ui.toast] enabled = true` は `delivery = "herdr"`、`enabled = false` は `off` に読むが、`delivery` があればそれを優先する。
 - **受け入れ条件**:
   - Claude Code画面の composer罫線とstatuslineだけが末尾にある場合、通知本文はその上の実本文になる。chromeだけなら本文なしになる。
@@ -889,7 +925,7 @@
 - **目的**: AI agentを起動するたびに「paneを作る→shellでCLI名を打つ→agent扱いにする」という手作業をなくす。pane配置も右クリック対象を基準に左・右・上・下へ明示的に寄せられるようにし、複数agentを並べる初動を短くする。
 - **UI挙動**:
   - workspace右クリックメニューの先頭に `New Claude Code agent`、`New Codex agent`、`New agy agent` をこの順で表示する。
-  - workspaceメニューで上記項目を選ぶと、そのworkspace内に右方向splitの新規paneを作り、対応CLIを起動してagent targetとして登録する。起動コマンドはそれぞれ `claude`、`codex`、`gemini`。
+  - workspaceメニューで上記項目を選ぶと、そのworkspace内に右方向splitの新規paneを作り、対応CLIを起動してagent targetとして登録する。起動コマンドはそれぞれ `claude`、`codex`、`agy`。
   - pane右クリックメニューには `New Claude Code agent`、`New Codex agent`、`New agy agent` を表示する。選択時は右クリックされたpaneを一度focusし、そのpaneを基準に右方向splitを作ってagentを起動する。
   - pane右クリックメニューには `Move to left split`、`Move to right split`、`Move to upper split`、`Move to lower split` を表示する。
   - `Move to left split` は対象paneをroot水平splitの左側、`Move to right split` は右側へ移動する。`Move to upper split` はroot垂直splitの上側、`Move to lower split` は下側へ移動する。
@@ -990,7 +1026,7 @@
   - 未対応serverでJSON errorをそのまま出し、restart案内が出ない。
 
 ### 短いpane targetとAI向けhelp
-- **元コミット**: a5f2d9d, 130f5d7, 87d2c49
+- **元コミット**: a5f2d9d, 130f5d7, 87d2c49, aac2a88, 0ebabac
 - **分類**: PARTIAL
 - **status: 本家基盤＋fork差分保持 (B)** — 本家 `fbd20ad`, `d35c642` のstable short handle・schemaを採用し、`%N`互換とAI向けfail-closed helpを残す。
 - **目的**: AIがpane targetを短く確実に読み書きできるようにする。CLI helpも人間向け一覧ではなく、agentが守るべきpane識別ルールを含む再利用可能な指示として読める形にする。
@@ -1302,7 +1338,7 @@
 - **デグレ判定**: fork build が agent の `~/.claude`、`~/.codex`、OpenCode、Pi、Hermes などの config/plugin/hook directory を自動変更する。`integrations` tab や `herdr integration ...` が復活する。docs が「hooks/plugins を入れるとより正確」と案内する。`pane.report-agent` まで消えて、信頼済みローカルツールから状態報告できなくなる。
 
 ### fork からの build/install を正とする配布
-- **元コミット**: b2ea0fe, 73e429c
+- **元コミット**: b2ea0fe, 73e429c, 2e21703
 - **分類**: POLICY
 - **status: fork独自・保持 (C)** — forkのintegrated mainからbuild/installする運用を正とする。
 - **目的**: kazuph/herdr fork は upstream の hosted installer / release manifest を正にせず、fork repository の source build と fork releases を配布導線にする。
@@ -1324,6 +1360,33 @@
   - 手動 download link が `ogulcancelik/herdr/releases` ではなく `kazuph/herdr/releases` を指す。
 - **実装方針**: 本家 docs の install section を fork docs overlay として差し替えるだけでよい。実行時 API は不要。
 - **デグレ判定**: README/docs が `herdr.dev/install.sh`、`ogulcancelik/herdr/releases`、または upstream clone を fork の標準導線として案内する。
+
+### fork release・npm・Homebrewの配布境界
+- **元コミット**: bfdc3cc, e9f1b6d, 18a89ed, 4e6f5e7, e331072, 15b18eb, 1bf52a1, db68217
+- **分類**: POLICY
+- **status: fork独自・保持 (C)** — 本家の`v*` release workflowとは別に、kazuph forkの`kazuph-v<semver>` tagを唯一のfork配布入力とする。native binary、npm wrapper/native package、Homebrew tapを同じversion・同じrelease artifactから検証して公開する。
+- **目的**: fork binaryとupstream binary、npm packageとHomebrew formulaのversion・内容・公開先が混線しないようにし、CIが作った実体を検証してから配布する。既存versionの再公開やcredential不足で、異なるartifactを黙って上書きしない。
+- **挙動**:
+  - `preflight`はrepositoryが`kazuph/herdr`であること、tagが`kazuph-v<semver>`であること、tag versionと`Cargo.toml` versionが一致することをbuild前に検証する。不一致はfail closedで、native build・npm publish・Homebrew pushへ進まない。
+  - buildはRust `1.96.1`、Zig `0.15.2`、`--locked`を使い、`x86_64-unknown-linux-musl`/`aarch64-unknown-linux-musl`/`x86_64-apple-darwin`/`aarch64-apple-darwin`の4 targetを個別に生成する。release asset名は順に`herdr-linux-x86_64`、`herdr-linux-aarch64`、`herdr-macos-x86_64`、`herdr-macos-aarch64`とし、`SHA256SUMS`とgenerated formulaを同じGitHub releaseへ添付する。
+  - npmは`@kazuph/herdr` wrapperと4つの`@kazuph/herdr-{darwin-arm64,darwin-x64,linux-arm64,linux-x64}` native packageを同一versionで作る。native packageは対応OS/CPUと`bin/herdr`だけを持ち、wrapperの`optionalDependencies`は4 packageの同一versionを固定する。package内binaryはCI release assetとbyte一致させ、lifecycle scriptや未検証の`libc`制約を追加しない。
+  - npm publish前に既存versionを確認する。既存tarballがある時はCI生成tarballと`cmp`でbyte一致を確認できた時だけ再利用し、異なるarchiveを同じversionとしてpublishしない。publishはtrusted OIDC/provenanceを使い、npm cold installとBun cold installを4 host matrixで実行してhostに合うnative packageが1つだけ選ばれ、wrapperの`herdr --version`がtag versionを返すことを確認する。
+  - Homebrew formulaは`kazuph/herdr`のimmutable release URLとSHA256を使用し、temporary `kazuph/herdr-ci` tapへpushして`brew install` / `brew test` / version checkを通す。検証済みformulaだけを`kazuph/homebrew-tap`へpushし、利用者の導線は`brew tap kazuph/tap && brew install kazuph/tap/herdr`とする。
+  - tap deploy keyなどのcredentialはbuild前に空commit＋`git push --dry-run`で到達性だけを検証する。credential不在・dry-run失敗・release asset欠落・formula検証失敗はpublishを行わず、秘密値をlogへ出さない。
+  - fork releaseの完了はtag作成やGitHub Release job成功だけではなく、4 native asset、checksum、formula、4 hostのnpm/Bun cold install、temporary tapのbrew test、public tapのversion checkが同じversionで通った時とする。本家の`v*` release完了やupstream release pageだけではfork配布完了と扱わない。
+- **受け入れ条件**:
+  - wrong repository、`v1.2.3`などの非`kazuph-v<semver>` tag、tag/Cargo version不一致はbuild前に停止する。
+  - `kazuph-v<semver>`から4つの固定名native asset、`SHA256SUMS`、formulaが生成され、各SHA256がrelease assetと一致する。
+  - wrapper/native npm packageのversion・OS/CPU metadata・binary内容が一致し、npmとBunの各host installが対応host packageだけを選び、`herdr --version`がtag versionを返す。
+  - npmに同じversionが既に存在する場合、archive byte一致なしに上書き・再publishしない。
+  - formulaがimmutable release URLと正しいSHA256を持ち、temporary tapのinstall/testとpublic tapのversion checkが成功する。
+  - credential preflightまたはいずれかのartifact検証が失敗した時、native/npm/Homebrewの公開処理を開始せず、秘密値がCI logへ出ない。
+  - 4 native asset、checksum、formula、npm/Bun cold install、temporary/public Homebrew検証が同一versionで揃うまでreleaseを完了扱いにしない。
+- **実装方針**: fork専用workflowと`fork_release_input.py`、`fork_npm_packages.py`、`render_fork_homebrew_formula.py`のartifact生成・検証を正本にする。upstreamのrelease workflowやhosted installerをfork packageのversion/source判定に再利用せず、publish jobは検証済みartifactだけを受け取る。
+- **デグレ判定**:
+  - `v*`またはupstream repositoryをfork releaseの入力として受け付ける、tagとCargo versionがずれてもbuildする、または4 targetの一部だけでreleaseを成功扱いにする。
+  - npm wrapperが別version/native packageを選ぶ、package tarballとrelease binaryがbyte不一致でもpublishする、既存versionをarchive比較なしで上書きする。
+  - formulaがmutable URL・誤SHA256・未検証public tapを指す、credential失敗後もpushする、またはnpm/Homebrewのcold installとversion checkを省略する。
 
 ### self-update と release download の無効化
 - **元コミット**: 73e429c
@@ -1368,8 +1431,8 @@
 - **status: fork独自・保持 (C)** — committed・integrated mainのrelease binaryでlocal runtimeを置換する完了条件を残す。
 - **目的**: fork workspace では source code の変更だけで完了扱いにせず、実際にユーザーが使う `herdr` runtime へ反映することを agent 運用ルールにする。
 - **UI挙動**:
-  - AGENTS.md の Testing section に、agent-driven change を commit または handoff するたびに release binary を rebuild し、local runtime `~/.local/bin/herdr` を置き換えてから completion report する、と明記する。
-  - このルールは code change がこの環境に fully applied とみなされる条件であり、`just check` だけでは完了ではない。
+  - Rust/runtimeを変更するagent-driven changeをcommitまたはhandoffする時は、release binaryをrebuildし、local runtime `~/.local/bin/herdr` を置き換えてからcompletion reportする。SPEC、形式モデル、inventory、docsだけの変更は対象外とする。
+  - このルールはproduct runtime code changeがこの環境にfully appliedとみなされる条件であり、`just check`だけでは完了ではない。
 - **受け入れ条件**:
   - AI が fork change を完了報告する前に `just check` 相当の検証と local binary replacement を行う運用になっている。
   - runtime replacement の対象 path は `~/.local/bin/herdr`。macOS では上記 `just install-local` を使うと署名更新も満たせる。
@@ -1413,7 +1476,7 @@
 ## G9. Agent間通信・長時間job・runtime信頼性
 
 ### herdr msg durable mailbox
-- **該当コミット**: aacd871, 3660b51
+- **該当コミット**: aacd871, 3660b51, f0b80e3, 0f61acb, 5f69fc9, 3200098, 88118ae
 - **分類**: CORE-UI
 - **status: fork独自・保持 (C)** — 本家にmailbox、room、durable deliveryの代替がないため保持する。
 - **目的**: room単位のmessageをSQLiteへ永続化し、待機中のagentには新しいturnとして、作業中のagentには現在の作業への追加指示として、送信時点で全文を届ける。
@@ -1434,8 +1497,36 @@
   - server起動時の未読配送、message送信先への即時配送、Blocked/UnknownからIdle、Working、Doneへ変わったagentへの配送、runtime復旧後の同一状態再報告による再配送は、通常API request後の全agent走査を削除しても維持される。
 - **デグレ判定**: Working recipientへのmessageをIdleまで保留する。各API requestの完了時に全利用可能agentのmailboxを走査する。各agentについてroom一覧を取得してroomごとに未読queryする。recipient/status indexを使わずmessage全体を走査する。
 
+### normal mailのPTY全byte書込み確認
+- **該当コミット**: f0b80e3, 0f61acb, 5f69fc9, 3200098, 88118ae
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — 通常mailの`delivered`遷移を、内部channel投入ではなくrecipient PTY masterへの本文＋Enterの全byte書込み完了へ結び付ける。in-flight、失敗再試行、App loop非ブロックをdurable mailboxの独立契約として保持する。
+- **目的**: channelへ受け渡しただけでdelivery済みと記録すると、agentが本文を受け取っていないのにqueued行が消え、再送不能になる。PTY書込みの成功・失敗をmessage単位で永続状態へ反映し、busy状態への即時steeringと再起動後のexact deliveryを両立する。
+- **挙動**:
+  - 通常mailは`queued`、`in_flight`、`delivered`、`read`のmessage状態を持つ。Idle、Working、Doneのrecipientへflushする時、global pane IDのactor/status indexで取得したcreated時刻・message ID順のqueued行を一度だけin-flightへ移し、本文byte列とEnter byte列を一つのPTY write operationとしてsubmitする。
+  - `in_flight`のmessage IDは次のflush候補とmanual `inbox`から除外する。同じ利用可能event、同じstatus再報告、または並行flushが重なっても、同一messageを二重submitしない。別messageは自分のqueue順とin-flight状態を保つ。
+  - submit成功は、bodyとEnterの全byteがrecipientのPTY masterへ書き終わり、完了callbackがそのmessage IDを返した時だけ成立する。内部channelへ投入できたこと、write callbackを予約できたこと、runtimeが存在することだけでは`delivered`にしない。
+  - PTY write error、partial write、runtime消失など完了失敗では、そのmessageを`queued`へ戻し、`delivered`/`read`へ遷移させない。次のrecipient availability/runtime-ready eventで同じ本文を一度だけ再試行する。
+  - mailbox completion eventは共有AppEvent channelの空きを待たず、専用completion pathでin-flightを解除してstate reportを継続させる。共有event channelが満杯でもApp loop、status report、後続messageのdeliveryをmail completionが停止させない。
+  - 成功callbackは完了したmessage IDだけを`delivered`・`read`へ更新する。失敗中または未送信の他message、別recipient、別roomの状態をまとめて既読化・delivery済みにしない。
+  - `herdr-jobs`は通常mailとは別のjob completion pathであり、Working中でも直接bodyをinjectしてmark-readする既存例外を維持する。normal mailのbody＋Enter atomic write契約を`herdr-jobs`のroom-group配送へ適用しない。
+- **受け入れ条件**:
+  - 改行、quote、spaceを含む通常mailでも、送信時のbody全体とEnterがrecipient PTYへ同じbyte順で一度に書かれ、内部channel投入だけではdelivery済みにならない。
+  - in-flight中にflushまたはmanual inboxを繰り返しても同一messageが再submit・再表示されず、完了後だけ対象messageがdelivery/readになる。
+  - PTY writeが失敗またはpartial writeになったmessageはqueuedのまま残り、delivery/readへ進まず、後続のIdle/Working/Done利用可能eventで同じmessageが再試行される。
+  - shared AppEvent channelが満杯でもmail completionがApp loopをblockせず、state reportと別messageの処理が継続する。
+  - 成功した一つのmessageだけがdelivery/readになり、同じflush batchの別messageの順序・queue・失敗状態を変更しない。
+  - 通常mailのAPI listingやpresentation-only state updateは無関係なrecipientへのflushを発火せず、送信・利用可能状態・runtime復旧のevent-driven pathだけが対象paneを配送する。
+  - `herdr-jobs`はWorking recipientへの直接body injectionとjob completion既読化を維持し、通常mailのPTY全byte書込み契約と混同しない。
+- **検証契約**: Rust unit testsは`regular_message_delivery_submits_body_and_enter_atomically`、`in_flight_regular_message_is_not_resubmitted_on_repeat_flush`、`inbox_excludes_in_flight_regular_message_without_marking_it_read`、`failed_pty_write_keeps_regular_message_queued`、`backpressured_regular_delivery_does_not_block_state_report_or_mark_second_message`、`full_shared_event_channel_does_not_block_mailbox_completion`で各状態遷移を固定する。Quint modelは`formal/p428_mailbox_write_ack.qnt`の`deliveredRequiresPtyWrite`、`failedWriteRemainsQueued`、`appNeverBlocks`を検査するが、外部agentがturnを消費したこと、terminal parser、SQLite障害分類、detector timing、`herdr-jobs`をproduction proofとしては扱わない。
+- **実装方針**: regular messageごとのin-flight setとPTY write completion callbackをmailbox dispatcherへ持たせ、送信候補query・manual inbox除外・成功mark・失敗再queueを同じmessage IDで結ぶ。共有AppEvent channelの容量に依存しないcompletion通知を使い、`herdr-jobs`の既存dispatcherは別経路として残す。
+- **デグレ判定**:
+  - channel enqueueやwrite開始だけで`delivered`/`read`へ遷移する、partial/error後にmessageが消える、または同一messageを並行flushで二重submitする。
+  - in-flight messageがmanual inboxへ再表示される、別messageまで一括既読になる、共有event channelの満杯でstate report/App loopが停止する。
+  - API request後の全agent走査へ戻る、通常mailへ`herdr msg inbox` commandを注入する、または`herdr-jobs`のWorking direct injectionを通常mailの契約として扱う。
+
 ### pane-less background jobs
-- **該当コミット**: 92f6bd6, 287c32d, 9255326, 03fc5eb, 8b3ae29
+- **該当コミット**: 92f6bd6, 287c32d, 9255326, 03fc5eb, 8b3ae29, 65729f0
 - **分類**: CORE-UI
 - **status: fork独自・保持 (C)** — paneを作らないdurable job lifecycleとexact caller配送を保持する。
 - **目的**: build/test/download等をpaneなしで開始し、呼び出し元を塞がず、終了結果とlogを再起動越しに取得できるようにする。
@@ -1589,3 +1680,58 @@
 - `d4c94b0`, `ec2ceb0`, `2938c43`, `2911498`, `b038d78`, `b713fb0`, `99dbba3`, `427714f`, `1d1aa94` はG3のexact restore、stale evidence失効、restore表示へ統合した。
 - `2d6e8ea`, `3ed38ed`, `52cee5b`, `5d1fd2c`, `4c9cc42` はそれぞれG1/G2/G5/G6のstatusと受け入れ条件へ統合した。
 - `e5e0e0e`, `2439864` はA判定としてG6/G1に明示した。これによりoverlap-analysisの「SPEC未記載44コミット」はmerge commit・文書・evidenceを含めて全件追跡できる。
+- `6b913e4` のworkspace owner付きpopup terminalはG2「workspace ownerにスコープされたpopup terminal」へ、`fd532c8`, `8937a6b`, `5ff4d86`のsidebar/workspace表示差分はG2「sidebar・mobile・dragの微細契約」へ統合した。
+- `e5d677f`, `bb61e75`, `d626f8f`, `3e8b725`, `0c0a97a`のClaude/Codex session観測・復元差分はG3「paneごとのexact agent session復元」へ統合した。Claudeのresume引数よりruntime現行IDを優先する点を別契約として固定した。
+- `bfdc3cc`, `e9f1b6d`, `18a89ed`, `4e6f5e7`, `e331072`, `15b18eb`, `1bf52a1`, `db68217`のfork release/npm/Homebrew配布差分はG8「fork release・npm・Homebrewの配布境界」へ統合した。
+- `f0b80e3`, `0f61acb`, `5f69fc9`, `3200098`, `88118ae`のnormal mail delivery/in-flight/PTY write ack差分はG9「normal mailのPTY全byte書込み確認」へ統合した。
+- `aac2a88`, `0ebabac`のvisible/persisted identity、global `pN`、Space `sN`/legacy alias差分はG5「短いpane targetとAI向けhelp」へ、`65729f0`の`run.start` server IPC差分はG9「pane-less background jobs」へ、`2e21703`のfork install docs差分はG8「forkからのbuild/installを正とする配布」へ統合した。
+- `b39432c`はAGENTS.mdの運用文言だけを変更する非製品仕様commitのため、実装契約としてはSPECへ追加しない。
+
+## G10. 本家最新リリース v0.8.0 と現状fork版の差分・段階取込契約
+
+### 比較基準と差分範囲
+- **本家の最新リリース**: tag `v0.8.0`、release commit `346411f`（tag object `857196d`）、Cargo version `0.8.0`。repositoryは`herdrdev/herdr`、licenseは`Apache-2.0`、stable releaseの導線は本家の`v*` release・`herdr.dev` installer・`latest.json`である。
+- **immutable fork runtime baseline**: commit `88118ae`、Cargo version `0.1.4`。repositoryは`kazuph/herdr`、licenseは`AGPL-3.0-or-later`、fork release tagは`kazuph-v<semver>`である。SPEC・formal資産を積むmoving evidence HEADとは別物として扱い、push後もこのruntime比較SHAを書き換えない。
+- **共通祖先と履歴量**: merge-baseは`9c9490d`。immutable runtime baseline `88118ae`時点の比較ではfork側187 commits、本家`v0.8.0`側175 commitsである。この数はmerge・docs・test・vendor更新を含む履歴数であり、機能数ではない。moving evidence HEADのcommit数として再計算しない。
+- **previewの扱い**: `upstream/master`は`v0.8.0`より67 commits先の未リリースpreview（現時点の先端`6c6ddcd`）である。stable parityの基準へ混ぜず、previewの差分は末尾の別欄に置く。
+- **実装の読み方**: G1〜G9はforkが保持する観測可能な追加・変更契約、G10は本家`v0.8.0`の機能を現状forkへ段階的に取り込むための差分台帳である。現状forkを全量置換する根拠には使わない。
+
+### 差分台帳
+
+| 領域 | 本家 v0.8.0 | 現状fork | 実装時の境界 |
+|---|---|---|---|
+| version・release identity | `0.8.0`、`herdrdev/herdr`、Apache、`herdr.dev`、本家のstable release/update経路 | `0.1.4`、`kazuph/herdr`、AGPL、fork release/npm/Homebrew、self-update無効 | G8のfork release・install・self-update契約を維持し、version・repository・asset URLを混ぜない。 |
+| agent automation・integration | `3f809476`のfirst-class agent automation、`d30ab1b`のplugin-driven agent views/startup hooks、`1955406`のserverなしplugin link、`69d07db`のplugin state共有、`679584fd`のantigravity、`e9b22084`のgrok、`6fb0d803`のopencode2認識 | `de0d64a`でagent configへのhook/plugin installerを持たない方針。forkのsession restoreはagentごとに安全IDを絞り、`agy`/`grok`の本家native restore planをそのまま採用しない | 本家のautomation surfaceを無条件で復活させず、外部configを書き換えないG8契約を保つ。導入する場合も明示的なCLI/APIとfail-closed permissionを仕様化する。 |
+| session restore・agent detection | 本家native `agent_resume`、`ac47b9e`のheadless restore、`1491b7dd`のnested Codex report除外、複数agentのsession ref/manifest更新 | pane単位session ledger、Claude runtime現行ID優先、Codex起動argv保持、unsafe ID・`--last`・cwd-latest推測拒否 | G3のexact pane/session IDを失わず、本家の新しいagent restore/detectionをagentごとに同じpaneへ対応付ける。1つのcwdの最新sessionへ戻す実装は禁止。 |
+| pane・workspace identity | v0.8.0のworkspace/tab/pane公開IDと保存形式 | global pane `pN`、Space `sN`、tab `sN:tN`、旧`w`/composite targetはrestore aliasのみ、move後のglobal ID維持 | G5のID形式を正本にし、API/event/env/snapshot/notificationの全出力を同じIDへ揃える。旧本家IDは入力alias以外へ再出力しない。 |
+| mailbox・job・popup runtime | 本家v0.8.0の通常pane/API基盤 | `herdr msg` durable mailbox、通常mailのPTY全byte ack、`herdr-jobs`例外、server-owned `herdr run`、popup owner workspace | G2/G9のdirect delivery・in-flight・job caller・popup ownerを本家の新APIへ移植する。本文を要約・再解釈しない、PTY完了前に既読化しない、popup hidden時にprocessをkillしない。 |
+| sidebar・UI・input | `02fe7d76`のbottom tab bar、`f6031f7f`のpane scrollbar切替、`a26a6543`/`8843bbb0`のnavigator/worktree hierarchy、`eacea2da`のpage-key scroll、`b33e5f97`の保持selection copy、`d950fdfe`のCtrl+_、`1d238bc9`のmouse/clipboard internals | fork独自のsidebar section、mobile density、separator、workspace drag、copy status、pane action、popup mouse/selection契約 | 本家の挙動を取り込む時も、G1/G2/G6のhit-test・表示順・selection・popup入力先を壊さない。設定値やkeybindの名称・defaultを本家v0.8.0とforkのどちらに寄せるかを実装前に固定する。 |
+| Windows・remote・platform | `8afd52ae`のmodern ConPTY、`df2cb2c3`/`44b3adb1`のGit Bash/parent ownership、`0732039e`のSSH logout session、`5b0be42e`の通知/sound、`6cfaa079`のIME、`e9b22084`等のWindows agent integration | forkのmacOS/Linux中心のlocal runtime・ad-hoc sign・fork binary導線。Windows cross-lintはmacOSでは完了証明できない | platform差分は`src/platform/<os>.rs`へ隔離し、G8のlocal binary replacementとG3のsession identityをWindowsへ同じ意味で適用する。macOSでWindows acceptanceを完了扱いにしない。 |
+| docs・update・remote binary | `herdr.dev/install.sh`、`latest.json`、Homebrew/mise/Nix向けrelease matching、versioned docs | fork checkoutからのbuild/install、fork release URL、self-update/manifest download無効、remote platform mismatchは`HERDR_REMOTE_BINARY`必須 | G8のfork install/self-update禁止を優先し、本家docsをそのまま戻さない。remote attachのbinary sourceとinstall methodをfork packageへ明示的に合わせる。 |
+| build・dependency・repository surface | v0.8.0のApache license、`jsonc-parser`、`serde_ignored`、Windows `wmi`/IME依存、`skills/herdr/SKILL.md` package inclusion | `rusqlite bundled`、fork mailbox/job DB、fork npm packages、`-Demit-xcframework=false`、fork license/repository、local skill/doc構成 | source replant時にCargo feature・license・package include・vendored build flagを一括で戻さず、G8/G9のDB・distribution・macOS build契約を保つ。依存追加・削除は挙動差分として個別検証する。 |
+
+### 本家v0.8.0を現状forkへ段階的に取り込む実装契約
+- **現状forkを基礎にする**: 初回形式化baseline `88118ae`を保護対象として固定する。その後は各packet開始時の明示SHAをpre-packet baseline、検証済みpacket commitを次のbaselineとして記録する。本家機能を独立した取込packetへ分割し、本家sourceの全量置換、merge/rebase後の一括修復、SPECからのfork機能再実装は行わない。
+- **packet dispositionを固定する**: 各packetは `source_accept`（sourceを限定採用）、`semantic_port`（抽象概念だけをfork構造へ実装）、`reject_hold`（active contractと競合するため不採用）、`evidence_only`（docs/test/build等の証拠のみ）のいずれか1つを持つ。大型migration carrierは変更fileを重複・欠落のない原子sliceへ分解する。
+- **一packet一検証境界**: packetは一意なpacket ID、upstream source commitとfile allowlist、exact fork parent SHA、影響contract ID、identity/ownership/order/retry/platform次元、依存packet ID、変更前後の証拠を持つ。`source_accept` / `semantic_port`は失敗時に戻すpacket commitとrollback triggerを持ち、依存先を戻す時はその上のdependent packetを逆topological orderで戻す。`reject_hold` / `evidence_only`はproduct rollbackを持たず理由と証拠だけを持つ。同一fileまたはcontractを複数packetが触る時は依存edgeと後勝ちではない統合ownerを明記する。複数packetをまとめてGREENにしない。
+- **取込開始gate**: 初回packetは、このSPEC、全active contractのevidence manifest、Lean/Alloy/Quint結果、RED→GREEN drift証拠、zero-error fork inventory、GREENの`just fork-spec-contracts`、GREENの`git diff --check`を含む形式化commitがoriginへpush済みで、remote evidence HEADとlocal parent SHAが一致する時だけ開始できる。`python3 scripts/upstream_packet_gate.py --require-pushed`を必須preconditionとし、packet manifestはそのexact evidence HEADをparentとして記録する。未push・dirty tree・stale model hash・別parent・未解決矛盾・未分類差分が1件でもあれば開始しない。
+- **本家機能の等価性を確認する**: 本家v0.8.0に存在するagent automation、integration、session restore、sidebar/input、Windows/remote、update/docsの各機能は、forkへ実装済み・同等実装済み・意図的にfork policyで無効化のいずれかを明示する。sourceに同名symbolがあるだけでは等価としない。
+- **競合時の優先順**: G1〜G9の全active contractを保護し、その中ではidentity/ownership、fail-closed、exact delivery、永続化を、本家の便利なfallback・hosted download・cwd-latest restoreより優先する。active contract同士の矛盾は優先順で隠さず、実装前にSPEC上で解消する。
+- **previewを先取りしない**: `upstream/master`の`f5067ed` tab key actions、`e48d830` tab status、`4e310844` direct pane resize、`1777e9bb` frame streaming、`10974c82` right-click routing、`50ddc06f` Windows all-agent integrationなどは、stable v0.8.0 parity完了後の別差分として扱う。
+
+- **受け入れ条件**:
+  - 比較対象が`v0.8.0^{}` = `346411f`（tag object `v0.8.0` = `857196d`）、immutable fork runtime baselineが`88118ae`として記録され、moving evidence HEADと混同せず、`upstream/master = 6c6ddcd`の未リリース67 commitsをstable差分へ混入させない。
+  - `Cargo.toml`のversion・license・repository・homepage、release tag、native asset、npm package、Homebrew URLの本家/fork差分が表どおりに分離され、forkの`kazuph-v<semver>`から本家`v*`へ誤って公開しない。
+  - G1〜G9の全active contractが各packet取込後も残り、特にpopup owner、Claude現行session、global `pN`/Space `sN`、normal mailのPTY ack、`herdr-jobs`、server-owned jobが同じ観測結果になる。
+  - 本家v0.8.0のagent automation/integration/detectionについて、forkで保持、同等移植、またはhook/pluginを意図的に無効化した理由が各実装・テスト・docsで追跡できる。
+  - 本家v0.8.0のsession restoreが、同じcwdの複数paneを混同せず、forkのsafe session ID・ledger・runtime現行ID優先・`--last`拒否を保つ。
+  - bottom tab bar、pane scrollbar、navigator/worktree hierarchy、page-key scroll、selection copy、Ctrl+_、mouse/clipboard、terminal/PTY入力の本家v0.8.0挙動について、fork側の既存hit-test・selection・popup契約を壊さない等価テストがある。
+  - Windows ConPTY、Git Bash agent検出、parent ownership、SSH logout、IME、notification/sound、remote attachについて、macOS/Linuxの静的成功だけをWindows acceptanceとせず、対象OSで確認できない項目を未検証として報告する。
+  - 本家のhosted installer・`latest.json`・self-update経路がforkの実行時に復活せず、fork install、remote binary、npm、Homebrewの手順がG8と一致する。
+  - Cargo dependency、vendor、protocol/API schema、package include、generated docsの差分が、単なるrebase残骸ではなく本家v0.8.0またはG1〜G9の契約へ紐付く。
+  - parity実装の完了判定は、静的/unit/CI、対象OSを含むlive runtime、package/release検証、human acceptanceを分離し、compile成功や未リリース`upstream/master`追従だけで完了扱いにしない。
+- **検証方針**: 差分の根拠は`git diff v0.8.0..HEAD`、`git log 9c9490d..v0.8.0`、`git log 9c9490d..HEAD`、本家/fork各refのsource・schema・workflowを使う。全non-merge fork commitをSPEC参照または理由付きoverrideへ分類し、全active contractをmachine-readable evidence manifestへ対応させる。Lean/Alloy/Quint/Rust/liveの担当範囲と未表現次元を明記し、未分類・未解決矛盾が0になってから最初の取込packetへ進む。
+- **デグレ判定**:
+  - 本家masterの最新commitをstable v0.8.0と誤記する、fork HEADのCargo versionを本家versionとして扱う、または本家/forkのrelease repository・license・asset URLを混ぜる。
+  - 本家のfallback、cwd-latest restore、hosted update、global popup inputを取り込むことで、G3/G5/G8/G9のfail-closed・exact delivery・workspace ownershipが失われる。
+  - 本家v0.8.0の機能を同名CLI・Rust symbolの存在だけで移植済みと報告し、Windows/live/package/human acceptanceの未検証を隠す。

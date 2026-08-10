@@ -90,8 +90,8 @@ fork-spec-contracts:
     just test-one cancelled_job_is_durable
     just test-one terminal_transition_has_single_owner
     just test-one pending_nudges_for_agent_groups_only_that_agents_queued_messages_by_room
-    just test-one blocked_then_idle_flushes_multiple_pending_messages_as_direct_push
-    just test-one startup_flush_walk_delivers_pending_messages_after_server_restart
+    just test-one regular_message_batch_submits_every_body_in_creation_order
+    just test-one reopened_app_with_same_stable_pane_id_delivers_regular_mail_once
     @if [ "$(uname -s)" != "Darwin" ]; then just test-one herdr_job_cancel_kills_term_ignoring_process_tree_before_marking_cancelled; fi
 
     # G8 update, channel, integration, download, and documentation fail-closed.

@@ -1,0 +1,113 @@
+{
+  "verified_at": "2026-08-10T17:34:00+09:00",
+  "runtime_baseline": "88118ae5a17e915883b2fd69562ad24b2a56e905",
+  "execution_binding": {
+    "code_commit": "88118ae5a17e915883b2fd69562ad24b2a56e905",
+    "evidence_bundle_sha256": "de84d302740a0171695887385f33f074987194c024582edec3fce38675171c6a",
+    "rule": "The gate requires this exact evidence bundle, unchanged src/tests since code_commit, a clean tree, origin tracking, and local HEAD equal to the pushed evidence HEAD."
+  },
+  "tools": {
+    "lean": "4.32.2",
+    "alloy": "6.2.0",
+    "alloy_solver": "SAT4J",
+    "quint": "0.32.0"
+  },
+  "lean": {
+    "command": "~/.elan/toolchains/leanprover--lean4---v4.32.2/bin/lean formal/ForkDecisionSpec.lean",
+    "result": "green",
+    "theorems": [
+      "two_pane_toggle_round_trip",
+      "grid_rounding_preserves_pane_count",
+      "grid_top_is_never_smaller",
+      "finite_split_rounding_preserves_residual",
+      "odd_half_cell_goes_to_first",
+      "inverted_sidebar_bounds_fail_closed",
+      "product_change_iff_rollback"
+    ],
+    "scope": "finite pane counts, selected boundary axes and split ratios, sidebar invalid bounds, packet disposition",
+    "model_sha256": "a3eb815d0d251a13ffc32f427ec3776a3828de8f39916971b62863f33d5998d8"
+  },
+  "alloy": {
+    "command": "tmpdir=\"$(mktemp -d)\"; java -jar \"$HOME/Library/Caches/karukan/alloy/6.2.0/org.alloytools.alloy.dist.jar\" exec -q -t json -o \"$tmpdir/results\" formal/fork-ownership.als; jq -c '.commands | to_entries | map({command:.key,type:.value.type,solutions:(.value.solution // [] | length)})' \"$tmpdir/results/receipt.json\"",
+    "scope": 4,
+    "result": "green",
+    "unsat_assertions": [
+      "PaneIdIdentifiesAtMostOnePane",
+      "LedgerCannotCrossPaneGeneration",
+      "LedgerCannotOutliveItsPane",
+      "PopupOwnershipCannotDrift"
+    ],
+    "sat_witnesses": ["OwnershipWitness"],
+    "model_sha256": "37f362eed1f2cd78aa0fabdcc4a32e54d5eaffe1ebe6efe81692e56ba8b6a5be"
+  },
+  "quint": {
+    "typecheck_command": "npx --yes @informalsystems/quint@0.32.0 typecheck formal/fork-contract-lifecycle.qnt",
+    "model_sha256": "b1f7e9f396f73748fdbb7855afbb28024bb20317f5c81f15931225f62d17be52",
+    "result": "green_with_non_vacuity_red",
+    "green_runs": [
+      {"invariant": "deliveredRequiresWrite", "seed": "0xc00ded40936da3b2", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=deliveredRequiresWrite --max-samples=20000 --max-steps=25 --backend=rust --seed=0xc00ded40936da3b2"},
+      {"invariant": "cancelledCannotRetry", "seed": "0x238243e9b95ec496", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=cancelledCannotRetry --max-samples=20000 --max-steps=25 --backend=rust --seed=0x238243e9b95ec496"},
+      {"invariant": "retryOnlyForQueued", "seed": "0x84d3cba002fea3d2", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=retryOnlyForQueued --max-samples=20000 --max-steps=25 --backend=rust --seed=0x84d3cba002fea3d2"},
+      {"invariant": "ledgerHasLiveOwner", "seed": "0x91788c0085e189b4", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=ledgerHasLiveOwner --max-samples=20000 --max-steps=25 --backend=rust --seed=0x91788c0085e189b4"},
+      {"invariant": "ledgerMatchesGeneration", "seed": "0xbf6064e639a9b1c6", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=ledgerMatchesGeneration --max-samples=20000 --max-steps=25 --backend=rust --seed=0xbf6064e639a9b1c6"},
+      {"invariant": "removedPaneHasNoLedger", "seed": "0xaf57bba0425fc86f", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=removedPaneHasNoLedger --max-samples=20000 --max-steps=25 --backend=rust --seed=0xaf57bba0425fc86f"}
+    ],
+    "non_vacuity_red": [
+      {"invariant": "deliveredIsReachable", "seed": "0x1573c044c87164f", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=deliveredIsReachable --max-samples=20000 --max-steps=25 --backend=rust --seed=0x1573c044c87164f", "witness": "Delivered reached after successful write"},
+      {"invariant": "retainedRestorablePaneIsReachable", "seed": "0x4f80d8d0dbb23d1a", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=retainedRestorablePaneIsReachable --max-samples=20000 --max-steps=25 --backend=rust --seed=0x4f80d8d0dbb23d1a", "witness": "restorable pane and ledger retained while runtime is closed"},
+      {"invariant": "cancelledIsReachable", "seed": "0x1111111111111111", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=cancelledIsReachable --max-samples=20000 --max-steps=25 --backend=rust --seed=0x1111111111111111", "witness": "Cancelled row reached"},
+      {"invariant": "failedWriteQueueIsReachable", "seed": "0x2222222222222222", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=failedWriteQueueIsReachable --max-samples=20000 --max-steps=25 --backend=rust --seed=0x2222222222222222", "witness": "failed write returned to queued without an unnamed retry"},
+      {"invariant": "permanentDeletionIsReachable", "seed": "0x3333333333333333", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=permanentDeletionIsReachable --max-samples=20000 --max-steps=25 --backend=rust --seed=0x3333333333333333", "witness": "pane and ledger permanently removed"},
+      {"invariant": "reusedGenerationLedgerIsReachable", "seed": "0x4444444444444444", "command": "npx --yes @informalsystems/quint@0.32.0 run formal/fork-contract-lifecycle.qnt --invariant=reusedGenerationLedgerIsReachable --max-samples=20000 --max-steps=25 --backend=rust --seed=0x4444444444444444", "witness": "new pane generation received a matching new ledger"}
+    ]
+  },
+  "mailbox_model_separation": {
+    "production_current": [
+      {"path": "formal/p428_mailbox_immediate_steering.qnt", "sha256": "9028864f05d82368da4eae3a92cc9f61dc8205c39146550659dc9258fe8ee340"},
+      {"path": "formal/p428_mailbox_write_ack.qnt", "sha256": "3dbecbad7b1977f2c098340f8ba1a0acdf805370180d438b81a565ca8c469b05"}
+    ],
+    "historical_current_red": [
+      "formal/p428_mailbox_delivery.qnt",
+      "formal/p428_mailbox_input_current.qnt"
+    ],
+    "historical_repaired_candidate": [
+      {"path": "formal/p428_mailbox_repaired.qnt", "sha256": "44c89c71092fc18ff591a8cc904917633f918b8e9eec1711592487ab3dfcf726"},
+      "formal/p428_mailbox_input_repaired.qnt"
+    ],
+    "evidence": "formal/p428-mailbox-model-results.md",
+    "rule": "historical wait-for-Idle RED and repaired candidate GREEN are not production-current proof"
+  },
+  "production_quint_runs": [
+    {"model":"formal/p428_mailbox_immediate_steering.qnt","invariant":"availableQueueHasDeliveryEvent","seed":"0x5000000000000001","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_immediate_steering.qnt --invariant=availableQueueHasDeliveryEvent --max-samples=20000 --max-steps=25 --backend=rust --seed=0x5000000000000001"},
+    {"model":"formal/p428_mailbox_immediate_steering.qnt","invariant":"workingSteeringIsImmediate","seed":"0x5000000000000002","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_immediate_steering.qnt --invariant=workingSteeringIsImmediate --max-samples=20000 --max-steps=25 --backend=rust --seed=0x5000000000000002"},
+    {"model":"formal/p428_mailbox_immediate_steering.qnt","invariant":"unavailableNeverAccepts","seed":"0x5000000000000003","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_immediate_steering.qnt --invariant=unavailableNeverAccepts --max-samples=20000 --max-steps=25 --backend=rust --seed=0x5000000000000003"},
+    {"model":"formal/p428_mailbox_immediate_steering.qnt","invariant":"noDuplicateAcceptance","seed":"0x5000000000000004","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_immediate_steering.qnt --invariant=noDuplicateAcceptance --max-samples=20000 --max-steps=25 --backend=rust --seed=0x5000000000000004"},
+    {"model":"formal/p428_mailbox_immediate_steering.qnt","invariant":"presentationDoesNotDeliver","seed":"0x5000000000000005","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_immediate_steering.qnt --invariant=presentationDoesNotDeliver --max-samples=20000 --max-steps=25 --backend=rust --seed=0x5000000000000005"},
+    {"model":"formal/p428_mailbox_immediate_steering.qnt","invariant":"unrelatedApiDoesNotDeliver","seed":"0x5000000000000006","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_immediate_steering.qnt --invariant=unrelatedApiDoesNotDeliver --max-samples=20000 --max-steps=25 --backend=rust --seed=0x5000000000000006"},
+    {"model":"formal/p428_mailbox_write_ack.qnt","invariant":"deliveredRequiresPtyWrite","seed":"0x6000000000000001","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_write_ack.qnt --invariant=deliveredRequiresPtyWrite --step=repairedStep --max-samples=20000 --max-steps=25 --backend=rust --seed=0x6000000000000001"},
+    {"model":"formal/p428_mailbox_write_ack.qnt","invariant":"failedWriteRemainsQueued","seed":"0x6000000000000002","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_write_ack.qnt --invariant=failedWriteRemainsQueued --step=repairedStep --max-samples=20000 --max-steps=25 --backend=rust --seed=0x6000000000000002"},
+    {"model":"formal/p428_mailbox_write_ack.qnt","invariant":"appNeverBlocks","seed":"0x6000000000000003","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_write_ack.qnt --invariant=appNeverBlocks --step=repairedStep --max-samples=20000 --max-steps=25 --backend=rust --seed=0x6000000000000003"},
+    {"model":"formal/p428_mailbox_write_ack.qnt","invariant":"completionMatchesInFlight","seed":"0x6000000000000004","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_write_ack.qnt --invariant=completionMatchesInFlight --step=repairedStep --max-samples=20000 --max-steps=25 --backend=rust --seed=0x6000000000000004"},
+    {"model":"formal/p428_mailbox_write_ack.qnt","invariant":"markedAtMostOnce","seed":"0x6000000000000005","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_write_ack.qnt --invariant=markedAtMostOnce --step=repairedStep --max-samples=20000 --max-steps=25 --backend=rust --seed=0x6000000000000005"},
+    {"model":"formal/p428_mailbox_write_ack.qnt","invariant":"mailboxNeverReservesSharedEventCapacity","seed":"0x6000000000000006","result":"green","command":"npx --yes @informalsystems/quint@0.32.0 run formal/p428_mailbox_write_ack.qnt --invariant=mailboxNeverReservesSharedEventCapacity --step=repairedStep --max-samples=20000 --max-steps=25 --backend=rust --seed=0x6000000000000006"}
+  ],
+  "drift_and_contract_evidence": {
+    "fork_difference_inventory": {"command": "python3 scripts/fork_difference_inventory.py", "non_merge": 178, "spec_referenced": 145, "overrides": 33, "errors": 0},
+    "drift_red_green": {"command": "python3 -m unittest scripts.test_spec_formal_drift_check", "result": "all current-tree and intentional mutation checks passed"},
+    "contract_suite": {"command": "just fork-spec-contracts", "job": "job-1786351098697-76529-317", "exit_code": 0},
+    "diff_check": {"command": "git diff --check", "result": "green"},
+    "formal_gate_suite": {
+      "command": "python3 -m unittest scripts.test_spec_contract_inventory scripts.test_fork_difference_inventory scripts.test_spec_formal_drift_check scripts.test_upstream_packet_gate",
+      "tests": 31,
+      "result": "green",
+      "evidence_bundle_sha256": "de84d302740a0171695887385f33f074987194c024582edec3fce38675171c6a"
+    }
+  },
+  "unrepresented_dimensions": [
+    "multi-recipient and global message ordering remain covered by the existing p428 mailbox models, not this lifecycle model",
+    "real PTY concurrent writes and crash recovery require Rust and live runtime evidence",
+    "Windows ConPTY, Git Bash, parent ownership, SSH logout, IME and notification acceptance remain unverified",
+    "mouse, mobile and visual geometry require live acceptance",
+    "release packages, Homebrew, npm and published docs remain unverified"
+  ]
+}
