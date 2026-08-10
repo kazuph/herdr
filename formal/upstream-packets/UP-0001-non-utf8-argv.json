@@ -1,0 +1,102 @@
+{
+  "id": "UP-0001-non-utf8-argv",
+  "disposition": "source_accept",
+  "source": {
+    "commit": "0f14e279a783f456f3506086a0945cc8fb15a66c",
+    "allowlist": [
+      "src/main.rs"
+    ]
+  },
+  "fork_parent": "7a5ee7479dccb045e1a41f3d76f0a312a616f217",
+  "fork_files": [
+    "src/main.rs",
+    "formal/upstream-packets/UP-0001-non-utf8-argv.json"
+  ],
+  "contract_impact": {
+    "direct_stage_contract": {
+      "id": "G10-8752c6a17f",
+      "requirement": "Each accepted packet preserves G1-G9 after integration."
+    },
+    "protected_contracts": [
+      {
+        "id": "G5-4132d3e8be",
+        "requirement": "Unknown flags are rejected before the nested guard.",
+        "status": "unchanged"
+      }
+    ],
+    "unaffected_contracts": [
+      {
+        "id": "G5-2cc3a1fdb4",
+        "reason": "The stale HERDR_ENV/socket guard still receives the same validated Vec<String>; this packet only rejects non-UTF-8 OsString input before existing argument handling."
+      }
+    ]
+  },
+  "unaffected_dimensions": [
+    "identity",
+    "ownership",
+    "order",
+    "retry",
+    "restart",
+    "UI",
+    "release"
+  ],
+  "dimensions": [
+    "root CLI argv UTF-8 validation",
+    "error privacy",
+    "process exit status"
+  ],
+  "dependencies": [],
+  "owner": {
+    "file_and_contract_integration": "manager",
+    "implementation": "packet001-nonutf8-argv implementer"
+  },
+  "evidence": {
+    "before": {
+      "job": "job-1786355154763-4453-13",
+      "command": "just test-one args_as_utf8",
+      "result": "RED: exit 101; args_as_utf8 was not found in src/main.rs"
+    },
+    "after": {
+      "job": "job-1786355311325-4453-19",
+      "command": "just test-one args_as_utf8 && just test-one spec_excludes_disabled_fork_commands",
+      "result": "GREEN: exit 0; args_as_utf8 ran 2 tests and spec_excludes_disabled_fork_commands ran 1 test"
+    },
+    "unix_live": {
+      "job": "job-1786355853341-4453-54",
+      "result": "GREEN: the debug binary exited 2, emitted the exact fixed stderr, and did not expose the malformed byte"
+    },
+    "protected_unknown_flag_live": {
+      "job": "job-1786355837359-4453-51",
+      "result": "GREEN: --show-changelog remained an unknown-option error before the nested guard"
+    },
+    "formal_inventory_and_gate": {
+      "job": "job-1786355514960-4453-28",
+      "result": "GREEN: 31 unit tests, formal drift, zero-error fork inventory, pre-packet gate, and git diff check"
+    },
+    "fork_contract_suite": {
+      "job": "job-1786355882575-4453-57",
+      "result": "GREEN: just fork-spec-contracts exited 0"
+    },
+    "native_ci_and_maintenance": {
+      "jobs": [
+        "job-1786356028767-4453-58",
+        "job-1786356148018-4453-65"
+      ],
+      "result": "GREEN: format, native clippy, 2970 Rust tests, 2 integration asset tests, 12 plugin tests, 87 maintenance tests, distribution docs, and git diff check"
+    }
+  },
+  "rollback": {
+    "trigger": "valid argv, exit status, or error privacy regression",
+    "target": "the UP-0001-non-utf8-argv packet commit",
+    "cascade_dependents": []
+  },
+  "relevant_formal": {
+    "value": "none",
+    "reason": "The packet only converts process argv at the root CLI boundary before existing session and CLI parsing; no modeled protocol or state transition changes."
+  },
+  "unverified_live_dimensions": [
+    "Windows process exit behavior with a non-UTF-8 OsString",
+    "The non-macOS cli_wrapper integration tests are compile-excluded on macOS and were not run on Linux or Windows",
+    "macOS-to-Windows MSVC clippy is unverified because bundled SQLite cross-compilation could not find stdlib.h; job-1786356028767-4453-58 exited 101 only at windows-lint after all native CI checks passed"
+  ]
+}
