@@ -21,6 +21,7 @@ mod plugin;
 mod protocol_guard;
 mod runtime;
 mod server;
+mod server_not_running;
 mod spec;
 mod status;
 mod tab;
@@ -827,7 +828,7 @@ pub(super) fn wait_for_agent_change(
     ensure_server_protocol_compatible(&client, &request.id)?;
     let (ack, mut stream) = client
         .subscribe_value(&request, read_timeout)
-        .map_err(api_client_error_to_io)?;
+        .map_err(|err| map_server_not_running_or_io(err, &request.id, &client))?;
     if let Err(err) = crate::api::client::parse_response_value(ack) {
         if let ApiClientError::ErrorResponse(response) = err {
             eprintln!("{}", serde_json::to_string(&response).unwrap());
@@ -882,17 +883,20 @@ pub(super) fn send_request(request: &Request) -> std::io::Result<serde_json::Val
     ensure_server_protocol_compatible(&client, &request.id)?;
     client
         .request_value(request)
-        .map_err(api_client_error_to_io)
+        .map_err(|err| map_server_not_running_or_io(err, &request.id, &client))
 }
 
 pub(super) fn send_request_unchecked(request: &Request) -> std::io::Result<serde_json::Value> {
-    ApiClient::local()
+    let client = ApiClient::local();
+    client
         .request_value(request)
-        .map_err(api_client_error_to_io)
+        .map_err(|err| map_server_not_running_or_io(err, &request.id, &client))
 }
 
 fn ensure_server_protocol_compatible(client: &ApiClient, request_id: &str) -> std::io::Result<()> {
-    let status = client.status().map_err(api_client_error_to_io)?;
+    let status = client
+        .status()
+        .map_err(|err| map_server_not_running_or_io(err, request_id, client))?;
     let server_protocol = status
         .protocol
         .ok_or_else(|| std::io::Error::other("server ping did not include a protocol version"))?;
@@ -913,6 +917,39 @@ fn ensure_server_protocol_compatible(client: &ApiClient, request_id: &str) -> st
 
 pub(crate) fn protocol_mismatch_was_reported(err: &std::io::Error) -> bool {
     protocol_guard::was_reported(err)
+}
+
+pub(crate) fn server_not_running_was_reported(err: &std::io::Error) -> bool {
+    server_not_running::was_reported(err)
+}
+
+pub(crate) fn server_not_running_reported_response(
+    err: &std::io::Error,
+) -> Option<&crate::api::schema::ErrorResponse> {
+    server_not_running::reported_response(err)
+}
+
+pub(super) fn server_not_running_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+    )
+}
+
+fn map_server_not_running_or_io(
+    err: ApiClientError,
+    request_id: &str,
+    client: &ApiClient,
+) -> std::io::Error {
+    match err {
+        ApiClientError::Io(io_err) if server_not_running_error(&io_err) => {
+            server_not_running::reported_error(server_not_running::response(
+                request_id,
+                &client.socket_path(),
+            ))
+        }
+        err => api_client_error_to_io(err),
+    }
 }
 
 fn api_timeout_error(err: &std::io::Error) -> bool {
@@ -1111,6 +1148,8 @@ fn _print_json<T: Serialize>(value: &T) {
 
 #[cfg(test)]
 mod tests {
+    use crate::api::client::{ApiClient, ApiClientError};
+
     #[test]
     fn parse_env_assignment_accepts_empty_values() {
         assert_eq!(
@@ -1125,5 +1164,28 @@ mod tests {
             super::parse_env_assignment("HERDR_ROLE").unwrap_err(),
             "env must use KEY=VALUE"
         );
+    }
+
+    #[test]
+    fn maps_dead_server_connect_failure_to_marker() {
+        let client = ApiClient::local();
+        let mapped = super::map_server_not_running_or_io(
+            ApiClientError::Io(std::io::Error::from(std::io::ErrorKind::NotFound)),
+            "cli:workspace:create",
+            &client,
+        );
+
+        let response = super::server_not_running_reported_response(&mapped)
+            .expect("dead-server connect failure should carry a response");
+        assert_eq!(response.id, "cli:workspace:create");
+        assert_eq!(response.error.code, "server_not_running");
+        assert!(super::server_not_running_was_reported(&mapped));
+    }
+
+    #[test]
+    fn classifier_ignores_unrelated_io_kinds() {
+        assert!(!super::server_not_running_error(&std::io::Error::from(
+            std::io::ErrorKind::TimedOut
+        )));
     }
 }

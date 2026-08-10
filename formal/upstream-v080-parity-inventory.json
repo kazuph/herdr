@@ -15,6 +15,11 @@
       "id": "UP-0001-non-utf8-argv",
       "source_commit": "0f14e279a783f456f3506086a0945cc8fb15a66c",
       "manifest": "formal/upstream-packets/UP-0001-non-utf8-argv.json"
+    },
+    {
+      "id": "UP-0002-server-not-running",
+      "source_commit": "f99647b2c2d7fbfd11269330a25ea4f9be59bafa",
+      "manifest": "formal/upstream-packets/UP-0002-server-not-running.json"
     }
   ],
   "rows": [
@@ -8189,6 +8194,7 @@
     {
       "commit": "f99647b2c2d7fbfd11269330a25ea4f9be59bafa",
       "subject": "fix: report a clear cli error when no herdr server is running (#1963)",
+      "accepted_packet": "UP-0002-server-not-running",
       "changed_files": [
         "src/cli.rs",
         "src/cli/agent.rs",
@@ -8198,37 +8204,58 @@
         "src/main.rs",
         "tests/cli/sessions.rs"
       ],
-      "feature_group": "Build and distribution + CLI and configuration",
-      "domain": "multiple upstream feature domains",
-      "preliminary_disposition": "unassessed",
-      "evidence": "upstream commit metadata only; fork behavior is unassessed",
-      "missing_work": "assess fork behavior, contracts, evidence, and packet dependencies",
+      "feature_group": "CLI server-not-running error boundary",
+      "domain": "CLI, help, argument parsing, config, and error behavior + Server/client protocol, API, events, identity, sockets, and runtime ownership",
+      "preliminary_disposition": "semantic_port",
+      "evidence": "UP-0002-server-not-running semantic port: job-1786361221149-4453-221 contract RED; job-1786361593464-4453-227 Unix debug-binary GREEN with one JSON stderr line, exit 1, session-aware guidance, alternate binary ownership, and preserved status output; job-1786362140727-4453-236 ran 3 macOS Unix public-boundary tests for agent start, unchecked live handoff, and the post-protocol-check subscription race; job-1786362959636-4453-261 fixed Unix full-message compatibility and PowerShell-explicit recovery guidance in a pure formatter test. Plugin offline recovery remains unverified.",
+      "missing_work": "Run Windows named-pipe and PowerShell live validation; run the non-macOS cli_wrapper assertions on their target environment; exercise plugin list, link, and uninstall offline recovery paths.",
       "dependencies": [],
       "platform_gap": [
-        "unassessed"
+        "Windows named-pipe live validation is unverified.",
+        "Windows PowerShell execution of Windows-specific guidance is unverified; cmd.exe is not presented as a supported recovery shell.",
+        "macOS-to-Windows MSVC clippy could not compile vendored libsqlite3-sys because stdlib.h was unavailable (job-1786362209204-4453-238).",
+        "tests/server_not_running.rs is cfg(unix); its GREEN result is not cross-platform runtime evidence.",
+        "tests/cli_wrapper.rs is compile-excluded on macOS and was not run on its Linux/Windows target environment."
       ],
       "behavior_slices": [
         {
           "files": [
-            "tests/cli/sessions.rs"
-          ],
-          "feature_group": "Build and distribution",
-          "domain": "Build, dependencies, vendor, package contents, docs, installer, updater, release channels, npm, Homebrew, Nix, and website behavior",
-          "status": "unassessed",
-          "primary": true
-        },
-        {
-          "files": [
             "src/cli.rs",
-            "src/cli/agent.rs",
-            "src/cli/plugin.rs",
             "src/cli/server_not_running.rs",
             "src/cli/status.rs",
             "src/main.rs"
           ],
-          "feature_group": "CLI and configuration",
+          "feature_group": "CLI API socket error boundary and recovery guidance",
+          "domain": "CLI, help, argument parsing, config, and error behavior + Server/client protocol, API, events, identity, sockets, and runtime ownership",
+          "status": "semantic_port",
+          "primary": true
+        },
+        {
+          "files": [
+            "src/cli/plugin.rs"
+          ],
+          "feature_group": "Plugin offline recovery marker",
           "domain": "CLI, help, argument parsing, config, and error behavior",
-          "status": "unassessed",
+          "status": "semantic_port",
+          "primary": true
+        },
+        {
+          "files": [
+            "src/cli/agent.rs"
+          ],
+          "feature_group": "Fork-native agent-start initial-request missing-server recovery",
+          "domain": "Agent automation, detection, integrations, and startup behavior",
+          "status": "semantic_port",
+          "fork_action": "upstream polling helper reviewed_not_adopted because the fork has no corresponding polling function; the observable missing-server error behavior is achieved by the fork-native agent start initial request, proven by job-1786362140727-4453-236",
+          "primary": true
+        },
+        {
+          "files": [
+            "tests/cli/sessions.rs"
+          ],
+          "feature_group": "CLI server-not-running integration coverage",
+          "domain": "CLI, help, argument parsing, config, and error behavior",
+          "status": "semantic_port",
           "primary": true
         }
       ],

@@ -1,0 +1,153 @@
+{
+  "id": "UP-0002-server-not-running",
+  "disposition": "semantic_port",
+  "source": {
+    "commit": "f99647b2c2d7fbfd11269330a25ea4f9be59bafa",
+    "allowlist": [
+      "src/cli.rs",
+      "src/cli/plugin.rs",
+      "src/cli/server_not_running.rs",
+      "src/cli/status.rs",
+      "src/main.rs"
+    ]
+  },
+  "reviewed_but_rejected_source_hunks": [
+    {
+      "file": "src/cli/agent.rs",
+      "reason": "The fork has no corresponding upstream agent-start polling function; no hunk was adopted."
+    },
+    {
+      "file": "tests/cli/sessions.rs",
+      "reason": "The upstream test layout is not adopted; fork-native coverage is in tests/cli_wrapper.rs and tests/server_not_running.rs."
+    }
+  ],
+  "fork_parent": "8beda9d6452bbdb0e3d4f9813f59f68f7e048fd5",
+  "fork_files": [
+    "src/cli.rs",
+    "src/cli/plugin.rs",
+    "src/cli/server_not_running.rs",
+    "src/cli/status.rs",
+    "src/main.rs",
+    "tests/cli_wrapper.rs",
+    "tests/server_not_running.rs",
+    "formal/upstream-packets/UP-0002-server-not-running.json",
+    "formal/upstream-v080-parity-inventory.json"
+  ],
+  "contract_impact": {
+    "direct_stage_contract": {
+      "id": "G10-8752c6a17f",
+      "requirement": "Each accepted packet preserves G1-G9 after integration."
+    },
+    "protected_contracts": [
+      {
+        "id": "G5-4132d3e8be",
+        "requirement": "Unknown flags are rejected before the nested guard.",
+        "status": "unchanged"
+      },
+      {
+        "name": "G8 integration surface",
+        "requirement": "Non-public integrations and self-update remain unavailable.",
+        "status": "unchanged"
+      },
+      {
+        "name": "G9 runtime ownership",
+        "requirement": "The current executable and explicit socket override remain owned by the invoking runtime.",
+        "status": "preserved by the fork-native command mapper"
+      }
+    ],
+    "unaffected_contracts": [
+      {
+        "id": "G5-2cc3a1fdb4",
+        "reason": "The stale HERDR_ENV/socket guard remains unchanged; this packet only maps NotFound and ConnectionRefused at the API-client boundary after existing argument validation."
+      }
+    ]
+  },
+  "unaffected_dimensions": [
+    "identity: request IDs and session names remain supplied by the existing runtime",
+    "ownership: alternate executable and explicit socket ownership are preserved rather than redirected",
+    "order: unknown-flag validation remains before nested guards",
+    "retry: only plugin offline recovery recognizes the marker; no retry policy changes",
+    "restart: no server restart or reload behavior changes",
+    "UI: status keeps its existing human-readable not-running output",
+    "release: no integration, updater, package, or release-channel behavior changes"
+  ],
+  "dimensions": [
+    "API socket transport error boundary",
+    "single-line JSON CLI error response",
+    "current executable and session-aware recovery guidance",
+    "PowerShell-specific Windows recovery guidance",
+    "plugin offline recovery marker",
+    "subscription race after protocol check",
+    "status command presentation"
+  ],
+  "dependencies": [],
+  "owner": {
+    "file_and_contract_integration": "manager",
+    "implementation": "v080-server-not-running implementer"
+  },
+  "evidence": {
+    "before_characterization": {
+      "job": "job-1786361199674-4453-220",
+      "result": "The debug binary emitted the prior raw IO error; this characterization intentionally expected the old behavior and is not the contract RED."
+    },
+    "contract_red": {
+      "job": "job-1786361221149-4453-221",
+      "result": "RED: the required JSON response assertion failed before the semantic port."
+    },
+    "core_green": {
+      "job": "job-1786361499657-4453-224",
+      "result": "GREEN: the two marker-classification unit tests and the Unix alternate-binary integration test passed before shell-safe guidance was added."
+    },
+    "final_green": {
+      "job": "job-1786361593464-4453-227",
+      "result": "GREEN: marker unit tests and the Unix live debug-binary boundary passed; explicit missing socket exited 1 with empty stdout and one JSON stderr line, and status remained human-readable. The integration test covered a named session and an alternate binary path containing a space and apostrophe."
+    },
+    "macos_public_boundary_green": {
+      "job": "job-1786362140727-4453-236",
+      "result": "GREEN: 3 Unix public-boundary tests ran on macOS. They verified current and shell-safe alternate executable guidance, missing-server agent start and unchecked live handoff, and the post-protocol-check subscription race returning id cli:agent:wait and code server_not_running."
+    },
+    "non_macos_wrapper_attempt": {
+      "job": "job-1786362001171-4453-234",
+      "result": "Not evidence: tests/cli_wrapper.rs is compile-excluded on macOS, so the first requested target-wrapper filter ran 0 tests and exited 4; the remaining chained filters did not run."
+    },
+    "risk_proportional_check": {
+      "job": "job-1786362209204-4453-238",
+      "result": "Partial GREEN only: inventory validation, fork contracts, diff check, native format/clippy, 2979 Rust tests, 2 integration-asset tests, 12 plugin-marketplace tests, and distribution/formal checks passed. The job exited 101 at macOS-to-Windows MSVC clippy because vendored libsqlite3-sys could not find stdlib.h."
+    },
+    "maintenance_green": {
+      "job": "job-1786362411834-4453-245",
+      "result": "GREEN: the 11 maintenance Python modules ran 106 tests successfully; P428 mailbox G9 inventory, the 175-commit v0.8 inventory, and 11 current distribution-guidance files were current."
+    },
+    "powershell_formatter_red": {
+      "jobs": [
+        "job-1786362732129-4453-251",
+        "job-1786362822629-4453-255"
+      ],
+      "result": "RED: the first job proved the pure recovery-command formatter was absent; the second proved the PowerShell-explicit recovery-message formatter was absent."
+    },
+    "powershell_expected_value_retry": {
+      "job": "job-1786362897956-4453-259",
+      "result": "Not evidence: only the Windows named-pipe expected value omitted one leading backslash; the production output was correct."
+    },
+    "powershell_formatter_green": {
+      "job": "job-1786362959636-4453-261",
+      "result": "GREEN: the pure formatter fixed Unix's existing command and full message, plus PowerShell's explicit message and ampersand-prefixed, single-quoted executable/session command. Three macOS Unix public-boundary tests also passed; inventory validation and diff check passed."
+    }
+  },
+  "rollback": {
+    "trigger": "valid CLI behavior, error privacy, exit status, explicit socket ownership, or recovery guidance regression",
+    "target": "the UP-0002-server-not-running packet commit",
+    "cascade_dependents": []
+  },
+  "relevant_formal": {
+    "value": "none",
+    "reason": "The packet maps an existing API-client connection failure into an existing JSON error envelope without changing modeled protocol state, identity, or ownership transitions."
+  },
+  "unverified_live_dimensions": [
+    "Windows named-pipe runtime behavior and PowerShell execution of the Windows-specific recovery guidance were not run on a Windows host; cmd.exe is not presented as a supported recovery shell.",
+    "The macOS-to-Windows MSVC clippy compile check did not reach the Windows PowerShell guidance branch because vendored libsqlite3-sys could not find stdlib.h (job-1786362209204-4453-238).",
+    "tests/server_not_running.rs is cfg(unix) and is not cross-platform runtime evidence.",
+    "tests/cli_wrapper.rs is compile-excluded on macOS and was not run on its Linux/Windows target environment.",
+    "Plugin list, link, and uninstall offline recovery were not directly exercised end to end."
+  ]
+}
