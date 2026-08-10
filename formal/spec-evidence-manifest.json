@@ -309,7 +309,7 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "Lean covers direction round-trip only; logical order, focus, and live terminal geometry remain Rust/live concerns"
+        "Lean covers finite grid pane counts, top/bottom allocation, and half-cell rounding only; exact 90x30 geometry and live focus remain Rust/live concerns"
       ]
     },
     {

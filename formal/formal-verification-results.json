@@ -3,7 +3,7 @@
   "runtime_baseline": "88118ae5a17e915883b2fd69562ad24b2a56e905",
   "execution_binding": {
     "code_commit": "88118ae5a17e915883b2fd69562ad24b2a56e905",
-    "evidence_bundle_sha256": "de84d302740a0171695887385f33f074987194c024582edec3fce38675171c6a",
+    "evidence_bundle_sha256": "dba1261293eddde707cd1598fbb3450951277bba56bed1b31b63dafbe3d41961",
     "rule": "The gate requires this exact evidence bundle, unchanged src/tests since code_commit, a clean tree, origin tracking, and local HEAD equal to the pushed evidence HEAD."
   },
   "tools": {
@@ -100,7 +100,7 @@
       "command": "python3 -m unittest scripts.test_spec_contract_inventory scripts.test_fork_difference_inventory scripts.test_spec_formal_drift_check scripts.test_upstream_packet_gate",
       "tests": 31,
       "result": "green",
-      "evidence_bundle_sha256": "de84d302740a0171695887385f33f074987194c024582edec3fce38675171c6a"
+      "evidence_bundle_sha256": "dba1261293eddde707cd1598fbb3450951277bba56bed1b31b63dafbe3d41961"
     }
   },
   "unrepresented_dimensions": [
