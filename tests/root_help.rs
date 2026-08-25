@@ -29,6 +29,7 @@ fn root_help_is_skill_style_and_matches_help_command() {
         "herdr --help",
         "herdr pane current",
         "HERDR_PANE_ID",
+        "exported as `p_N`",
         "calling process session",
         "parent process tree",
         "Do not infer the requester pane from the focused pane",

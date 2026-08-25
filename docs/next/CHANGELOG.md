@@ -6,6 +6,9 @@
 - Added `ui.sidebar_start_collapsed` to launch Herdr with the sidebar collapsed. (#1463)
 - Added macOS support for the `HERDR_AGENT=<agent>` foreground-process hint, allowing agents hidden behind host-visible wrappers such as `nono` to use the named agent's screen manifest. (#679)
 
+### Changed
+- `HERDR_PANE_ID` (and `HERDR_ACTIVE_PANE_ID` / plugin runtime `HERDR_PANE_ID`) is now exported as `p_N`, matching upstream herdr, so scripts written for either binary resolve the same pane; `pN` and `%N` remain accepted as input and API responses keep `pN`.
+
 ### Fixed
 - Popup terminals now belong to the workspace where they were opened: workspace keybindings can switch away while the popup keeps running, returning restores it, and mouse drag selection copies text like a tiled pane.
 - Claude panes now save the current runtime session id after native resume instead of repeatedly restoring the older id from the launch command.

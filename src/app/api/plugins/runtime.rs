@@ -68,7 +68,10 @@ impl App {
             env.push(("HERDR_TAB_ID".to_string(), tab_id.clone()));
         }
         if let Some(pane_id) = context.focused_pane_id.as_ref() {
-            env.push(("HERDR_PANE_ID".to_string(), pane_id.clone()));
+            env.push((
+                "HERDR_PANE_ID".to_string(),
+                crate::workspace::pane_env_id_from_public(pane_id),
+            ));
         }
         if let Some(clicked_url) = context.clicked_url.as_ref() {
             env.push(("HERDR_PLUGIN_CLICKED_URL".to_string(), clicked_url.clone()));

@@ -1031,7 +1031,7 @@
 - **status: 本家基盤＋fork差分保持 (B)** — 本家 `fbd20ad`, `d35c642` のstable short handle・schemaを採用し、`%N`互換とAI向けfail-closed helpを残す。
 - **目的**: AIがpane targetを短く確実に読み書きできるようにする。CLI helpも人間向け一覧ではなく、agentが守るべきpane識別ルールを含む再利用可能な指示として読める形にする。
 - **UI挙動**:
-  - pane targetはglobal pane番号 `N`、画面表示の `%N`、公開/API/event/env/snapshot IDの`pN`を受け付け、すべて同じ `PaneId.raw()` を指す。Space-local short id、base32 pane ID、composite IDは新規出力しない。存在しない値、0、overflowは拒否する。
+  - pane targetはglobal pane番号 `N`、画面表示の `%N`、公開/API/event/snapshot IDの`pN`、child process envの`p_N`（本家herdrと同じ綴り）を受け付け、すべて同じ `PaneId.raw()` を指す。Space-local short id、base32 pane ID、composite IDは新規出力しない。存在しない値、0、overflowは拒否する。
   - `herdr pane list`、pane作成response、agent infoは唯一のglobal pane ID `pN` を返す。pane数は全tabのlive pane数である。
   - workspace作成responseは `workspace`、`tab`、`root_pane` を返し、root paneは `pN` 形式で返す。
   - Space公開IDは安定十進`sN`、tab locatorは表示と同じSpace-local十進番号をsuffixに持つ`sN:tN`である。UI/API/event/new-pane launch env/snapshotはこの値を共通利用する。v4以前の旧Space IDとcomposite pane targetはledger、handoff、継続processのrestore aliasとしてのみ解決し、新規出力しない。
@@ -1044,7 +1044,8 @@
 - **受け入れ条件**:
   - 2 pane構成でglobal pane number、`%N`、`pN` が同じpaneを指せる。
   - `herdr pane list` と `herdr agent list` の各paneが同じ`pN`を返す。
-  - v4以前のsnapshotを復元すると、保存し直したsnapshot、API response、pane launch envは`sN`/`tN`/`pN`だけを出し、継続中の旧process/envが送るcomposite pane targetだけは同じlive paneへ解決する。
+  - v4以前のsnapshotを復元すると、保存し直したsnapshotとAPI responseは`sN`/`tN`/`pN`だけを出し、pane launch envは`HERDR_WORKSPACE_ID=sN`/`HERDR_TAB_ID=sN:tN`/`HERDR_PANE_ID=p_N`を出し、継続中の旧process/envが送るcomposite pane targetだけは同じlive paneへ解決する。
+  - 新規paneの`HERDR_PANE_ID`と`HERDR_ACTIVE_PANE_ID`、plugin runtimeへ渡す`HERDR_PANE_ID`は本家ogulcancelik/herdrと同じ`p_N`であり、`herdr pane get "$HERDR_PANE_ID"`は同じpaneを`pN`で返す。root helpはこの綴りを`exported as \`p_N\``として明記する。
   - `herdr help` と `herdr --help` のstdoutが完全一致する。
   - root helpに `HERDR_PANE_ID`、`calling process session`、`Do not infer the requester pane from the focused pane`、`herdr pane current` が含まれる。
   - root helpに `herdr client` が含まれない。

@@ -4145,7 +4145,7 @@ fn pane_shell_gets_herdr_socket_and_pane_env() {
     while Instant::now() < deadline {
         if env_capture.exists() {
             text = fs::read_to_string(&env_capture).unwrap();
-            if text.contains(&socket_path.display().to_string()) && text.contains(&pane_id) {
+            if text.contains(&socket_path.display().to_string()) && text.lines().count() >= 4 {
                 break;
             }
         }
@@ -4173,13 +4173,20 @@ fn pane_shell_gets_herdr_socket_and_pane_env() {
         !tab_number.is_empty() && tab_number.chars().all(|ch| ch.is_ascii_digit()),
         "HERDR_TAB_ID must use a decimal tab number: {text:?}"
     );
-    assert_eq!(lines[3], pane_id);
+    // Upstream herdr exports `p_N`; the fork matches that spelling so scripts
+    // written for either binary work, while `pN` / `%N` stay accepted as input.
+    let env_pane_number = lines[3]
+        .strip_prefix("p_")
+        .expect("HERDR_PANE_ID must be p_N");
     assert!(
-        lines[3].strip_prefix('p').is_some_and(
-            |number| !number.is_empty() && number.chars().all(|ch| ch.is_ascii_digit())
-        ),
-        "HERDR_PANE_ID must be pN: {text:?}"
+        !env_pane_number.is_empty() && env_pane_number.chars().all(|ch| ch.is_ascii_digit()),
+        "HERDR_PANE_ID must be p_N: {text:?}"
     );
+    assert_eq!(format!("p{env_pane_number}"), pane_id, "env id must name the created pane");
+    let got = run_cli(&socket_path, &["pane", "get", lines[3]]);
+    assert!(got.status.success(), "pane get must accept the env spelling: {got:?}");
+    let got_json: serde_json::Value = serde_json::from_slice(&got.stdout).unwrap();
+    assert_eq!(got_json["result"]["pane"]["pane_id"].as_str(), Some(pane_id.as_str()));
 
     cleanup_spawned_herdr(herdr, base);
 }

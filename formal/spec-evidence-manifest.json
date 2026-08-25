@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 358,
+    "active_contract_count": 359,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -5009,7 +5009,7 @@
       ]
     },
     {
-      "contract_id": "G5-a334dd66be",
+      "contract_id": "G5-845234e729",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -5017,47 +5017,58 @@
       ],
       "verification_methods": [
         "drift_source_anchor:src/app/ids.rs",
+        "rust_test_target:pane_shell_gets_herdr_socket_and_pane_env",
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1047"
+        "SPEC.md:1047",
+        "src/app/ids.rs:47"
       ],
       "test_status": [
-        "unverified"
+        "static_verified"
       ],
       "live_status": [
         "unverified"
       ],
       "unrepresented_dimensions": [
         "live caller-process resolution unverified"
+      ]
+    },
+    {
+      "contract_id": "G5-712d033302",
+      "dimensions": [
+        "public pane identity",
+        "upstream parity",
+        "child process env"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/workspace.rs",
+        "rust_test_target:pane_shell_gets_herdr_socket_and_pane_env",
+        "rust_test_target:custom_command_runs_from_prefix_key_in_navigate_mode",
+        "rust_test_target:direct_custom_popup_command_closes_after_exit",
+        "rust_test_target:env_id_uses_upstream_spelling",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1048",
+        "src/workspace.rs:132",
+        "src/app/ids.rs:47",
+        "src/app/api/plugins/runtime.rs:73",
+        "src/app/input/navigate.rs:858",
+        "tests/cli_wrapper.rs:4180"
+      ],
+      "test_status": [
+        "static_verified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "running Herdr keeps exporting the old spelling until restart; live restart acceptance unverified"
       ]
     },
     {
       "contract_id": "G5-75b51a37a8",
-      "dimensions": [
-        "public pane identity",
-        "caller resolution",
-        "API failure behavior"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/ids.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1048"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "live caller-process resolution unverified"
-      ]
-    },
-    {
-      "contract_id": "G5-1795d5392c",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -5081,7 +5092,7 @@
       ]
     },
     {
-      "contract_id": "G5-95fa5bf9e5",
+      "contract_id": "G5-1795d5392c",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -5093,6 +5104,30 @@
       ],
       "source_anchors": [
         "SPEC.md:1050"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "live caller-process resolution unverified"
+      ]
+    },
+    {
+      "contract_id": "G5-95fa5bf9e5",
+      "dimensions": [
+        "public pane identity",
+        "caller resolution",
+        "API failure behavior"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/ids.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1051"
       ],
       "test_status": [
         "unverified"
@@ -5117,7 +5152,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1067"
+        "SPEC.md:1068"
       ],
       "test_status": [
         "unverified"
@@ -5142,7 +5177,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1068"
+        "SPEC.md:1069"
       ],
       "test_status": [
         "unverified"
@@ -5167,7 +5202,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1069"
+        "SPEC.md:1070"
       ],
       "test_status": [
         "unverified"
@@ -5191,7 +5226,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1092"
+        "SPEC.md:1093"
       ],
       "test_status": [
         "unverified"
@@ -5215,7 +5250,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1093"
+        "SPEC.md:1094"
       ],
       "test_status": [
         "unverified"
@@ -5239,7 +5274,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1094"
+        "SPEC.md:1095"
       ],
       "test_status": [
         "unverified"
@@ -5263,7 +5298,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1095"
+        "SPEC.md:1096"
       ],
       "test_status": [
         "unverified"
@@ -5287,7 +5322,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1096"
+        "SPEC.md:1097"
       ],
       "test_status": [
         "unverified"
@@ -5311,7 +5346,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1117"
+        "SPEC.md:1118"
       ],
       "test_status": [
         "unverified"
@@ -5335,7 +5370,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1118"
+        "SPEC.md:1119"
       ],
       "test_status": [
         "unverified"
@@ -5359,7 +5394,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1119"
+        "SPEC.md:1120"
       ],
       "test_status": [
         "unverified"
@@ -5383,7 +5418,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1120"
+        "SPEC.md:1121"
       ],
       "test_status": [
         "unverified"
@@ -5407,7 +5442,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1133"
+        "SPEC.md:1134"
       ],
       "test_status": [
         "unverified"
@@ -5431,7 +5466,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1134"
+        "SPEC.md:1135"
       ],
       "test_status": [
         "unverified"
@@ -5455,7 +5490,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1135"
+        "SPEC.md:1136"
       ],
       "test_status": [
         "unverified"
@@ -5479,7 +5514,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1136"
+        "SPEC.md:1137"
       ],
       "test_status": [
         "unverified"
@@ -5503,7 +5538,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1150"
+        "SPEC.md:1151"
       ],
       "test_status": [
         "unverified"
@@ -5527,7 +5562,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1151"
+        "SPEC.md:1152"
       ],
       "test_status": [
         "unverified"
@@ -5551,7 +5586,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1152"
+        "SPEC.md:1153"
       ],
       "test_status": [
         "unverified"
@@ -5575,7 +5610,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1201"
+        "SPEC.md:1202"
       ],
       "test_status": [
         "unverified"
@@ -5599,7 +5634,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1202"
+        "SPEC.md:1203"
       ],
       "test_status": [
         "unverified"
@@ -5623,7 +5658,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1203"
+        "SPEC.md:1204"
       ],
       "test_status": [
         "unverified"
@@ -5647,7 +5682,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1204"
+        "SPEC.md:1205"
       ],
       "test_status": [
         "unverified"
@@ -5671,7 +5706,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1224"
+        "SPEC.md:1225"
       ],
       "test_status": [
         "unverified"
@@ -5695,7 +5730,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1225"
+        "SPEC.md:1226"
       ],
       "test_status": [
         "unverified"
@@ -5719,7 +5754,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1226"
+        "SPEC.md:1227"
       ],
       "test_status": [
         "unverified"
@@ -5743,7 +5778,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1227"
+        "SPEC.md:1228"
       ],
       "test_status": [
         "unverified"
@@ -5767,7 +5802,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1251"
+        "SPEC.md:1252"
       ],
       "test_status": [
         "unverified"
@@ -5791,7 +5826,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1252"
+        "SPEC.md:1253"
       ],
       "test_status": [
         "unverified"
@@ -5815,7 +5850,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1253"
+        "SPEC.md:1254"
       ],
       "test_status": [
         "unverified"
@@ -5839,7 +5874,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1254"
+        "SPEC.md:1255"
       ],
       "test_status": [
         "unverified"
@@ -5863,7 +5898,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1255"
+        "SPEC.md:1256"
       ],
       "test_status": [
         "unverified"
@@ -5887,7 +5922,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1256"
+        "SPEC.md:1257"
       ],
       "test_status": [
         "unverified"
@@ -5911,7 +5946,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1257"
+        "SPEC.md:1258"
       ],
       "test_status": [
         "unverified"
@@ -5935,7 +5970,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1258"
+        "SPEC.md:1259"
       ],
       "test_status": [
         "unverified"
@@ -5959,7 +5994,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1277"
+        "SPEC.md:1278"
       ],
       "test_status": [
         "unverified"
@@ -5983,7 +6018,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1278"
+        "SPEC.md:1279"
       ],
       "test_status": [
         "unverified"
@@ -6007,7 +6042,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1279"
+        "SPEC.md:1280"
       ],
       "test_status": [
         "unverified"
@@ -6031,7 +6066,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1291"
+        "SPEC.md:1292"
       ],
       "test_status": [
         "unverified"
@@ -6055,7 +6090,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1292"
+        "SPEC.md:1293"
       ],
       "test_status": [
         "unverified"
@@ -6079,7 +6114,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1293"
+        "SPEC.md:1294"
       ],
       "test_status": [
         "unverified"
@@ -6103,7 +6138,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1294"
+        "SPEC.md:1295"
       ],
       "test_status": [
         "unverified"
@@ -6127,7 +6162,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1304"
+        "SPEC.md:1305"
       ],
       "test_status": [
         "unverified"
@@ -6151,7 +6186,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1305"
+        "SPEC.md:1306"
       ],
       "test_status": [
         "unverified"
@@ -6175,7 +6210,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1306"
+        "SPEC.md:1307"
       ],
       "test_status": [
         "unverified"
@@ -6199,7 +6234,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1307"
+        "SPEC.md:1308"
       ],
       "test_status": [
         "unverified"
@@ -6223,7 +6258,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1308"
+        "SPEC.md:1309"
       ],
       "test_status": [
         "unverified"
@@ -6247,7 +6282,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1309"
+        "SPEC.md:1310"
       ],
       "test_status": [
         "unverified"
@@ -6271,7 +6306,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1310"
+        "SPEC.md:1311"
       ],
       "test_status": [
         "unverified"
@@ -6295,7 +6330,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1311"
+        "SPEC.md:1312"
       ],
       "test_status": [
         "unverified"
@@ -6319,7 +6354,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1312"
+        "SPEC.md:1313"
       ],
       "test_status": [
         "unverified"
@@ -6343,7 +6378,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1331"
+        "SPEC.md:1332"
       ],
       "test_status": [
         "unverified"
@@ -6367,7 +6402,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1332"
+        "SPEC.md:1333"
       ],
       "test_status": [
         "unverified"
@@ -6391,7 +6426,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1333"
+        "SPEC.md:1334"
       ],
       "test_status": [
         "unverified"
@@ -6415,7 +6450,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1334"
+        "SPEC.md:1335"
       ],
       "test_status": [
         "unverified"
@@ -6439,7 +6474,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1335"
+        "SPEC.md:1336"
       ],
       "test_status": [
         "unverified"
@@ -6463,7 +6498,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1336"
+        "SPEC.md:1337"
       ],
       "test_status": [
         "unverified"
@@ -6487,7 +6522,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1358"
+        "SPEC.md:1359"
       ],
       "test_status": [
         "unverified"
@@ -6511,7 +6546,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1359"
+        "SPEC.md:1360"
       ],
       "test_status": [
         "unverified"
@@ -6535,7 +6570,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1360"
+        "SPEC.md:1361"
       ],
       "test_status": [
         "unverified"
@@ -6559,7 +6594,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1378"
+        "SPEC.md:1379"
       ],
       "test_status": [
         "unverified"
@@ -6583,7 +6618,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1379"
+        "SPEC.md:1380"
       ],
       "test_status": [
         "unverified"
@@ -6607,7 +6642,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1380"
+        "SPEC.md:1381"
       ],
       "test_status": [
         "unverified"
@@ -6631,7 +6666,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1381"
+        "SPEC.md:1382"
       ],
       "test_status": [
         "unverified"
@@ -6655,7 +6690,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1382"
+        "SPEC.md:1383"
       ],
       "test_status": [
         "unverified"
@@ -6679,7 +6714,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1383"
+        "SPEC.md:1384"
       ],
       "test_status": [
         "unverified"
@@ -6703,7 +6738,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1384"
+        "SPEC.md:1385"
       ],
       "test_status": [
         "unverified"
@@ -6727,7 +6762,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1404"
+        "SPEC.md:1405"
       ],
       "test_status": [
         "unverified"
@@ -6751,7 +6786,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1405"
+        "SPEC.md:1406"
       ],
       "test_status": [
         "unverified"
@@ -6775,7 +6810,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1406"
+        "SPEC.md:1407"
       ],
       "test_status": [
         "unverified"
@@ -6799,7 +6834,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1407"
+        "SPEC.md:1408"
       ],
       "test_status": [
         "unverified"
@@ -6823,7 +6858,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1422"
+        "SPEC.md:1423"
       ],
       "test_status": [
         "unverified"
@@ -6847,7 +6882,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1423"
+        "SPEC.md:1424"
       ],
       "test_status": [
         "unverified"
@@ -6871,7 +6906,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1424"
+        "SPEC.md:1425"
       ],
       "test_status": [
         "unverified"
@@ -6895,7 +6930,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1437"
+        "SPEC.md:1438"
       ],
       "test_status": [
         "unverified"
@@ -6919,7 +6954,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1438"
+        "SPEC.md:1439"
       ],
       "test_status": [
         "unverified"
@@ -6943,7 +6978,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1454"
+        "SPEC.md:1455"
       ],
       "test_status": [
         "unverified"
@@ -6967,7 +7002,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1455"
+        "SPEC.md:1456"
       ],
       "test_status": [
         "unverified"
@@ -6991,7 +7026,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1469"
+        "SPEC.md:1470"
       ],
       "test_status": [
         "unverified"
@@ -7015,7 +7050,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1470"
+        "SPEC.md:1471"
       ],
       "test_status": [
         "unverified"
@@ -7039,7 +7074,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1471"
+        "SPEC.md:1472"
       ],
       "test_status": [
         "unverified"
@@ -7063,7 +7098,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1472"
+        "SPEC.md:1473"
       ],
       "test_status": [
         "unverified"
@@ -7090,7 +7125,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1491"
+        "SPEC.md:1492"
       ],
       "test_status": [
         "unverified"
@@ -7115,7 +7150,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1492"
+        "SPEC.md:1493"
       ],
       "test_status": [
         "unverified"
@@ -7141,7 +7176,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1493"
+        "SPEC.md:1494"
       ],
       "test_status": [
         "unverified"
@@ -7167,7 +7202,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1494"
+        "SPEC.md:1495"
       ],
       "test_status": [
         "unverified"
@@ -7192,7 +7227,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1495"
+        "SPEC.md:1496"
       ],
       "test_status": [
         "unverified"
@@ -7218,7 +7253,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1496"
+        "SPEC.md:1497"
       ],
       "test_status": [
         "unverified"
@@ -7246,7 +7281,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1497"
+        "SPEC.md:1498"
       ],
       "test_status": [
         "unverified"
@@ -7272,7 +7307,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1514"
+        "SPEC.md:1515"
       ],
       "test_status": [
         "unverified"
@@ -7299,7 +7334,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1515"
+        "SPEC.md:1516"
       ],
       "test_status": [
         "unverified"
@@ -7325,7 +7360,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1516"
+        "SPEC.md:1517"
       ],
       "test_status": [
         "unverified"
@@ -7352,7 +7387,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1517"
+        "SPEC.md:1518"
       ],
       "test_status": [
         "unverified"
@@ -7378,7 +7413,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1518"
+        "SPEC.md:1519"
       ],
       "test_status": [
         "unverified"
@@ -7405,7 +7440,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1519"
+        "SPEC.md:1520"
       ],
       "test_status": [
         "unverified"
@@ -7430,7 +7465,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1520"
+        "SPEC.md:1521"
       ],
       "test_status": [
         "unverified"
@@ -7454,7 +7489,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1540"
+        "SPEC.md:1541"
       ],
       "test_status": [
         "unverified"
@@ -7478,7 +7513,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1541"
+        "SPEC.md:1542"
       ],
       "test_status": [
         "unverified"
@@ -7502,7 +7537,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1542"
+        "SPEC.md:1543"
       ],
       "test_status": [
         "unverified"
@@ -7526,7 +7561,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1543"
+        "SPEC.md:1544"
       ],
       "test_status": [
         "unverified"
@@ -7551,7 +7586,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1544",
+        "SPEC.md:1545",
         "tests/cli_wrapper.rs:3547"
       ],
       "test_status": [
@@ -7576,7 +7611,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1556"
+        "SPEC.md:1557"
       ],
       "test_status": [
         "unverified"
@@ -7600,7 +7635,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1557"
+        "SPEC.md:1558"
       ],
       "test_status": [
         "unverified"
@@ -7624,7 +7659,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1558"
+        "SPEC.md:1559"
       ],
       "test_status": [
         "unverified"
@@ -7648,7 +7683,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1569"
+        "SPEC.md:1570"
       ],
       "test_status": [
         "unverified"
@@ -7672,7 +7707,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1570"
+        "SPEC.md:1571"
       ],
       "test_status": [
         "unverified"
@@ -7696,7 +7731,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1571"
+        "SPEC.md:1572"
       ],
       "test_status": [
         "unverified"
@@ -7720,7 +7755,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1580"
+        "SPEC.md:1581"
       ],
       "test_status": [
         "unverified"
@@ -7744,7 +7779,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1581"
+        "SPEC.md:1582"
       ],
       "test_status": [
         "unverified"
@@ -7768,7 +7803,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1590"
+        "SPEC.md:1591"
       ],
       "test_status": [
         "unverified"
@@ -7792,7 +7827,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1591"
+        "SPEC.md:1592"
       ],
       "test_status": [
         "unverified"
@@ -7816,7 +7851,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1600"
+        "SPEC.md:1601"
       ],
       "test_status": [
         "unverified"
@@ -7840,7 +7875,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1601"
+        "SPEC.md:1602"
       ],
       "test_status": [
         "unverified"
@@ -7864,7 +7899,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1602"
+        "SPEC.md:1603"
       ],
       "test_status": [
         "unverified"
@@ -7888,7 +7923,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1611"
+        "SPEC.md:1612"
       ],
       "test_status": [
         "unverified"
@@ -7912,7 +7947,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1612"
+        "SPEC.md:1613"
       ],
       "test_status": [
         "unverified"
@@ -7936,7 +7971,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1613"
+        "SPEC.md:1614"
       ],
       "test_status": [
         "unverified"
@@ -7960,7 +7995,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1622"
+        "SPEC.md:1623"
       ],
       "test_status": [
         "unverified"
@@ -7984,7 +8019,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1623"
+        "SPEC.md:1624"
       ],
       "test_status": [
         "unverified"
@@ -8008,7 +8043,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1624"
+        "SPEC.md:1625"
       ],
       "test_status": [
         "unverified"
@@ -8032,7 +8067,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1625"
+        "SPEC.md:1626"
       ],
       "test_status": [
         "unverified"
@@ -8056,7 +8091,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1626"
+        "SPEC.md:1627"
       ],
       "test_status": [
         "unverified"
@@ -8080,7 +8115,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1636"
+        "SPEC.md:1637"
       ],
       "test_status": [
         "unverified"
@@ -8104,7 +8139,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1637"
+        "SPEC.md:1638"
       ],
       "test_status": [
         "unverified"
@@ -8128,7 +8163,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1638"
+        "SPEC.md:1639"
       ],
       "test_status": [
         "unverified"
@@ -8152,7 +8187,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1639"
+        "SPEC.md:1640"
       ],
       "test_status": [
         "unverified"
@@ -8176,7 +8211,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1640"
+        "SPEC.md:1641"
       ],
       "test_status": [
         "unverified"
@@ -8200,7 +8235,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1649"
+        "SPEC.md:1650"
       ],
       "test_status": [
         "unverified"
@@ -8224,7 +8259,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1650"
+        "SPEC.md:1651"
       ],
       "test_status": [
         "unverified"
@@ -8248,7 +8283,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1651"
+        "SPEC.md:1652"
       ],
       "test_status": [
         "unverified"
@@ -8272,7 +8307,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1652"
+        "SPEC.md:1653"
       ],
       "test_status": [
         "unverified"
@@ -8296,7 +8331,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1662"
+        "SPEC.md:1663"
       ],
       "test_status": [
         "unverified"
@@ -8320,7 +8355,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1663"
+        "SPEC.md:1664"
       ],
       "test_status": [
         "unverified"
@@ -8344,7 +8379,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1664"
+        "SPEC.md:1665"
       ],
       "test_status": [
         "unverified"
@@ -8368,7 +8403,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1673"
+        "SPEC.md:1674"
       ],
       "test_status": [
         "unverified"
@@ -8392,7 +8427,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1674"
+        "SPEC.md:1675"
       ],
       "test_status": [
         "unverified"
@@ -8416,7 +8451,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1675"
+        "SPEC.md:1676"
       ],
       "test_status": [
         "unverified"
@@ -8441,7 +8476,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1723"
+        "SPEC.md:1724"
       ],
       "test_status": [
         "unverified"
@@ -8466,7 +8501,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1724"
+        "SPEC.md:1725"
       ],
       "test_status": [
         "unverified"
@@ -8491,7 +8526,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1725"
+        "SPEC.md:1726"
       ],
       "test_status": [
         "unverified"
@@ -8516,7 +8551,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1726"
+        "SPEC.md:1727"
       ],
       "test_status": [
         "unverified"
@@ -8541,7 +8576,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1727"
+        "SPEC.md:1728"
       ],
       "test_status": [
         "unverified"
@@ -8566,7 +8601,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1728"
+        "SPEC.md:1729"
       ],
       "test_status": [
         "unverified"
@@ -8591,7 +8626,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1729"
+        "SPEC.md:1730"
       ],
       "test_status": [
         "unverified"
@@ -8616,7 +8651,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1730"
+        "SPEC.md:1731"
       ],
       "test_status": [
         "unverified"
@@ -8641,7 +8676,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1731"
+        "SPEC.md:1732"
       ],
       "test_status": [
         "unverified"
@@ -8666,7 +8701,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1732"
+        "SPEC.md:1733"
       ],
       "test_status": [
         "unverified"
