@@ -481,6 +481,7 @@ Use `herdr` to run terminal-based coding agents, address panes by stable targets
 
 - Prefer `herdr pane current` to resolve your own pane.
 - `HERDR_PANE_ID` is authoritative when present; otherwise pane current resolves the calling process session, then its parent process tree.
+- `HERDR_PANE_ID` is exported as `p_N` (the upstream herdr spelling); pane targets also accept `pN` and `%N`, and API responses keep `pN`.
 - Do not infer the requester pane from the focused pane, active window, pane list order, or UI selection.
 - If pane identity cannot be resolved, fail closed and ask for `--caller <pane>`.
 - For communication commands, remember: send=talk, run=execute, log=inspect, inbox=pull fallback.

@@ -43,7 +43,8 @@ impl App {
         let ws = self.state.workspaces.get(ws_idx)?;
         let tab_idx = ws.find_tab_index_for_pane(pane_id)?;
         let tab_id = self.public_tab_id(ws_idx, tab_idx)?;
-        let pane_id = self.public_pane_id(ws_idx, pane_id)?;
+        let pane_id =
+            crate::workspace::pane_env_id_from_public(&self.public_pane_id(ws_idx, pane_id)?);
         Some(
             crate::pane::PaneLaunchEnv::from_extra(extra_env).with_identity(
                 workspace_id,

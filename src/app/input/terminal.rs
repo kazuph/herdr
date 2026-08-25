@@ -1375,7 +1375,10 @@ mod tests {
 
         assert_eq!(
             wait_for_file(&output_path),
-            format!("unset|{focused_pane_id}")
+            format!(
+                "unset|{}",
+                crate::workspace::pane_env_id_from_public(&focused_pane_id)
+            )
         );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while std::time::Instant::now() < deadline {

@@ -853,7 +853,10 @@ impl App {
                 }
                 if let Some(pane_id) = workspace.focused_pane_id() {
                     if let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) {
-                        env.push(("HERDR_ACTIVE_PANE_ID".to_string(), public_pane_id));
+                        env.push((
+                            "HERDR_ACTIVE_PANE_ID".to_string(),
+                            crate::workspace::pane_env_id_from_public(&public_pane_id),
+                        ));
                     }
                     if let Some(pane_cwd) = workspace.active_tab().and_then(|tab| {
                         tab.cwd_for_pane(pane_id, &self.state.terminals, &self.terminal_runtimes)
@@ -3031,7 +3034,7 @@ navigate_pane_down = "ctrl+j"
         assert_eq!(lines[2], format!("{}:t1", app.state.workspaces[0].id));
         assert_eq!(
             lines[3],
-            format!("p{}", app.state.workspaces[0].tabs[0].root_pane.raw())
+            format!("p_{}", app.state.workspaces[0].tabs[0].root_pane.raw())
         );
         assert_eq!(app.state.mode, Mode::Terminal);
 

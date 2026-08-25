@@ -125,6 +125,29 @@ pub(crate) fn public_pane_id_for_number(_workspace_id: &str, pane_id: u32) -> St
     format!("p{pane_id}")
 }
 
+/// Pane identity exported to child processes (`HERDR_PANE_ID`,
+/// `HERDR_ACTIVE_PANE_ID`, plugin runtime env). Uses upstream herdr's
+/// `p_N` spelling so scripts written against ogulcancelik/herdr keep working;
+/// every fork target parser also accepts `pN` and `%N`.
+pub(crate) fn pane_env_id_for_number(pane_id: u32) -> String {
+    format!("p_{pane_id}")
+}
+
+/// Convert a public `pN` id into the env spelling. `p_N` passes through
+/// unchanged; any other value is returned as-is.
+pub(crate) fn pane_env_id_from_public(public_pane_id: &str) -> String {
+    if public_pane_id.starts_with("p_") {
+        return public_pane_id.to_string();
+    }
+    match public_pane_id
+        .strip_prefix('p')
+        .and_then(|number| number.parse::<u32>().ok())
+    {
+        Some(raw) if raw > 0 => pane_env_id_for_number(raw),
+        _ => public_pane_id.to_string(),
+    }
+}
+
 pub(crate) fn public_tab_id_for_number(workspace_id: &str, tab_number: usize) -> String {
     format!("{workspace_id}:t{tab_number}")
 }
@@ -1413,6 +1436,24 @@ impl Workspace {
             self.next_public_tab_number,
             max_tab_number
         );
+    }
+}
+
+#[cfg(test)]
+mod pane_env_id_tests {
+    use super::{pane_env_id_for_number, pane_env_id_from_public};
+
+    #[test]
+    fn env_id_uses_upstream_spelling() {
+        assert_eq!(pane_env_id_for_number(7), "p_7");
+        assert_eq!(pane_env_id_from_public("p7"), "p_7");
+    }
+
+    #[test]
+    fn env_id_conversion_is_idempotent_and_leaves_unknown_values() {
+        assert_eq!(pane_env_id_from_public("p_7"), "p_7");
+        assert_eq!(pane_env_id_from_public("p0"), "p0");
+        assert_eq!(pane_env_id_from_public("worker"), "worker");
     }
 }
 
