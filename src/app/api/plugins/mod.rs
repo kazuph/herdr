@@ -1309,7 +1309,7 @@ command = ["echo", "b"]
             app.state.settings.original_theme.as_deref(),
             Some("settings-theme")
         );
-        assert!(app.state.popup_pane.is_none());
+        assert!(app.state.popup_panes.is_empty());
 
         let copy_mode = crate::app::state::CopyModeState {
             pane_id: root_pane,
@@ -1326,7 +1326,7 @@ command = ["echo", "b"]
         assert_eq!(copy_error["error"]["code"], "ui_busy");
         assert_eq!(app.state.mode, crate::app::Mode::Copy);
         assert_eq!(app.state.copy_mode, Some(copy_mode));
-        assert!(app.state.popup_pane.is_none());
+        assert!(app.state.popup_panes.is_empty());
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1859,7 +1859,7 @@ command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
             "unset"
         );
 
-        let opened_pane_id = app.state.popup_pane.as_ref().unwrap().pane_id;
+        let opened_pane_id = app.state.active_popup_pane().unwrap().pane_id;
         assert!(!app.state.plugin_panes.contains_key(&opened_pane_id));
         app.state.assert_invariants_for_test();
         app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 100, 30);
@@ -1891,7 +1891,7 @@ command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
         app.handle_internal_event(crate::events::AppEvent::PaneDied {
             pane_id: opened_pane_id,
         });
-        assert!(app.state.popup_pane.is_none());
+        assert!(app.state.popup_panes.is_empty());
         assert!(event_hub.events_after(0).is_empty());
 
         for (_, runtime) in app.terminal_runtimes.drain() {

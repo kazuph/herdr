@@ -60,15 +60,21 @@ impl App {
     }
 
     pub(crate) fn shutdown_detached_terminal_runtimes(&mut self) {
-        let popup_owner_missing = self.state.popup_pane.as_ref().is_some_and(|popup| {
-            !self
-                .state
-                .workspaces
-                .iter()
-                .any(|workspace| workspace.id == popup.workspace_id)
-        });
-        if popup_owner_missing {
-            self.close_popup_pane();
+        let orphaned_popup_pane_ids: Vec<crate::layout::PaneId> = self
+            .state
+            .popup_panes
+            .iter()
+            .filter(|popup| {
+                !self
+                    .state
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.id == popup.workspace_id)
+            })
+            .map(|popup| popup.pane_id)
+            .collect();
+        for pane_id in orphaned_popup_pane_ids {
+            self.close_popup_pane_by_pane_id(pane_id);
         }
         let terminal_ids = std::mem::take(&mut self.state.terminal_runtime_shutdowns);
         for terminal_id in terminal_ids {
@@ -463,14 +469,14 @@ impl App {
         }
 
         // Rect-change detection: if inner_rect changed since drag, stop
-        let current_rect = if self
-            .state
-            .popup_pane
-            .as_ref()
-            .is_some_and(|popup| popup.pane_id == pane_id)
-        {
-            crate::ui::popup_pane_rects(&self.state, self.state.view.terminal_area)
-                .map(|(_, inner)| inner)
+        let current_rect = if self.state.popup_pane_by_pane_id(pane_id).is_some() {
+            self.state
+                .active_popup_pane()
+                .filter(|popup| popup.pane_id == pane_id)
+                .and_then(|_| {
+                    crate::ui::popup_pane_rects(&self.state, self.state.view.terminal_area)
+                        .map(|(_, inner)| inner)
+                })
         } else {
             self.state
                 .pane_info_by_id(pane_id)

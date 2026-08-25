@@ -153,13 +153,8 @@ impl App {
         }
 
         if let AppEvent::PaneDied { pane_id } = &ev {
-            if self
-                .state
-                .popup_pane
-                .as_ref()
-                .is_some_and(|popup| popup.pane_id == *pane_id)
-            {
-                self.close_popup_pane();
+            if self.state.popup_pane_by_pane_id(*pane_id).is_some() {
+                self.close_popup_pane_by_pane_id(*pane_id);
                 return;
             }
             let previous_toast = self.state.toast.clone();

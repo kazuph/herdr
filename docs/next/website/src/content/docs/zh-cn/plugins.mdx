@@ -258,7 +258,7 @@ command = ["sh", "picker.sh"]
 split、tab、zoomed 和 overlay 插件窗格打开后就是普通的 Herdr 窗格。插件可以通过 socket 或 CLI 调用
 `pane.move`、`pane.swap`、`pane.resize`、`pane.zoom` 等标准窗格 API;
 窗格跨标签页或工作区移动时,Herdr 会让插件窗格的所有权跟随底层窗格。
-弹窗不是 Herdr 窗格,而是会话级单例资源:它没有窗格 id,不会改变插件焦点上下文,不会发出窗格生命周期事件,也不参与 pane、layout、持久化或智能体 API。
+弹窗不是 Herdr 窗格,而是每个工作区最多一个的资源。在另一个工作区打开新弹窗时,无需关闭先前的弹窗;只有当前工作区的弹窗可见并接收输入。弹窗没有窗格 id,不会改变插件焦点上下文,不会发出窗格生命周期事件,也不参与 pane、layout、持久化或智能体 API。
 其进程不会收到 `HERDR_PANE_ID`;底层平铺窗格仍可通过 `HERDR_PLUGIN_CONTEXT_JSON` 获取。
 在 Settings、复制模式或其他 Herdr 模态界面打开时尝试打开弹窗会返回 `ui_busy`;启动成功后,`plugin.pane.open` 返回 `ok`。
 

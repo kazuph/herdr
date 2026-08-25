@@ -424,8 +424,7 @@ impl App {
         };
         let Some((popup_pane_id, popup_terminal_id)) = self
             .state
-            .popup_pane
-            .as_ref()
+            .active_popup_pane()
             .map(|popup| (popup.pane_id, popup.terminal_id.clone()))
         else {
             return;

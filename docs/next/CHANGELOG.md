@@ -11,6 +11,7 @@
 
 ### Fixed
 - Popup terminals now belong to the workspace where they were opened: workspace keybindings can switch away while the popup keeps running, returning restores it, and mouse drag selection copies text like a tiled pane.
+- Opening a popup in one workspace no longer blocks opening a separate popup in another workspace; each workspace's popup runs as its own terminal, closing one leaves the other running, and only the active workspace's popup is visible and receives input.
 - Claude panes now save the current runtime session id after native resume instead of repeatedly restoring the older id from the launch command.
 - Live handoff now preserves installed plugins and no longer lets the next plugin installation overwrite the existing registry. (#893)
 - Codex and Claude session restore now preserve each configured `[agent_start.commands]` argv before appending native resume arguments, avoid Unix alias expansion, and safely carry literal argv through Windows cmd and PowerShell.

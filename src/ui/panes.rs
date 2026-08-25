@@ -407,7 +407,7 @@ pub(crate) fn popup_pane_rects(app: &AppState, area: Rect) -> Option<(Rect, Rect
     if !app.popup_pane_is_visible() {
         return None;
     }
-    let popup = app.popup_pane.as_ref()?;
+    let popup = app.active_popup_pane()?;
     resolve_popup_geometry(popup.width, popup.height, area)
         .map(|geometry| (geometry.outer, geometry.inner))
 }
@@ -418,7 +418,7 @@ pub(super) fn resize_popup_pane(
     area: Rect,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
-    let Some(popup) = app.popup_pane.as_ref() else {
+    let Some(popup) = app.active_popup_pane() else {
         return;
     };
     let Some((_outer, inner)) = popup_pane_rects(app, area) else {
@@ -443,7 +443,7 @@ pub(super) fn render_popup_pane(
     frame: &mut Frame,
     area: Rect,
 ) {
-    let Some(popup) = app.popup_pane.as_ref() else {
+    let Some(popup) = app.active_popup_pane() else {
         return;
     };
     let Some((outer, inner)) = popup_pane_rects(app, area) else {

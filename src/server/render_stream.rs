@@ -362,7 +362,7 @@ fn popup_terminal_cursor(
     app_state: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
 ) -> Option<CursorState> {
-    let popup = app_state.popup_pane.as_ref()?;
+    let popup = app_state.active_popup_pane()?;
     let runtime = terminal_runtimes.get(&popup.terminal_id)?;
     if runtime.synchronized_output_active() {
         return None;

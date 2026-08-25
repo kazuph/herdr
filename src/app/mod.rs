@@ -728,7 +728,7 @@ impl App {
             pane_graphics_layers: std::collections::HashMap::new(),
             pane_graphics_streams: std::collections::HashMap::new(),
             pane_graphics_revision: 0,
-            popup_pane: None,
+            popup_panes: Vec::new(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
@@ -5362,7 +5362,7 @@ last_pane = "prefix+tab"
                     std::path::PathBuf::from("/popup"),
                 ),
             );
-            app.state.popup_pane = Some(state::PopupPaneState {
+            app.state.popup_panes.push(state::PopupPaneState {
                 pane_id: crate::layout::PaneId::alloc(),
                 terminal_id: popup_terminal_id,
                 workspace_id: app.state.workspaces[0].id.clone(),
@@ -5378,7 +5378,7 @@ last_pane = "prefix+tab"
         );
 
         assert!(tiled_rx.try_recv().is_err());
-        assert!(app.state.popup_pane.is_none());
+        assert!(app.state.popup_panes.is_empty());
 
         install_missing_popup(&mut app);
         assert!(
@@ -5388,7 +5388,7 @@ last_pane = "prefix+tab"
             .await
         );
         assert!(tiled_rx.try_recv().is_err());
-        assert!(app.state.popup_pane.is_none());
+        assert!(app.state.popup_panes.is_empty());
     }
 
     #[tokio::test]

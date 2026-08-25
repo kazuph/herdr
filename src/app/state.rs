@@ -1827,8 +1827,10 @@ pub struct AppState {
     pub(crate) pane_graphics_streams: std::collections::HashMap<PaneId, String>,
     /// Monotonic marker for accepted pane graphics mutations.
     pub(crate) pane_graphics_revision: u64,
-    /// Workspace-scoped terminal popup kept outside tiled workspace layouts.
-    pub(crate) popup_pane: Option<PopupPaneState>,
+    /// Workspace-scoped terminal popups kept outside tiled workspace
+    /// layouts. At most one popup per workspace; only the active
+    /// workspace's popup is visible/interactive at a time.
+    pub(crate) popup_panes: Vec<PopupPaneState>,
     /// Recent plugin action/event command executions.
     pub(crate) plugin_command_logs: Vec<crate::api::schema::PluginCommandLogInfo>,
     pub(crate) next_plugin_command_log_id: u64,
@@ -2073,12 +2075,76 @@ impl AppState {
             || self.focused_pane_requests_mouse_capture_from(terminal_runtimes)
     }
 
+    /// Returns the popup owned by the currently active workspace, if any.
+    /// Only this popup is visible/interactive; other workspaces may hold
+    /// their own popups in the background.
+    pub(crate) fn active_popup_pane(&self) -> Option<&PopupPaneState> {
+        let ws_idx = self.active?;
+        let workspace = self.workspaces.get(ws_idx)?;
+        self.popup_pane_for_workspace(&workspace.id)
+    }
+
+    pub(crate) fn popup_pane_for_workspace(&self, workspace_id: &str) -> Option<&PopupPaneState> {
+        self.popup_panes
+            .iter()
+            .find(|popup| popup.workspace_id == workspace_id)
+    }
+
+    pub(crate) fn popup_pane_by_pane_id(&self, pane_id: PaneId) -> Option<&PopupPaneState> {
+        self.popup_panes
+            .iter()
+            .find(|popup| popup.pane_id == pane_id)
+    }
+
+    /// Removes and returns the popup owned by `workspace_id`, clearing its
+    /// selection/resize-lock/terminal bookkeeping. Does not touch `mode` or
+    /// shut down the popup's `TerminalRuntime` — callers with runtime access
+    /// (`App`) must do that; callers without it (plain `AppState`) must
+    /// queue the terminal id onto `terminal_runtime_shutdowns`.
+    pub(crate) fn take_popup_pane_for_workspace(
+        &mut self,
+        workspace_id: &str,
+    ) -> Option<PopupPaneState> {
+        let index = self
+            .popup_panes
+            .iter()
+            .position(|popup| popup.workspace_id == workspace_id)?;
+        let popup = self.popup_panes.remove(index);
+        if self
+            .selection
+            .as_ref()
+            .is_some_and(|selection| selection.pane_id == popup.pane_id)
+        {
+            self.clear_selection();
+        }
+        self.direct_attach_resize_locks.remove(&popup.terminal_id);
+        self.terminals.remove(&popup.terminal_id);
+        Some(popup)
+    }
+
+    /// Removes every popup whose owner workspace no longer exists, queuing
+    /// their terminal ids for runtime shutdown.
+    pub(crate) fn close_popups_with_missing_owner(&mut self) {
+        let missing_owner_workspace_ids: Vec<String> = self
+            .popup_panes
+            .iter()
+            .filter(|popup| {
+                !self
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.id == popup.workspace_id)
+            })
+            .map(|popup| popup.workspace_id.clone())
+            .collect();
+        for workspace_id in missing_owner_workspace_ids {
+            if let Some(popup) = self.take_popup_pane_for_workspace(&workspace_id) {
+                self.terminal_runtime_shutdowns.push(popup.terminal_id);
+            }
+        }
+    }
+
     pub(crate) fn popup_pane_is_visible(&self) -> bool {
-        self.popup_pane.as_ref().is_some_and(|popup| {
-            self.active
-                .and_then(|ws_idx| self.workspaces.get(ws_idx))
-                .is_some_and(|workspace| workspace.id == popup.workspace_id)
-        })
+        self.active_popup_pane().is_some()
     }
 
     pub fn is_prefix_key(&self, key: crate::input::TerminalKey) -> bool {
@@ -2154,11 +2220,7 @@ impl AppState {
         terminal_runtimes: &'a crate::terminal::TerminalRuntimeRegistry,
         pane_id: crate::layout::PaneId,
     ) -> Option<&'a crate::terminal::TerminalRuntime> {
-        if let Some(popup) = self
-            .popup_pane
-            .as_ref()
-            .filter(|popup| popup.pane_id == pane_id)
-        {
+        if let Some(popup) = self.popup_pane_by_pane_id(pane_id) {
             return terminal_runtimes.get(&popup.terminal_id);
         }
         let ws_idx = self.active?;
@@ -2432,7 +2494,7 @@ impl AppState {
             pane_graphics_layers: std::collections::HashMap::new(),
             pane_graphics_streams: std::collections::HashMap::new(),
             pane_graphics_revision: 0,
-            popup_pane: None,
+            popup_panes: Vec::new(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
@@ -2502,7 +2564,7 @@ impl AppState {
                 "empty app state must not keep plugin pane records"
             );
             assert!(
-                self.popup_pane.is_none(),
+                self.popup_panes.is_empty(),
                 "empty app state must not keep a popup without an owner workspace"
             );
             assert!(
@@ -2669,26 +2731,46 @@ impl AppState {
                 "pending agent notification",
             );
         }
-        if let Some(popup) = &self.popup_pane {
-            assert!(
-                self.workspaces
-                    .iter()
-                    .any(|workspace| workspace.id == popup.workspace_id),
-                "popup {:?} references missing workspace {}",
-                popup.pane_id,
-                popup.workspace_id
-            );
-            assert!(
-                self.terminals.contains_key(&popup.terminal_id),
-                "popup {:?} references missing terminal {}",
-                popup.pane_id,
-                popup.terminal_id
-            );
-            assert!(
-                !attached_terminal_ids.contains(&popup.terminal_id),
-                "popup terminal {} must not be attached to a tiled pane",
-                popup.terminal_id
-            );
+        {
+            let mut seen_workspace_ids = std::collections::HashSet::new();
+            let mut seen_pane_ids = std::collections::HashSet::new();
+            let mut seen_terminal_ids = std::collections::HashSet::new();
+            for popup in &self.popup_panes {
+                assert!(
+                    self.workspaces
+                        .iter()
+                        .any(|workspace| workspace.id == popup.workspace_id),
+                    "popup {:?} references missing workspace {}",
+                    popup.pane_id,
+                    popup.workspace_id
+                );
+                assert!(
+                    self.terminals.contains_key(&popup.terminal_id),
+                    "popup {:?} references missing terminal {}",
+                    popup.pane_id,
+                    popup.terminal_id
+                );
+                assert!(
+                    !attached_terminal_ids.contains(&popup.terminal_id),
+                    "popup terminal {} must not be attached to a tiled pane",
+                    popup.terminal_id
+                );
+                assert!(
+                    seen_workspace_ids.insert(popup.workspace_id.clone()),
+                    "workspace {} must not own more than one popup",
+                    popup.workspace_id
+                );
+                assert!(
+                    seen_pane_ids.insert(popup.pane_id),
+                    "popup pane id {:?} must be unique across popups",
+                    popup.pane_id
+                );
+                assert!(
+                    seen_terminal_ids.insert(popup.terminal_id.clone()),
+                    "popup terminal id {} must be unique across popups",
+                    popup.terminal_id
+                );
+            }
         }
         for &pane_id in self.plugin_panes.keys() {
             assert_live_pane(pane_id, "plugin pane record");
@@ -2700,11 +2782,7 @@ impl AppState {
             assert_live_pane(pane_id, "rename pane target");
         }
         if let Some(selection) = &self.selection {
-            if !self
-                .popup_pane
-                .as_ref()
-                .is_some_and(|popup| popup.pane_id == selection.pane_id)
-            {
+            if self.popup_pane_by_pane_id(selection.pane_id).is_none() {
                 assert_live_pane(selection.pane_id, "text selection");
             }
         } else {

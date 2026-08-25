@@ -1316,7 +1316,7 @@ mod tests {
         ))
         .await;
 
-        assert!(app.state.popup_pane.is_some());
+        assert!(app.state.popup_pane_is_visible());
         assert!(!app
             .popup_runtime()
             .unwrap()
@@ -1383,12 +1383,12 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
             app.drain_internal_events();
-            if app.state.popup_pane.is_none() {
+            if app.state.popup_panes.is_empty() {
                 break;
             }
         }
 
-        assert!(app.state.popup_pane.is_none());
+        assert!(app.state.popup_panes.is_empty());
         assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
 
         shutdown_test_runtimes(&mut app);
@@ -1415,7 +1415,7 @@ mod tests {
         app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Char('j'), KeyModifiers::SUPER));
 
         assert_eq!(app.state.active, Some(1));
-        assert!(app.state.popup_pane.is_some());
+        assert!(!app.state.popup_panes.is_empty());
         assert!(!app.state.popup_pane_is_visible());
         assert!(popup_rx.try_recv().is_err());
 
@@ -1496,6 +1496,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn popup_selection_autoscroll_stops_after_switching_to_another_popup() {
+        let mut app = app_for_mouse_test();
+        let runtime = TerminalRuntime::test_with_scrollback_bytes(
+            40,
+            12,
+            1024 * 1024,
+            &numbered_lines_bytes(40),
+        );
+        let (_, first_terminal_id) = app.install_test_popup_runtime(runtime);
+        let (_, inner) =
+            crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area).unwrap();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            inner.x,
+            inner.y + 4,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            inner.x,
+            inner.y,
+        ));
+
+        let deadline = app
+            .selection_autoscroll_deadline
+            .expect("popup drag should schedule autoscroll");
+        app.state.workspaces.push(Workspace::test_new("two"));
+        app.state.active = Some(1);
+        let second_runtime = TerminalRuntime::test_with_scrollback_bytes(
+            40,
+            12,
+            1024 * 1024,
+            &numbered_lines_bytes(40),
+        );
+        app.install_test_popup_runtime(second_runtime);
+
+        app.tick_selection_autoscroll(deadline);
+
+        assert!(app.state.selection_autoscroll.is_none());
+        assert!(app.selection_autoscroll_deadline.is_none());
+        assert!(app
+            .terminal_runtimes
+            .get(&first_terminal_id)
+            .and_then(TerminalRuntime::scroll_metrics)
+            .is_some_and(|metrics| metrics.offset_from_bottom == 0));
+    }
+
+    #[tokio::test]
     async fn popup_forwards_escape_instead_of_closing() {
         let mut app = app_for_mouse_test();
         let (runtime, mut rx) =
@@ -1516,7 +1564,7 @@ mod tests {
         app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Esc, KeyModifiers::empty()));
 
         assert_eq!(rx.try_recv().unwrap().as_ref(), b"\x1b");
-        assert!(app.state.popup_pane.is_some());
+        assert!(app.state.popup_pane_is_visible());
         assert_eq!(
             app.popup_runtime()
                 .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
