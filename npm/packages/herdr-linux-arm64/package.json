@@ -1,3 +1,3 @@
 {
-  "name": "@kazuph/herdr-linux-arm64", "version": "0.1.4", "description": "Herdr native static binary for Linux arm64", "license": "AGPL-3.0-or-later", "repository": "https://github.com/kazuph/herdr", "os": ["linux"], "cpu": ["arm64"], "files": ["bin/herdr"]
+  "name": "@kazuph/herdr-linux-arm64", "version": "0.1.5", "description": "Herdr native static binary for Linux arm64", "license": "AGPL-3.0-or-later", "repository": "https://github.com/kazuph/herdr", "os": ["linux"], "cpu": ["arm64"], "files": ["bin/herdr"]
 }
