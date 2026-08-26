@@ -4182,11 +4182,21 @@ fn pane_shell_gets_herdr_socket_and_pane_env() {
         !env_pane_number.is_empty() && env_pane_number.chars().all(|ch| ch.is_ascii_digit()),
         "HERDR_PANE_ID must be p_N: {text:?}"
     );
-    assert_eq!(format!("p{env_pane_number}"), pane_id, "env id must name the created pane");
+    assert_eq!(
+        format!("p{env_pane_number}"),
+        pane_id,
+        "env id must name the created pane"
+    );
     let got = run_cli(&socket_path, &["pane", "get", lines[3]]);
-    assert!(got.status.success(), "pane get must accept the env spelling: {got:?}");
+    assert!(
+        got.status.success(),
+        "pane get must accept the env spelling: {got:?}"
+    );
     let got_json: serde_json::Value = serde_json::from_slice(&got.stdout).unwrap();
-    assert_eq!(got_json["result"]["pane"]["pane_id"].as_str(), Some(pane_id.as_str()));
+    assert_eq!(
+        got_json["result"]["pane"]["pane_id"].as_str(),
+        Some(pane_id.as_str())
+    );
 
     cleanup_spawned_herdr(herdr, base);
 }
