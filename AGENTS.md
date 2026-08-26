@@ -164,6 +164,15 @@ Use lowercase conventional commits, no emojis, and no AI co-author lines. Commit
 
 Commit only when the user explicitly requests or has already authorized it. When a commit is authorized, choose an appropriate commit message and commit without asking for separate message approval.
 
+### Required Local Delivery
+
+For this project, the user has already authorized the following standing completion requirements for every repository change, including documentation and agent-instruction changes:
+
+- Verify the task-related change before reporting completion. When the changed behavior can only be proven with real local state or data, source tests, fixtures, mocks, and debug-only runs are insufficient; dogfood the installed binary with that real state or data. If this cannot be done, report the behavior as unverified rather than complete.
+- Commit only the task-related files after verification. Do not leave an authorized change uncommitted.
+- Build and replace the local installed binary with `just install-local`, then prove that `target/release/herdr` and `$HOME/.local/bin/herdr` have the same SHA-256 and that the installed binary passes code-signature verification. For a non-runtime-only change, also prove that the installed binary executes successfully; do not invent a product-behavior claim for a documentation-only change.
+- Pushes, tags, releases, and restarts are not implied by this standing authorization. Perform them only when the user explicitly requests them.
+
 When a normal feature or fix commit relates to a GitHub issue, add a commit body line `refs #<issue-number>` after the subject:
 
 ```text
