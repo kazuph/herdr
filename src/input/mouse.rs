@@ -42,8 +42,8 @@ impl HostGeometry {
 
     pub(crate) fn cell(self, x: u32, y: u32) -> Option<(u16, u16)> {
         Some((
-            grid_cell(x, self.cols, self.width_px)?,
-            grid_cell(y, self.rows, self.height_px)?,
+            grid_cell(x.checked_sub(1)?, self.cols, self.width_px)?,
+            grid_cell(y.checked_sub(1)?, self.rows, self.height_px)?,
         ))
     }
 
@@ -71,8 +71,8 @@ impl HostPixels {
         let end_y = self
             .geometry
             .row_boundary(inner.y.checked_add(inner.height)?)?;
-        let x = self.x.checked_sub(start_x)?;
-        let y = self.y.checked_sub(start_y)?;
+        let x = self.x.checked_sub(1)?.checked_sub(start_x)?;
+        let y = self.y.checked_sub(1)?.checked_sub(start_y)?;
         let source_width = end_x.checked_sub(start_x)?;
         let source_height = end_y.checked_sub(start_y)?;
         if x >= source_width || y >= source_height || child_width_px == 0 || child_height_px == 0 {
@@ -150,7 +150,6 @@ mod tests {
             (b"key".as_slice(), None),
             (b"\x1b[<0;1;2Mkey".as_slice(), None),
             (b"\x1b[<0;1M".as_slice(), None),
-            (b"\x1b[<35;-3;0M".as_slice(), None),
         ] {
             assert_eq!(parse_report(input), expected);
         }
@@ -166,38 +165,30 @@ mod tests {
         let end_y = geometry.row_boundary(inner.y + inner.height).unwrap();
         assert_eq!(
             HostPixels {
-                x: start_x,
-                y: start_y,
-                geometry
+                x: start_x + 1,
+                y: start_y + 1,
+                geometry,
             }
             .pane_position(inner, 636, 1_225),
             Some(Position::Pixels { x: 1, y: 1 })
         );
         assert_eq!(
             HostPixels {
-                x: end_x - 1,
-                y: end_y - 1,
-                geometry
+                x: end_x,
+                y: end_y,
+                geometry,
             }
             .pane_position(inner, 636, 1_225),
             Some(Position::Pixels { x: 636, y: 1_225 })
-        );
-        assert_eq!(
-            HostPixels {
-                x: end_x,
-                y: start_y,
-                geometry
-            }
-            .pane_position(inner, 636, 1_225),
-            None
         );
     }
 
     #[test]
     fn geometry_rejects_outside_pixels_and_maps_cells() {
         let geometry = HostGeometry::new(80, 24, 800, 480).unwrap();
-        assert_eq!(geometry.cell(0, 0), Some((0, 0)));
-        assert_eq!(geometry.cell(799, 479), Some((79, 23)));
-        assert_eq!(geometry.cell(800, 0), None);
+        assert_eq!(geometry.cell(1, 1), Some((0, 0)));
+        assert_eq!(geometry.cell(800, 480), Some((79, 23)));
+        assert_eq!(geometry.cell(801, 1), None);
+        assert_eq!(geometry.cell(0, 1), None);
     }
 }

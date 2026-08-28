@@ -5,6 +5,23 @@ use ratatui::{
     Frame,
 };
 
+/// Read-only view of the active tab surface used by graphics placement.
+#[derive(Clone, Copy)]
+pub(crate) struct TabSurfaceView<'a> {
+    pub(crate) pane_infos: &'a [crate::layout::PaneInfo],
+    #[allow(dead_code)] // mirrors the upstream surface contract; borders are unused so far
+    pub(crate) split_borders: &'a [crate::layout::SplitBorder],
+}
+
+impl crate::app::state::ViewState {
+    pub(crate) fn tab_surface(&self) -> TabSurfaceView<'_> {
+        TabSurfaceView {
+            pane_infos: &self.pane_infos,
+            split_borders: &self.split_borders,
+        }
+    }
+}
+
 mod dialogs;
 mod keybind_help;
 mod menus;

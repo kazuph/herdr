@@ -419,11 +419,6 @@ impl TerminalRuntime {
     pub fn wheel_routing(&self) -> Option<crate::pane::WheelRouting> {
         self.0.wheel_routing()
     }
-
-    pub fn sgr_pixel_mouse_enabled(&self) -> bool {
-        self.0.sgr_pixel_mouse_enabled()
-    }
-
     pub fn pixel_size(&self) -> Option<(u32, u32)> {
         self.0.pixel_size()
     }
@@ -437,7 +432,7 @@ impl TerminalRuntime {
         self.0.encode_mouse_button(kind, position, modifiers)
     }
 
-    pub fn encode_mouse_motion(
+    pub(crate) fn encode_mouse_motion(
         &self,
         kind: crossterm::event::MouseEventKind,
         position: crate::input::mouse::Position,
@@ -446,7 +441,7 @@ impl TerminalRuntime {
         self.0.encode_mouse_motion(kind, position, modifiers)
     }
 
-    pub fn encode_mouse_wheel(
+    pub(crate) fn encode_mouse_wheel(
         &self,
         kind: crossterm::event::MouseEventKind,
         position: crate::input::mouse::Position,

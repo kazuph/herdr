@@ -2884,11 +2884,6 @@ impl PaneRuntime {
     pub fn wheel_routing(&self) -> Option<WheelRouting> {
         self.terminal.wheel_routing()
     }
-
-    pub fn sgr_pixel_mouse_enabled(&self) -> bool {
-        self.terminal.sgr_pixel_mouse_enabled()
-    }
-
     /// Child terminal size in pixels, known only once a host cell size was
     /// applied through `resize`. Ghostty clamps unknown cells to 1px, so the
     /// terminal's own pixel size cannot tell "unknown" from "known".
@@ -2912,7 +2907,7 @@ impl PaneRuntime {
         self.terminal.encode_mouse_button(kind, position, modifiers)
     }
 
-    pub fn encode_mouse_motion(
+    pub(crate) fn encode_mouse_motion(
         &self,
         kind: crossterm::event::MouseEventKind,
         position: crate::input::mouse::Position,
@@ -2921,7 +2916,7 @@ impl PaneRuntime {
         self.terminal.encode_mouse_motion(kind, position, modifiers)
     }
 
-    pub fn encode_mouse_wheel(
+    pub(crate) fn encode_mouse_wheel(
         &self,
         kind: crossterm::event::MouseEventKind,
         position: crate::input::mouse::Position,

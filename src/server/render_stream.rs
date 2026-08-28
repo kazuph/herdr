@@ -15,7 +15,11 @@ pub(crate) enum ClientRenderState {
     /// Semantic clients compare full frame data and skip identical frames.
     Semantic { last_frame: Option<FrameData> },
     /// Terminal-ANSI clients keep a terminal diff encoder and sequence number.
-    TerminalAnsi { blit_encoder: BlitEncoder, seq: u64 },
+    TerminalAnsi {
+        blit_encoder: BlitEncoder,
+        seq: u64,
+        repaint_pending: bool,
+    },
 }
 
 impl ClientRenderState {
@@ -25,6 +29,7 @@ impl ClientRenderState {
             RenderEncoding::TerminalAnsi => Self::TerminalAnsi {
                 blit_encoder: BlitEncoder::new(),
                 seq: 0,
+                repaint_pending: false,
             },
         }
     }
@@ -32,7 +37,24 @@ impl ClientRenderState {
     pub(crate) fn reset_baseline(&mut self) {
         match self {
             Self::Semantic { last_frame } => *last_frame = None,
-            Self::TerminalAnsi { blit_encoder, .. } => *blit_encoder = BlitEncoder::new(),
+            Self::TerminalAnsi {
+                blit_encoder,
+                repaint_pending,
+                ..
+            } => {
+                *blit_encoder = BlitEncoder::new();
+                *repaint_pending = false;
+            }
+        }
+    }
+
+    /// Request a full text repaint on the next frame without resetting the graphics baseline.
+    pub(crate) fn request_repaint(&mut self) {
+        match self {
+            Self::Semantic { last_frame } => *last_frame = None,
+            Self::TerminalAnsi {
+                repaint_pending, ..
+            } => *repaint_pending = true,
         }
     }
 
@@ -54,12 +76,16 @@ impl ClientRenderState {
                     message: ServerMessage::Frame(frame),
                 })
             }
-            Self::TerminalAnsi { blit_encoder, seq } => {
-                if blit_encoder.is_current(&frame) {
+            Self::TerminalAnsi {
+                blit_encoder,
+                seq,
+                repaint_pending,
+            } => {
+                if !*repaint_pending && blit_encoder.is_current(&frame) {
                     crate::render_prof::event("prepare_frame.ansi.skip_current");
                     return None;
                 }
-                let mut encoded = blit_encoder.encode(&frame, false);
+                let mut encoded = blit_encoder.encode(&frame, *repaint_pending);
                 crate::render_prof::event("prepare_frame.ansi.changed");
                 crate::render_prof::counter("prepare_frame.ansi.bytes", encoded.bytes.len() as u64);
                 if encoded.full {
@@ -103,7 +129,11 @@ impl ClientRenderState {
                 },
             ) => *last_frame = Some(frame),
             (
-                Self::TerminalAnsi { blit_encoder, seq },
+                Self::TerminalAnsi {
+                    blit_encoder,
+                    seq,
+                    repaint_pending,
+                },
                 PreparedRender::TerminalAnsi {
                     frame,
                     encoded: Some(encoded),
@@ -112,6 +142,7 @@ impl ClientRenderState {
             ) => {
                 blit_encoder.commit(frame, encoded);
                 *seq += 1;
+                *repaint_pending = false;
             }
             _ => {}
         }

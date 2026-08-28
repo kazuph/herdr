@@ -2,7 +2,6 @@ use crate::config::{Keybinds, NewTerminalCwdConfig, SoundConfig, ToastConfig, To
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::Color;
-use std::hash::{Hash, Hasher};
 
 use crate::detect::AgentState;
 use crate::layout::{PaneId, PaneInfo, SplitBorder};
@@ -10,47 +9,10 @@ use crate::selection::Selection;
 
 pub(crate) type InstalledPluginRegistry =
     std::collections::HashMap<String, crate::api::schema::InstalledPluginInfo>;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginPaneRecord {
     pub plugin_id: String,
     pub entrypoint: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PaneGraphicsLayer {
-    pub format: crate::api::schema::PaneGraphicsFormat,
-    pub image_width: u32,
-    pub image_height: u32,
-    pub data: Vec<u8>,
-    pub data_fingerprint: u64,
-    pub render: crate::api::schema::PaneGraphicsPlacementParams,
-}
-
-impl PaneGraphicsLayer {
-    pub(crate) fn new(
-        format: crate::api::schema::PaneGraphicsFormat,
-        image_width: u32,
-        image_height: u32,
-        data: Vec<u8>,
-        render: crate::api::schema::PaneGraphicsPlacementParams,
-    ) -> Self {
-        let data_fingerprint = pane_graphics_data_fingerprint(&data);
-        Self {
-            format,
-            image_width,
-            image_height,
-            data,
-            data_fingerprint,
-            render,
-        }
-    }
-}
-
-fn pane_graphics_data_fingerprint(data: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    data.hash(&mut hasher);
-    hasher.finish()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1821,12 +1783,6 @@ pub struct AppState {
     pub(crate) installed_plugins: InstalledPluginRegistry,
     /// Pane ids opened through the plugin pane API.
     pub(crate) plugin_panes: std::collections::HashMap<PaneId, PluginPaneRecord>,
-    /// Runtime image layers owned by API clients and composited over panes.
-    pub(crate) pane_graphics_layers: std::collections::HashMap<PaneId, PaneGraphicsLayer>,
-    /// Active streaming graphics owner token by pane id.
-    pub(crate) pane_graphics_streams: std::collections::HashMap<PaneId, String>,
-    /// Monotonic marker for accepted pane graphics mutations.
-    pub(crate) pane_graphics_revision: u64,
     /// Workspace-scoped terminal popups kept outside tiled workspace
     /// layouts. At most one popup per workspace; only the active
     /// workspace's popup is visible/interactive at a time.
@@ -1841,7 +1797,7 @@ pub struct AppState {
     pub host_terminal_theme: TerminalTheme,
     /// Last known foreground host terminal cell size in pixels.
     pub(crate) host_cell_size: crate::kitty_graphics::HostCellSize,
-    /// Exact host pixels for the one mouse event currently routed through the cell UI.
+    /// Exact pixel provenance only while one confirmed SGR report is dispatched.
     pub(crate) host_mouse_pixels: Option<crate::input::mouse::HostPixels>,
     /// Set when a persisted session snapshot would change.
     pub session_dirty: bool,
@@ -2076,18 +2032,6 @@ impl AppState {
             || self.popup_pane_is_visible()
             || self.focused_pane_requests_mouse_capture_from(terminal_runtimes)
     }
-
-    pub(crate) fn focused_pane_requests_sgr_pixels_from(
-        &self,
-        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
-    ) -> bool {
-        self.mode == Mode::Terminal
-            && self
-                .active
-                .and_then(|idx| self.focused_runtime_in_workspace(terminal_runtimes, idx))
-                .is_some_and(crate::terminal::TerminalRuntime::sgr_pixel_mouse_enabled)
-    }
-
     /// Returns the popup owned by the currently active workspace, if any.
     /// Only this popup is visible/interactive; other workspaces may hold
     /// their own popups in the background.
@@ -2504,9 +2448,6 @@ impl AppState {
                 crate::detect::manifest_update::ManifestUpdateStatus::default(),
             installed_plugins: std::collections::HashMap::new(),
             plugin_panes: std::collections::HashMap::new(),
-            pane_graphics_layers: std::collections::HashMap::new(),
-            pane_graphics_streams: std::collections::HashMap::new(),
-            pane_graphics_revision: 0,
             popup_panes: Vec::new(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
@@ -2626,6 +2567,10 @@ impl AppState {
             assert!(
                 self.context_menu.is_none(),
                 "empty app state must not keep context menu"
+            );
+            assert!(
+                self.host_mouse_pixels.is_none(),
+                "empty app state must not keep host mouse pixel provenance"
             );
             return;
         }

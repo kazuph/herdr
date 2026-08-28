@@ -63,17 +63,13 @@ pub(super) fn ghostty_mouse_encoder_for_terminal(
     let rows = terminal.rows().ok()? as u32;
     match position {
         crate::input::mouse::Position::Cell { .. } => {
-            let sgr_pixels = terminal
+            if terminal
                 .mode_get(crate::ghostty::MODE_MOUSE_SGR_PIXELS)
-                .ok()?;
-            let width_px = terminal.width_px().ok()?;
-            let height_px = terminal.height_px().ok()?;
-            if sgr_pixels && width_px > 0 && height_px > 0 && cols > 0 && rows > 0 {
-                encoder.set_size(width_px, height_px, width_px / cols, height_px / rows);
-            } else {
+                .ok()?
+            {
                 encoder.set_format(crate::ghostty::MOUSE_FORMAT_SGR);
-                encoder.set_size(cols, rows, 1, 1);
             }
+            encoder.set_size(cols, rows, 1, 1);
         }
         crate::input::mouse::Position::Pixels { .. } => {
             let width_px = terminal.width_px().ok()?;
@@ -88,29 +84,11 @@ pub(super) fn ghostty_mouse_encoder_for_terminal(
 }
 
 pub(super) fn ghostty_mouse_position_for_terminal(
-    terminal: &crate::ghostty::Terminal,
     position: crate::input::mouse::Position,
 ) -> Option<(f32, f32)> {
     match position {
         crate::input::mouse::Position::Pixels { x, y } => Some((x as f32, y as f32)),
-        crate::input::mouse::Position::Cell { column, row } => {
-            let sgr_pixels = terminal
-                .mode_get(crate::ghostty::MODE_MOUSE_SGR_PIXELS)
-                .ok()?;
-            let cols = terminal.cols().ok()? as u32;
-            let rows = terminal.rows().ok()? as u32;
-            let width_px = terminal.width_px().ok()?;
-            let height_px = terminal.height_px().ok()?;
-            if !sgr_pixels || cols == 0 || rows == 0 || width_px == 0 || height_px == 0 {
-                return Some((column as f32, row as f32));
-            }
-            let cell_width = width_px / cols;
-            let cell_height = height_px / rows;
-            Some((
-                (u32::from(column) * cell_width + cell_width / 2 + 1) as f32,
-                (u32::from(row) * cell_height + cell_height / 2 + 1) as f32,
-            ))
-        }
+        crate::input::mouse::Position::Cell { column, row } => Some((column as f32, row as f32)),
     }
 }
 

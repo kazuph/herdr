@@ -1817,7 +1817,10 @@ impl AppState {
         let Some(host) = self.host_mouse_pixels else {
             return Some(cell);
         };
-        if !runtime.sgr_pixel_mouse_enabled() {
+        let wants_pixels = runtime.input_state().is_some_and(|state| {
+            state.mouse_protocol_encoding == crate::input::MouseProtocolEncoding::SgrPixels
+        });
+        if !wants_pixels {
             return Some(cell);
         }
         let Some((width_px, height_px)) = runtime.pixel_size() else {
@@ -1926,19 +1929,7 @@ impl AppState {
         match rt.wheel_routing() {
             Some(crate::pane::WheelRouting::HostScroll) | None => false,
             Some(crate::pane::WheelRouting::MouseReport) => {
-                rt.scroll_reset();
-                let Some(position) = self.pane_mouse_position(rt, info.inner_rect, mouse) else {
-                    return false;
-                };
-                let Some(bytes) = rt.encode_mouse_wheel(mouse.kind, position, mouse.modifiers)
-                else {
-                    warn!(pane = info.id.raw(), kind = ?mouse.kind, "failed to encode mouse wheel event");
-                    return true;
-                };
-                if let Err(err) = rt.try_send_bytes(Bytes::from(bytes)) {
-                    warn!(pane = info.id.raw(), err = %err, "failed to forward mouse wheel event");
-                }
-                true
+                self.forward_pane_reported_wheel(terminal_runtimes, info, mouse)
             }
             Some(crate::pane::WheelRouting::AlternateScroll) => {
                 rt.scroll_reset();
@@ -2394,11 +2385,11 @@ mod tests {
         });
         app.handle_mouse(MouseEvent {
             modifiers: KeyModifiers::CONTROL,
-            ..mouse(MouseEventKind::Drag(MouseButton::Right), col + 1, row + 1)
+            ..mouse(MouseEventKind::Drag(MouseButton::Right), 0, 0)
         });
         app.handle_mouse(MouseEvent {
             modifiers: KeyModifiers::CONTROL,
-            ..mouse(MouseEventKind::Up(MouseButton::Right), col + 1, row + 1)
+            ..mouse(MouseEventKind::Up(MouseButton::Right), 0, 0)
         });
 
         assert_eq!(app.state.mode, Mode::Terminal);
@@ -2410,11 +2401,11 @@ mod tests {
         );
         assert_eq!(
             input_rx.try_recv().expect("forwarded right mouse drag"),
-            Bytes::from_static(b"\x1b[<34;4;5M")
+            Bytes::from_static(b"\x1b[<34;1;1M")
         );
         assert_eq!(
             input_rx.try_recv().expect("forwarded right mouse up"),
-            Bytes::from_static(b"\x1b[<2;4;5m")
+            Bytes::from_static(b"\x1b[<2;1;1m")
         );
         assert!(input_rx.try_recv().is_err());
     }
@@ -2499,7 +2490,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mouse_dispatcher_downgrades_sgr_pixel_motion_to_cell_coordinates() {
+    async fn ordinary_cell_mouse_downgrades_pixel_mode_to_cell_coordinates() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
         let pane_id = ws.tabs[0].root_pane;
@@ -2517,8 +2508,16 @@ mod tests {
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
+        app.state.host_cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
         let info = app.state.view.pane_infos[0].clone();
+        app.state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap()
+            .resize(info.inner_rect.height, info.inner_rect.width, 10, 20);
         assert!(info.inner_rect.x > 0, "sidebar offset should be present");
         assert!(info.inner_rect.y > 0, "tab bar offset should be present");
 
@@ -2533,6 +2532,77 @@ mod tests {
             Bytes::from_static(b"\x1b[<35;3;4M")
         );
         assert!(input_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn dedicated_client_pixel_mouse_preserves_subcell_position() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                18,
+                0,
+                b"\x1b[?1003h\x1b[?1006h\x1b[?1016h",
+                4,
+            );
+        ws.insert_test_runtime(pane_id, runtime);
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.mouse_capture = false;
+        app.state.host_cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let inner = app.state.view.pane_infos[0].inner_rect;
+        let geometry = crate::input::mouse::HostGeometry::new(106, 20, 1_060, 400).unwrap();
+        let x = u32::from(inner.x + 2) * 10 + 8;
+        let y = u32::from(inner.y + 3) * 20 + 9;
+        let report = format!("\x1b[<35;{x};{y}M");
+        app.state.host_mouse_pixels = Some(crate::input::mouse::HostPixels { x, y, geometry });
+        let runtime = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        assert_eq!(runtime.pixel_size(), None);
+        assert_eq!(
+            app.state.pane_mouse_position(
+                runtime,
+                inner,
+                mouse(MouseEventKind::Moved, inner.x + 2, inner.y + 3),
+            ),
+            Some(crate::input::mouse::Position::Cell { column: 2, row: 3 })
+        );
+        runtime.resize(inner.height, inner.width, 10, 20);
+        let runtime = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        assert_eq!(
+            runtime.pixel_size(),
+            Some((u32::from(inner.width) * 10, u32::from(inner.height) * 20))
+        );
+        assert_eq!(
+            app.state.pane_mouse_position(
+                runtime,
+                inner,
+                mouse(MouseEventKind::Moved, inner.x + 2, inner.y + 3),
+            ),
+            Some(crate::input::mouse::Position::Pixels { x: 28, y: 69 })
+        );
+        app.state.host_mouse_pixels = None;
+
+        assert!(app.route_client_pixel_mouse(report.as_bytes(), geometry));
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded exact mouse motion"),
+            Bytes::from_static(b"\x1b[<35;28;69M")
+        );
+        assert!(input_rx.try_recv().is_err());
+        assert!(app.state.host_mouse_pixels.is_none());
     }
 
     #[tokio::test]

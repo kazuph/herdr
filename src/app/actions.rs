@@ -1783,8 +1783,6 @@ impl AppState {
         }
         for pane_id in pane_ids {
             self.plugin_panes.remove(&pane_id);
-            self.pane_graphics_layers.remove(&pane_id);
-            self.pane_graphics_streams.remove(&pane_id);
         }
     }
 
@@ -3436,26 +3434,6 @@ mod tests {
         state.view.layout = ViewLayout::Mobile;
 
         assert_eq!(state.visual_workspace_order(), vec![2, 0, 1]);
-    }
-
-    fn insert_test_pane_graphics_layer(state: &mut AppState, pane_id: PaneId) {
-        state.pane_graphics_layers.insert(
-            pane_id,
-            crate::app::state::PaneGraphicsLayer::new(
-                crate::api::schema::PaneGraphicsFormat::Rgba,
-                1,
-                1,
-                vec![1, 2, 3, 4],
-                crate::api::schema::PaneGraphicsPlacementParams::default(),
-            ),
-        );
-    }
-
-    fn insert_test_pane_graphics_state(state: &mut AppState, pane_id: PaneId) {
-        insert_test_pane_graphics_layer(state, pane_id);
-        state
-            .pane_graphics_streams
-            .insert(pane_id, "test-stream".into());
     }
 
     fn insert_test_agent_ledger_entry(state: &mut AppState, pane_id: PaneId) {
@@ -5728,14 +5706,11 @@ mod tests {
                 entrypoint: "board".into(),
             },
         );
-        insert_test_pane_graphics_state(&mut state, closed);
         insert_test_agent_ledger_entry(&mut state, closed);
 
         state.close_pane();
         assert_eq!(state.workspaces[0].panes.len(), 1);
         assert!(!state.plugin_panes.contains_key(&closed));
-        assert!(!state.pane_graphics_layers.contains_key(&closed));
-        assert!(!state.pane_graphics_streams.contains_key(&closed));
         assert!(state
             .agent_session_ledger
             .entries
@@ -5805,15 +5780,12 @@ mod tests {
                 entrypoint: "board".into(),
             },
         );
-        insert_test_pane_graphics_state(&mut state, pane_id);
         insert_test_agent_ledger_entry(&mut state, pane_id);
 
         state.close_tab();
 
         assert!(!state.terminals.contains_key(&terminal_id));
         assert!(!state.plugin_panes.contains_key(&pane_id));
-        assert!(!state.pane_graphics_layers.contains_key(&pane_id));
-        assert!(!state.pane_graphics_streams.contains_key(&pane_id));
         assert!(state
             .agent_session_ledger
             .entries
@@ -5834,15 +5806,12 @@ mod tests {
                 entrypoint: "board".into(),
             },
         );
-        insert_test_pane_graphics_state(&mut state, pane_id);
         insert_test_agent_ledger_entry(&mut state, pane_id);
 
         state.close_selected_workspace();
 
         assert!(!state.terminals.contains_key(&terminal_id));
         assert!(!state.plugin_panes.contains_key(&pane_id));
-        assert!(!state.pane_graphics_layers.contains_key(&pane_id));
-        assert!(!state.pane_graphics_streams.contains_key(&pane_id));
         assert!(state
             .agent_session_ledger
             .entries

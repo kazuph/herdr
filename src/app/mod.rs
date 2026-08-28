@@ -14,6 +14,7 @@ mod creation;
 mod ids;
 mod input;
 mod msg;
+pub(crate) mod pane_graphics;
 mod popup;
 mod runtime;
 mod runtime_mutations;
@@ -95,6 +96,9 @@ impl PaneClickState {
 
 pub struct App {
     pub state: AppState,
+    pub(crate) pane_graphics: pane_graphics::Runtime,
+    pub(crate) pane_graphics_files: Arc<crate::pane_graphics_files::FileStore>,
+    pub(crate) direct_graphics_available: bool,
     pub(crate) pixel_mouse_available: bool,
     pub(crate) terminal_runtimes: crate::terminal::TerminalRuntimeRegistry,
     pub event_tx: mpsc::Sender<AppEvent>,
@@ -726,9 +730,6 @@ impl App {
             agent_manifest_update_status: crate::detect::manifest_update::load_status(),
             installed_plugins: load_plugin_registry(no_session),
             plugin_panes: std::collections::HashMap::new(),
-            pane_graphics_layers: std::collections::HashMap::new(),
-            pane_graphics_streams: std::collections::HashMap::new(),
-            pane_graphics_revision: 0,
             popup_panes: Vec::new(),
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
@@ -786,6 +787,9 @@ impl App {
             copy_feedback_deadline: None,
             last_api_notification_at: None,
             state,
+            pane_graphics: pane_graphics::Runtime::default(),
+            pane_graphics_files: Arc::new(crate::pane_graphics_files::FileStore::default()),
+            direct_graphics_available: false,
             pixel_mouse_available: false,
             terminal_runtimes: restored_terminal_runtimes,
             event_tx,
@@ -1124,6 +1128,10 @@ impl App {
                 needs_render = true;
             }
 
+            if self.pane_graphics.retain_live_panes(&self.state) {
+                needs_render = true;
+            }
+
             let now = Instant::now();
             self.sync_animation_timer(now);
             self.sync_host_mouse_capture(&mut host_mouse_capture_active)?;
@@ -1139,18 +1147,19 @@ impl App {
                     terminal.clear()?;
                     self.full_redraw_pending = false;
                 }
-                let mut cell_size = crate::kitty_graphics::HostCellSize::default();
+                let mut cell_size = self.state.host_cell_size;
                 terminal.draw(|frame| {
                     let area = frame.area();
                     if kitty_graphics_enabled {
-                        let observed_cell_size =
-                            crate::kitty_graphics::HostCellSize::try_from_terminal(area);
-                        if let Some(observed_cell_size) = observed_cell_size {
+                        if let Some(observed_cell_size) =
+                            crate::kitty_graphics::HostCellSize::try_from_terminal(area)
+                        {
                             self.state.host_cell_size = observed_cell_size;
+                            cell_size = observed_cell_size;
+                        } else if !cell_size.is_known() {
+                            cell_size =
+                                crate::kitty_graphics::HostCellSize::fallback_for_area(area);
                         }
-                        cell_size = observed_cell_size.unwrap_or_else(|| {
-                            crate::kitty_graphics::HostCellSize::fallback_for_area(area)
-                        });
                         crate::ui::compute_view_with_cell_size(
                             &mut self.state,
                             &self.terminal_runtimes,
@@ -1173,6 +1182,7 @@ impl App {
                 if kitty_graphics_enabled {
                     crate::kitty_graphics::paint_local_pane_graphics(
                         &self.state,
+                        &self.pane_graphics,
                         &self.terminal_runtimes,
                         cell_size,
                     )?;
@@ -1520,8 +1530,7 @@ impl App {
             crate::kitty_graphics::set_enabled(config.experimental.kitty_graphics);
             if was_kitty_graphics_enabled && !config.experimental.kitty_graphics {
                 let _ = crate::kitty_graphics::clear_all_host_graphics();
-                self.state.pane_graphics_layers.clear();
-                self.state.pane_graphics_streams.clear();
+                self.pane_graphics.clear();
                 self.state.host_cell_size = crate::kitty_graphics::HostCellSize::default();
             }
             self.state.reveal_hidden_cursor_for_cjk_ime =
@@ -5203,17 +5212,17 @@ last_pane = "prefix+tab"
         assert!(app.route_client_pixel_mouse(b"\x1b[<35;126;101M", geometry));
         assert_eq!(
             rx.recv().await.unwrap(),
-            bytes::Bytes::from_static(b"\x1b[<35;53;51M")
+            bytes::Bytes::from_static(b"\x1b[<35;51;49M")
         );
         assert!(app.route_client_pixel_mouse(b"\x1b[<0;126;101M", geometry));
         assert_eq!(
             rx.recv().await.unwrap(),
-            bytes::Bytes::from_static(b"\x1b[<0;53;51M")
+            bytes::Bytes::from_static(b"\x1b[<0;51;49M")
         );
         assert!(app.route_client_pixel_mouse(b"\x1b[<64;126;101M", geometry));
         assert_eq!(
             rx.recv().await.unwrap(),
-            bytes::Bytes::from_static(b"\x1b[<64;53;51M")
+            bytes::Bytes::from_static(b"\x1b[<64;51;49M")
         );
         assert!(app.state.host_mouse_pixels.is_none());
     }
