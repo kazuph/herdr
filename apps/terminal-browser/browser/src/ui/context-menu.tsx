@@ -1,0 +1,165 @@
+import { Box, Path, Text } from "pixel-react";
+import type { Theme } from "./theme";
+import type { ChromeActions, ChromeLayout, PageMenuItem, PageMenuView } from "./types";
+
+export function PageContextMenu({
+  view,
+  actions,
+  layout,
+  theme,
+}: {
+  view: PageMenuView;
+  actions: ChromeActions;
+  layout: ChromeLayout;
+  theme: Theme;
+}) {
+  const rem = layout.rem;
+  const rowH = Math.round(rem * 1.55);
+  const width = Math.round(rem * 11);
+  const pad = Math.round(rem * 0.3);
+  const height = view.items.reduce(
+    (sum, item) => sum + ("separator" in item ? pad : rowH),
+    0,
+  );
+  const x = Math.max(2, Math.min(view.x, layout.width - width - 4));
+  const y = Math.max(2, Math.min(view.y, layout.height - height - 4));
+  return (
+    <>
+      <Box
+        style={{
+          position: "absolute",
+          inset: { top: 0, left: 0 },
+          width: layout.width,
+          height: layout.height,
+        }}
+        onClick={() => actions.pageMenuClose()}
+      />
+      <Box
+        style={{
+          position: "absolute",
+          inset: { top: y, left: x },
+          width,
+          flexDirection: "column",
+          background: theme.field,
+          cornerRadius: rem * 0.45,
+          border: { width: 1, color: theme.fieldBorder },
+          overflow: "hidden",
+        }}
+      >
+        {view.items.map((item, i) =>
+          "separator" in item ? (
+            <Box
+              key={item.id}
+              style={{
+                height: 1,
+                margin: { top: Math.floor((pad - 1) / 2), bottom: Math.ceil((pad - 1) / 2) },
+                background: theme.hairline,
+              }}
+            />
+          ) : (
+            <MenuRow
+              key={item.id}
+              item={item}
+              rowH={rowH}
+              rem={rem}
+              theme={theme}
+              actions={actions}
+              first={i === 0}
+              last={i === view.items.length - 1}
+              alignIcons={view.items.some((other) => "icon" in other && other.icon)}
+            />
+          ),
+        )}
+      </Box>
+    </>
+  );
+}
+
+function MenuRow({
+  item,
+  rowH,
+  rem,
+  theme,
+  actions,
+  first,
+  last,
+  alignIcons,
+}: {
+  item: Extract<PageMenuItem, { label: string }>;
+  rowH: number;
+  rem: number;
+  theme: Theme;
+  actions: ChromeActions;
+  first: boolean;
+  last: boolean;
+  alignIcons: boolean;
+}) {
+  const radius = Math.max(2, rem * 0.45 - 1);
+  return (
+    <Box
+      style={{
+        height: rowH,
+        alignItems: "center",
+        padding: { left: rem * 0.7, right: rem * 0.7 },
+        hoverBackground: item.enabled ? theme.hover : undefined,
+        cornerRadius: {
+          topLeft: first ? radius : 0,
+          topRight: first ? radius : 0,
+          bottomLeft: last ? radius : 0,
+          bottomRight: last ? radius : 0,
+        },
+        flexShrink: 0,
+      }}
+      onClick={item.enabled ? () => actions.pageMenuAction(item.id) : undefined}
+    >
+      {item.icon ? (
+        <Path
+          d={item.icon.d}
+          viewBox={24}
+          stroke={{
+            width: item.icon.weight ?? 2.2,
+            color: item.enabled
+              ? item.icon.tint === "red"
+                ? theme.red
+                : theme.muted
+              : theme.disabled,
+            cap: "round",
+            join: "round",
+          }}
+          style={{
+            width: rem * 0.75,
+            height: rem * 0.75,
+            flexShrink: 0,
+            margin: { right: rem * 0.45 },
+          }}
+        />
+      ) : (
+        alignIcons && <Box style={{ width: rem * 1.2, flexShrink: 0 }} />
+      )}
+      <Text
+        style={{
+          flexGrow: 1,
+          flexBasis: 0,
+          fontSize: rem * 0.82,
+          color: item.enabled ? theme.fg : theme.disabled,
+          wrap: false,
+          selectable: false,
+        }}
+      >
+        {item.label}
+      </Text>
+      {item.shortcut && (
+        <Text
+          style={{
+            fontSize: rem * 0.72,
+            color: item.enabled ? theme.muted : theme.disabled,
+            wrap: false,
+            selectable: false,
+          }}
+        >
+          {item.shortcut}
+        </Text>
+      )}
+    </Box>
+  );
+}

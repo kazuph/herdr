@@ -3,7 +3,7 @@
 # Run tests
 test:
     cargo nextest run --locked --status-level fail --final-status-level fail --failure-output final --success-output never
-    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_formal_mailbox_pilot scripts.test_fork_distribution scripts.test_preview scripts.test_spec_contract_inventory scripts.test_upstream_v080_parity_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
+    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_formal_mailbox_pilot scripts.test_fork_distribution scripts.test_preview scripts.test_spec_contract_inventory scripts.test_terminal_browser_monorepo scripts.test_upstream_v080_parity_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
     python3 scripts/upstream_v080_parity_inventory.py
     python3 scripts/fork_distribution_docs_check.py
     just integration-assets-test
@@ -125,7 +125,7 @@ windows-lint:
 
 # Check formatting + run unit tests + Windows target lint + maintenance script tests
 check: ci windows-lint
-    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_formal_mailbox_pilot scripts.test_fork_distribution scripts.test_preview scripts.test_spec_contract_inventory scripts.test_upstream_v080_parity_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
+    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_formal_mailbox_pilot scripts.test_fork_distribution scripts.test_preview scripts.test_spec_contract_inventory scripts.test_terminal_browser_monorepo scripts.test_upstream_v080_parity_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
     python3 scripts/upstream_v080_parity_inventory.py
     python3 scripts/fork_distribution_docs_check.py
     @echo "docs reminder: if this changes user-facing behavior, make sure the relevant release docs are updated or called out before release."
@@ -140,6 +140,23 @@ install-hooks:
 # Build release binary
 build:
     cargo build --release --locked
+
+# Build the monorepo terminal-browser from source with fail-closed macOS signing.
+terminal-browser-build:
+    bash apps/terminal-browser/herdr-plugin/build.sh
+
+# Verify source contracts and reject known high-severity production dependencies.
+terminal-browser-check:
+    python3 -m unittest scripts.test_terminal_browser_monorepo
+    cd apps/terminal-browser && corepack pnpm audit --prod --audit-level high
+    cd apps/terminal-browser && corepack pnpm test
+
+# Link the locally built browser into this Herdr installation without downloading code.
+terminal-browser-link:
+    herdr plugin link apps/terminal-browser/herdr-plugin
+
+# Build, verify, and link terminal-browser into the current local Herdr installation.
+terminal-browser-install: terminal-browser-build terminal-browser-check terminal-browser-link
 
 # Pack all four CI-built native artifacts and the wrapper.
 fork-npm-pack artifacts output:

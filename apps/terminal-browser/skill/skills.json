@@ -1,0 +1,11 @@
+{
+  "agents": [
+    { "id": "claude", "skills": ".claude/skills" },
+    { "id": "codex", "skills": ".codex/skills", "variant": "codex" },
+    { "id": "cursor", "skills": ".cursor/skills" },
+    { "id": "gemini", "skills": ".gemini/skills" }
+  ],
+  "skills": [
+    { "name": "terminal-browser", "variants": ["default", "codex"] }
+  ]
+}

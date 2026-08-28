@@ -1,0 +1,21 @@
+{
+  "name": "terminal-browser-cli",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "terminal-browser": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pixel-store": "workspace:*",
+    "pixel-terminals": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}

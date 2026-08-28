@@ -1,0 +1,17 @@
+id = "zenbu-labs.terminal-browser"
+name = "Terminal Browser"
+version = "0.7.1-herdr.1"
+min_herdr_version = "0.1.6"
+description = "Open the monorepo-built terminal browser inside Herdr"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["bash", "build.sh"]
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "open-split"
+title = "Open terminal-browser (right split)"
+description = "Split the focused pane and open terminal-browser in it"
+contexts = ["global"]
+command = ["bash", "open-split.sh"]

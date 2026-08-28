@@ -97,6 +97,19 @@ just test        # unit tests
 just check       # formatting, tests, and maintenance checks
 ```
 
+### optional terminal browser
+
+This fork vendors the audited `terminal-browser` source under
+`apps/terminal-browser`. Build, verify, and link its local Herdr plugin with:
+
+```bash
+just terminal-browser-install
+```
+
+The macOS build requires a Developer ID Application identity. The build pins
+downloaded source and binary checksums and does not download an executable when
+the plugin is linked or opened.
+
 ## license
 
 Herdr is dual-licensed:

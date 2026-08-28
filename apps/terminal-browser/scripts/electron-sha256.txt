@@ -1,0 +1,3 @@
+79523ea9fd0ead084bd53125eff353f63c0f418e8df561c2d008c59af12ab20c *electron-v43.3.0-darwin-arm64.zip
+cda5b298b9450c9b9a080dddf3b79fb7f15a8cd01e6de8fe4b26a19d12ef892f *electron-v43.3.0-linux-x64.zip
+3e89a62c345d8171bf54f77df5b3d8216c492847eed00ae59cadd78d6f5535f7 *electron-v43.3.0-linux-arm64.zip

@@ -1,0 +1,23 @@
+{
+  "name": "pixel-react",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "npm run build:native && tsc -p tsconfig.json",
+    "build:native": "node scripts/build-native.mjs"
+  },
+  "dependencies": {
+    "react-reconciler": "^0.29.2"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-reconciler": "^0.28.8",
+    "typescript": "^5.5.0"
+  }
+}

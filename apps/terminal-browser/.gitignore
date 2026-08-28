@@ -1,0 +1,53 @@
+# Cargo build artifacts
+/engine/target/
+# Backup files from `cargo fix` / rustfmt
+**/*.rs.bk
+# Keep Cargo.lock committed: this repo builds binaries, so reproducible builds win.
+
+# Profiling and coverage output (engine dumps and devtools exports, any depth)
+profiles/
+*.profraw
+*.profdata
+/coverage/
+lcov.info
+
+# insta snapshot review state (accepted snapshots ARE committed)
+*.snap.new
+*.pending-snap
+
+# Debugger/IDE state
+.idea/
+*.iml
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Local environment / secrets
+.env
+.env.*
+
+# Node
+node_modules/
+engine/packages/pixel-react/dist/
+engine/packages/pixel-react/native/
+agent/app/dist/
+agent/app/.data/
+browser/dist/
+cli/dist/
+terminals/dist/
+store/dist/
+.claude/worktrees/
+tools/
+dist-release/
+
+.dev.vars
+.wrangler/
+skill/build/
