@@ -2864,7 +2864,7 @@ impl HeadlessServer {
                             && cell.width_px == geometry.width_px / u32::from(geometry.cols)
                             && cell.height_px == geometry.height_px / u32::from(geometry.rows)
                     });
-                if !valid || self.handoff_in_progress || !self.focused_pane_graphics_demand() {
+                if !valid || self.handoff_in_progress {
                     return false;
                 }
                 let foreground_changed = self.promote_client_to_foreground(client_id);
@@ -3394,28 +3394,15 @@ impl HeadlessServer {
         changed
     }
 
-    fn focused_pane_graphics_demand(&self) -> bool {
-        self.app
-            .state
-            .active
-            .and_then(|ws_idx| self.app.state.workspaces.get(ws_idx))
-            .and_then(crate::workspace::Workspace::focused_pane_id)
-            .is_some_and(|pane_id| {
-                self.app.state.pane_graphics_streams.contains_key(&pane_id)
-                    || self.app.state.pane_graphics_layers.contains_key(&pane_id)
-            })
-    }
-
     fn stream_host_mouse_capture_mode(&mut self) {
         let enabled = self
             .app
             .state
             .should_capture_host_mouse_from(&self.app.terminal_runtimes);
-        let sgr_pixels = self.focused_pane_graphics_demand()
-            && self
-                .app
-                .state
-                .focused_pane_requests_sgr_pixels_from(&self.app.terminal_runtimes);
+        let sgr_pixels = self
+            .app
+            .state
+            .focused_pane_requests_sgr_pixels_from(&self.app.terminal_runtimes);
 
         let mut broken_clients: Vec<u64> = Vec::new();
         for (&client_id, client) in &mut self.clients {
@@ -8133,24 +8120,6 @@ next_tab = ""
         };
 
         server.stream_host_mouse_capture_mode();
-        assert!(matches!(
-            read_server_message(
-                client_control_rx
-                    .recv_timeout(Duration::from_millis(100))
-                    .expect("cell mouse capture message")
-            ),
-            ServerMessage::MouseCapture {
-                enabled: true,
-                sgr_pixels: false,
-            }
-        ));
-
-        server
-            .app
-            .state
-            .pane_graphics_streams
-            .insert(pane_id, "terminal-browser".to_owned());
-        server.stream_host_mouse_capture_mode();
 
         assert!(matches!(
             read_server_message(
@@ -8234,11 +8203,6 @@ next_tab = ""
         server.foreground_client_id = Some(1);
         server.app.state.kitty_graphics_enabled = true;
         server.sync_foreground_client_state();
-        server
-            .app
-            .state
-            .pane_graphics_streams
-            .insert(right, "terminal-browser".to_owned());
         server.stream_host_mouse_capture_mode();
         let geometry = crate::input::mouse::HostGeometry::new(200, 50, 2400, 1250).unwrap();
         (server, rx, client_control_rx, geometry)
@@ -8368,12 +8332,6 @@ next_tab = ""
         );
         client.pixel_mouse = true;
         server.clients.insert(1, client);
-        server
-            .app
-            .state
-            .pane_graphics_streams
-            .insert(pane_id, "terminal-browser".to_owned());
-
         server.stream_host_mouse_capture_mode();
 
         assert!(matches!(
