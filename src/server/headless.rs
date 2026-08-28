@@ -319,8 +319,7 @@ fn apply_terminal_attach_scroll(
             let row = row.unwrap_or(0);
             let Some(bytes) = runtime.encode_mouse_wheel(
                 wheel_kind,
-                column,
-                row,
+                crate::input::mouse::Position::Cell { column, row },
                 KeyModifiers::from_bits_truncate(modifiers),
             ) else {
                 return Err(format!(
@@ -1033,6 +1032,11 @@ impl HeadlessServer {
     }
 
     fn sync_foreground_client_state(&mut self) {
+        self.app.pixel_mouse_available = self.foreground_client_id.is_some_and(|id| {
+            self.clients
+                .get(&id)
+                .is_some_and(|client| client.pixel_mouse)
+        });
         let Some(client_id) = self.foreground_client_id else {
             self.effective_size = (MIN_COLS, MIN_ROWS);
             self.app.state.outer_terminal_focus = None;
@@ -2719,6 +2723,7 @@ impl HeadlessServer {
                 writer,
                 render_encoding,
                 direct_attach_requested,
+                pixel_mouse,
             } => {
                 if self.handoff_in_progress {
                     if let Ok(message) =
@@ -2762,6 +2767,9 @@ impl HeadlessServer {
                         Some(writer),
                     ),
                 );
+                if let Some(client) = self.clients.get_mut(&client_id) {
+                    client.pixel_mouse = pixel_mouse;
+                }
                 if !direct_attach_requested {
                     self.foreground_client_id = Some(client_id);
                 }
@@ -2836,6 +2844,34 @@ impl HeadlessServer {
                     Vec::new()
                 };
                 self.handle_client_input_events(client_id, events)
+            }
+            ServerEvent::ClientInputPixels {
+                client_id,
+                data,
+                geometry,
+            } => {
+                let valid = crate::input::mouse::parse_report(&data)
+                    .and_then(|(x, y)| geometry.cell(x, y))
+                    .is_some()
+                    && self.app.state.host_cell_size.is_known()
+                    && self.clients.get(&client_id).is_some_and(|client| {
+                        let cell = client.cell_size;
+                        client.is_full_app_client()
+                            && client.pixel_mouse
+                            && client.host_sgr_pixels_active == Some(true)
+                            && client.terminal_size == (geometry.cols, geometry.rows)
+                            && cell.is_known()
+                            && cell.width_px == geometry.width_px / u32::from(geometry.cols)
+                            && cell.height_px == geometry.height_px / u32::from(geometry.rows)
+                    });
+                if !valid || self.handoff_in_progress || !self.focused_pane_graphics_demand() {
+                    return false;
+                }
+                let foreground_changed = self.promote_client_to_foreground(client_id);
+                if foreground_changed {
+                    self.resize_shared_runtime_to_effective_size_before_input();
+                }
+                self.app.route_client_pixel_mouse(&data, geometry) || foreground_changed
             }
             ServerEvent::ClientInputEvents { client_id, events } => {
                 if self.handoff_in_progress {
@@ -3358,32 +3394,60 @@ impl HeadlessServer {
         changed
     }
 
+    fn focused_pane_graphics_demand(&self) -> bool {
+        self.app
+            .state
+            .active
+            .and_then(|ws_idx| self.app.state.workspaces.get(ws_idx))
+            .and_then(crate::workspace::Workspace::focused_pane_id)
+            .is_some_and(|pane_id| {
+                self.app.state.pane_graphics_streams.contains_key(&pane_id)
+                    || self.app.state.pane_graphics_layers.contains_key(&pane_id)
+            })
+    }
+
     fn stream_host_mouse_capture_mode(&mut self) {
         let enabled = self
             .app
             .state
             .should_capture_host_mouse_from(&self.app.terminal_runtimes);
-        let serialized = match Self::frame_server_message(&ServerMessage::MouseCapture { enabled })
-        {
-            Ok(framed) => framed,
-            Err(err) => {
-                warn!(err = %err, "failed to serialize mouse capture mode for clients");
-                return;
-            }
-        };
+        let sgr_pixels = self.focused_pane_graphics_demand()
+            && self
+                .app
+                .state
+                .focused_pane_requests_sgr_pixels_from(&self.app.terminal_runtimes);
 
         let mut broken_clients: Vec<u64> = Vec::new();
         for (&client_id, client) in &mut self.clients {
             if !client.is_full_app_client() {
                 continue;
             }
-            if client.host_mouse_capture_active == Some(enabled) {
+            // Pane pixel sizes derive from the foreground host cell size, so
+            // exact pixels are only meaningful while that size is known too.
+            let client_sgr_pixels = enabled
+                && sgr_pixels
+                && client.pixel_mouse
+                && client.cell_size.is_known()
+                && self.app.state.host_cell_size.is_known();
+            if client.host_mouse_capture_active == Some(enabled)
+                && client.host_sgr_pixels_active == Some(client_sgr_pixels)
+            {
                 continue;
             }
             let Some(writer) = &client.writer else {
                 continue;
             };
-            if writer.control.send(serialized.clone()).is_err() {
+            let serialized = match Self::frame_server_message(&ServerMessage::MouseCapture {
+                enabled,
+                sgr_pixels: client_sgr_pixels,
+            }) {
+                Ok(framed) => framed,
+                Err(err) => {
+                    warn!(err = %err, "failed to serialize mouse capture mode for client");
+                    continue;
+                }
+            };
+            if writer.control.send(serialized).is_err() {
                 debug!(
                     client_id,
                     "client writer channel closed during mouse capture update"
@@ -3392,6 +3456,7 @@ impl HeadlessServer {
                 continue;
             }
             client.host_mouse_capture_active = Some(enabled);
+            client.host_sgr_pixels_active = Some(client_sgr_pixels);
         }
 
         for client_id in broken_clients {
@@ -4952,6 +5017,7 @@ new_tab = "prefix+t"
             render_encoding: RenderEncoding::SemanticFrame,
             keybindings: Some(Box::new(local_keybindings)),
             direct_attach_requested: false,
+            pixel_mouse: false,
             writer: writer_a,
         }));
         assert_eq!(
@@ -4976,6 +5042,7 @@ new_tab = "prefix+t"
             render_encoding: RenderEncoding::SemanticFrame,
             keybindings: None,
             direct_attach_requested: false,
+            pixel_mouse: false,
             writer: writer_b,
         }));
         assert_eq!(
@@ -5016,6 +5083,7 @@ new_tab = "prefix+t"
             render_encoding: RenderEncoding::SemanticFrame,
             keybindings: Some(Box::new(local_keybindings)),
             direct_attach_requested: false,
+            pixel_mouse: false,
             writer: writer_a,
         }));
         assert_eq!(server.app.state.config_diagnostic, without_keybindings);
@@ -5029,6 +5097,7 @@ new_tab = "prefix+t"
             render_encoding: RenderEncoding::SemanticFrame,
             keybindings: None,
             direct_attach_requested: false,
+            pixel_mouse: false,
             writer: writer_b,
         }));
         assert_eq!(
@@ -5072,6 +5141,7 @@ next_tab = ""
             render_encoding: RenderEncoding::SemanticFrame,
             keybindings: Some(Box::new(local_keybindings)),
             direct_attach_requested: false,
+            pixel_mouse: false,
             writer,
         }));
         server.app.state.mode = crate::app::Mode::Settings;
@@ -5147,6 +5217,7 @@ next_tab = ""
             render_encoding: RenderEncoding::SemanticFrame,
             keybindings: Some(Box::new(local_config.live_keybinds().unwrap())),
             direct_attach_requested: false,
+            pixel_mouse: false,
             writer: writer_a,
         }));
         server.app.state.mode = crate::app::Mode::Settings;
@@ -5167,6 +5238,7 @@ next_tab = ""
             render_encoding: RenderEncoding::SemanticFrame,
             keybindings: None,
             direct_attach_requested: false,
+            pixel_mouse: false,
             writer: writer_b,
         }));
         assert_eq!(
@@ -5201,6 +5273,7 @@ next_tab = ""
             render_encoding: RenderEncoding::TerminalAnsi,
             keybindings: None,
             direct_attach_requested: true,
+            pixel_mouse: false,
             writer,
         }));
         assert!(server.clients.contains_key(&7));
@@ -5266,6 +5339,7 @@ next_tab = ""
             render_encoding: RenderEncoding::TerminalAnsi,
             keybindings: None,
             direct_attach_requested: true,
+            pixel_mouse: false,
             writer,
         }));
         control_rx
@@ -5568,6 +5642,7 @@ next_tab = ""
             render_encoding,
             keybindings: None,
             direct_attach_requested: false,
+            pixel_mouse: false,
             writer,
         }));
 
@@ -5602,6 +5677,7 @@ next_tab = ""
             render_encoding: RenderEncoding::TerminalAnsi,
             keybindings: None,
             direct_attach_requested: true,
+            pixel_mouse: false,
             writer,
         }));
 
@@ -5635,6 +5711,7 @@ next_tab = ""
             render_encoding: RenderEncoding::SemanticFrame,
             keybindings: None,
             direct_attach_requested: false,
+            pixel_mouse: false,
             writer,
         }));
         assert!(server.has_app_client());
@@ -5680,6 +5757,7 @@ next_tab = ""
             render_encoding: RenderEncoding::TerminalAnsi,
             keybindings: None,
             direct_attach_requested: true,
+            pixel_mouse: false,
             writer,
         }));
         assert!(
@@ -7451,6 +7529,7 @@ next_tab = ""
             render_encoding: RenderEncoding::TerminalAnsi,
             keybindings: None,
             direct_attach_requested: true,
+            pixel_mouse: false,
             writer,
         }));
         assert!(
@@ -8007,7 +8086,306 @@ next_tab = ""
                     .recv_timeout(Duration::from_millis(100))
                     .expect("mouse capture message")
             ),
-            ServerMessage::MouseCapture { enabled: true }
+            ServerMessage::MouseCapture {
+                enabled: true,
+                sgr_pixels: false,
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn focused_sgr_pixel_pane_enables_exact_host_mouse_mode() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let pane_id = workspace.focused_pane_id().expect("focused pane");
+        workspace.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(
+                80,
+                24,
+                b"\x1b[?1003h\x1b[?1006h\x1b[?1016h",
+            ),
+        );
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+        server.app.state.mouse_capture = false;
+
+        let (client_tx, client_control_rx, _client_rx) = test_client_writer();
+        let mut client = ClientConnection::new(
+            (80, 24),
+            crate::kitty_graphics::HostCellSize {
+                width_px: 10,
+                height_px: 20,
+            },
+            crate::terminal_theme::TerminalTheme::default(),
+            None,
+            1,
+            RenderEncoding::SemanticFrame,
+            Some(client_tx),
+        );
+        client.pixel_mouse = true;
+        server.clients.insert(1, client);
+        server.app.state.host_cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+
+        server.stream_host_mouse_capture_mode();
+        assert!(matches!(
+            read_server_message(
+                client_control_rx
+                    .recv_timeout(Duration::from_millis(100))
+                    .expect("cell mouse capture message")
+            ),
+            ServerMessage::MouseCapture {
+                enabled: true,
+                sgr_pixels: false,
+            }
+        ));
+
+        server
+            .app
+            .state
+            .pane_graphics_streams
+            .insert(pane_id, "terminal-browser".to_owned());
+        server.stream_host_mouse_capture_mode();
+
+        assert!(matches!(
+            read_server_message(
+                client_control_rx
+                    .recv_timeout(Duration::from_millis(100))
+                    .expect("pixel mouse capture message")
+            ),
+            ServerMessage::MouseCapture {
+                enabled: true,
+                sgr_pixels: true,
+            }
+        ));
+    }
+
+    /// Terminal-browser's startup sequence: alt screen, any-motion, SGR, SGR
+    /// pixels, focus, bracketed paste, in-band resize, kitty keyboard.
+    const TERMINAL_BROWSER_INIT: &[u8] =
+        b"\x1b[?1049h\x1b[?25l\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b[?1004h\x1b[?2004h\x1b[?2048h\x1b[>1u";
+
+    /// Two-pane split on a 200x50 host at 12x25px cells with a one-row tab
+    /// bar: the browser pane starts at host cell (101, 1), after host pixel
+    /// boundaries (1212, 25). Returns the server, the browser pane's PTY channel, and
+    /// the geometry the host client observes.
+    fn split_pane_pixel_server() -> (
+        HeadlessServer,
+        tokio::sync::mpsc::Receiver<bytes::Bytes>,
+        std::sync::mpsc::Receiver<Vec<u8>>,
+        crate::input::mouse::HostGeometry,
+    ) {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let left = workspace.focused_pane_id().expect("focused pane");
+        let right = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        assert_eq!(workspace.focused_pane_id(), Some(right));
+        let (runtime, rx) = crate::terminal::TerminalRuntime::test_with_channel(99, 48);
+        runtime.test_process_pty_bytes(TERMINAL_BROWSER_INIT);
+        runtime.resize(48, 99, 12, 25);
+        workspace.insert_test_runtime(right, runtime);
+        workspace.insert_test_runtime(
+            left,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(100, 48, b""),
+        );
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+        server.app.state.view.pane_infos = vec![
+            crate::layout::PaneInfo {
+                id: left,
+                rect: ratatui::layout::Rect::new(0, 1, 100, 48),
+                inner_rect: ratatui::layout::Rect::new(0, 1, 100, 48),
+                scrollbar_rect: None,
+                borders: ratatui::widgets::Borders::empty(),
+                is_focused: false,
+            },
+            crate::layout::PaneInfo {
+                id: right,
+                rect: ratatui::layout::Rect::new(101, 1, 99, 48),
+                inner_rect: ratatui::layout::Rect::new(101, 1, 99, 48),
+                scrollbar_rect: None,
+                borders: ratatui::widgets::Borders::empty(),
+                is_focused: true,
+            },
+        ];
+
+        let (client_tx, client_control_rx, _client_rx) = test_client_writer();
+        let mut client = ClientConnection::new(
+            (200, 50),
+            crate::kitty_graphics::HostCellSize {
+                width_px: 12,
+                height_px: 25,
+            },
+            crate::terminal_theme::TerminalTheme::default(),
+            None,
+            1,
+            RenderEncoding::SemanticFrame,
+            Some(client_tx),
+        );
+        client.pixel_mouse = true;
+        server.clients.insert(1, client);
+        server.foreground_client_id = Some(1);
+        server.app.state.kitty_graphics_enabled = true;
+        server.sync_foreground_client_state();
+        server
+            .app
+            .state
+            .pane_graphics_streams
+            .insert(right, "terminal-browser".to_owned());
+        server.stream_host_mouse_capture_mode();
+        let geometry = crate::input::mouse::HostGeometry::new(200, 50, 2400, 1250).unwrap();
+        (server, rx, client_control_rx, geometry)
+    }
+
+    async fn child_bytes(rx: &mut tokio::sync::mpsc::Receiver<bytes::Bytes>) -> Vec<u8> {
+        tokio::time::timeout(Duration::from_millis(500), rx.recv())
+            .await
+            .expect("child receives forwarded mouse bytes")
+            .expect("channel open")
+            .to_vec()
+    }
+
+    #[tokio::test]
+    async fn split_pane_host_pixels_reach_the_browser_pane_as_pane_local_pixels() {
+        let (mut server, mut rx, client_control_rx, geometry) = split_pane_pixel_server();
+        assert!(matches!(
+            read_server_message(
+                client_control_rx
+                    .recv_timeout(Duration::from_millis(100))
+                    .expect("pixel mouse capture message")
+            ),
+            ServerMessage::MouseCapture {
+                enabled: true,
+                sgr_pixels: true,
+            }
+        ));
+
+        // Ghostty reports host SGR pixels as zero-based. Host pixel
+        // (1212 + 7, 25 + 3) lands 7px right and 3px below the pane origin
+        // (1-based child report (8, 4)): the
+        // tab strip's "+" region of the browser chrome.
+        for (report, expected) in [
+            (&b"\x1b[<0;1219;28M"[..], &b"\x1b[<0;8;4M"[..]),
+            (b"\x1b[<0;1219;28m", b"\x1b[<0;8;4m"),
+            // Motion and wheel deep in the page area keep exact pixels too.
+            (b"\x1b[<35;1300;500M", b"\x1b[<35;89;476M"),
+            (b"\x1b[<64;1300;500M", b"\x1b[<64;89;476M"),
+            (b"\x1b[<65;1300;500M", b"\x1b[<65;89;476M"),
+            // The pane's first pixel is not dropped.
+            (b"\x1b[<0;1212;25M", b"\x1b[<0;1;1M"),
+            // The last pixel of the pane maps to the child's last pixel.
+            (b"\x1b[<0;2399;1224M", b"\x1b[<0;1188;1200M"),
+        ] {
+            assert!(
+                server.handle_server_event(ServerEvent::ClientInputPixels {
+                    client_id: 1,
+                    data: report.to_vec(),
+                    geometry,
+                }),
+                "{:?} must be routed",
+                String::from_utf8_lossy(report)
+            );
+            assert_eq!(
+                child_bytes(&mut rx).await,
+                expected,
+                "{:?}",
+                String::from_utf8_lossy(report)
+            );
+        }
+        assert!(server.app.state.host_mouse_pixels.is_none());
+    }
+
+    #[tokio::test]
+    async fn split_pane_cell_fallback_reaches_pixel_pane_at_the_cell_centre() {
+        let (mut server, mut rx, _client_control_rx, _geometry) = split_pane_pixel_server();
+
+        // A plain cell report (host without pixel geometry) at host cell
+        // (108, 4) becomes pane-local cell (7, 3).
+        assert!(server.handle_server_event(ServerEvent::ClientInput {
+            client_id: 1,
+            data: b"\x1b[<0;109;5M".to_vec(),
+        }));
+        assert_eq!(child_bytes(&mut rx).await, b"\x1b[<0;91;88M");
+        assert!(server.handle_server_event(ServerEvent::ClientInput {
+            client_id: 1,
+            data: b"\x1b[<64;109;5M".to_vec(),
+        }));
+        assert_eq!(child_bytes(&mut rx).await, b"\x1b[<64;91;88M");
+    }
+
+    #[tokio::test]
+    async fn pixel_reports_fall_back_to_cells_until_host_cell_size_is_known() {
+        let (mut server, mut rx, _client_control_rx, geometry) = split_pane_pixel_server();
+        server.app.state.host_cell_size = crate::kitty_graphics::HostCellSize::default();
+        server.stream_host_mouse_capture_mode();
+        assert_eq!(server.clients[&1].host_sgr_pixels_active, Some(false));
+
+        // Stale pixel reports still in flight are rejected, not misrouted.
+        assert!(!server.handle_server_event(ServerEvent::ClientInputPixels {
+            client_id: 1,
+            data: b"\x1b[<0;1219;28M".to_vec(),
+            geometry,
+        }));
+        assert!(tokio::time::timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn focused_sgr_pixel_pane_keeps_cell_mode_when_host_pixels_are_unknown() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let pane_id = workspace.focused_pane_id().expect("focused pane");
+        workspace.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(
+                80,
+                24,
+                b"\x1b[?1003h\x1b[?1006h\x1b[?1016h",
+            ),
+        );
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (client_tx, client_control_rx, _client_rx) = test_client_writer();
+        let mut client = ClientConnection::new(
+            (80, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            crate::terminal_theme::TerminalTheme::default(),
+            None,
+            1,
+            RenderEncoding::SemanticFrame,
+            Some(client_tx),
+        );
+        client.pixel_mouse = true;
+        server.clients.insert(1, client);
+        server
+            .app
+            .state
+            .pane_graphics_streams
+            .insert(pane_id, "terminal-browser".to_owned());
+
+        server.stream_host_mouse_capture_mode();
+
+        assert!(matches!(
+            read_server_message(
+                client_control_rx
+                    .recv_timeout(Duration::from_millis(100))
+                    .expect("cell mouse capture message")
+            ),
+            ServerMessage::MouseCapture {
+                enabled: true,
+                sgr_pixels: false,
+            }
         ));
     }
 

@@ -2885,43 +2885,52 @@ impl PaneRuntime {
         self.terminal.wheel_routing()
     }
 
+    pub fn sgr_pixel_mouse_enabled(&self) -> bool {
+        self.terminal.sgr_pixel_mouse_enabled()
+    }
+
+    /// Child terminal size in pixels, known only once a host cell size was
+    /// applied through `resize`. Ghostty clamps unknown cells to 1px, so the
+    /// terminal's own pixel size cannot tell "unknown" from "known".
+    pub fn pixel_size(&self) -> Option<(u32, u32)> {
+        let (_, _, cell_width_px, cell_height_px) = self.current_size.get();
+        if cell_width_px == 0 || cell_height_px == 0 {
+            return None;
+        }
+        self.terminal.pixel_size()
+    }
+
     pub fn encode_mouse_button(
         &self,
         kind: crossterm::event::MouseEventKind,
-        column: u16,
-        row: u16,
+        position: crate::input::mouse::Position,
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<Vec<u8>> {
         if !self.input_state()?.mouse_protocol_mode.reporting_enabled() {
             return None;
         }
-        self.terminal
-            .encode_mouse_button(kind, column, row, modifiers)
+        self.terminal.encode_mouse_button(kind, position, modifiers)
     }
 
     pub fn encode_mouse_motion(
         &self,
         kind: crossterm::event::MouseEventKind,
-        column: u16,
-        row: u16,
+        position: crate::input::mouse::Position,
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<Vec<u8>> {
-        self.terminal
-            .encode_mouse_motion(kind, column, row, modifiers)
+        self.terminal.encode_mouse_motion(kind, position, modifiers)
     }
 
     pub fn encode_mouse_wheel(
         &self,
         kind: crossterm::event::MouseEventKind,
-        column: u16,
-        row: u16,
+        position: crate::input::mouse::Position,
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<Vec<u8>> {
         if self.wheel_routing()? != WheelRouting::MouseReport {
             return None;
         }
-        self.terminal
-            .encode_mouse_wheel(kind, column, row, modifiers)
+        self.terminal.encode_mouse_wheel(kind, position, modifiers)
     }
 
     pub fn encode_alternate_scroll(

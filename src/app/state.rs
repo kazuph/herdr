@@ -1841,6 +1841,8 @@ pub struct AppState {
     pub host_terminal_theme: TerminalTheme,
     /// Last known foreground host terminal cell size in pixels.
     pub(crate) host_cell_size: crate::kitty_graphics::HostCellSize,
+    /// Exact host pixels for the one mouse event currently routed through the cell UI.
+    pub(crate) host_mouse_pixels: Option<crate::input::mouse::HostPixels>,
     /// Set when a persisted session snapshot would change.
     pub session_dirty: bool,
     pub(crate) agent_session_ledger: crate::persist::agent_ledger::AgentSessionLedger,
@@ -2073,6 +2075,17 @@ impl AppState {
         self.mouse_capture
             || self.popup_pane_is_visible()
             || self.focused_pane_requests_mouse_capture_from(terminal_runtimes)
+    }
+
+    pub(crate) fn focused_pane_requests_sgr_pixels_from(
+        &self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+    ) -> bool {
+        self.mode == Mode::Terminal
+            && self
+                .active
+                .and_then(|idx| self.focused_runtime_in_workspace(terminal_runtimes, idx))
+                .is_some_and(crate::terminal::TerminalRuntime::sgr_pixel_mouse_enabled)
     }
 
     /// Returns the popup owned by the currently active workspace, if any.
@@ -2501,6 +2514,7 @@ impl AppState {
             global_menu: MenuListState::new(0),
             host_terminal_theme: TerminalTheme::default(),
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
+            host_mouse_pixels: None,
             session_dirty: false,
             agent_session_ledger: crate::persist::agent_ledger::AgentSessionLedger::default(),
             agent_session_ledger_path: None,

@@ -174,6 +174,7 @@ pub enum ResponseResult {
     PaneGraphicsInfo {
         cell_width_px: u32,
         cell_height_px: u32,
+        pixel_mouse: bool,
     },
     AgentExplain {
         explain: serde_json::Value,

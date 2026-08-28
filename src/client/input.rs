@@ -40,10 +40,15 @@ pub fn stdin_reader_loop(
     should_quit: &Arc<AtomicBool>,
     host_color_query_sent: bool,
     host_mouse_capture_active: Arc<AtomicBool>,
+    host_sgr_pixels_active: Arc<AtomicBool>,
 ) {
     #[cfg(windows)]
     {
-        let _ = (host_color_query_sent, host_mouse_capture_active);
+        let _ = (
+            host_color_query_sent,
+            host_mouse_capture_active,
+            host_sgr_pixels_active,
+        );
         windows_stdin_reader_loop(event_tx, should_quit);
     }
 
@@ -53,6 +58,7 @@ pub fn stdin_reader_loop(
         should_quit,
         host_color_query_sent,
         host_mouse_capture_active,
+        host_sgr_pixels_active,
     );
 }
 
@@ -62,6 +68,7 @@ fn unix_stdin_reader_loop(
     should_quit: &Arc<AtomicBool>,
     host_color_query_sent: bool,
     host_mouse_capture_active: Arc<AtomicBool>,
+    host_sgr_pixels_active: Arc<AtomicBool>,
 ) {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
@@ -71,16 +78,30 @@ fn unix_stdin_reader_loop(
         framer.host_color_query_sent();
         framer.enable_host_color_scheme_change_tracking();
     }
+    let mut pending_mode = None;
+    let mut pending_geometry = None;
 
     while !should_quit.load(Ordering::Acquire) {
         match reader.read(&mut scratch) {
             Ok(0) => break,
             Ok(n) => {
-                for data in framer.push(&scratch[..n]) {
-                    if event_tx
-                        .blocking_send(ClientLoopEvent::StdinInput(data))
-                        .is_err()
-                    {
+                let sgr_pixels = *pending_mode
+                    .get_or_insert_with(|| host_sgr_pixels_active.load(Ordering::Acquire));
+                let geometry = *pending_geometry.get_or_insert_with(|| {
+                    sgr_pixels
+                        .then(crate::input::mouse::HostGeometry::current)
+                        .flatten()
+                });
+                let chunks = framer.push(&scratch[..n]);
+                if !framer.has_pending_input() {
+                    pending_mode = None;
+                    pending_geometry = None;
+                }
+                for data in chunks {
+                    let Some(event) = classify_unix_input(data, sgr_pixels, geometry) else {
+                        continue;
+                    };
+                    if event_tx.blocking_send(event).is_err() {
                         return;
                     }
                 }
@@ -93,11 +114,18 @@ fn unix_stdin_reader_loop(
                     let had_pending = framer.has_pending_input();
                     let chunks = framer.flush_timeout();
                     let held_escape = had_pending && chunks.is_empty();
+                    let sgr_pixels = pending_mode
+                        .unwrap_or_else(|| host_sgr_pixels_active.load(Ordering::Acquire));
+                    let geometry = pending_geometry.flatten();
+                    if !framer.has_pending_input() {
+                        pending_mode = None;
+                        pending_geometry = None;
+                    }
                     for data in chunks {
-                        if event_tx
-                            .blocking_send(ClientLoopEvent::StdinInput(data))
-                            .is_err()
-                        {
+                        let Some(event) = classify_unix_input(data, sgr_pixels, geometry) else {
+                            continue;
+                        };
+                        if event_tx.blocking_send(event).is_err() {
                             return;
                         }
                     }
@@ -108,10 +136,15 @@ fn unix_stdin_reader_loop(
                         ) == Some(false)
                     {
                         for data in framer.flush_timeout() {
-                            if event_tx
-                                .blocking_send(ClientLoopEvent::StdinInput(data))
-                                .is_err()
-                            {
+                            if !framer.has_pending_input() {
+                                pending_mode = None;
+                                pending_geometry = None;
+                            }
+                            let Some(event) = classify_unix_input(data, sgr_pixels, geometry)
+                            else {
+                                continue;
+                            };
+                            if event_tx.blocking_send(event).is_err() {
                                 return;
                             }
                         }
@@ -126,6 +159,18 @@ fn unix_stdin_reader_loop(
             }
         }
     }
+}
+
+#[cfg(unix)]
+fn classify_unix_input(
+    data: Vec<u8>,
+    sgr_pixels: bool,
+    geometry: Option<crate::input::mouse::HostGeometry>,
+) -> Option<ClientLoopEvent> {
+    if sgr_pixels && crate::input::mouse::parse_report(&data).is_some() {
+        return geometry.map(|geometry| ClientLoopEvent::PixelMouse(data, geometry));
+    }
+    Some(ClientLoopEvent::StdinInput(data))
 }
 
 #[cfg(unix)]
@@ -396,6 +441,22 @@ mod tests {
             ClientLoopEvent::StdinInput(d) => assert_eq!(d, data),
             _ => panic!("expected StdinInput event"),
         }
+    }
+
+    #[test]
+    fn pixel_reports_are_separated_only_with_geometry_and_active_mode() {
+        let geometry = crate::input::mouse::HostGeometry::new(80, 24, 800, 480).unwrap();
+        let report = b"\x1b[<0;321;241M".to_vec();
+        assert!(matches!(
+            classify_unix_input(report.clone(), true, Some(geometry)),
+            Some(ClientLoopEvent::PixelMouse(data, captured))
+                if data == report && captured == geometry
+        ));
+        assert!(classify_unix_input(report.clone(), true, None).is_none());
+        assert!(matches!(
+            classify_unix_input(report, false, Some(geometry)),
+            Some(ClientLoopEvent::StdinInput(_))
+        ));
     }
 
     #[test]

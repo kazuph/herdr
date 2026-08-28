@@ -64,6 +64,10 @@ pub(crate) struct ClientConnection {
     pane_graphics_render_pending: bool,
     /// Last host mouse capture mode sent to this client.
     pub(crate) host_mouse_capture_active: Option<bool>,
+    /// Whether this frontend can preserve exact SGR 1016 reports.
+    pub(crate) pixel_mouse: bool,
+    /// Last SGR pixel provenance mode sent to this client.
+    pub(crate) host_sgr_pixels_active: Option<bool>,
     /// Temporary files staged from this client's local clipboard image pastes.
     pub(crate) staged_clipboard_files: Vec<PathBuf>,
     /// Channels for sending framed ServerMessage data to the client writer thread.
@@ -127,6 +131,8 @@ impl ClientConnection {
             render_pending: false,
             pane_graphics_render_pending: false,
             host_mouse_capture_active: None,
+            pixel_mouse: false,
+            host_sgr_pixels_active: None,
             staged_clipboard_files: Vec::new(),
             writer,
         }

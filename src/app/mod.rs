@@ -95,6 +95,7 @@ impl PaneClickState {
 
 pub struct App {
     pub state: AppState,
+    pub(crate) pixel_mouse_available: bool,
     pub(crate) terminal_runtimes: crate::terminal::TerminalRuntimeRegistry,
     pub event_tx: mpsc::Sender<AppEvent>,
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
@@ -735,6 +736,7 @@ impl App {
             global_menu: state::MenuListState::new(0),
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
             host_cell_size: crate::kitty_graphics::HostCellSize::default(),
+            host_mouse_pixels: None,
             session_dirty: false,
             agent_session_ledger,
             agent_session_ledger_path: (!no_session).then(crate::persist::agent_ledger::path),
@@ -784,6 +786,7 @@ impl App {
             copy_feedback_deadline: None,
             last_api_notification_at: None,
             state,
+            pixel_mouse_available: false,
             terminal_runtimes: restored_terminal_runtimes,
             event_tx,
             event_rx,
@@ -1655,6 +1658,30 @@ impl App {
     pub(crate) fn route_client_input(&mut self, data: Vec<u8>) {
         let events = crate::raw_input::parse_raw_input_bytes_sync(&data);
         self.route_client_events(events, true);
+    }
+
+    pub(crate) fn route_client_pixel_mouse(
+        &mut self,
+        data: &[u8],
+        geometry: crate::input::mouse::HostGeometry,
+    ) -> bool {
+        let Some((x, y)) = crate::input::mouse::parse_report(data) else {
+            return false;
+        };
+        let Some((column, row)) = geometry.cell(x, y) else {
+            return false;
+        };
+        let Some(cell_report) = crate::input::mouse::report_at_cell(data, column, row) else {
+            return false;
+        };
+        let events = crate::raw_input::parse_raw_input_bytes_sync(&cell_report);
+        if events.len() != 1 || !matches!(events[0], crate::raw_input::RawInputEvent::Mouse(_)) {
+            return false;
+        }
+        self.state.host_mouse_pixels = Some(crate::input::mouse::HostPixels { x, y, geometry });
+        self.route_client_events(events, false);
+        self.state.host_mouse_pixels = None;
+        true
     }
 
     pub(crate) fn route_client_events(
@@ -5133,6 +5160,62 @@ last_pane = "prefix+tab"
         // in headless mode.
         app.route_client_input(mouse_bytes);
         // No assertions on specific behavior — just no panic.
+    }
+
+    #[test]
+    fn route_client_pixel_mouse_clears_transient_provenance() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let geometry = crate::input::mouse::HostGeometry::new(80, 24, 800, 480).unwrap();
+
+        assert!(app.route_client_pixel_mouse(b"\x1b[<64;100;100M", geometry));
+        assert!(app.state.host_mouse_pixels.is_none());
+    }
+
+    #[tokio::test]
+    async fn route_client_pixel_mouse_preserves_exact_child_coordinates() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        runtime.test_process_pty_bytes(b"\x1b[?1003h\x1b[?1006h\x1b[?1016h");
+        runtime.resize(24, 80, 10, 20);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = vec![crate::layout::PaneInfo {
+            id: focused,
+            rect: ratatui::layout::Rect::new(10, 4, 40, 10),
+            inner_rect: ratatui::layout::Rect::new(10, 4, 40, 10),
+            scrollbar_rect: None,
+            borders: ratatui::widgets::Borders::empty(),
+            is_focused: true,
+        }];
+        let geometry = crate::input::mouse::HostGeometry::new(80, 24, 800, 480).unwrap();
+
+        // Ghostty's SGR-pixels output is zero-based. Host pixel (126, 101)
+        // relative to pane origin (100, 80) is offset (26, 21), which scales
+        // from the 400x200 host pane to 1-based child report (53, 51).
+        assert!(app.route_client_pixel_mouse(b"\x1b[<35;126;101M", geometry));
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[<35;53;51M")
+        );
+        assert!(app.route_client_pixel_mouse(b"\x1b[<0;126;101M", geometry));
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[<0;53;51M")
+        );
+        assert!(app.route_client_pixel_mouse(b"\x1b[<64;126;101M", geometry));
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"\x1b[<64;53;51M")
+        );
+        assert!(app.state.host_mouse_pixels.is_none());
     }
 
     #[test]

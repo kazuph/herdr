@@ -39,6 +39,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Maximum input payload size (bytes) for a single `ClientMessage::Input`.
 const MAX_INPUT_PAYLOAD: usize = 1024 * 1024; // 1 MB
+const MAX_PIXEL_MOUSE_PAYLOAD: usize = 64;
 /// Maximum structured input events accepted in one client message.
 const MAX_INPUT_EVENT_BATCH: usize = 4096;
 
@@ -291,10 +292,17 @@ pub(crate) enum ServerEvent {
         render_encoding: RenderEncoding,
         keybindings: Option<Box<crate::config::LiveKeybindConfig>>,
         direct_attach_requested: bool,
+        pixel_mouse: bool,
         writer: ClientWriter,
     },
     /// A client sent an input message.
     ClientInput { client_id: u64, data: Vec<u8> },
+    /// One validated SGR pixel report with client read-time geometry.
+    ClientInputPixels {
+        client_id: u64,
+        data: Vec<u8>,
+        geometry: crate::input::mouse::HostGeometry,
+    },
     /// A client sent structured input events.
     ClientInputEvents {
         client_id: u64,
@@ -463,6 +471,7 @@ pub(crate) fn handle_client_handshake(
         render_encoding,
         keybindings,
         direct_attach_requested,
+        pixel_mouse,
     ) = match hello {
         ClientMessage::Hello {
             version,
@@ -473,6 +482,7 @@ pub(crate) fn handle_client_handshake(
             requested_encoding,
             keybindings,
             launch_mode,
+            pixel_mouse,
         } => {
             // Version check.
             match protocol::check_client_version(version) {
@@ -512,6 +522,7 @@ pub(crate) fn handle_client_handshake(
                 requested_encoding,
                 keybindings,
                 launch_mode == ClientLaunchMode::TerminalAttach,
+                pixel_mouse,
             )
         }
         _ => {
@@ -566,6 +577,7 @@ pub(crate) fn handle_client_handshake(
         render_encoding,
         keybindings,
         direct_attach_requested,
+        pixel_mouse,
         writer,
     });
 
@@ -660,6 +672,33 @@ fn client_read_loop(
                     break;
                 } else {
                     ServerEvent::ClientInput { client_id, data }
+                }
+            }
+            ClientMessage::InputPixels {
+                data,
+                cols,
+                rows,
+                width_px,
+                height_px,
+            } => {
+                let Some(geometry) =
+                    crate::input::mouse::HostGeometry::new(cols, rows, width_px, height_px)
+                else {
+                    let _ = server_event_tx
+                        .blocking_send(ServerEvent::ClientDisconnected { client_id });
+                    break;
+                };
+                if data.len() > MAX_PIXEL_MOUSE_PAYLOAD
+                    || crate::input::mouse::parse_report(&data).is_none()
+                {
+                    let _ = server_event_tx
+                        .blocking_send(ServerEvent::ClientDisconnected { client_id });
+                    break;
+                }
+                ServerEvent::ClientInputPixels {
+                    client_id,
+                    data,
+                    geometry,
                 }
             }
             ClientMessage::InputEvents { events } => {
@@ -1057,6 +1096,7 @@ new_tab = "ctrl+notakey"
                 requested_encoding: RenderEncoding::TerminalAnsi,
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
+                pixel_mouse: true,
             },
         )
         .expect("write hello");
@@ -1089,6 +1129,7 @@ new_tab = "ctrl+notakey"
                 render_encoding,
                 keybindings,
                 direct_attach_requested,
+                pixel_mouse,
                 writer,
             } => {
                 assert_eq!(client_id, 42);
@@ -1097,6 +1138,7 @@ new_tab = "ctrl+notakey"
                 assert_eq!(render_encoding, RenderEncoding::TerminalAnsi);
                 assert!(keybindings.is_none());
                 assert!(!direct_attach_requested);
+                assert!(pixel_mouse);
                 drop(writer);
             }
             other => panic!("expected ClientConnected, got {other:?}"),
@@ -1132,6 +1174,7 @@ new_tab = "ctrl+notakey"
                 requested_encoding: RenderEncoding::TerminalAnsi,
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::TerminalAttach,
+                pixel_mouse: false,
             },
         )
         .expect("write hello");
@@ -1199,6 +1242,89 @@ new_tab = "ctrl+notakey"
             ServerEvent::ClientDisconnected { client_id } => assert_eq!(client_id, 7),
             other => panic!("expected ClientDisconnected, got {other:?}"),
         }
+
+        drop(client_stream);
+        should_quit.store(true, Ordering::Release);
+        handle
+            .join()
+            .expect("read thread join")
+            .expect("read thread result");
+    }
+
+    #[test]
+    fn client_read_loop_forwards_valid_pixel_mouse_with_geometry() {
+        let (mut client_stream, server_stream, _path) = local_stream_pair("client-read-pixels");
+        let (server_event_tx, mut server_event_rx) = mpsc::channel(4);
+        let should_quit = Arc::new(AtomicBool::new(false));
+        let read_quit = should_quit.clone();
+        let handle = std::thread::spawn(move || {
+            client_read_loop(server_stream, 7, &server_event_tx, &read_quit)
+        });
+        let data = b"\x1b[<0;321;241M".to_vec();
+
+        protocol::write_message(
+            &mut client_stream,
+            &ClientMessage::InputPixels {
+                data: data.clone(),
+                cols: 80,
+                rows: 24,
+                width_px: 800,
+                height_px: 480,
+            },
+        )
+        .expect("write pixel input");
+
+        match server_event_rx.blocking_recv().expect("pixel input event") {
+            ServerEvent::ClientInputPixels {
+                client_id,
+                data: actual,
+                geometry,
+            } => {
+                assert_eq!(client_id, 7);
+                assert_eq!(actual, data);
+                assert_eq!(
+                    geometry,
+                    crate::input::mouse::HostGeometry::new(80, 24, 800, 480).unwrap()
+                );
+            }
+            other => panic!("expected ClientInputPixels, got {other:?}"),
+        }
+
+        drop(client_stream);
+        should_quit.store(true, Ordering::Release);
+        handle
+            .join()
+            .expect("read thread join")
+            .expect("read thread result");
+    }
+
+    #[test]
+    fn client_read_loop_rejects_malformed_pixel_mouse() {
+        let (mut client_stream, server_stream, _path) =
+            local_stream_pair("client-read-invalid-pixels");
+        let (server_event_tx, mut server_event_rx) = mpsc::channel(4);
+        let should_quit = Arc::new(AtomicBool::new(false));
+        let read_quit = should_quit.clone();
+        let handle = std::thread::spawn(move || {
+            client_read_loop(server_stream, 7, &server_event_tx, &read_quit)
+        });
+
+        protocol::write_message(
+            &mut client_stream,
+            &ClientMessage::InputPixels {
+                data: b"\x1b[<0;321Mextra".to_vec(),
+                cols: 80,
+                rows: 24,
+                width_px: 800,
+                height_px: 480,
+            },
+        )
+        .expect("write malformed pixel input");
+
+        assert!(matches!(
+            server_event_rx.blocking_recv(),
+            Some(ServerEvent::ClientDisconnected { client_id: 7 })
+        ));
 
         drop(client_stream);
         should_quit.store(true, Ordering::Release);

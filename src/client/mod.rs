@@ -354,9 +354,9 @@ fn setup_terminal_with_capabilities(
 
     if enable_client_protocols {
         if mouse_capture {
-            set_mouse_capture(true)?;
+            set_mouse_capture(true, false)?;
         } else {
-            set_mouse_capture(false)?;
+            set_mouse_capture(false, false)?;
         }
         execute!(io::stdout(), EnableBracketedPaste, EnableFocusChange)?;
         if host_color_scheme_reports {
@@ -368,9 +368,9 @@ fn setup_terminal_with_capabilities(
             write_host_color_scheme_report_mode(&mut io::stdout(), false)?;
         }
         if mouse_capture {
-            set_mouse_capture(true)?;
+            set_mouse_capture(true, false)?;
         } else {
-            set_mouse_capture(false)?;
+            set_mouse_capture(false, false)?;
         }
     }
 
@@ -545,10 +545,31 @@ fn restore_windows_input_mode_value(mode: u32) {
     }
 }
 
-fn set_mouse_capture(enabled: bool) -> io::Result<()> {
+/// Whether this frontend can turn SGR 1016 reports back into cells.
+///
+/// That needs the host window's pixel geometry; hosts that report zero pixel
+/// sizes (tmux, Terminal.app, plain consoles) must stay on cell reports or
+/// every mouse event would be dropped once 1016 is enabled.
+fn host_pixel_mouse_supported() -> bool {
+    #[cfg(unix)]
+    {
+        crate::input::mouse::HostGeometry::current().is_some()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+fn set_mouse_capture(enabled: bool, sgr_pixels: bool) -> io::Result<()> {
     crate::terminal_modes::clear_host_mouse_reporting(&mut io::stdout())?;
     if enabled {
-        execute!(io::stdout(), EnableMouseCapture)
+        execute!(io::stdout(), EnableMouseCapture)?;
+        if sgr_pixels {
+            io::stdout().write_all(b"\x1b[?1016h")?;
+            io::stdout().flush()?;
+        }
+        Ok(())
     } else {
         match execute!(io::stdout(), DisableMouseCapture) {
             Ok(()) => Ok(()),
@@ -755,6 +776,7 @@ fn do_handshake(
         } else {
             ClientLaunchMode::App
         },
+        pixel_mouse: host_pixel_mouse_supported(),
     };
     protocol::write_message(stream, &hello)
         .map_err(|e| ClientError::ConnectionFailed(io::Error::other(e.to_string())))?;
@@ -799,6 +821,9 @@ enum ClientLoopEvent {
     /// Raw input bytes from stdin.
     #[cfg(unix)]
     StdinInput(Vec<u8>),
+    /// One complete SGR pixel report with geometry captured by the stdin reader.
+    #[cfg(unix)]
+    PixelMouse(Vec<u8>, crate::input::mouse::HostGeometry),
     /// Structured input events from platforms without Unix-style stdin bytes.
     #[cfg(windows)]
     StdinEvents(Vec<crate::protocol::ClientInputEvent>),
@@ -1298,6 +1323,7 @@ async fn run_client_loop(
     };
     debug!(?negotiated_encoding, "client render encoding active");
     let host_mouse_capture_active = Arc::new(AtomicBool::new(state.mouse_capture_active));
+    let host_sgr_pixels_active = Arc::new(AtomicBool::new(false));
 
     // Channel for events from the stdin, resize, and server reader threads.
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<ClientLoopEvent>(256);
@@ -1308,12 +1334,14 @@ async fn run_client_loop(
     let stdin_quit = should_quit.clone();
     let stdin_tx = event_tx.clone();
     let stdin_mouse_capture_active = host_mouse_capture_active.clone();
+    let stdin_sgr_pixels_active = host_sgr_pixels_active.clone();
     std::thread::spawn(move || {
         input::stdin_reader_loop(
             stdin_tx,
             &stdin_quit,
             will_query_host_terminal_theme,
             stdin_mouse_capture_active,
+            stdin_sgr_pixels_active,
         );
     });
 
@@ -1468,6 +1496,19 @@ async fn run_client_loop(
                     return Err(ClientError::ConnectionLost(e));
                 }
             }
+            #[cfg(unix)]
+            ClientLoopEvent::PixelMouse(data, geometry) => {
+                let msg = ClientMessage::InputPixels {
+                    data,
+                    cols: geometry.cols,
+                    rows: geometry.rows,
+                    width_px: geometry.width_px,
+                    height_px: geometry.height_px,
+                };
+                if let Err(e) = write_to_server(&mut write_stream, &msg) {
+                    return Err(ClientError::ConnectionLost(e));
+                }
+            }
             #[cfg(windows)]
             ClientLoopEvent::StdinEvents(events) => {
                 if state.attach_escape.is_some() {
@@ -1575,17 +1616,24 @@ async fn run_client_loop(
                         &mut state.remote_image_paste_key,
                     );
                 }
-                ServerMessage::MouseCapture { enabled } => {
-                    let desired = enabled;
-                    if desired != state.mouse_capture_active {
-                        set_mouse_capture(desired).map_err(ClientError::ConnectionFailed)?;
+                ServerMessage::MouseCapture {
+                    enabled,
+                    sgr_pixels,
+                } => {
+                    let desired_pixels = enabled && sgr_pixels;
+                    if enabled != state.mouse_capture_active
+                        || desired_pixels != host_sgr_pixels_active.load(Ordering::Acquire)
+                    {
+                        set_mouse_capture(enabled, desired_pixels)
+                            .map_err(ClientError::ConnectionFailed)?;
                         #[cfg(windows)]
-                        if windows_vti_input_backend_enabled() {
+                        if enabled && windows_vti_input_backend_enabled() {
                             let _ = enable_windows_virtual_terminal_input();
                         }
-                        state.mouse_capture_active = desired;
-                        host_mouse_capture_active.store(desired, Ordering::Release);
                     }
+                    state.mouse_capture_active = enabled;
+                    host_mouse_capture_active.store(enabled, Ordering::Release);
+                    host_sgr_pixels_active.store(desired_pixels, Ordering::Release);
                 }
                 ServerMessage::PrefixInputSource { active } => {
                     if active {

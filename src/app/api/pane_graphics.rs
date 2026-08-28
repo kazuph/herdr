@@ -30,6 +30,7 @@ impl App {
             ResponseResult::PaneGraphicsInfo {
                 cell_width_px: self.state.host_cell_size.width_px,
                 cell_height_px: self.state.host_cell_size.height_px,
+                pixel_mouse: self.pixel_mouse_available,
             },
         )
     }
@@ -310,6 +311,7 @@ mod tests {
             ResponseResult::PaneGraphicsInfo {
                 cell_width_px: 11,
                 cell_height_px: 22,
+                pixel_mouse: false,
             }
         ));
         assert!(app.state.pane_graphics_layers.is_empty());

@@ -101,20 +101,14 @@ impl Herdr {
 
     pub(crate) fn mouse_position_px(
         &self,
-        kind: crate::terminal::MouseKind,
         x: u32,
         y: u32,
-        focused: bool,
         pixel_mouse: bool,
-        grid: impl FnOnce() -> Option<crate::terminal::WindowSize>,
     ) -> (u32, u32) {
         let (cell_w, cell_h) = self.cell;
         let cell_center =
             |x: u32, y: u32| ((x - 1) * cell_w + cell_w / 2, (y - 1) * cell_h + cell_h / 2);
         if !pixel_mouse {
-            return cell_center(x, y);
-        }
-        if !focused && is_wheel(kind) && grid().is_some_and(|ws| within_grid(&ws, x, y)) {
             return cell_center(x, y);
         }
         (x.saturating_sub(1), y.saturating_sub(1))
@@ -162,21 +156,6 @@ impl Herdr {
         file.write(pixels);
         Ok(file.path().to_string_lossy().into_owned())
     }
-}
-
-fn is_wheel(kind: crate::terminal::MouseKind) -> bool {
-    use crate::terminal::MouseKind;
-    matches!(
-        kind,
-        MouseKind::ScrollUp
-            | MouseKind::ScrollDown
-            | MouseKind::ScrollLeft
-            | MouseKind::ScrollRight
-    )
-}
-
-fn within_grid(ws: &crate::terminal::WindowSize, x: u32, y: u32) -> bool {
-    x >= 1 && y >= 1 && x <= ws.cols && y <= ws.rows
 }
 
 fn request(socket: &str, line: &str) -> io::Result<String> {
@@ -453,52 +432,95 @@ mod shared_process_tests {
     }
 }
 
+/// Deterministic contract with the Herdr fork: the bytes below are exactly
+/// what Herdr's `split_pane_*` server tests assert reach this pane's PTY for
+/// a 99x48-cell pane at 12x25px cells in a two-pane split (non-zero offset).
 #[cfg(test)]
-mod degraded_wheel_tests {
+mod herdr_split_pane_contract_tests {
     use super::*;
-    use crate::terminal::{MouseKind, WindowSize};
+    use crate::style::{Dimension, Style};
+    use crate::terminal::{MouseKind, RawEvent, parse_event};
+    use crate::tree::{Props, Tree};
 
-    fn grid() -> Option<WindowSize> {
-        Some(WindowSize {
-            cols: 120,
-            rows: 40,
-            width_px: 1200,
-            height_px: 800,
-        })
+    static FONT_BYTES: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
+
+    fn decode(herdr: &Herdr, bytes: &[u8]) -> (MouseKind, (u32, u32)) {
+        let (RawEvent::Mouse(kind, _, _, x, y), used) = parse_event(bytes).expect("mouse event")
+        else {
+            panic!("not a mouse event");
+        };
+        assert_eq!(used, bytes.len(), "one report, fully consumed");
+        (kind, herdr.mouse_position_px(x, y, true))
+    }
+
+    /// Browser chrome (tab strip with the "+" button, 30px tall) above the
+    /// page surface, laid out at the pane's 1188x1200 canvas size.
+    fn chrome_and_page() -> (Tree, crate::tree::NodeId, crate::tree::NodeId) {
+        let font = fontdue::Font::from_bytes(FONT_BYTES, fontdue::FontSettings::default()).unwrap();
+        let mut tree = Tree::new((1188.0, 1200.0));
+        let new_tab = tree.create(Props {
+            style: Style {
+                width: Dimension::Px(40.0),
+                height: Dimension::Px(30.0),
+                ..Style::default()
+            },
+            key: Some("new-tab".into()),
+            clickable: true,
+            ..Props::default()
+        });
+        let page = tree.create(Props {
+            style: Style {
+                width: Dimension::Px(1188.0),
+                height: Dimension::Px(1170.0),
+                ..Style::default()
+            },
+            key: Some("page".into()),
+            pointer_events: true,
+            ..Props::default()
+        });
+        tree.append(tree.root(), new_tab);
+        tree.append(tree.root(), page);
+        tree.flush_layout(&[font], 16.0);
+        (tree, new_tab, page)
     }
 
     #[test]
-    fn unfocused_in_grid_wheel_rescales_to_cell_centers() {
-        let dir = tests::scratch("degraded-wheel");
+    fn herdr_pixels_land_on_chrome_and_page_at_the_intended_canvas_pixels() {
+        let dir = tests::scratch("split-contract");
         let (socket, _frames) = tests::fake_herdr(&dir, "direct-kitty");
-        // fake_herdr advertises a 10x20 cell size.
-        let herdr = Herdr::connect("w1:p1", &socket.to_string_lossy()).unwrap();
+        let herdr = Herdr::connect("w1:p2", &socket.to_string_lossy()).unwrap();
+        let (tree, new_tab, page) = chrome_and_page();
 
-        // The bug case: an unfocused wheel arrives as cells (8, 9) and is
-        // rescaled to the cell center.
-        assert_eq!(
-            herdr.mouse_position_px(MouseKind::ScrollUp, 8, 9, false, true, grid),
-            (75, 170)
-        );
-        // Focused wheels are honest pixels; pass them through 0-based.
-        assert_eq!(
-            herdr.mouse_position_px(MouseKind::ScrollUp, 8, 9, true, true, grid),
-            (7, 8)
-        );
-        // Coordinates beyond the cell grid can only be pixels.
-        assert_eq!(
-            herdr.mouse_position_px(MouseKind::ScrollDown, 640, 9, false, true, grid),
-            (639, 8)
-        );
-        // Without pixel mouse mode every report is cells.
-        assert_eq!(
-            herdr.mouse_position_px(MouseKind::ScrollUp, 8, 9, false, false, grid),
-            (75, 170)
-        );
-        // Only wheels: clicks focus the pane first, so they stay untouched.
-        assert_eq!(
-            herdr.mouse_position_px(MouseKind::Down, 8, 9, false, true, grid),
-            (7, 8)
-        );
+        // Click 7px right / 3px below the pane origin: the "+" button.
+        let (kind, px) = decode(&herdr, b"\x1b[<0;8;4M");
+        assert_eq!((kind, px), (MouseKind::Down, (7, 3)));
+        assert_eq!(tree.hit_click(px.0 as f32, px.1 as f32), Some(new_tab));
+        let (kind, _) = decode(&herdr, b"\x1b[<0;8;4m");
+        assert_eq!(kind, MouseKind::Up);
+
+        // Motion and wheel deep in the page keep exact pixels.
+        let (kind, px) = decode(&herdr, b"\x1b[<35;89;476M");
+        assert_eq!((kind, px), (MouseKind::Move, (88, 475)));
+        assert_eq!(tree.hit_pointer(px.0 as f32, px.1 as f32), Some(page));
+        let (kind, px) = decode(&herdr, b"\x1b[<64;89;476M");
+        assert_eq!((kind, px), (MouseKind::ScrollUp, (88, 475)));
+        let (kind, px) = decode(&herdr, b"\x1b[<65;89;476M");
+        assert_eq!((kind, px), (MouseKind::ScrollDown, (88, 475)));
+
+        // Pane corners: first and last pixel of the canvas.
+        assert_eq!(decode(&herdr, b"\x1b[<0;1;1M").1, (0, 0));
+        assert_eq!(decode(&herdr, b"\x1b[<0;1188;1200M").1, (1187, 1199));
+    }
+
+    #[test]
+    fn herdr_cell_fallback_arrives_as_cell_centre_pixels() {
+        let dir = tests::scratch("split-contract-cells");
+        let (socket, _frames) = tests::fake_herdr(&dir, "direct-kitty");
+        let herdr = Herdr::connect("w1:p2", &socket.to_string_lossy()).unwrap();
+        let (tree, _new_tab, page) = chrome_and_page();
+
+        let (kind, px) = decode(&herdr, b"\x1b[<0;91;88M");
+        assert_eq!((kind, px), (MouseKind::Down, (90, 87)));
+        assert_eq!(tree.hit_pointer(px.0 as f32, px.1 as f32), Some(page));
     }
 }

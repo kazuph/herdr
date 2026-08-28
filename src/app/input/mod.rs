@@ -482,11 +482,13 @@ impl App {
         }
         let column = mouse.column.saturating_sub(inner.x);
         let row = mouse.row.saturating_sub(inner.y);
+        let position = self
+            .state
+            .pane_mouse_position(rt, inner, mouse)
+            .unwrap_or(crate::input::mouse::Position::Cell { column, row });
         let bytes = match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(bytes) =
-                    rt.encode_mouse_button(mouse.kind, column, row, mouse.modifiers)
-                {
+                if let Some(bytes) = rt.encode_mouse_button(mouse.kind, position, mouse.modifiers) {
                     Some(bytes)
                 } else {
                     if self.state.copy_on_select && mouse.modifiers.is_empty() {
@@ -505,7 +507,7 @@ impl App {
             | MouseEventKind::ScrollLeft
             | MouseEventKind::ScrollRight => match rt.wheel_routing() {
                 Some(crate::pane::WheelRouting::MouseReport) => {
-                    rt.encode_mouse_wheel(mouse.kind, column, row, mouse.modifiers)
+                    rt.encode_mouse_wheel(mouse.kind, position, mouse.modifiers)
                 }
                 Some(crate::pane::WheelRouting::AlternateScroll) => {
                     rt.encode_alternate_scroll(mouse.kind)
@@ -521,11 +523,9 @@ impl App {
                 }
             },
             MouseEventKind::Down(_) | MouseEventKind::Up(_) | MouseEventKind::Drag(_) => {
-                rt.encode_mouse_button(mouse.kind, column, row, mouse.modifiers)
+                rt.encode_mouse_button(mouse.kind, position, mouse.modifiers)
             }
-            MouseEventKind::Moved => {
-                rt.encode_mouse_motion(mouse.kind, column, row, mouse.modifiers)
-            }
+            MouseEventKind::Moved => rt.encode_mouse_motion(mouse.kind, position, mouse.modifiers),
         };
         let Some(bytes) = bytes else {
             return;

@@ -103,7 +103,7 @@ fn encode_mouse_cb(
     encoding: MouseProtocolEncoding,
 ) -> Option<Vec<u8>> {
     let mut cb = match (encoding, release) {
-        (MouseProtocolEncoding::Sgr, true) => base_button,
+        (MouseProtocolEncoding::Sgr | MouseProtocolEncoding::SgrPixels, true) => base_button,
         (_, true) => 3,
         (_, false) => base_button,
     };
@@ -121,7 +121,7 @@ fn encode_mouse_cb(
     let row = row as u32 + 1;
 
     match encoding {
-        MouseProtocolEncoding::Sgr => Some(
+        MouseProtocolEncoding::Sgr | MouseProtocolEncoding::SgrPixels => Some(
             format!(
                 "\x1b[<{cb};{column};{row}{}",
                 if release { 'm' } else { 'M' }

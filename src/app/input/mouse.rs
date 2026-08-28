@@ -1805,6 +1805,30 @@ impl AppState {
         }
     }
 
+    pub(super) fn pane_mouse_position(
+        &self,
+        runtime: &crate::terminal::TerminalRuntime,
+        inner: Rect,
+        mouse: MouseEvent,
+    ) -> Option<crate::input::mouse::Position> {
+        let column = mouse.column.saturating_sub(inner.x);
+        let row = mouse.row.saturating_sub(inner.y);
+        let cell = crate::input::mouse::Position::Cell { column, row };
+        let Some(host) = self.host_mouse_pixels else {
+            return Some(cell);
+        };
+        if !runtime.sgr_pixel_mouse_enabled() {
+            return Some(cell);
+        }
+        let Some((width_px, height_px)) = runtime.pixel_size() else {
+            return Some(cell);
+        };
+        Some(
+            host.pane_position(inner, width_px, height_px)
+                .unwrap_or(cell),
+        )
+    }
+
     pub(super) fn forward_pane_mouse_button(
         &self,
         terminal_runtimes: &TerminalRuntimeRegistry,
@@ -1818,9 +1842,10 @@ impl AppState {
         else {
             return false;
         };
-        let column = mouse.column.saturating_sub(info.inner_rect.x);
-        let row = mouse.row.saturating_sub(info.inner_rect.y);
-        let Some(bytes) = rt.encode_mouse_button(mouse.kind, column, row, mouse.modifiers) else {
+        let Some(position) = self.pane_mouse_position(rt, info.inner_rect, mouse) else {
+            return false;
+        };
+        let Some(bytes) = rt.encode_mouse_button(mouse.kind, position, mouse.modifiers) else {
             return false;
         };
         rt.scroll_reset();
@@ -1843,9 +1868,10 @@ impl AppState {
         else {
             return false;
         };
-        let column = mouse.column.saturating_sub(info.inner_rect.x);
-        let row = mouse.row.saturating_sub(info.inner_rect.y);
-        let Some(bytes) = rt.encode_mouse_motion(mouse.kind, column, row, mouse.modifiers) else {
+        let Some(position) = self.pane_mouse_position(rt, info.inner_rect, mouse) else {
+            return false;
+        };
+        let Some(bytes) = rt.encode_mouse_motion(mouse.kind, position, mouse.modifiers) else {
             return false;
         };
         if let Err(err) = rt.try_send_bytes(Bytes::from(bytes)) {
@@ -1871,9 +1897,10 @@ impl AppState {
             return false;
         }
         rt.scroll_reset();
-        let column = mouse.column.saturating_sub(info.inner_rect.x);
-        let row = mouse.row.saturating_sub(info.inner_rect.y);
-        let Some(bytes) = rt.encode_mouse_wheel(mouse.kind, column, row, mouse.modifiers) else {
+        let Some(position) = self.pane_mouse_position(rt, info.inner_rect, mouse) else {
+            return false;
+        };
+        let Some(bytes) = rt.encode_mouse_wheel(mouse.kind, position, mouse.modifiers) else {
             warn!(pane = info.id.raw(), kind = ?mouse.kind, "failed to encode mouse wheel event");
             return true;
         };
@@ -1900,9 +1927,10 @@ impl AppState {
             Some(crate::pane::WheelRouting::HostScroll) | None => false,
             Some(crate::pane::WheelRouting::MouseReport) => {
                 rt.scroll_reset();
-                let column = mouse.column.saturating_sub(info.inner_rect.x);
-                let row = mouse.row.saturating_sub(info.inner_rect.y);
-                let Some(bytes) = rt.encode_mouse_wheel(mouse.kind, column, row, mouse.modifiers)
+                let Some(position) = self.pane_mouse_position(rt, info.inner_rect, mouse) else {
+                    return false;
+                };
+                let Some(bytes) = rt.encode_mouse_wheel(mouse.kind, position, mouse.modifiers)
                 else {
                     warn!(pane = info.id.raw(), kind = ?mouse.kind, "failed to encode mouse wheel event");
                     return true;

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// Current protocol version. Bumped when wire format changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 17;
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// Maximum allowed frame payload size (2 MB). Frames larger than this are
 /// rejected to prevent denial-of-service via oversized length prefixes.
@@ -324,6 +324,8 @@ pub enum ClientMessage {
         keybindings: ClientKeybindings,
         /// Whether this connection will render the full app or attach directly to a pane terminal.
         launch_mode: ClientLaunchMode,
+        /// Whether this frontend preserves exact SGR 1016 reports with read-time geometry.
+        pixel_mouse: bool,
     },
 
     /// Raw input bytes read from the client's stdin.
@@ -394,6 +396,15 @@ pub enum ClientMessage {
         target: String,
         /// Replace an existing writable controller for this terminal.
         takeover: bool,
+    },
+
+    /// One complete SGR 1016 report with the host geometry observed when it was read.
+    InputPixels {
+        data: Vec<u8>,
+        cols: u16,
+        rows: u16,
+        width_px: u32,
+        height_px: u32,
     },
 }
 
@@ -657,6 +668,8 @@ pub enum ServerMessage {
     MouseCapture {
         /// True when Herdr mouse UI is enabled or the focused pane app requests mouse reporting.
         enabled: bool,
+        /// True when the host must preserve SGR 1016 pixel coordinates.
+        sgr_pixels: bool,
     },
 
     /// Apply the prefix-mode ASCII input-source change on the foreground client.
@@ -955,6 +968,7 @@ mod tests {
             requested_encoding: RenderEncoding::SemanticFrame,
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
+            pixel_mouse: true,
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ClientMessage, _) =
@@ -992,6 +1006,7 @@ mod tests {
                 requested_encoding: RenderEncoding::SemanticFrame,
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
+                pixel_mouse: true,
             }),
             0
         );
@@ -1045,6 +1060,31 @@ mod tests {
             }),
             9
         );
+        assert_eq!(
+            tag(&ClientMessage::InputPixels {
+                data: b"\x1b[<0;1;1M".to_vec(),
+                cols: 80,
+                rows: 24,
+                width_px: 800,
+                height_px: 480,
+            }),
+            10
+        );
+    }
+
+    #[test]
+    fn client_input_pixels_roundtrip() {
+        let msg = ClientMessage::InputPixels {
+            data: b"\x1b[<0;321;241M".to_vec(),
+            cols: 80,
+            rows: 24,
+            width_px: 800,
+            height_px: 480,
+        };
+        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        let (decoded, _): (ClientMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(msg, decoded);
     }
 
     #[test]
@@ -1408,7 +1448,10 @@ mod tests {
 
     #[test]
     fn server_mouse_capture_roundtrip() {
-        let msg = ServerMessage::MouseCapture { enabled: true };
+        let msg = ServerMessage::MouseCapture {
+            enabled: true,
+            sgr_pixels: false,
+        };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ServerMessage, _) =
             bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
@@ -1439,6 +1482,7 @@ mod tests {
             requested_encoding: RenderEncoding::SemanticFrame,
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
+            pixel_mouse: true,
         };
         let mut buf = Vec::new();
         write_message(&mut buf, &msg).unwrap();
@@ -1513,6 +1557,7 @@ mod tests {
                     requested_encoding: RenderEncoding::SemanticFrame,
                     keybindings: ClientKeybindings::Server,
                     launch_mode: ClientLaunchMode::App,
+                    pixel_mouse: true,
                 },
                 1 => ClientMessage::Input {
                     data: vec![(i % 256) as u8; (i as usize % 50) + 1],
@@ -1949,6 +1994,7 @@ mod tests {
             requested_encoding: RenderEncoding::SemanticFrame,
             keybindings: ClientKeybindings::Server,
             launch_mode: ClientLaunchMode::App,
+            pixel_mouse: true,
         };
         let mut buf = Vec::new();
         write_message(&mut buf, &msg).unwrap();
@@ -1985,6 +2031,7 @@ mod tests {
                 requested_encoding: RenderEncoding::SemanticFrame,
                 keybindings: ClientKeybindings::Server,
                 launch_mode: ClientLaunchMode::App,
+                pixel_mouse: true,
             },
             ClientMessage::Input {
                 data: b"hello world".to_vec(),

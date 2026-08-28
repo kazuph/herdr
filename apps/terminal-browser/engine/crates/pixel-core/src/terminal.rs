@@ -692,14 +692,7 @@ impl Terminal {
                     RawEvent::WindowSize(ws) => Event::WindowSize(ws),
                     RawEvent::Mouse(kind, button, mods, x, y) => {
                         let (x, y) = match &self.herdr {
-                            Some(herdr) => herdr.mouse_position_px(
-                                kind,
-                                x,
-                                y,
-                                self.focused,
-                                self.mouse_pixels,
-                                || self.size().ok(),
-                            ),
+                            Some(herdr) => herdr.mouse_position_px(x, y, self.mouse_pixels),
                             None => self.mouse_position_px(x, y),
                         };
                         Event::Mouse(Mouse {
@@ -1253,7 +1246,7 @@ impl Drop for Terminal {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum RawEvent {
+pub(crate) enum RawEvent {
     Key(KeyEvent),
     Mouse(MouseKind, MouseButton, Mods, u32, u32),
     Paste(String),
@@ -1273,7 +1266,7 @@ enum ClipStatus {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ClipPacket {
+pub(crate) struct ClipPacket {
     status: ClipStatus,
     mime: Option<String>,
     payload: Vec<u8>,
@@ -1330,7 +1323,7 @@ fn parse_clip_packet(seq: &[u8]) -> Option<ClipPacket> {
 }
 
 #[cfg(test)]
-fn parse_event(buf: &[u8]) -> Option<(RawEvent, usize)> {
+pub(crate) fn parse_event(buf: &[u8]) -> Option<(RawEvent, usize)> {
     parse_event_kitty(buf, false)
 }
 

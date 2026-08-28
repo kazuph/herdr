@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocol": 17,
+  "protocol": 18,
   "schema_version": 1,
   "schemas": {
     "error_response": {
@@ -8946,6 +8946,9 @@
                   "minimum": 0,
                   "type": "integer"
                 },
+                "pixel_mouse": {
+                  "type": "boolean"
+                },
                 "type": {
                   "const": "pane_graphics_info",
                   "type": "string"
@@ -8954,7 +8957,8 @@
               "required": [
                 "type",
                 "cell_width_px",
-                "cell_height_px"
+                "cell_height_px",
+                "pixel_mouse"
               ],
               "type": "object"
             },
