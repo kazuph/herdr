@@ -10,7 +10,7 @@ mod version;
 
 #[cfg(test)]
 pub(crate) use actions::{install_target, uninstall_target};
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use env::integration_env_lock;
 pub(crate) use env::{
     apply_pane_base_env, HERDR_PANE_ID_ENV_VAR, HERDR_TAB_ID_ENV_VAR, HERDR_WORKSPACE_ID_ENV_VAR,
