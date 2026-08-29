@@ -138,19 +138,26 @@ impl App {
                 Ok(())
             });
         }
-        if let Err(err) = runner.spawn() {
-            let finished_unix_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis();
-            let _ = store.mark_start_failed(&job, 127, finished_unix_ms);
-            return responses::encode_error_body(
-                id,
-                ErrorBody {
-                    code: "runner_spawn_failed".into(),
-                    message: err.to_string(),
-                },
-            );
+        match runner.spawn() {
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(err) => {
+                let finished_unix_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                let _ = store.mark_start_failed(&job, 127, finished_unix_ms);
+                return responses::encode_error_body(
+                    id,
+                    ErrorBody {
+                        code: "runner_spawn_failed".into(),
+                        message: err.to_string(),
+                    },
+                );
+            }
         }
 
         responses::encode_success(
