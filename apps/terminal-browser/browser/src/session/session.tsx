@@ -837,6 +837,9 @@ class Session {
         this.syncDevtoolsLayout({ keepFrame: true });
       }
     },
+    zoomIn: () => this.applyZoom(1),
+    zoomOut: () => this.applyZoom(-1),
+    zoomReset: () => this.applyZoom(0),
     pageMenuAction: (id) => this.runPageMenu(id),
     pageMenuClose: () => this.closePageMenu(),
     record: this.recordActions(),

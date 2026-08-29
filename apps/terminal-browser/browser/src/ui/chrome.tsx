@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Box, Text } from "pixel-react";
 import type { EngineInfo, Surface } from "pixel-react";
 import type { BrowserState } from "../page/types";
+import { ZOOM_MAX, ZOOM_MIN } from "../page/zoom";
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
 import { PageContextMenu } from "./context-menu";
@@ -212,6 +213,7 @@ function Toolbar({
       />
       <TabStrip tabs={tabs} state={state} actions={actions} rem={rem} theme={theme} />
       {record && <RecordToolbarPill view={record} actions={actions} rem={rem} theme={theme} />}
+      <ZoomControls zoom={state.zoom} actions={actions} rem={rem} theme={theme} />
     </Box>
   );
 }
@@ -362,6 +364,62 @@ function DevtoolsPane({
         ))}
       </Box>
     </>
+  );
+}
+
+/// Pointer-driven page zoom. The keyboard shortcuts for this are taken by the
+/// host terminal on macOS, so the toolbar has to offer its own controls.
+function ZoomControls({
+  zoom,
+  actions,
+  rem,
+  theme,
+}: {
+  zoom: number;
+  actions: ChromeActions;
+  rem: number;
+  theme: Theme;
+}) {
+  return (
+    <Box style={{ alignItems: "center", gap: rem * 0.1, flexShrink: 0 }}>
+      <ToolbarButton
+        icon="minus"
+        enabled={zoom > ZOOM_MIN * 1.001}
+        rem={rem}
+        theme={theme}
+        onClick={actions.zoomOut}
+      />
+      <Box
+        style={{
+          height: rem * 1.5,
+          width: rem * 2.6,
+          alignItems: "center",
+          justifyContent: "center",
+          cornerRadius: rem * 0.3,
+          hoverBackground: theme.hover,
+          flexShrink: 0,
+        }}
+        onClick={actions.zoomReset}
+      >
+        <Text
+          style={{
+            fontSize: rem * 0.75,
+            color: zoom === 1 ? theme.muted : theme.fg,
+            wrap: false,
+            selectable: false,
+          }}
+        >
+          {`${Math.round(zoom * 100)}%`}
+        </Text>
+      </Box>
+      <ToolbarButton
+        icon="plus"
+        enabled={zoom < ZOOM_MAX * 0.999}
+        rem={rem}
+        theme={theme}
+        onClick={actions.zoomIn}
+      />
+    </Box>
   );
 }
 

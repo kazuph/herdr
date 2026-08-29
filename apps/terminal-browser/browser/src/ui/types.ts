@@ -85,6 +85,9 @@ export interface ChromeActions {
   devtoolsHover(hovering: boolean): void;
   devtoolsDividerDrag(event: DragEvent): void;
   devtoolsDividerHover(hovering: boolean): void;
+  zoomIn(): void;
+  zoomOut(): void;
+  zoomReset(): void;
   pageMenuAction(id: string): void;
   pageMenuClose(): void;
   record: RecordActions;
