@@ -4,6 +4,7 @@
 
 ### Added
 - Experimental pane graphics now support bounded named layers, acknowledged full-RGBA primary-layer direct file frames on audited local terminals, owned BGRA fallback, exact pixel mouse input, and placement-only resize replay.
+- terminal-browser's toolbar now carries pointer zoom controls (minus, the current percentage, plus), because the host terminal claims the keyboard zoom shortcuts on macOS; clicking the percentage returns the page to 100%.
 - Added `ui.sidebar_start_collapsed` to launch Herdr with the sidebar collapsed. (#1463)
 - Added macOS support for the `HERDR_AGENT=<agent>` foreground-process hint, allowing agents hidden behind host-visible wrappers such as `nono` to use the named agent's screen manifest. (#679)
 
