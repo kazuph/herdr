@@ -3011,13 +3011,17 @@ fn pane_run_read_and_wait_commands_work() {
     let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
     wait_for_socket(&socket_path, Duration::from_secs(5));
 
-    send_request(
+    let created = send_request(
         &socket_path,
         &format!(
             r#"{{"id":"req_cli_1","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
             base.display()
         ),
     );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .expect("workspace create should return root pane id")
+        .to_string();
     let create = run_cli(
         &socket_path,
         &[
@@ -3035,7 +3039,7 @@ fn pane_run_read_and_wait_commands_work() {
         &[
             "wait",
             "output",
-            "p1",
+            &pane_id,
             "--match",
             "ready",
             "--source",
@@ -3061,7 +3065,9 @@ fn pane_run_read_and_wait_commands_work() {
 
     let read = run_cli(
         &socket_path,
-        &["pane", "read", "p1", "--source", "recent", "--lines", "40"],
+        &[
+            "pane", "read", &pane_id, "--source", "recent", "--lines", "40",
+        ],
     );
     assert!(read.status.success());
     let text = String::from_utf8(read.stdout).unwrap();
