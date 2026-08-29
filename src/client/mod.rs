@@ -1309,6 +1309,8 @@ fn run_client_with_mode(
             stream,
             cols,
             rows,
+            cell_width_px,
+            cell_height_px,
             should_quit,
             loop_config,
             negotiated_encoding,
@@ -1352,6 +1354,8 @@ async fn run_client_loop(
     stream: LocalStream,
     cols: u16,
     rows: u16,
+    initial_cell_width_px: u32,
+    initial_cell_height_px: u32,
     should_quit: Arc<AtomicBool>,
     config: ClientLoopConfig,
     negotiated_encoding: RenderEncoding,
@@ -1425,7 +1429,15 @@ async fn run_client_loop(
     let resize_tx = event_tx.clone();
     let kitty_graphics_enabled = state.kitty_graphics_enabled;
     std::thread::spawn(move || {
-        resize_poll_loop(resize_tx, cols, rows, kitty_graphics_enabled, &resize_quit);
+        resize_poll_loop(
+            resize_tx,
+            cols,
+            rows,
+            initial_cell_width_px,
+            initial_cell_height_px,
+            kitty_graphics_enabled,
+            &resize_quit,
+        );
     });
 
     // Spawn the server reader thread (blocking reads from the socket).
@@ -2318,13 +2330,21 @@ fn ioctl_cell_size() -> Option<(u32, u32)> {
     ))
 }
 
-fn current_terminal_geometry(kitty_graphics_enabled: bool) -> (u16, u16, u32, u32) {
+fn cell_size_fallback(last: Option<(u32, u32)>) -> (u32, u32) {
+    last.filter(|(width, height)| *width > 0 && *height > 0)
+        .unwrap_or((DEFAULT_CELL_WIDTH_PX, DEFAULT_CELL_HEIGHT_PX))
+}
+
+fn current_terminal_geometry(
+    kitty_graphics_enabled: bool,
+    last_cell_size: Option<(u32, u32)>,
+) -> (u16, u16, u32, u32) {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     if !kitty_graphics_enabled {
         return (cols, rows, 0, 0);
     }
     let (cell_width_px, cell_height_px) =
-        ioctl_cell_size().unwrap_or((DEFAULT_CELL_WIDTH_PX, DEFAULT_CELL_HEIGHT_PX));
+        ioctl_cell_size().unwrap_or_else(|| cell_size_fallback(last_cell_size));
     (cols, rows, cell_width_px, cell_height_px)
 }
 
@@ -2352,11 +2372,11 @@ fn resize_poll_loop(
     resize_tx: tokio::sync::mpsc::Sender<ClientLoopEvent>,
     initial_cols: u16,
     initial_rows: u16,
+    initial_cell_width: u32,
+    initial_cell_height: u32,
     kitty_graphics_enabled: bool,
     should_quit: &Arc<AtomicBool>,
 ) {
-    let (_, _, initial_cell_width, initial_cell_height) =
-        current_terminal_geometry(kitty_graphics_enabled);
     let mut last_size = (
         initial_cols,
         initial_rows,
@@ -2365,7 +2385,8 @@ fn resize_poll_loop(
     );
     while !should_quit.load(Ordering::Acquire) {
         std::thread::sleep(Duration::from_millis(100));
-        let new_size = current_terminal_geometry(kitty_graphics_enabled);
+        let new_size =
+            current_terminal_geometry(kitty_graphics_enabled, Some((last_size.2, last_size.3)));
         if new_size != last_size {
             last_size = new_size;
             if resize_tx
@@ -3228,6 +3249,13 @@ mod tests {
             (cols, rows, cell_width_px, cell_height_px),
             (100, 30, 8, 16)
         );
+    }
+
+    #[test]
+    fn cell_size_fallback_preserves_last_known_size() {
+        assert_eq!(cell_size_fallback(Some((8, 18))), (8, 18));
+        assert_eq!(cell_size_fallback(Some((0, 18))), (8, 16));
+        assert_eq!(cell_size_fallback(None), (8, 16));
     }
 
     #[test]

@@ -86,6 +86,18 @@ impl App {
             return;
         }
 
+        if let AppEvent::JobsRefreshed { jobs } = ev {
+            self.jobs_refresh_in_flight = false;
+            self.state.jobs = jobs;
+            let max_scroll = self.state.jobs.len().saturating_sub(1);
+            self.state.jobs_scroll = self.state.jobs_scroll.min(max_scroll);
+            // Without this the panel keeps the frame it drew before the worker
+            // thread answered, which reads as "no background jobs".
+            self.render_dirty.store(true, Ordering::Release);
+            self.render_notify.notify_one();
+            return;
+        }
+
         if let AppEvent::GitStatusRefreshed {
             results,
             cache_updates,

@@ -400,7 +400,7 @@ v1 没有 Herdr 管理的插件存储 API。`HERDR_PLUGIN_CONFIG_DIR` 和 `HERDR
 {"id":"req_plugin_pane","method":"plugin.pane.open","params":{"plugin_id":"example.board","entrypoint":"board","placement":"zoomed","target_pane_id":"w1:p1","env":{"HERDR_ROLE":"board"},"focus":true}}
 ```
 
-`plugin.pane.open` 要求已安装、已启用、平台兼容的插件,然后把请求的清单 `[[panes]]` 入口点作为 argv 支撑的终端窗格启动。清单窗格的 `placement` 默认为 `overlay`;请求的 `placement` 可以用 `overlay`、`popup`、`split`、`tab` 或 `zoomed` 覆盖清单。overlay 和 popup 使用活动平铺窗格作为启动上下文。弹窗终端属于打开它的工作区,不会改变标签页布局。使用 Herdr 快捷键切换到其他工作区时弹窗会继续运行,返回原工作区时会再次显示。可选的 `width` 和 `height` 以终端单元格数或 `"80%"` 这样的百分比设置外层尺寸。省略时默认为终端大小的一半,过小的值会限制为弹窗最小尺寸。弹窗支持鼠标拖动选择,但没有窗格 id,不属于任何 `pane.*` 或智能体 API,不会发出窗格生命周期事件,会把插件焦点上下文保留在底层平铺窗格上,也不会向其进程导出 `HERDR_PANE_ID`。弹窗启动返回 `ok`;`popup.close` 关闭活动弹窗,没有弹窗时返回 `popup_not_open`。split 和 zoomed 针对已有窗格,tab 可以针对工作区。split、tab、zoomed 和 overlay 打开后表现得像普通 Herdr 窗格,`plugin.pane.focus` 和 `plugin.pane.close` 仍可操作这些窗格。
+`plugin.pane.open` 要求已安装、已启用、平台兼容的插件,然后把请求的清单 `[[panes]]` 入口点作为 argv 支撑的终端窗格启动。清单窗格的 `placement` 默认为 `overlay`;请求的 `placement` 可以用 `overlay`、`popup`、`split`、`tab` 或 `zoomed` 覆盖清单。overlay 和 popup 使用活动平铺窗格作为启动上下文。弹窗终端属于打开它的工作区,不会改变标签页布局。使用 Herdr 快捷键切换到其他工作区时弹窗会继续运行,返回原工作区时会再次显示。可选的 `width` 和 `height` 以终端单元格数或 `"80%"` 这样的百分比设置外层尺寸。省略时默认为终端区域的80%,过小的值会限制为弹窗最小尺寸。弹窗支持鼠标拖动选择,但没有窗格 id,不属于任何 `pane.*` 或智能体 API,不会发出窗格生命周期事件,会把插件焦点上下文保留在底层平铺窗格上,也不会向其进程导出 `HERDR_PANE_ID`。弹窗启动返回 `ok`;`popup.close` 关闭活动弹窗,没有弹窗时返回 `popup_not_open`。split 和 zoomed 针对已有窗格,tab 可以针对工作区。split、tab、zoomed 和 overlay 打开后表现得像普通 Herdr 窗格,`plugin.pane.focus` 和 `plugin.pane.close` 仍可操作这些窗格。
 
 ## Socket 传输
 

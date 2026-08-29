@@ -3020,8 +3020,10 @@ impl HeadlessServer {
                         client.cell_size = observed;
                     }
                 }
-                self.promote_client_to_foreground(client_id);
-                self.resize_shared_runtime_to_effective_size();
+                if self.foreground_client_id == Some(client_id) {
+                    self.sync_foreground_client_state();
+                    self.resize_shared_runtime_to_effective_size();
+                }
                 true
             }
             ServerEvent::ClientDetach { client_id } => {
@@ -4100,6 +4102,7 @@ impl HeadlessServer {
         if self.has_app_client() {
             self.app.start_git_status_refresh_if_due(now);
         }
+        self.app.start_jobs_refresh_if_due(now);
 
         if self
             .app
@@ -6175,6 +6178,60 @@ next_tab = ""
         assert_eq!(server.app.next_agent_manifest_update_check, None);
     }
 
+    #[test]
+    fn headless_scheduled_tasks_refresh_jobs_for_the_jobs_sidebar() {
+        let _guard = crate::msg::msg_db_env_lock().lock().unwrap();
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-headless-jobs-{}-{}",
+            std::process::id(),
+            TEST_SOCKET_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let db_path = dir.join("herdr.db");
+        let previous_db_path = std::env::var_os(crate::msg::MSG_DB_PATH_ENV_VAR);
+        std::env::set_var(crate::msg::MSG_DB_PATH_ENV_VAR, &db_path);
+
+        let store = crate::job::JobStore::open_active().unwrap();
+        store
+            .insert(&crate::job::JobRecord {
+                id: "headless-job".into(),
+                label: "headless refresh".into(),
+                command: "true".into(),
+                cwd: "/repo".into(),
+                caller_pane: String::new(),
+                caller_agent: "test".into(),
+                completion: "test completion".into(),
+                status: "queued".into(),
+                runner_pid: None,
+                exit_code: None,
+                started_unix_ms: None,
+                finished_unix_ms: None,
+                log_path: dir.join("job.log").display().to_string(),
+            })
+            .unwrap();
+
+        let mut server = test_headless_server();
+        server.app.state.sidebar_detail_view = crate::app::state::SidebarDetailView::Jobs;
+        let now = server.app.last_jobs_refresh + app::JOBS_REFRESH_INTERVAL;
+
+        assert!(!server.handle_scheduled_tasks_headless(now, false));
+        assert!(server.app.jobs_refresh_in_flight);
+        let event = server
+            .app
+            .event_rx
+            .blocking_recv()
+            .expect("jobs refresh event channel closed");
+        assert!(server.handle_internal_event_with_forwarding(event));
+        assert_eq!(server.app.state.jobs.len(), 1);
+        assert_eq!(server.app.state.jobs[0].id, "headless-job");
+        assert!(!server.app.jobs_refresh_in_flight);
+
+        match previous_db_path {
+            Some(path) => std::env::set_var(crate::msg::MSG_DB_PATH_ENV_VAR, path),
+            None => std::env::remove_var(crate::msg::MSG_DB_PATH_ENV_VAR),
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test]
     async fn headless_scheduled_tasks_do_not_start_pending_agent_resume_when_geometry_dirty() {
         let mut server = test_headless_server();
@@ -6868,6 +6925,32 @@ next_tab = ""
             server.app.state.host_terminal_theme,
             crate::terminal_theme::TerminalTheme::default()
         );
+    }
+
+    #[test]
+    fn background_client_resize_does_not_replace_foreground_geometry() {
+        let mut server = test_headless_server();
+        server.clients.insert(1, test_app_client(Some(true), 2));
+        server.clients.insert(2, test_app_client(Some(false), 1));
+        server
+            .clients
+            .get_mut(&1)
+            .expect("foreground client")
+            .terminal_size = (160, 45);
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+
+        assert!(server.handle_server_event(ServerEvent::ClientResize {
+            client_id: 2,
+            cols: 4,
+            rows: 2,
+            cell_width_px: 8,
+            cell_height_px: 16,
+        }));
+
+        assert_eq!(server.clients[&2].terminal_size, (4, 2));
+        assert_eq!(server.foreground_client_id, Some(1));
+        assert_eq!(server.effective_size, (160, 45));
     }
 
     #[test]

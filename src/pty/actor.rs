@@ -396,7 +396,7 @@ mod windows {
             let accepting = Arc::new(Mutex::new(true));
             let pending_mailbox_completions = Arc::new(Mutex::new(Vec::new()));
             let (result_tx, result_rx) = std_mpsc::channel();
-            let completion = Arc::new(Mutex::new(Some(Box::new(move |result| {
+            let completion = Arc::new(Mutex::new(Some(Box::new(move |result: io::Result<()>| {
                 let _ = result_tx.send(result);
             }) as MailboxCallback)));
             pending_mailbox_completions

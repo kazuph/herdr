@@ -146,6 +146,7 @@ pub fn restore_handoff(
     )
 }
 
+#[cfg(any(unix, test))]
 pub fn handoff_pane_aliases(
     snapshot: &SessionSnapshot,
     workspaces: &[Workspace],

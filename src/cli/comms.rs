@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,6 +13,7 @@ use crate::api::schema::{
 };
 
 const JOB_LOG_TAIL_CHARS: usize = 20_000;
+const JOB_LOG_VIEW_POLL_INTERVAL: Duration = Duration::from_millis(250);
 #[cfg(unix)]
 const JOB_CANCEL_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(unix)]
@@ -459,6 +460,29 @@ pub(super) fn background_runner(args: &[String]) -> std::io::Result<i32> {
         enqueue_job_completion(&job, code, &log_path)?;
     }
     Ok(code.unwrap_or(1))
+}
+
+pub(super) fn job_log_viewer(args: &[String]) -> std::io::Result<i32> {
+    let [path] = args else {
+        eprintln!("usage: herdr __job-log-view <path>");
+        return Ok(2);
+    };
+    let path = std::path::Path::new(path);
+    let mut offset = 0;
+    loop {
+        let mut file = std::fs::File::open(path)?;
+        let len = file.metadata()?.len();
+        if len < offset {
+            offset = 0;
+        }
+        file.seek(std::io::SeekFrom::Start(offset))?;
+        let copied = std::io::copy(&mut file, &mut std::io::stdout())?;
+        if copied > 0 {
+            std::io::stdout().flush()?;
+            offset = offset.saturating_add(copied);
+        }
+        std::thread::sleep(JOB_LOG_VIEW_POLL_INTERVAL);
+    }
 }
 
 pub(super) fn pane_runner(args: &[String]) -> std::io::Result<i32> {

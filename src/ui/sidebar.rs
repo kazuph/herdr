@@ -1836,6 +1836,31 @@ fn job_status_label(job: &crate::job::JobRecord) -> String {
     }
 }
 
+const JOB_PANE_FIELD_WIDTH: usize = 6;
+const JOB_AGE_MAX_VALUE: u128 = 999;
+
+fn job_age_label(job: &crate::job::JobRecord, now_unix_ms: u128) -> String {
+    let reference = if job.status == "running" {
+        job.started_unix_ms
+    } else {
+        job.finished_unix_ms
+    };
+    let Some(reference) = reference else {
+        return "   -".to_string();
+    };
+    let seconds = now_unix_ms.saturating_sub(reference) / 1000;
+    let (value, unit) = if seconds < 60 {
+        (seconds, 's')
+    } else if seconds < 60 * 60 {
+        (seconds / 60, 'm')
+    } else if seconds < 24 * 60 * 60 {
+        (seconds / (60 * 60), 'h')
+    } else {
+        (seconds / (24 * 60 * 60), 'd')
+    };
+    format!("{:>3}{unit}", value.min(JOB_AGE_MAX_VALUE))
+}
+
 fn render_jobs_panel(app: &AppState, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
     let body = agent_panel_body_rect(area, false);
@@ -1853,6 +1878,10 @@ fn render_jobs_panel(app: &AppState, frame: &mut Frame, area: Rect) {
         return;
     }
 
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
     for (rect, index) in jobs_panel_rows(app, area) {
         let Some(job) = app.jobs.get(index) else {
             continue;
@@ -1863,10 +1892,23 @@ fn render_jobs_panel(app: &AppState, frame: &mut Frame, area: Rect) {
         } else {
             job.label.as_str()
         };
+        let pane = if job.caller_pane.is_empty() {
+            "-".to_string()
+        } else {
+            truncate_end(&job.caller_pane, JOB_PANE_FIELD_WIDTH)
+        };
         let line = Line::from(vec![
             Span::styled(
                 format!(" {status:<4} "),
                 Style::default().fg(job_status_color(&job.status, job.exit_code, p)),
+            ),
+            Span::styled(
+                format!("{pane:<width$} ", width = JOB_PANE_FIELD_WIDTH),
+                Style::default().fg(p.subtext0),
+            ),
+            Span::styled(
+                format!("{} ", job_age_label(job, now_unix_ms)),
+                Style::default().fg(p.overlay0),
             ),
             Span::styled(label.to_string(), Style::default().fg(p.text)),
         ]);
@@ -2345,18 +2387,22 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     fn jobs_view_lists_running_jobs_and_hides_the_sort_toggle() {
         let mut app = crate::app::state::AppState::test_new();
         app.sidebar_detail_view = crate::app::state::SidebarDetailView::Jobs;
+        let now_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
         app.jobs = vec![crate::job::JobRecord {
             id: "job-1".into(),
             label: "cargo-test".into(),
             command: "cargo test".into(),
             cwd: "/repo".into(),
-            caller_pane: "p1".into(),
+            caller_pane: "p1060".into(),
             caller_agent: "claude".into(),
             completion: "summary".into(),
             status: "running".into(),
             runner_pid: Some(42),
             exit_code: None,
-            started_unix_ms: Some(1),
+            started_unix_ms: Some(now_unix_ms - 10 * 60 * 1000),
             finished_unix_ms: None,
             log_path: "/tmp/job-1.log".into(),
         }];
@@ -2379,7 +2425,36 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let body = agent_panel_body_rect(area, false);
         let first = row_text(buffer, body.y, body.width);
         assert!(first.contains("run"), "first job row was {first:?}");
+        assert!(first.contains("p1060"), "first job row was {first:?}");
+        assert!(first.contains("10m"), "first job row was {first:?}");
         assert!(first.contains("cargo-test"), "first job row was {first:?}");
+    }
+
+    #[test]
+    fn job_age_uses_start_for_running_and_finish_for_completed_jobs() {
+        let mut job = crate::job::JobRecord {
+            id: "job-1".into(),
+            label: "test".into(),
+            command: "true".into(),
+            cwd: "/repo".into(),
+            caller_pane: String::new(),
+            caller_agent: "test".into(),
+            completion: "summary".into(),
+            status: "running".into(),
+            runner_pid: Some(1),
+            exit_code: None,
+            started_unix_ms: Some(1_000),
+            finished_unix_ms: Some(10_000),
+            log_path: "/tmp/job.log".into(),
+        };
+        assert_eq!(job_age_label(&job, 13_000), " 12s");
+        job.status = "finished".into();
+        assert_eq!(job_age_label(&job, 4 * 60 * 1000 + 10_000), "  4m");
+        assert_eq!(job_age_label(&job, 2 * 60 * 60 * 1000 + 10_000), "  2h");
+        assert_eq!(
+            job_age_label(&job, 3 * 24 * 60 * 60 * 1000 + 10_000),
+            "  3d"
+        );
     }
 
     #[test]

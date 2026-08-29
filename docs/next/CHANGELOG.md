@@ -11,8 +11,10 @@
 
 ### Changed
 - `HERDR_PANE_ID` (and `HERDR_ACTIVE_PANE_ID` / plugin runtime `HERDR_PANE_ID`) is now exported as `p_N`, matching upstream herdr, so scripts written for either binary resolve the same pane; `pN` and `%N` remain accepted as input and API responses keep `pN`.
+- Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- Plain popup terminals now close on Escape, all popup terminals close when their outside area is clicked, and closing a popup terminates its child process; interactive terminal apps still receive Escape when they enable terminal modes.
 - The sidebar agent list no longer draws over the sidebar width toggle: the panel's last row is reserved for the NARROW/NORMAL/WIDE button.
 - Pane graphics streams now retry a delayed graphics-only frame without promoting the writer-drain event to a full TUI redraw, preventing continuous terminal-browser frames from saturating the server render loop.
 - Terminal applications that request SGR 1016 pixel mouse input now receive exact host pixel coordinates through the client/server path, so terminal-browser reload, tab, link, and scroll controls follow physical mouse clicks instead of cell-downgraded coordinates.

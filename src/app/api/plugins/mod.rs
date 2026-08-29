@@ -1423,7 +1423,9 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \
         assert_eq!(lines.next(), Some("example.pane"));
         assert_eq!(lines.next(), Some("board"));
         assert_eq!(lines.next(), Some(plugin_pane.pane.workspace_id.as_str()));
-        assert_eq!(lines.next(), Some(plugin_pane.pane.pane_id.as_str()));
+        let plugin_pane_env_id =
+            crate::workspace::pane_env_id_from_public(&plugin_pane.pane.pane_id);
+        assert_eq!(lines.next(), Some(plugin_pane_env_id.as_str()));
         let bin_path = lines.next().expect("bin path");
         assert_ne!(bin_path, "/tmp/spoofed-herdr");
         assert_eq!(

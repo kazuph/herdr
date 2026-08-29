@@ -543,7 +543,7 @@ context. Popup terminals belong to the workspace where they were opened and do
 not change the tab layout. Herdr keybindings can switch away while the popup
 keeps running, and returning to its workspace restores it;
 optional `width` and `height` fields set their outer size as terminal cells or
-percentages such as `"80%"`. Omitted dimensions default to half the terminal
+percentages such as `"80%"`. Omitted dimensions default to 80% of the terminal
 size, with too-small values clamped to the popup minimum. A popup has no pane
 ID, remains outside all `pane.*` and agent APIs, emits no pane lifecycle events,
 leaves plugin focus context on the underlying tiled pane, supports mouse drag
