@@ -150,6 +150,21 @@ impl AppState {
             .saturating_sub(offset_from_bottom);
     }
 
+    /// Scrolls the jobs list, keeping at least one row on screen.
+    pub(super) fn scroll_jobs_panel(&mut self, delta: i16) {
+        let max_scroll = self.jobs.len().saturating_sub(1);
+        if delta < 0 {
+            self.jobs_scroll = self
+                .jobs_scroll
+                .saturating_sub(delta.unsigned_abs() as usize);
+        } else {
+            self.jobs_scroll = self
+                .jobs_scroll
+                .saturating_add(delta as usize)
+                .min(max_scroll);
+        }
+    }
+
     pub(super) fn scroll_agent_panel(&mut self, delta: i16) {
         let area = self.agent_panel_rect();
         let max_scroll = crate::ui::agent_panel_scroll_metrics(self, area).max_offset_from_bottom;
@@ -633,6 +648,58 @@ impl AppState {
         best.map(|(insert_idx, _)| insert_idx)
     }
 
+    /// Which detail tab, if any, sits under the pointer.
+    pub(super) fn sidebar_detail_tab_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<crate::app::state::SidebarDetailView> {
+        if self.sidebar_collapsed {
+            return None;
+        }
+        let (_, detail_area) = crate::ui::expanded_sidebar_sections(
+            self.view.sidebar_rect,
+            self.sidebar_section_split,
+        );
+        let (agents, jobs) = crate::ui::sidebar_detail_tab_rects(detail_area);
+        let hit = |rect: ratatui::layout::Rect| {
+            rect.width > 0
+                && col >= rect.x
+                && col < rect.x + rect.width
+                && row >= rect.y
+                && row < rect.y + rect.height
+        };
+        if hit(agents) {
+            return Some(crate::app::state::SidebarDetailView::Agents);
+        }
+        if hit(jobs) {
+            return Some(crate::app::state::SidebarDetailView::Jobs);
+        }
+        None
+    }
+
+    /// Index of the job row under the pointer, when the jobs list is showing.
+    pub(super) fn jobs_panel_index_at(&self, col: u16, row: u16) -> Option<usize> {
+        if self.sidebar_collapsed
+            || self.sidebar_detail_view != crate::app::state::SidebarDetailView::Jobs
+        {
+            return None;
+        }
+        let (_, detail_area) = crate::ui::expanded_sidebar_sections(
+            self.view.sidebar_rect,
+            self.sidebar_section_split,
+        );
+        crate::ui::jobs_panel_rows(self, detail_area)
+            .into_iter()
+            .find(|(rect, _)| {
+                col >= rect.x
+                    && col < rect.x + rect.width
+                    && row >= rect.y
+                    && row < rect.y + rect.height
+            })
+            .map(|(_, index)| index)
+    }
+
     pub(super) fn on_agent_panel_sort_toggle(&self, col: u16, row: u16) -> bool {
         if self.sidebar_collapsed {
             return false;
@@ -664,6 +731,34 @@ impl AppState {
             && col < rect.x + rect.width
             && row >= rect.y
             && row < rect.y + rect.height
+    }
+
+    /// Workspace and pane that started the job, when that pane still exists.
+    pub(super) fn job_focus_target(&self, index: usize) -> Option<(usize, crate::layout::PaneId)> {
+        let job = self.jobs.get(index)?;
+        if job.caller_pane.is_empty() {
+            return None;
+        }
+        let pane_id = self
+            .public_pane_id_aliases
+            .get(&job.caller_pane)
+            .copied()
+            .or_else(|| {
+                let raw = job
+                    .caller_pane
+                    .trim_start_matches('%')
+                    .trim_start_matches("p_")
+                    .trim_start_matches('p')
+                    .parse::<u32>()
+                    .ok()?;
+                Some(crate::layout::PaneId::from_raw(raw))
+            })?;
+        let ws_idx = self.workspaces.iter().position(|ws| {
+            ws.tabs
+                .iter()
+                .any(|tab| tab.layout.pane_ids().contains(&pane_id))
+        })?;
+        Some((ws_idx, pane_id))
     }
 
     pub(super) fn agent_detail_target_at(
@@ -1246,6 +1341,84 @@ mod tests {
                 "restart",
             ]
         );
+    }
+
+    #[test]
+    fn clicking_detail_tabs_switches_between_agents_and_jobs() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.agent_panel_scroll = 2;
+
+        let (_, detail_area) = crate::ui::expanded_sidebar_sections(
+            app.state.view.sidebar_rect,
+            app.state.sidebar_section_split,
+        );
+        let (agents_tab, jobs_tab) = crate::ui::sidebar_detail_tab_rects(detail_area);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            jobs_tab.x,
+            jobs_tab.y,
+        ));
+        assert_eq!(
+            app.state.sidebar_detail_view,
+            crate::app::state::SidebarDetailView::Jobs
+        );
+        assert_eq!(app.state.agent_panel_scroll, 0);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            agents_tab.x,
+            agents_tab.y,
+        ));
+        assert_eq!(
+            app.state.sidebar_detail_view,
+            crate::app::state::SidebarDetailView::Agents
+        );
+    }
+
+    #[test]
+    fn clicking_a_job_row_focuses_the_pane_that_started_it() {
+        let mut app = app_for_mouse_test();
+        let ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        app.state.workspaces = vec![ws];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.sidebar_detail_view = crate::app::state::SidebarDetailView::Jobs;
+        app.state.jobs = vec![crate::job::JobRecord {
+            id: "job-1".into(),
+            label: "cargo-test".into(),
+            command: "cargo test".into(),
+            cwd: "/repo".into(),
+            caller_pane: format!("p{}", pane_id.raw()),
+            caller_agent: "claude".into(),
+            completion: "summary".into(),
+            status: "running".into(),
+            runner_pid: Some(7),
+            exit_code: None,
+            started_unix_ms: Some(1),
+            finished_unix_ms: None,
+            log_path: "/tmp/job-1.log".into(),
+        }];
+
+        let (_, detail_area) = crate::ui::expanded_sidebar_sections(
+            app.state.view.sidebar_rect,
+            app.state.sidebar_section_split,
+        );
+        let rows = crate::ui::jobs_panel_rows(&app.state, detail_area);
+        let (row, index) = rows.first().copied().expect("one job row");
+        assert_eq!(index, 0);
+
+        assert_eq!(app.state.job_focus_target(0), Some((0, pane_id)));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
+        assert_eq!(app.state.mode, Mode::Terminal);
     }
 
     #[test]

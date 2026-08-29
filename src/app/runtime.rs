@@ -344,6 +344,7 @@ impl App {
         changed |= self.clear_due_selection_highlight(now);
 
         self.start_git_status_refresh_if_due(now);
+        self.start_jobs_refresh_if_due(now);
 
         if self
             .next_auto_update_check
@@ -606,6 +607,30 @@ impl App {
                 results: output.results,
                 cache_updates: output.cache_updates,
             });
+        });
+    }
+
+    /// Reads the background job rows while the sidebar is showing them.
+    ///
+    /// The dispatch store is SQLite on disk, so this stays on a worker thread
+    /// and off the render path.
+    pub(crate) fn start_jobs_refresh_if_due(&mut self, now: Instant) {
+        if self.state.sidebar_detail_view != crate::app::state::SidebarDetailView::Jobs
+            || self.jobs_refresh_in_flight
+        {
+            return;
+        }
+        if now < self.last_jobs_refresh + super::JOBS_REFRESH_INTERVAL {
+            return;
+        }
+        self.jobs_refresh_in_flight = true;
+        self.last_jobs_refresh = now;
+        let event_tx = self.event_tx.clone();
+        std::thread::spawn(move || {
+            let jobs = crate::job::JobStore::open_active()
+                .and_then(|store| store.list())
+                .unwrap_or_default();
+            let _ = event_tx.blocking_send(AppEvent::JobsRefreshed { jobs });
         });
     }
 

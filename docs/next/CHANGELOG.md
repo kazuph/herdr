@@ -4,6 +4,7 @@
 
 ### Added
 - Experimental pane graphics now support bounded named layers, acknowledged full-RGBA primary-layer direct file frames on audited local terminals, owned BGRA fallback, exact pixel mouse input, and placement-only resize replay.
+- The sidebar's lower panel is now a pair of clickable `[agents]` / `[jobs]` tabs; `[jobs]` lists background jobs started with `herdr run`, running first, and clicking a row focuses the pane that started it.
 - terminal-browser's toolbar now carries pointer zoom controls (minus, the current percentage, plus), because the host terminal claims the keyboard zoom shortcuts on macOS; clicking the percentage returns the page to 100%.
 - Added `ui.sidebar_start_collapsed` to launch Herdr with the sidebar collapsed. (#1463)
 - Added macOS support for the `HERDR_AGENT=<agent>` foreground-process hint, allowing agents hidden behind host-visible wrappers such as `nono` to use the named agent's screen manifest. (#679)
@@ -12,6 +13,7 @@
 - `HERDR_PANE_ID` (and `HERDR_ACTIVE_PANE_ID` / plugin runtime `HERDR_PANE_ID`) is now exported as `p_N`, matching upstream herdr, so scripts written for either binary resolve the same pane; `pN` and `%N` remain accepted as input and API responses keep `pN`.
 
 ### Fixed
+- The sidebar agent list no longer draws over the sidebar width toggle: the panel's last row is reserved for the NARROW/NORMAL/WIDE button.
 - Pane graphics streams now retry a delayed graphics-only frame without promoting the writer-drain event to a full TUI redraw, preventing continuous terminal-browser frames from saturating the server render loop.
 - Terminal applications that request SGR 1016 pixel mouse input now receive exact host pixel coordinates through the client/server path, so terminal-browser reload, tab, link, and scroll controls follow physical mouse clicks instead of cell-downgraded coordinates.
 - SGR 1016 panes now always receive pixel reports: cell-only input (hosts without pixel geometry, unfocused wheels) is delivered as the cell-centre pixel instead of a cell report the application would misread as pixels. Host pixel reports follow libghostty's 0-based convention, reports outside the measured grid are rejected, and pixel mode is only negotiated when the host window reports real pixel geometry and the foreground cell size is known.

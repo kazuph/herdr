@@ -734,6 +734,26 @@ impl AppState {
                         return None;
                     }
 
+                    if let Some(view) = self.sidebar_detail_tab_at(mouse.column, mouse.row) {
+                        if self.sidebar_detail_view != view {
+                            self.sidebar_detail_view = view;
+                            self.agent_panel_scroll = 0;
+                            self.jobs_scroll = 0;
+                        }
+                        return None;
+                    }
+
+                    if let Some(index) = self.jobs_panel_index_at(mouse.column, mouse.row) {
+                        if let Some(target) = self.job_focus_target(index) {
+                            self.mode = Mode::Terminal;
+                            return Some(MouseAction::FocusPane {
+                                ws_idx: target.0,
+                                pane_id: target.1,
+                            });
+                        }
+                        return None;
+                    }
+
                     if self.on_agent_panel_sort_toggle(mouse.column, mouse.row) {
                         self.agent_panel_sort = match self.agent_panel_sort {
                             AgentPanelSort::Spaces => AgentPanelSort::Priority,
@@ -1150,9 +1170,11 @@ impl AppState {
                     && mouse.row >= agent_area.y
                     && mouse.row < agent_area.y + agent_area.height;
                 if over_agent_panel {
-                    if crate::ui::should_show_scrollbar(crate::ui::agent_panel_scroll_metrics(
-                        self, agent_area,
-                    )) {
+                    if self.sidebar_detail_view == crate::app::state::SidebarDetailView::Jobs {
+                        self.scroll_jobs_panel(-1);
+                    } else if crate::ui::should_show_scrollbar(
+                        crate::ui::agent_panel_scroll_metrics(self, agent_area),
+                    ) {
                         self.scroll_agent_panel(-1);
                     }
                 } else if crate::ui::should_show_scrollbar(
@@ -1169,9 +1191,11 @@ impl AppState {
                     && mouse.row >= agent_area.y
                     && mouse.row < agent_area.y + agent_area.height;
                 if over_agent_panel {
-                    if crate::ui::should_show_scrollbar(crate::ui::agent_panel_scroll_metrics(
-                        self, agent_area,
-                    )) {
+                    if self.sidebar_detail_view == crate::app::state::SidebarDetailView::Jobs {
+                        self.scroll_jobs_panel(1);
+                    } else if crate::ui::should_show_scrollbar(
+                        crate::ui::agent_panel_scroll_metrics(self, agent_area),
+                    ) {
                         self.scroll_agent_panel(1);
                     }
                 } else if crate::ui::should_show_scrollbar(

@@ -917,6 +917,14 @@ pub enum AgentPanelSort {
     Priority,
 }
 
+/// Which list the sidebar's lower panel shows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SidebarDetailView {
+    #[default]
+    Agents,
+    Jobs,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WorkspacePanelDensity {
     #[default]
@@ -1717,6 +1725,12 @@ pub struct AppState {
     pub sidebar_section_split: f32,
     pub workspace_panel_density: WorkspacePanelDensity,
     pub agent_panel_sort: AgentPanelSort,
+    /// Which list the sidebar's lower panel currently shows.
+    pub sidebar_detail_view: SidebarDetailView,
+    /// Background jobs started through `herdr run`, newest first.
+    pub(crate) jobs: Vec<crate::job::JobRecord>,
+    /// First visible row of the jobs list.
+    pub jobs_scroll: usize,
     pub sidebar_agents: crate::config::AgentsSidebarConfig,
     pub sidebar_spaces: crate::config::SpacesSidebarConfig,
     pub next_agent_state_change_seq: u64,
@@ -2389,6 +2403,9 @@ impl AppState {
             sidebar_section_split: 0.5,
             workspace_panel_density: WorkspacePanelDensity::Full,
             agent_panel_sort: AgentPanelSort::Spaces,
+            sidebar_detail_view: SidebarDetailView::default(),
+            jobs: Vec::new(),
+            jobs_scroll: 0,
             sidebar_agents: crate::config::AgentsSidebarConfig::default(),
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),
             next_agent_state_change_seq: 0,

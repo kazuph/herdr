@@ -2982,6 +2982,22 @@ impl AppState {
                 let _ = cache_updates;
                 Vec::new()
             }
+            AppEvent::JobsRefreshed { jobs } => {
+                self.jobs = jobs;
+                self.jobs.sort_by(|a, b| {
+                    let rank = |job: &crate::job::JobRecord| match job.status.as_str() {
+                        "running" => 0,
+                        "queued" => 1,
+                        _ => 2,
+                    };
+                    rank(a)
+                        .cmp(&rank(b))
+                        .then(b.started_unix_ms.cmp(&a.started_unix_ms))
+                });
+                let max_scroll = self.jobs.len().saturating_sub(1);
+                self.jobs_scroll = self.jobs_scroll.min(max_scroll);
+                Vec::new()
+            }
             AppEvent::WorktreeAddFinished(_) => Vec::new(),
             AppEvent::WorktreeRemoveFinished(_) => Vec::new(),
             AppEvent::PluginCommandFinished { .. } => Vec::new(),

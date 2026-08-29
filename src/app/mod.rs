@@ -39,6 +39,8 @@ pub(crate) const HEADLESS_ANIMATION_TICK_STEP: u32 = 8;
 pub(crate) const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(30);
 const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
+/// How often the sidebar re-reads background jobs while their list is open.
+const JOBS_REFRESH_INTERVAL: Duration = Duration::from_millis(1000);
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const PENDING_AGENT_RESUME_THEME_WAIT: Duration = Duration::from_millis(750);
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
@@ -117,6 +119,8 @@ pub struct App {
     pub(crate) last_api_notification_at: Option<Instant>,
     pub(crate) last_git_remote_status_refresh: Instant,
     pub(crate) git_refresh_in_flight: bool,
+    pub(crate) jobs_refresh_in_flight: bool,
+    pub(crate) last_jobs_refresh: Instant,
     pub(crate) regular_mail_in_flight: HashSet<i64>,
     pub(crate) git_refresh_due_after_in_flight: bool,
     pub(crate) git_status_cache: HashMap<std::path::PathBuf, crate::workspace::GitStatusCacheEntry>,
@@ -680,6 +684,9 @@ impl App {
             sidebar_section_split,
             workspace_panel_density,
             agent_panel_sort,
+            sidebar_detail_view: crate::app::state::SidebarDetailView::default(),
+            jobs: Vec::new(),
+            jobs_scroll: 0,
             sidebar_agents: config.ui.sidebar.agents.clone(),
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
             next_agent_state_change_seq: 0,
@@ -798,6 +805,10 @@ impl App {
             mailbox_write_rx,
             last_git_remote_status_refresh: Instant::now() - GIT_REMOTE_STATUS_REFRESH_INTERVAL,
             git_refresh_in_flight: false,
+            jobs_refresh_in_flight: false,
+            last_jobs_refresh: Instant::now()
+                .checked_sub(JOBS_REFRESH_INTERVAL)
+                .unwrap_or_else(Instant::now),
             regular_mail_in_flight: HashSet::new(),
             git_refresh_due_after_in_flight: false,
             git_status_cache: HashMap::new(),

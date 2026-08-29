@@ -13,7 +13,8 @@ use super::scrollbar::{render_scrollbar, should_show_scrollbar};
 use super::status::{agent_icon, state_label, state_label_color, state_summary_icon};
 use super::text::{display_width, display_width_u16, truncate_end};
 use crate::app::state::{
-    AgentPanelSort, Palette, SidebarWidthPreset, SidebarWidthToggleRects, WorkspacePanelDensity,
+    AgentPanelSort, Palette, SidebarDetailView, SidebarWidthPreset, SidebarWidthToggleRects,
+    WorkspacePanelDensity,
 };
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
@@ -93,9 +94,31 @@ pub(crate) fn sidebar_section_divider_rect(area: Rect, split_ratio: f32) -> Rect
 
 fn agent_panel_sort_label(sort: AgentPanelSort) -> &'static str {
     match sort {
-        AgentPanelSort::Spaces => "grouped",
-        AgentPanelSort::Priority => "priority",
+        AgentPanelSort::Spaces => "[grouped]",
+        AgentPanelSort::Priority => "[priority]",
     }
+}
+
+const DETAIL_TAB_AGENTS: &str = "[agents]";
+const DETAIL_TAB_JOBS: &str = "[jobs]";
+
+/// Clickable tab labels on the detail panel's header row, left to right.
+pub(crate) fn sidebar_detail_tab_rects(area: Rect) -> (Rect, Rect) {
+    if area.width == 0 || area.height < 2 {
+        return (Rect::default(), Rect::default());
+    }
+    let row = area.y + 1;
+    let agents_w = display_width_u16(DETAIL_TAB_AGENTS);
+    let jobs_w = display_width_u16(DETAIL_TAB_JOBS);
+    let agents_x = area.x + 1;
+    let jobs_x = agents_x.saturating_add(agents_w).saturating_add(1);
+    if jobs_x.saturating_add(jobs_w) > area.x + area.width {
+        return (Rect::new(agents_x, row, agents_w, 1), Rect::default());
+    }
+    (
+        Rect::new(agents_x, row, agents_w, 1),
+        Rect::new(jobs_x, row, jobs_w, 1),
+    )
 }
 
 fn workspace_panel_density_label(density: WorkspacePanelDensity) -> &'static str {
@@ -646,7 +669,12 @@ pub(crate) fn agent_panel_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
     }
 
     let body_y = area.y.saturating_add(AGENT_PANEL_HEADER_ROWS);
-    let body_height = (area.y + area.height).saturating_sub(body_y);
+    // The sidebar width toggle owns the panel's last row; leaving it in the body
+    // let long agent lists draw straight through the WIDE button.
+    let footer_rows = u16::from(sidebar_width_toggle_footer_rect(area) != Rect::default());
+    let body_height = (area.y + area.height)
+        .saturating_sub(body_y)
+        .saturating_sub(footer_rows);
     let body_width = area.width.saturating_sub(u16::from(has_scrollbar));
     Rect::new(area.x, body_y, body_width, body_height)
 }
@@ -1657,15 +1685,29 @@ fn render_agent_detail(
         Rect::new(area.x, area.y, area.width, 1),
     );
 
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![Span::styled(
-            " agents",
-            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-        )])),
-        Rect::new(area.x, area.y + 1, area.width, 1),
-    );
+    let (agents_tab, jobs_tab) = sidebar_detail_tab_rects(area);
+    let tab_style = |selected: bool| {
+        if selected {
+            Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(p.overlay0)
+        }
+    };
+    let showing_jobs = app.sidebar_detail_view == SidebarDetailView::Jobs;
+    if agents_tab != Rect::default() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(DETAIL_TAB_AGENTS, tab_style(!showing_jobs))),
+            agents_tab,
+        );
+    }
+    if jobs_tab != Rect::default() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(DETAIL_TAB_JOBS, tab_style(showing_jobs))),
+            jobs_tab,
+        );
+    }
     let toggle_rect = agent_panel_toggle_rect(area, app.agent_panel_sort);
-    if toggle_rect != Rect::default() {
+    if toggle_rect != Rect::default() && !showing_jobs {
         frame.render_widget(
             Paragraph::new(Span::styled(
                 agent_panel_sort_label(app.agent_panel_sort),
@@ -1674,6 +1716,12 @@ fn render_agent_detail(
             .alignment(Alignment::Right),
             toggle_rect,
         );
+    }
+
+    if showing_jobs {
+        render_jobs_panel(app, frame, area);
+        render_sidebar_width_toggle(app, frame, area);
+        return;
     }
 
     let details = agent_panel_entries_from(app, terminal_runtimes);
@@ -1744,6 +1792,86 @@ fn render_agent_detail(
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
     }
     render_sidebar_width_toggle(app, frame, area);
+}
+
+/// One visible row of the jobs list, so hit-testing and rendering agree.
+pub(crate) fn jobs_panel_rows(app: &AppState, area: Rect) -> Vec<(Rect, usize)> {
+    let body = agent_panel_body_rect(area, false);
+    if body.width == 0 || body.height == 0 {
+        return Vec::new();
+    }
+    app.jobs
+        .iter()
+        .enumerate()
+        .skip(app.jobs_scroll)
+        .take(body.height as usize)
+        .enumerate()
+        .map(|(offset, (index, _))| {
+            (
+                Rect::new(body.x, body.y + offset as u16, body.width, 1),
+                index,
+            )
+        })
+        .collect()
+}
+
+fn job_status_color(status: &str, exit_code: Option<i32>, p: &Palette) -> ratatui::style::Color {
+    match status {
+        "running" => p.yellow,
+        "queued" => p.overlay0,
+        _ if exit_code == Some(0) => p.green,
+        _ => p.red,
+    }
+}
+
+fn job_status_label(job: &crate::job::JobRecord) -> String {
+    match job.status.as_str() {
+        "running" => "run".to_string(),
+        "queued" => "wait".to_string(),
+        _ => match job.exit_code {
+            Some(0) => "ok".to_string(),
+            Some(code) => format!("x{code}"),
+            None => "done".to_string(),
+        },
+    }
+}
+
+fn render_jobs_panel(app: &AppState, frame: &mut Frame, area: Rect) {
+    let p = &app.palette;
+    let body = agent_panel_body_rect(area, false);
+    if body.width == 0 || body.height == 0 {
+        return;
+    }
+    if app.jobs.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " no background jobs",
+                Style::default().fg(p.overlay0),
+            )),
+            Rect::new(body.x, body.y, body.width, 1),
+        );
+        return;
+    }
+
+    for (rect, index) in jobs_panel_rows(app, area) {
+        let Some(job) = app.jobs.get(index) else {
+            continue;
+        };
+        let status = job_status_label(job);
+        let label = if job.label.is_empty() {
+            job.command.as_str()
+        } else {
+            job.label.as_str()
+        };
+        let line = Line::from(vec![
+            Span::styled(
+                format!(" {status:<4} "),
+                Style::default().fg(job_status_color(&job.status, job.exit_code, p)),
+            ),
+            Span::styled(label.to_string(), Style::default().fg(p.text)),
+        ]);
+        frame.render_widget(Paragraph::new(line), rect);
+    }
 }
 
 fn render_sidebar_width_toggle(app: &AppState, frame: &mut Frame, area: Rect) {
@@ -2167,10 +2295,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
         assert_eq!(app.sidebar_agents.row_gap, 0);
 
-        let area = Rect::new(0, 0, 20, 5);
+        // One row taller than the two agent rows: the panel's last row belongs to
+        // the sidebar width toggle, not to the agent list.
+        let area = Rect::new(0, 0, 20, 6);
         let metrics = agent_panel_scroll_metrics(&app, area);
         let body = agent_panel_body_rect(area, false);
-        let mut terminal = Terminal::new(TestBackend::new(20, 5)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(20, 6)).unwrap();
         terminal
             .draw(|frame| render_agent_detail(&app, &TerminalRuntimeRegistry::new(), frame, area))
             .unwrap();
@@ -2180,6 +2310,76 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(metrics.max_offset_from_bottom, 0);
         assert_eq!(row_text(buffer, body.y, body.width), " pi");
         assert_eq!(row_text(buffer, body.y + 1, body.width), " claude");
+    }
+
+    #[test]
+    fn agent_panel_body_leaves_the_width_toggle_row_alone() {
+        let area = Rect::new(0, 0, 20, 6);
+        let body = agent_panel_body_rect(area, false);
+        let footer = crate::ui::sidebar_width_toggle_rects(area).button;
+
+        assert_ne!(footer, Rect::default());
+        assert!(body.height > 0);
+        assert!(
+            body.y + body.height <= footer.y,
+            "agent rows {body:?} must stop above the width toggle {footer:?}"
+        );
+    }
+
+    #[test]
+    fn detail_tabs_are_bracketed_and_do_not_overlap() {
+        let area = Rect::new(0, 0, 30, 8);
+        let (agents, jobs) = sidebar_detail_tab_rects(area);
+
+        assert_eq!(agents.width, display_width_u16("[agents]"));
+        assert_eq!(jobs.width, display_width_u16("[jobs]"));
+        assert_eq!(agents.y, jobs.y);
+        assert!(agents.x + agents.width < jobs.x);
+
+        let sort = agent_panel_toggle_rect(area, AgentPanelSort::Priority);
+        assert_eq!(sort.width, display_width_u16("[priority]"));
+        assert!(jobs.x + jobs.width <= sort.x);
+    }
+
+    #[test]
+    fn jobs_view_lists_running_jobs_and_hides_the_sort_toggle() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_detail_view = crate::app::state::SidebarDetailView::Jobs;
+        app.jobs = vec![crate::job::JobRecord {
+            id: "job-1".into(),
+            label: "cargo-test".into(),
+            command: "cargo test".into(),
+            cwd: "/repo".into(),
+            caller_pane: "p1".into(),
+            caller_agent: "claude".into(),
+            completion: "summary".into(),
+            status: "running".into(),
+            runner_pid: Some(42),
+            exit_code: None,
+            started_unix_ms: Some(1),
+            finished_unix_ms: None,
+            log_path: "/tmp/job-1.log".into(),
+        }];
+
+        let area = Rect::new(0, 0, 30, 8);
+        let mut terminal = Terminal::new(TestBackend::new(30, 8)).unwrap();
+        terminal
+            .draw(|frame| render_agent_detail(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let header = row_text(buffer, area.y + 1, area.width);
+        assert!(header.contains("[agents]"), "header was {header:?}");
+        assert!(header.contains("[jobs]"), "header was {header:?}");
+        assert!(
+            !header.contains("[grouped]") && !header.contains("[priority]"),
+            "the sort toggle belongs to the agents view, header was {header:?}"
+        );
+
+        let body = agent_panel_body_rect(area, false);
+        let first = row_text(buffer, body.y, body.width);
+        assert!(first.contains("run"), "first job row was {first:?}");
+        assert!(first.contains("cargo-test"), "first job row was {first:?}");
     }
 
     #[test]
