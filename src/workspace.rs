@@ -393,7 +393,7 @@ impl Workspace {
         let launch_env = PaneLaunchEnv::from_extra(extra_env).with_identity(
             id.clone(),
             public_tab_id_for_number(&id, 1),
-            public_pane_id_for_number(&id, root_pane.raw()),
+            pane_env_id_for_number(root_pane.raw()),
         );
         let (tab, terminal, runtime) = if let Some(argv) = argv {
             Tab::new_argv_command(
@@ -1037,7 +1037,7 @@ impl Workspace {
         PaneLaunchEnv::from_extra(extra_env).with_identity(
             self.id.clone(),
             public_tab_id_for_number(&self.id, tab_number),
-            public_pane_id_for_number(&self.id, pane_id.raw()),
+            pane_env_id_for_number(pane_id.raw()),
         )
     }
 

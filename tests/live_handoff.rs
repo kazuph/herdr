@@ -1151,6 +1151,12 @@ fn live_handoff_accepts_canonical_pane_id_from_child_env() {
         .as_str()
         .unwrap()
         .to_string();
+    let pane_env_id = format!(
+        "p_{}",
+        pane_id
+            .strip_prefix('p')
+            .expect("API pane id should use pN spelling")
+    );
     assert_ok(request(
         &api_socket,
         serde_json::json!({
@@ -1159,9 +1165,9 @@ fn live_handoff_accepts_canonical_pane_id_from_child_env() {
             "params": {"pane_id": pane_id, "text": format!("printf '%s' \"$HERDR_PANE_ID\" > {}", pane_id_marker.display()), "keys": ["Enter"]}
         }),
     ));
-    let old_pane_id = wait_for_file_contains(&pane_id_marker, &pane_id, Duration::from_secs(5));
+    let old_pane_id = wait_for_file_contains(&pane_id_marker, &pane_env_id, Duration::from_secs(5));
     assert!(
-        old_pane_id == pane_id,
+        old_pane_id == pane_env_id,
         "unexpected pane id from env: {old_pane_id:?}"
     );
 

@@ -1347,11 +1347,6 @@ fn events_subscribe_streams_pane_split_and_close_events() {
         .as_str()
         .unwrap()
         .to_string();
-    let workspace_id = created["result"]["workspace"]["workspace_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
     let mut reader = open_subscription(
         &socket_path,
         r#"{"id":"sub_life_b","method":"events.subscribe","params":{"subscriptions":[{"type":"pane.created"},{"type":"pane.closed"}]}}"#,
@@ -1384,8 +1379,8 @@ fn events_subscribe_streams_pane_split_and_close_events() {
     let closed = send_request(
         &socket_path,
         &format!(
-            r#"{{"id":"req_pc_3","method":"pane.close","params":{{"pane_id":"{}-2"}}}}"#,
-            workspace_id
+            r#"{{"id":"req_pc_3","method":"pane.close","params":{{"pane_id":"{}"}}}}"#,
+            split_pane_id
         ),
     );
     assert_eq!(closed["result"]["type"], "ok");

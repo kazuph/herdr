@@ -3596,7 +3596,12 @@ fn herdr_run_adds_cwd_node_modules_bin_to_path() {
 
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let status = run_cli(&socket_path, &["job", "status", job]);
+        let status = run_named_cli_with_socket_override(
+            &config_home,
+            &runtime_dir,
+            &["job", "status", job],
+            Some(&socket_path),
+        );
         assert!(status.status.success());
         let status_json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
         if status_json["status"] == "exited" {
@@ -3610,7 +3615,12 @@ fn herdr_run_adds_cwd_node_modules_bin_to_path() {
         thread::sleep(Duration::from_millis(25));
     }
 
-    let log = run_cli(&socket_path, &["job", "log", job]);
+    let log = run_named_cli_with_socket_override(
+        &config_home,
+        &runtime_dir,
+        &["job", "log", job],
+        Some(&socket_path),
+    );
     assert!(log.status.success());
     let log_text = String::from_utf8(log.stdout).unwrap();
     assert!(log_text.contains("local-tool-ok"), "{log_text}");
@@ -3678,7 +3688,12 @@ fn herdr_job_cancel_kills_term_ignoring_process_tree_before_marking_cancelled() 
         .trim()
         .parse()
         .unwrap();
-    let cancelled = run_cli(&socket_path, &["job", "cancel", job]);
+    let cancelled = run_named_cli_with_socket_override(
+        &config_home,
+        &runtime_dir,
+        &["job", "cancel", job],
+        Some(&socket_path),
+    );
     assert!(
         cancelled.status.success(),
         "stderr: {} stdout: {}",
@@ -3688,7 +3703,15 @@ fn herdr_job_cancel_kills_term_ignoring_process_tree_before_marking_cancelled() 
     let cancelled_json: serde_json::Value = serde_json::from_slice(&cancelled.stdout).unwrap();
     assert_eq!(cancelled_json["status"], "cancelled");
     assert_eq!(cancelled_json["signal"], "KILL");
-    let status = run_cli_json(&socket_path, &["job", "status", job]);
+    let status = parse_cli_json_output(
+        &["job", "status", job],
+        run_named_cli_with_socket_override(
+            &config_home,
+            &runtime_dir,
+            &["job", "status", job],
+            Some(&socket_path),
+        ),
+    );
     assert_eq!(status["status"], "cancelled");
     assert_eq!(
         unsafe { libc::kill(child_pid, 0) },
