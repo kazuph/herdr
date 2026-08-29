@@ -97,6 +97,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "session" => run_session_command(&args[2..])?,
         "__background-run" => comms::background_runner(&args[2..])?,
         "__pane-run" => comms::pane_runner(&args[2..])?,
+        "__job-log-view" => comms::job_log_viewer(&args[2..])?,
         "help" => {
             crate::print_root_help();
             0

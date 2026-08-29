@@ -509,8 +509,10 @@ impl DispatchStore {
     pub(crate) fn command_rows(&self) -> rusqlite::Result<Vec<crate::job::JobRecord>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT d.external_id, d.label, d.body, d.project, d.status, d.exit_code, d.started_at,
-                   d.finished_at, d.log_path, fa.name, fa.pane_id, d.completion, d.runner_pid
+            SELECT d.external_id, d.label, d.body, d.project, d.status, d.exit_code,
+                   CAST((julianday(d.started_at) - 2440587.5) * 86400000 AS INTEGER),
+                   CAST((julianday(d.finished_at) - 2440587.5) * 86400000 AS INTEGER),
+                   d.log_path, fa.name, fa.pane_id, d.completion, d.runner_pid
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             WHERE d.kind='command'
@@ -521,23 +523,25 @@ impl DispatchStore {
         rows.collect()
     }
 
-    /// Newest commands first, running and queued ones ahead of finished ones.
+    /// The most recently dispatched commands, newest first.
     ///
     /// The store keeps every job ever dispatched, so the sidebar asks for a
-    /// bounded window instead of the whole table.
+    /// bounded window instead of the whole table. Ordering by status first
+    /// would bury recent activity behind long-lived `running` rows.
     pub(crate) fn recent_command_rows(
         &self,
         limit: usize,
     ) -> rusqlite::Result<Vec<crate::job::JobRecord>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT d.external_id, d.label, d.body, d.project, d.status, d.exit_code, d.started_at,
-                   d.finished_at, d.log_path, fa.name, fa.pane_id, d.completion, d.runner_pid
+            SELECT d.external_id, d.label, d.body, d.project, d.status, d.exit_code,
+                   CAST((julianday(d.started_at) - 2440587.5) * 86400000 AS INTEGER),
+                   CAST((julianday(d.finished_at) - 2440587.5) * 86400000 AS INTEGER),
+                   d.log_path, fa.name, fa.pane_id, d.completion, d.runner_pid
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             WHERE d.kind='command'
-            ORDER BY CASE d.status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
-                     d.id DESC
+            ORDER BY d.id DESC
             LIMIT ?1
             "#,
         )?;
@@ -549,8 +553,10 @@ impl DispatchStore {
         self.conn
             .query_row(
                 r#"
-                SELECT d.external_id, d.label, d.body, d.project, d.status, d.exit_code, d.started_at,
-                       d.finished_at, d.log_path, fa.name, fa.pane_id, d.completion, d.runner_pid
+                SELECT d.external_id, d.label, d.body, d.project, d.status, d.exit_code,
+                       CAST((julianday(d.started_at) - 2440587.5) * 86400000 AS INTEGER),
+                       CAST((julianday(d.finished_at) - 2440587.5) * 86400000 AS INTEGER),
+                       d.log_path, fa.name, fa.pane_id, d.completion, d.runner_pid
                 FROM dispatches d
                 JOIN actors fa ON fa.id=d.from_actor
                 WHERE d.kind='command' AND (d.external_id=?1 OR d.log_path LIKE '%' || ?1 || '.log')
@@ -686,8 +692,12 @@ fn job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<crate::job::JobReco
             .unwrap_or_default()
             .to_string()
     });
-    let started_at: Option<String> = row.get(6)?;
-    let finished_at: Option<String> = row.get(7)?;
+    let started_unix_ms = row
+        .get::<_, Option<i64>>(6)?
+        .and_then(|value| u128::try_from(value).ok());
+    let finished_unix_ms = row
+        .get::<_, Option<i64>>(7)?
+        .and_then(|value| u128::try_from(value).ok());
     Ok(crate::job::JobRecord {
         id,
         label: row.get(1)?,
@@ -701,8 +711,8 @@ fn job_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<crate::job::JobReco
         status: row.get(4)?,
         runner_pid: row.get::<_, Option<u32>>(12)?.or(metadata.runner_pid),
         exit_code: row.get(5)?,
-        started_unix_ms: started_at.as_deref().and_then(isoish_to_epoch_hint),
-        finished_unix_ms: finished_at.as_deref().and_then(isoish_to_epoch_hint),
+        started_unix_ms,
+        finished_unix_ms,
         log_path,
     })
 }
@@ -734,10 +744,6 @@ fn job_log_metadata(log_path: &str) -> JobLogMetadata {
         }
     }
     metadata
-}
-
-fn isoish_to_epoch_hint(value: &str) -> Option<u128> {
-    (!value.is_empty()).then_some(1)
 }
 
 #[cfg(test)]

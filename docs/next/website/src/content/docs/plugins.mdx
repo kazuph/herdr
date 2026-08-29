@@ -263,11 +263,12 @@ closes. A `plugin.pane.open` request can override the manifest placement with
 
 `placement = "popup"` opens a terminal popup in the current workspace without
 changing the tiled layout. It accepts optional `width` and `height` fields in the manifest or
-open request; omit them for the default half-size popup, use numbers for outer
+open request; omit them for the default 80% popup, use numbers for outer
 terminal-cell dimensions, or use strings like `"80%"` for a percentage of the
 terminal area. Herdr keybindings can switch away while the popup keeps running;
-returning to its workspace restores it. Mouse drag selection copies text, and
-other input including Escape goes to the popup. It closes when the command exits
+returning to its workspace restores it. Mouse drag selection copies text. Escape
+closes a plain popup, while interactive apps that enable terminal modes receive it.
+It closes when the command exits
 or a `popup.close` request is sent. Dimensions smaller than the popup minimum are clamped.
 
 Declare the placement directly on a plugin pane entrypoint when the pane should

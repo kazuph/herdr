@@ -220,6 +220,26 @@ impl App {
         self.state.update_dismissed = true;
 
         let key_event = key.as_key_event();
+        if key_event.code == KeyCode::Esc && key_event.modifiers.is_empty() {
+            let Some(rt) = self.popup_runtime() else {
+                self.close_popup_pane();
+                return PreparedPopupInput::Consumed;
+            };
+            if key_event.kind == crossterm::event::KeyEventKind::Press
+                && !popup_child_claims_escape(rt)
+            {
+                self.close_popup_pane();
+                return PreparedPopupInput::Consumed;
+            }
+            rt.scroll_reset();
+            let bytes = rt.encode_terminal_key(key);
+            self.state.mode = Mode::Terminal;
+            return if bytes.is_empty() {
+                PreparedPopupInput::Consumed
+            } else {
+                PreparedPopupInput::Bytes(Bytes::from(bytes))
+            };
+        }
         if let Some(action) = super::terminal_direct_non_indexed_navigation_action(&self.state, key)
         {
             debug!(
@@ -287,6 +307,20 @@ impl App {
             let _ = runtime.send_bytes(input.bytes).await;
         }
     }
+}
+
+fn popup_child_claims_escape(rt: &crate::terminal::TerminalRuntime) -> bool {
+    let input_claimed = rt.input_state().is_some_and(|state| {
+        state.alternate_screen
+            || state.application_cursor
+            || state.focus_reporting
+            || state.mouse_reporting_enabled()
+    });
+    input_claimed
+        || !matches!(
+            rt.keyboard_protocol(),
+            crate::input::KeyboardProtocol::Legacy
+        )
 }
 
 #[cfg(test)]
@@ -1544,7 +1578,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn popup_forwards_escape_instead_of_closing() {
+    async fn plain_popup_closes_on_escape_without_forwarding_it() {
         let mut app = app_for_mouse_test();
         let (runtime, mut rx) =
             crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
@@ -1560,17 +1594,75 @@ mod tests {
             .is_some_and(|metrics| metrics.offset_from_bottom > 0));
         app.install_test_popup_runtime(runtime);
         app.state.mode = Mode::Settings;
+        let popup_runtime = app.popup_runtime().unwrap();
+        assert!(
+            !popup_child_claims_escape(popup_runtime),
+            "plain popup claimed escape: state={:?} protocol={:?}",
+            popup_runtime.input_state(),
+            popup_runtime.keyboard_protocol()
+        );
+
+        app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Esc, KeyModifiers::empty()));
+
+        let received = rx.try_recv();
+        assert!(
+            received.is_err(),
+            "escape reached plain popup: {received:?}"
+        );
+        assert!(!app.state.popup_pane_is_visible());
+        assert!(app.state.popup_panes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn interactive_popup_keeps_escape_for_its_child() {
+        let mut app = app_for_mouse_test();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(40, 12);
+        runtime.test_process_pty_bytes(b"\x1b[?1049h");
+        app.install_test_popup_runtime(runtime);
 
         app.handle_terminal_key_headless(TerminalKey::new(KeyCode::Esc, KeyModifiers::empty()));
 
         assert_eq!(rx.try_recv().unwrap().as_ref(), b"\x1b");
         assert!(app.state.popup_pane_is_visible());
-        assert_eq!(
-            app.popup_runtime()
-                .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
-                .map(|metrics| metrics.offset_from_bottom),
-            Some(0)
-        );
+    }
+
+    #[tokio::test]
+    async fn clicking_outside_plain_popup_closes_it() {
+        let mut app = app_for_mouse_test();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(40, 12);
+        app.install_test_popup_runtime(runtime);
+        let (outer, _) =
+            crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area).unwrap();
+        assert!(outer.x > 0);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            outer.x - 1,
+            outer.y,
+        ));
+
+        assert!(rx.try_recv().is_err());
+        assert!(!app.state.popup_pane_is_visible());
+    }
+
+    #[tokio::test]
+    async fn clicking_outside_interactive_popup_still_closes_it() {
+        let mut app = app_for_mouse_test();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(40, 12);
+        runtime.test_process_pty_bytes(b"\x1b[?1049h\x1b[?1000h\x1b[?1006h");
+        app.install_test_popup_runtime(runtime);
+        let (outer, _) =
+            crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area).unwrap();
+        assert!(outer.x > 0);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            outer.x - 1,
+            outer.y,
+        ));
+
+        assert!(rx.try_recv().is_err());
+        assert!(!app.state.popup_pane_is_visible());
     }
 
     #[tokio::test]

@@ -47,13 +47,15 @@ pub(crate) struct PopupResolvedGeometry {
     pub inner: Rect,
 }
 
+const DEFAULT_POPUP_PERCENT: u8 = 80;
+
 pub(crate) fn resolve_popup_geometry(
     width: Option<PopupSize>,
     height: Option<PopupSize>,
     area: Rect,
 ) -> Option<PopupResolvedGeometry> {
-    let default_width = area.width.saturating_div(2).max(6);
-    let default_height = area.height.saturating_div(2).max(4);
+    let default_width = PopupSize::Percent(DEFAULT_POPUP_PERCENT).resolve(area.width);
+    let default_height = PopupSize::Percent(DEFAULT_POPUP_PERCENT).resolve(area.height);
     let outer_width = width
         .map(|width| width.resolve(area.width))
         .unwrap_or(default_width)
@@ -218,6 +220,16 @@ mod tests {
         .unwrap();
         assert_eq!(resolved.outer, ratatui::layout::Rect::new(10, 9, 80, 12));
         assert_eq!(resolved.inner, ratatui::layout::Rect::new(11, 10, 77, 10));
+    }
+
+    #[test]
+    fn defaults_to_eighty_percent_of_the_terminal_area() {
+        let resolved =
+            super::resolve_popup_geometry(None, None, ratatui::layout::Rect::new(0, 0, 100, 30))
+                .unwrap();
+
+        assert_eq!(resolved.outer, ratatui::layout::Rect::new(10, 3, 80, 24));
+        assert_eq!(resolved.inner, ratatui::layout::Rect::new(11, 4, 77, 22));
     }
 
     #[test]

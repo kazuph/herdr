@@ -733,39 +733,13 @@ impl AppState {
             && row < rect.y + rect.height
     }
 
-    /// Workspace and pane that started the job, when that pane still exists.
-    pub(super) fn job_focus_target(&self, index: usize) -> Option<(usize, crate::layout::PaneId)> {
-        let job = self.jobs.get(index)?;
-        if job.caller_pane.is_empty() {
-            return None;
-        }
-        let pane_id = self
-            .public_pane_id_aliases
-            .get(&job.caller_pane)
-            .copied()
-            .or_else(|| {
-                let raw = job
-                    .caller_pane
-                    .trim_start_matches('%')
-                    .trim_start_matches("p_")
-                    .trim_start_matches('p')
-                    .parse::<u32>()
-                    .ok()?;
-                Some(crate::layout::PaneId::from_raw(raw))
-            })?;
-        let ws_idx = self.workspaces.iter().position(|ws| {
-            ws.tabs
-                .iter()
-                .any(|tab| tab.layout.pane_ids().contains(&pane_id))
-        })?;
-        Some((ws_idx, pane_id))
-    }
-
     pub(super) fn agent_detail_target_at(
         &self,
         row: u16,
     ) -> Option<(usize, usize, crate::layout::PaneId)> {
-        if self.sidebar_collapsed {
+        if self.sidebar_collapsed
+            || self.sidebar_detail_view != crate::app::state::SidebarDetailView::Agents
+        {
             return None;
         }
 
@@ -1381,23 +1355,32 @@ mod tests {
         );
     }
 
-    #[test]
-    fn clicking_a_job_row_focuses_the_pane_that_started_it() {
+    #[tokio::test]
+    async fn clicking_a_job_row_focuses_the_caller_then_opens_log_in_a_popup() {
         let mut app = app_for_mouse_test();
         let ws = Workspace::test_new("test");
-        let pane_id = ws.tabs[0].root_pane;
-        app.state.workspaces = vec![ws];
+        let focused_pane = ws.tabs[0].root_pane;
+        let caller_ws = Workspace::test_new("caller");
+        let caller_pane = caller_ws.tabs[0].root_pane;
+        app.state.workspaces = vec![ws, caller_ws];
         app.state.ensure_test_terminals();
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
         app.state.sidebar_detail_view = crate::app::state::SidebarDetailView::Jobs;
+        let log_path = std::env::temp_dir().join(format!(
+            "herdr-job-click-{}-{}.log",
+            std::process::id(),
+            caller_pane.raw()
+        ));
+        std::fs::write(&log_path, "job output\n").unwrap();
+        let job_log_path = log_path.display().to_string();
         app.state.jobs = vec![crate::job::JobRecord {
             id: "job-1".into(),
             label: "cargo-test".into(),
             command: "cargo test".into(),
             cwd: "/repo".into(),
-            caller_pane: format!("p{}", pane_id.raw()),
+            caller_pane: format!("p{}", caller_pane.raw()),
             caller_agent: "claude".into(),
             completion: "summary".into(),
             status: "running".into(),
@@ -1405,7 +1388,7 @@ mod tests {
             exit_code: None,
             started_unix_ms: Some(1),
             finished_unix_ms: None,
-            log_path: "/tmp/job-1.log".into(),
+            log_path: log_path.display().to_string(),
         }];
 
         let (_, detail_area) = crate::ui::expanded_sidebar_sections(
@@ -1416,9 +1399,134 @@ mod tests {
         let (row, index) = rows.first().copied().expect("one job row");
         assert_eq!(index, 0);
 
-        assert_eq!(app.state.job_focus_target(0), Some((0, pane_id)));
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(
+            app.state.workspaces[0].focused_pane_id(),
+            Some(focused_pane)
+        );
+        assert_eq!(app.state.workspaces[1].focused_pane_id(), Some(caller_pane));
+        assert!(app.state.active_popup_pane().is_none());
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.workspaces[1].focused_pane_id(), Some(caller_pane));
+        let popup = app.state.active_popup_pane().expect("job log popup");
+        let popup_terminal = app.state.terminals.get(&popup.terminal_id).unwrap();
+        assert_eq!(
+            popup_terminal.manual_label.as_deref(),
+            Some("job log: cargo-test")
+        );
+        assert!(popup_terminal.launch_argv.as_ref().is_some_and(|argv| {
+            argv.get(1).is_some_and(|arg| arg == "__job-log-view")
+                && argv.get(2).is_some_and(|arg| arg == &job_log_path)
+        }));
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
+        assert_eq!(app.state.workspaces[1].tabs[0].layout.pane_count(), 1);
         assert_eq!(app.state.mode, Mode::Terminal);
+        crate::app::api::test_support::shutdown_test_runtimes(&mut app);
+        std::fs::remove_file(log_path).unwrap();
+    }
+
+    #[test]
+    fn clicking_a_job_without_a_log_does_nothing() {
+        let mut app = app_for_mouse_test();
+        let ws = Workspace::test_new("test");
+        let focused_pane = ws.tabs[0].root_pane;
+        let caller_ws = Workspace::test_new("caller");
+        let caller_pane = caller_ws.tabs[0].root_pane;
+        app.state.workspaces = vec![ws, caller_ws];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.sidebar_detail_view = crate::app::state::SidebarDetailView::Jobs;
+        app.state.jobs = vec![crate::job::JobRecord {
+            id: "job-missing".into(),
+            label: "missing-log".into(),
+            command: "true".into(),
+            cwd: "/repo".into(),
+            caller_pane: format!("p{}", caller_pane.raw()),
+            caller_agent: "claude".into(),
+            completion: "summary".into(),
+            status: "finished".into(),
+            runner_pid: None,
+            exit_code: Some(0),
+            started_unix_ms: Some(1),
+            finished_unix_ms: Some(2),
+            log_path: std::env::temp_dir()
+                .join(format!(
+                    "herdr-missing-job-{}-{}.log",
+                    std::process::id(),
+                    caller_pane.raw()
+                ))
+                .display()
+                .to_string(),
+        }];
+
+        let (_, detail_area) = crate::ui::expanded_sidebar_sections(
+            app.state.view.sidebar_rect,
+            app.state.sidebar_section_split,
+        );
+        let (row, _) = crate::ui::jobs_panel_rows(&app.state, detail_area)[0];
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
+
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(
+            app.state.workspaces[0].focused_pane_id(),
+            Some(focused_pane)
+        );
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
+        assert_eq!(app.state.workspaces[1].tabs[0].layout.pane_count(), 1);
+        assert!(app.state.active_popup_pane().is_none());
+    }
+
+    #[test]
+    fn clicking_a_job_whose_caller_pane_is_gone_does_nothing() {
+        let mut app = app_for_mouse_test();
+        let ws = Workspace::test_new("test");
+        let focused_pane = ws.tabs[0].root_pane;
+        app.state.workspaces = vec![ws];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.sidebar_detail_view = crate::app::state::SidebarDetailView::Jobs;
+        let log_path = std::env::temp_dir().join(format!(
+            "herdr-closed-caller-job-{}.log",
+            std::process::id()
+        ));
+        std::fs::write(&log_path, "job output\n").unwrap();
+        app.state.jobs = vec![crate::job::JobRecord {
+            id: "job-closed-caller".into(),
+            label: "closed-caller".into(),
+            command: "true".into(),
+            cwd: "/repo".into(),
+            caller_pane: "p999999".into(),
+            caller_agent: "claude".into(),
+            completion: "summary".into(),
+            status: "finished".into(),
+            runner_pid: None,
+            exit_code: Some(0),
+            started_unix_ms: Some(1),
+            finished_unix_ms: Some(2),
+            log_path: log_path.display().to_string(),
+        }];
+
+        let (_, detail_area) = crate::ui::expanded_sidebar_sections(
+            app.state.view.sidebar_rect,
+            app.state.sidebar_section_split,
+        );
+        let (row, _) = crate::ui::jobs_panel_rows(&app.state, detail_area)[0];
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), row.x, row.y));
+
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(
+            app.state.workspaces[0].focused_pane_id(),
+            Some(focused_pane)
+        );
+        assert!(app.state.active_popup_pane().is_none());
+        std::fs::remove_file(log_path).unwrap();
     }
 
     #[test]
@@ -1451,6 +1559,11 @@ mod tests {
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
 
+        app.state.sidebar_detail_view = crate::app::state::SidebarDetailView::Jobs;
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 16));
+        assert_eq!(app.state.workspaces[0].active_tab, 0);
+
+        app.state.sidebar_detail_view = crate::app::state::SidebarDetailView::Agents;
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 16));
 
         assert_eq!(app.state.workspaces[0].active_tab, 1);

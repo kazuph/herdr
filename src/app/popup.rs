@@ -329,6 +329,26 @@ mod tests {
         assert!(!app.state.direct_attach_resize_locks.contains(&terminal_id));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn closing_popup_terminates_its_child_process() {
+        let mut app = app_with_popup();
+        app.state.popup_panes.clear();
+        app.state.terminals.clear();
+        app.spawn_popup_shell_command("sleep 30", None, Vec::new(), PopupGeometry::default())
+            .expect("popup process should start");
+        let child_pid = app
+            .popup_runtime()
+            .and_then(TerminalRuntime::child_pid)
+            .expect("popup child pid");
+        assert!(crate::platform::process_exists(child_pid));
+
+        assert!(app.close_popup_pane());
+
+        assert!(!crate::platform::process_exists(child_pid));
+        assert!(app.state.popup_panes.is_empty());
+    }
+
     #[test]
     fn popup_survives_background_workspace_removal() {
         let mut app = app_with_popup();

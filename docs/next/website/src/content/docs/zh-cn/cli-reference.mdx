@@ -355,7 +355,7 @@ herdr plugin pane focus <pane_id>
 herdr plugin pane close <pane_id>
 ```
 
-`plugin pane open` 要求插件已链接、已启用并与当前平台兼容。它把清单声明的 `[[panes]]` 命令作为 Herdr 管理的终端窗格启动。清单的默认值是 `overlay`,在活动窗格上方打开一个临时的缩放覆盖层。它也可以作为分割、新标签页、缩放窗格,或不改变标签页布局的工作区级 `popup` 打开。弹窗运行时仍可使用 Herdr 快捷键切换工作区。`--width` 和 `--height` 以终端单元格数或 `80%` 这样的百分比设置弹窗外层尺寸;省略时默认为终端大小的一半,过小的值会限制为弹窗最小尺寸。弹窗不是 Herdr 窗格,不会收到 `HERDR_PANE_ID`,也不参与 pane 或智能体 API。非终端的原生插件窗格是之后的能力面。
+`plugin pane open` 要求插件已链接、已启用并与当前平台兼容。它把清单声明的 `[[panes]]` 命令作为 Herdr 管理的终端窗格启动。清单的默认值是 `overlay`,在活动窗格上方打开一个临时的缩放覆盖层。它也可以作为分割、新标签页、缩放窗格,或不改变标签页布局的工作区级 `popup` 打开。弹窗运行时仍可使用 Herdr 快捷键切换工作区。`--width` 和 `--height` 以终端单元格数或 `80%` 这样的百分比设置弹窗外层尺寸;省略时默认为终端区域的80%,过小的值会限制为弹窗最小尺寸。弹窗不是 Herdr 窗格,不会收到 `HERDR_PANE_ID`,也不参与 pane 或智能体 API。非终端的原生插件窗格是之后的能力面。
 
 `--env KEY=VALUE` 可以在启动进程的命令上重复使用,只作用于新启动的进程。当与调用方提供的环境变量冲突时,`HERDR_SOCKET_PATH`、`HERDR_BIN_PATH`、`HERDR_ENV`、`HERDR_WORKSPACE_ID`、`HERDR_TAB_ID`、`HERDR_PANE_ID`、`HERDR_PLUGIN_ID`、`HERDR_PLUGIN_ROOT`、`HERDR_PLUGIN_CONFIG_DIR`、`HERDR_PLUGIN_STATE_DIR`、`HERDR_PLUGIN_ENTRYPOINT_ID` 和 `HERDR_PLUGIN_CONTEXT_JSON` 等 Herdr 管理的变量保持权威。
 

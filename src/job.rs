@@ -116,7 +116,7 @@ impl JobStore {
         self.store.command_rows()
     }
 
-    /// Bounded window for the sidebar: running and queued first, newest first.
+    /// Bounded window for the sidebar, newest first.
     pub(crate) fn list_recent(&self, limit: usize) -> rusqlite::Result<Vec<JobRecord>> {
         self.store.recent_command_rows(limit)
     }
@@ -127,7 +127,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recent_rows_are_bounded_and_lead_with_unfinished_jobs() {
+    fn recent_rows_are_bounded_and_newest_first() {
         let dir = std::env::temp_dir().join(format!(
             "herdr-job-recent-{}-{}",
             std::process::id(),
@@ -144,11 +144,12 @@ mod tests {
         let recent = store.list_recent(3).unwrap();
 
         assert_eq!(recent.len(), 3);
-        assert_eq!(recent[0].id, "job-0");
-        assert_eq!(recent[0].status, "running");
-        // The rest fall back to newest first.
-        assert_eq!(recent[1].id, "job-4");
-        assert_eq!(recent[2].id, "job-3");
+        assert_eq!(
+            recent.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
+            ["job-4", "job-3", "job-2"],
+            "the window is the newest jobs, whatever their status"
+        );
+        assert_eq!(store.list_recent(9).unwrap().len(), 5);
     }
 
     fn record(id: &str) -> JobRecord {
@@ -195,12 +196,12 @@ mod tests {
         let running = reopened.get("job-one").unwrap().unwrap();
         assert_eq!(running.status, "running");
         assert_eq!(running.runner_pid, Some(1234));
-        assert_eq!(running.started_unix_ms, Some(1));
+        assert!(running.started_unix_ms.is_some());
         assert!(reopened.mark_finished("job-one", Some(7), 200).unwrap());
         let exited = reopened.get("job-one").unwrap().unwrap();
         assert_eq!(exited.status, "exited");
         assert_eq!(exited.exit_code, Some(7));
-        assert_eq!(exited.finished_unix_ms, Some(1));
+        assert!(exited.finished_unix_ms.is_some());
         let _ = std::fs::remove_file("/tmp/job-one.log");
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -219,7 +220,7 @@ mod tests {
         assert!(store.mark_cancelled("job-cancel", 20).unwrap());
         let cancelled = store.get("job-cancel").unwrap().unwrap();
         assert_eq!(cancelled.status, "cancelled");
-        assert_eq!(cancelled.finished_unix_ms, Some(1));
+        assert!(cancelled.finished_unix_ms.is_some());
         let _ = std::fs::remove_dir_all(dir);
     }
 

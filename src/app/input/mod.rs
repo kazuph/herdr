@@ -339,6 +339,7 @@ impl App {
                 MouseAction::FocusPane { ws_idx, pane_id } => {
                     self.focus_pane_internal_via_api(ws_idx, pane_id)
                 }
+                MouseAction::ActivateJob { index } => self.activate_job(index),
                 MouseAction::OpenPaneContextMenu {
                     ws_idx,
                     pane_id,
@@ -407,6 +408,52 @@ impl App {
         self.sync_selection_autoscroll_deadline();
     }
 
+    fn activate_job(&mut self, index: usize) {
+        let Some(job) = self.state.jobs.get(index).cloned() else {
+            return;
+        };
+        let log_path = std::path::PathBuf::from(&job.log_path);
+        if !log_path.is_file() {
+            return;
+        }
+        let Some((ws_idx, caller_pane)) = self.parse_pane_id(&job.caller_pane) else {
+            return;
+        };
+        let caller_is_focused = self.state.active == Some(ws_idx)
+            && self.state.workspaces[ws_idx].focused_pane_id() == Some(caller_pane);
+        if !caller_is_focused {
+            self.focus_pane_internal_via_api(ws_idx, caller_pane);
+            return;
+        }
+        let Ok(executable) = std::env::current_exe() else {
+            return;
+        };
+        let argv = vec![
+            executable.display().to_string(),
+            "__job-log-view".to_string(),
+            log_path.display().to_string(),
+        ];
+        if self
+            .spawn_popup_argv_command(
+                &argv,
+                log_path.parent().map(std::path::Path::to_path_buf),
+                Vec::new(),
+                crate::app::popup::PopupGeometry::default(),
+            )
+            .is_ok()
+        {
+            let popup_terminal_id = self
+                .state
+                .active_popup_pane()
+                .map(|popup| popup.terminal_id.clone());
+            if let Some(terminal) =
+                popup_terminal_id.and_then(|terminal_id| self.state.terminals.get_mut(&terminal_id))
+            {
+                terminal.set_manual_label(format!("job log: {}", job.label));
+            }
+        }
+    }
+
     fn sync_selection_autoscroll_deadline(&mut self) {
         if self.state.selection_autoscroll.is_none() {
             self.selection_autoscroll_deadline = None;
@@ -417,7 +464,7 @@ impl App {
     }
 
     fn handle_popup_mouse(&mut self, mouse: MouseEvent) {
-        let Some((_outer, inner)) =
+        let Some((outer, inner)) =
             crate::ui::popup_pane_rects(&self.state, self.state.view.terminal_area)
         else {
             return;
@@ -429,6 +476,14 @@ impl App {
         else {
             return;
         };
+        let inside_outer = mouse.column >= outer.x
+            && mouse.column < outer.x.saturating_add(outer.width)
+            && mouse.row >= outer.y
+            && mouse.row < outer.y.saturating_add(outer.height);
+        if !inside_outer && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            self.close_popup_pane();
+            return;
+        }
         let inside = mouse.column >= inner.x
             && mouse.column < inner.x.saturating_add(inner.width)
             && mouse.row >= inner.y

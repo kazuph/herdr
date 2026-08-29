@@ -38,6 +38,9 @@ pub(super) enum MouseAction {
         ws_idx: usize,
         pane_id: crate::layout::PaneId,
     },
+    ActivateJob {
+        index: usize,
+    },
     OpenPaneContextMenu {
         ws_idx: usize,
         pane_id: crate::layout::PaneId,
@@ -744,14 +747,7 @@ impl AppState {
                     }
 
                     if let Some(index) = self.jobs_panel_index_at(mouse.column, mouse.row) {
-                        if let Some(target) = self.job_focus_target(index) {
-                            self.mode = Mode::Terminal;
-                            return Some(MouseAction::FocusPane {
-                                ws_idx: target.0,
-                                pane_id: target.1,
-                            });
-                        }
-                        return None;
+                        return Some(MouseAction::ActivateJob { index });
                     }
 
                     if self.on_agent_panel_sort_toggle(mouse.column, mouse.row) {
