@@ -481,6 +481,62 @@ async fn retained_graphics_stays_ordered_after_an_older_render() {
 }
 
 #[tokio::test]
+async fn writer_drain_retries_graphics_only_render_without_full_redraw() {
+    let (mut server, client_rx, pane_id) = retained_test_server(b"aaaa");
+    let _ = enable_graphics_and_render(&mut server, &client_rx);
+    fill_render_lane(&server);
+    set_graphics_layer(&mut server, pane_id, vec![4, 5, 6]);
+
+    assert_eq!(
+        server.render_retained_graphics_update_and_stream(),
+        RetainedGraphicsOutcome::Deferred
+    );
+    assert_eq!(
+        server.clients[&1].deferred_render(),
+        DeferredRender::Graphics
+    );
+    assert!(matches!(
+        read_server_message(client_rx.recv_timeout(Duration::from_millis(100)).unwrap()),
+        ServerMessage::ReloadSoundConfig
+    ));
+    assert_eq!(
+        server.handle_server_event_with_render_impact(ServerEvent::ClientWriterDrained {
+            client_id: 1
+        }),
+        RenderImpact::Graphics
+    );
+}
+
+#[test]
+fn graphics_retry_does_not_downgrade_pending_full_render() {
+    let mut server = test_headless_server();
+    let (client_tx, _client_control_rx, _client_rx) = test_client_writer();
+    server.clients.insert(
+        1,
+        ClientConnection::new(
+            (80, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            crate::terminal_theme::TerminalTheme::default(),
+            None,
+            1,
+            RenderEncoding::SemanticFrame,
+            Some(client_tx),
+        ),
+    );
+    let client = server.clients.get_mut(&1).unwrap();
+    client.defer_full_render();
+    client.defer_pane_graphics_render();
+
+    assert_eq!(client.deferred_render(), DeferredRender::Full);
+    assert_eq!(
+        server.handle_server_event_with_render_impact(ServerEvent::ClientWriterDrained {
+            client_id: 1
+        }),
+        RenderImpact::Full
+    );
+}
+
+#[tokio::test]
 async fn retained_update_falls_back_for_mixed_app_geometry() {
     let (mut server, client_rx, _pane_id) = retained_test_server(b"aaaa");
     let _ = enable_graphics_and_render(&mut server, &client_rx);

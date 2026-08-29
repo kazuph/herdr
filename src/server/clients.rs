@@ -24,6 +24,7 @@ pub(crate) type RenderTarget = (
 pub(crate) enum DeferredRender {
     #[default]
     None,
+    Graphics,
     Full,
 }
 
@@ -63,6 +64,8 @@ pub(crate) struct ClientConnection {
     pub(crate) graphics_surface_reset_pending: bool,
     /// Whether an ordinary render was skipped because the render channel was full.
     pub(crate) render_pending: bool,
+    /// Whether a graphics-only render was skipped because the render channel was full.
+    pane_graphics_render_pending: bool,
     /// Last host mouse capture mode sent to this client.
     pub(crate) host_mouse_capture_active: Option<bool>,
     /// Last SGR pixel provenance mode sent to this client.
@@ -130,6 +133,7 @@ impl ClientConnection {
             pixel_mouse: false,
             graphics_surface_reset_pending: false,
             render_pending: false,
+            pane_graphics_render_pending: false,
             host_mouse_capture_active: None,
             host_sgr_pixels_active: None,
             staged_clipboard_files: Vec::new(),
@@ -143,6 +147,8 @@ impl ClientConnection {
     pub(crate) fn deferred_render(&self) -> DeferredRender {
         if self.render_pending {
             DeferredRender::Full
+        } else if self.pane_graphics_render_pending {
+            DeferredRender::Graphics
         } else {
             DeferredRender::None
         }
@@ -150,10 +156,18 @@ impl ClientConnection {
 
     pub(crate) fn clear_deferred_render(&mut self) {
         self.render_pending = false;
+        self.pane_graphics_render_pending = false;
     }
 
     pub(crate) fn defer_full_render(&mut self) {
         self.render_pending = true;
+        self.pane_graphics_render_pending = false;
+    }
+
+    pub(crate) fn defer_pane_graphics_render(&mut self) {
+        if !self.render_pending {
+            self.pane_graphics_render_pending = true;
+        }
     }
 
     pub(crate) fn take_deferred_render(&mut self) -> DeferredRender {

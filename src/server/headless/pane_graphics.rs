@@ -557,7 +557,7 @@ impl HeadlessServer {
                 Ok(()) => {
                     client.graphics_cache = next_graphics_cache;
                     if encoded.incomplete {
-                        client.defer_full_render();
+                        client.defer_pane_graphics_render();
                         deferred = true;
                     } else {
                         client.clear_deferred_render();
@@ -565,7 +565,7 @@ impl HeadlessServer {
                     crate::render_prof::event("retained_graphics.sent");
                 }
                 Err(std::sync::mpsc::TrySendError::Full(_)) => {
-                    client.defer_full_render();
+                    client.defer_pane_graphics_render();
                     deferred = true;
                 }
                 Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {

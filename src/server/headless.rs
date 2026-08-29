@@ -3050,10 +3050,19 @@ impl HeadlessServer {
     }
 
     fn handle_server_event_with_render_impact(&mut self, ev: ServerEvent) -> RenderImpact {
-        if self.handle_server_event(ev) {
-            RenderImpact::Full
-        } else {
-            RenderImpact::None
+        let deferred_render = match &ev {
+            ServerEvent::ClientWriterDrained { client_id } => self
+                .clients
+                .get(client_id)
+                .map_or(DeferredRender::None, ClientConnection::deferred_render),
+            _ => DeferredRender::None,
+        };
+        if !self.handle_server_event(ev) {
+            return RenderImpact::None;
+        }
+        match deferred_render {
+            DeferredRender::Graphics => RenderImpact::Graphics,
+            DeferredRender::None | DeferredRender::Full => RenderImpact::Full,
         }
     }
 

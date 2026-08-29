@@ -11,6 +11,7 @@
 - `HERDR_PANE_ID` (and `HERDR_ACTIVE_PANE_ID` / plugin runtime `HERDR_PANE_ID`) is now exported as `p_N`, matching upstream herdr, so scripts written for either binary resolve the same pane; `pN` and `%N` remain accepted as input and API responses keep `pN`.
 
 ### Fixed
+- Pane graphics streams now retry a delayed graphics-only frame without promoting the writer-drain event to a full TUI redraw, preventing continuous terminal-browser frames from saturating the server render loop.
 - Terminal applications that request SGR 1016 pixel mouse input now receive exact host pixel coordinates through the client/server path, so terminal-browser reload, tab, link, and scroll controls follow physical mouse clicks instead of cell-downgraded coordinates.
 - SGR 1016 panes now always receive pixel reports: cell-only input (hosts without pixel geometry, unfocused wheels) is delivered as the cell-centre pixel instead of a cell report the application would misread as pixels. Host pixel reports follow libghostty's 0-based convention, reports outside the measured grid are rejected, and pixel mode is only negotiated when the host window reports real pixel geometry and the foreground cell size is known.
 - Panes answer XTWINOPS size queries (`CSI 14 t`, `CSI 16 t`, `CSI 18 t`) once a host cell size is known, so pixel-aware applications such as terminal-browser measure the real cell size immediately instead of waiting for a query timeout.
