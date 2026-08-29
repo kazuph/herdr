@@ -41,6 +41,8 @@ const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 /// How often the sidebar re-reads background jobs while their list is open.
 const JOBS_REFRESH_INTERVAL: Duration = Duration::from_millis(1000);
+/// How many job rows the sidebar keeps; the dispatch store holds every job ever run.
+const SIDEBAR_JOBS_LIMIT: usize = 200;
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const PENDING_AGENT_RESUME_THEME_WAIT: Duration = Duration::from_millis(750);
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);

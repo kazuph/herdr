@@ -115,11 +115,41 @@ impl JobStore {
     pub(crate) fn list(&self) -> rusqlite::Result<Vec<JobRecord>> {
         self.store.command_rows()
     }
+
+    /// Bounded window for the sidebar: running and queued first, newest first.
+    pub(crate) fn list_recent(&self, limit: usize) -> rusqlite::Result<Vec<JobRecord>> {
+        self.store.recent_command_rows(limit)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recent_rows_are_bounded_and_lead_with_unfinished_jobs() {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-job-recent-{}-{}",
+            std::process::id(),
+            nonce()
+        ));
+        let store = JobStore::open_at(dir.join("jobs.db")).unwrap();
+        for index in 0..5 {
+            let mut job = record(&format!("job-{index}"));
+            job.label = format!("label-{index}");
+            store.insert(&job).unwrap();
+        }
+        store.mark_running("job-0", 11, 1).unwrap();
+
+        let recent = store.list_recent(3).unwrap();
+
+        assert_eq!(recent.len(), 3);
+        assert_eq!(recent[0].id, "job-0");
+        assert_eq!(recent[0].status, "running");
+        // The rest fall back to newest first.
+        assert_eq!(recent[1].id, "job-4");
+        assert_eq!(recent[2].id, "job-3");
+    }
 
     fn record(id: &str) -> JobRecord {
         JobRecord {

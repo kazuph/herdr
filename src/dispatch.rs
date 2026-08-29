@@ -521,6 +521,30 @@ impl DispatchStore {
         rows.collect()
     }
 
+    /// Newest commands first, running and queued ones ahead of finished ones.
+    ///
+    /// The store keeps every job ever dispatched, so the sidebar asks for a
+    /// bounded window instead of the whole table.
+    pub(crate) fn recent_command_rows(
+        &self,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<crate::job::JobRecord>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT d.external_id, d.label, d.body, d.project, d.status, d.exit_code, d.started_at,
+                   d.finished_at, d.log_path, fa.name, fa.pane_id, d.completion, d.runner_pid
+            FROM dispatches d
+            JOIN actors fa ON fa.id=d.from_actor
+            WHERE d.kind='command'
+            ORDER BY CASE d.status WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
+                     d.id DESC
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt.query_map(params![limit as i64], job_from_row)?;
+        rows.collect()
+    }
+
     pub(crate) fn command_row(&self, id: &str) -> rusqlite::Result<Option<crate::job::JobRecord>> {
         self.conn
             .query_row(

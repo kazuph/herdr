@@ -628,7 +628,7 @@ impl App {
         let event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
             let jobs = crate::job::JobStore::open_active()
-                .and_then(|store| store.list())
+                .and_then(|store| store.list_recent(super::SIDEBAR_JOBS_LIMIT))
                 .unwrap_or_default();
             let _ = event_tx.blocking_send(AppEvent::JobsRefreshed { jobs });
         });
