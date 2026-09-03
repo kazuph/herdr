@@ -14,6 +14,7 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- Message sends now reject the `*` recipient instead of broadcasting to every agent; callers must name one agent or pane target.
 - Plain popup terminals now close on Escape, all popup terminals close when their outside area is clicked, and closing a popup terminates its child process; interactive terminal apps still receive Escape when they enable terminal modes.
 - The sidebar agent list no longer draws over the sidebar width toggle: the panel's last row is reserved for the NARROW/NORMAL/WIDE button.
 - Pane graphics streams now retry a delayed graphics-only frame without promoting the writer-drain event to a full TUI redraw, preventing continuous terminal-browser frames from saturating the server render loop.
