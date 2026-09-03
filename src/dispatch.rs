@@ -455,21 +455,6 @@ impl DispatchStore {
         rows.collect()
     }
 
-    pub(crate) fn participants(&self, room: &str) -> rusqlite::Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            r#"
-            SELECT name FROM (
-              SELECT fa.name AS name FROM dispatches d JOIN actors fa ON fa.id=d.from_actor WHERE d.room=?1
-              UNION
-              SELECT ta.name AS name FROM dispatches d JOIN actors ta ON ta.id=d.to_actor WHERE d.room=?1
-            )
-            ORDER BY name ASC
-            "#,
-        )?;
-        let rows = stmt.query_map(params![room], |row| row.get(0))?;
-        rows.collect()
-    }
-
     pub(crate) fn mark_messages_delivered(
         &self,
         room: &str,

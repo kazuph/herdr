@@ -115,10 +115,6 @@ impl MsgStore {
         self.store.rooms()
     }
 
-    pub(crate) fn participants(&self, room: &str) -> rusqlite::Result<Vec<String>> {
-        self.store.participants(room)
-    }
-
     pub(crate) fn pending_nudge_for(
         &self,
         room: &str,

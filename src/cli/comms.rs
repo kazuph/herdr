@@ -108,6 +108,10 @@ pub(super) fn msg_send(args: &[String]) -> std::io::Result<i32> {
     }
 
     let to = args[0].clone();
+    if to == "*" {
+        eprintln!("wildcard recipient '*' is not supported; specify one agent or pane target");
+        return Ok(2);
+    }
     let mut room = crate::msg::DEFAULT_ROOM.to_string();
     let mut from = None;
     let mut reply_to = None;
@@ -1534,14 +1538,14 @@ fn print_msg_help() {
     eprintln!("  herdr msg history [--room R] [--project P] [--limit N]");
     eprintln!("  herdr msg tail [--room R] [--project P] [--limit N]");
     eprintln!("  herdr msg rooms");
-    eprintln!("  send targets accept agent names, pane targets, or '*' for room broadcast");
+    eprintln!("  send targets accept agent names or pane targets");
     print_data_footer();
 }
 
 fn print_send_help() {
     eprintln!("herdr send commands:");
     eprintln!("  herdr send <to> <text> [--room R] [--reply-to ID] [--from NAME]");
-    eprintln!("  targets accept agent names, pane targets, or '*' for room broadcast");
+    eprintln!("  targets accept agent names or pane targets");
     print_data_footer();
 }
 
@@ -1584,6 +1588,13 @@ fn print_data_footer() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn msg_send_rejects_wildcard_before_contacting_the_server() {
+        let args = vec!["*".to_string(), "do not deliver".to_string()];
+
+        assert_eq!(msg_send(&args).unwrap(), 2);
+    }
 
     #[test]
     fn pane_notify_tail_sample_keeps_bounded_chars() {

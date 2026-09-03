@@ -46,11 +46,15 @@ impl App {
         let room = normalize_room(&params.room)?;
         let from_agent = normalize_agent(&params.from_agent, "from_agent")?;
         let body = normalize_body(&params.body)?;
-        let recipients = if params.to == "*" {
-            self.broadcast_recipients(&room, &from_agent)?
-        } else {
-            vec![self.resolve_msg_recipient(&room, &params.to)?]
-        };
+        if params.to == "*" {
+            return Err(ErrorBody {
+                code: "msg_wildcard_recipient".into(),
+                message:
+                    "wildcard recipient '*' is not supported; specify one agent or pane target"
+                        .into(),
+            });
+        }
+        let recipients = vec![self.resolve_msg_recipient(&room, &params.to)?];
 
         let mut store = open_msg_store()?;
         let mut messages = Vec::with_capacity(recipients.len());
@@ -312,43 +316,6 @@ impl App {
         aliases.dedup();
         aliases
     }
-
-    fn broadcast_recipients(&self, room: &str, from_agent: &str) -> Result<Vec<String>, ErrorBody> {
-        let mut recipients = if room == crate::msg::JOBS_ROOM {
-            let store = open_msg_store()?;
-            let mut recipients = store.participants(room).map_err(msg_store_error)?;
-            recipients.extend(
-                self.collect_agent_infos()
-                    .into_iter()
-                    .filter_map(|agent| mailbox_agent_name(&agent)),
-            );
-            recipients
-        } else {
-            let store = open_msg_store()?;
-            let mut recipients = store.participants(room).map_err(msg_store_error)?;
-            recipients.retain(|recipient| is_global_pane_id(recipient));
-            recipients.extend(
-                self.collect_agent_infos()
-                    .into_iter()
-                    .map(|agent| agent.global_pane_id),
-            );
-            recipients
-        };
-        let from_pane = self
-            .agent_info_for_target(from_agent)
-            .ok()
-            .map(|agent| agent.global_pane_id);
-        recipients.sort();
-        recipients.dedup();
-        recipients.retain(|agent| agent != from_agent && Some(agent) != from_pane.as_ref());
-        if recipients.is_empty() {
-            return Err(ErrorBody {
-                code: "msg_no_recipients".into(),
-                message: format!("room {room} has no broadcast recipients"),
-            });
-        }
-        Ok(recipients)
-    }
 }
 
 fn inject_text_and_enter(
@@ -436,13 +403,6 @@ fn deliver_regular_messages(
         delivered = true;
     }
     Ok(delivered)
-}
-
-fn is_global_pane_id(value: &str) -> bool {
-    value
-        .strip_prefix('p')
-        .and_then(|number| number.parse::<u32>().ok())
-        .is_some_and(|raw| raw > 0 && value == format!("p{raw}"))
 }
 
 fn regular_mail_can_submit(status: AgentStatus) -> bool {
@@ -782,65 +742,16 @@ mod tests {
     }
 
     #[test]
-    fn broadcast_submits_immediately_to_working_recipients() {
+    fn wildcard_recipient_fails_closed_without_persisting_or_delivering_messages() {
         with_msg_api_harness(&["alpha", "beta", "gamma"], |harness| {
-            let nudged = harness.send("alpha", "*", "broadcast", "hello everyone");
-            let expected_recipients = [
-                harness.global_pane_id("beta"),
-                harness.global_pane_id("gamma"),
-            ];
+            for room in ["wildcard-rejected", crate::msg::JOBS_ROOM] {
+                let code = harness.send_error_code("alpha", "*", room);
 
-            let messages = harness.history("broadcast");
-            assert_eq!(
-                messages
-                    .iter()
-                    .map(|message| message.to_agent.as_str())
-                    .collect::<Vec<_>>(),
-                expected_recipients
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-            );
-            assert!(messages.iter().all(|message| message.from_agent == "alpha"));
-            assert_eq!(nudged, expected_recipients);
-            assert_eq!(
-                harness.received_texts("beta"),
-                vec!["hello everyone\r".to_string()]
-            );
-            assert_eq!(
-                harness.received_texts("gamma"),
-                vec!["hello everyone\r".to_string()]
-            );
-            assert!(messages.iter().all(|message| message.read_at.is_some()));
-        });
-
-        with_msg_api_harness(&["alpha"], |harness| {
-            let code = harness.send_error_code("alpha", "*", "broadcast-empty");
-
-            assert_eq!(code, "msg_no_recipients");
-            assert!(harness.history("broadcast-empty").is_empty());
-        });
-    }
-
-    #[test]
-    fn regular_broadcast_keeps_offline_global_pane_participants_only() {
-        with_msg_api_harness(&["alpha", "beta"], |harness| {
-            let room = "offline-broadcast";
-            let offline_pane_id = "p999999";
-            harness.insert_queued_message(room, offline_pane_id, "existing stable recipient");
-            harness.insert_queued_message(room, "legacy-beta", "legacy recipient");
-
-            harness.send("alpha", "*", room, "broadcast");
-
-            let recipients = harness
-                .history(room)
-                .into_iter()
-                .filter(|message| message.body == "broadcast")
-                .map(|message| message.to_agent)
-                .collect::<Vec<_>>();
-            let mut expected = vec![harness.global_pane_id("beta"), offline_pane_id.to_string()];
-            expected.sort();
-            assert_eq!(recipients, expected);
+                assert_eq!(code, "msg_wildcard_recipient");
+                assert!(harness.history(room).is_empty());
+            }
+            assert!(harness.received_texts("beta").is_empty());
+            assert!(harness.received_texts("gamma").is_empty());
         });
     }
 
@@ -852,14 +763,6 @@ mod tests {
             assert_eq!(code, "agent_not_found");
             assert!(harness.history("direct-missing").is_empty());
         });
-    }
-
-    #[test]
-    fn global_pane_id_requires_a_positive_canonical_number() {
-        assert!(is_global_pane_id("p42"));
-        for value in ["p0", "p01", "p_", "beta"] {
-            assert!(!is_global_pane_id(value), "{value} must not be canonical");
-        }
     }
 
     #[test]
