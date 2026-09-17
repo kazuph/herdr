@@ -10,6 +10,10 @@ pub(super) fn command() -> Command {
         .arg(option("session", "NAME").help("Use or create a named persistent session"))
         .arg(option("remote", "TARGET").help("Attach through SSH to a remote Herdr server"))
         .arg(
+            option("machine", "LABEL_OR_ID")
+                .help("Route agent, pane, workspace, or worktree to a saved SSH machine"),
+        )
+        .arg(
             option("remote-keybindings", "MODE")
                 .value_parser(["local", "server"])
                 .help("Choose local or server keybindings for remote attach"),

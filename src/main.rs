@@ -524,6 +524,7 @@ herdr run --label tests -- cargo test
 - `--no-session` runs monolithically without server/client.
 - `--session <name>` uses or creates a named persistent session.
 - `--remote <target>` attaches through SSH to a remote Herdr server.
+- `--machine <label-or-id>` routes `agent`, `pane`, `workspace`, or `worktree` to a saved SSH machine without opening a Herdr window.
 - `--default-config` prints the default configuration.
 - `--version`, `-V` prints the version.
 - `--help`, `-h` shows this help.
@@ -535,6 +536,39 @@ Run `herdr <command> help` for command-specific usage. Config: {config_path}. Lo
         config_path = config::config_path().display(),
         log_paths = logging::help_log_paths_summary()
     );
+}
+
+/// Route a CLI subcommand to a saved SSH machine (G11 P2). Never falls back
+/// to local execution: every failure exits non-zero before any local command
+/// runs. Returns the process exit code.
+fn run_machine_routed(args: &[String], route: &machine::MachineRoute) -> i32 {
+    match machine::classify_machine_request(args) {
+        Ok(machine::MachineRequest::LocalHelp) => {
+            print_root_help();
+            return 0;
+        }
+        Ok(machine::MachineRequest::Route { .. }) => {}
+        Err((message, code)) => {
+            eprintln!("error: {message}");
+            eprintln!("run 'herdr --help' for usage");
+            return code;
+        }
+    }
+    let catalog = machine::load();
+    let profile = match catalog.resolve(&route.label_or_id) {
+        Ok(profile) => profile.clone(),
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 1;
+        }
+    };
+    match machine::run_routed(&profile, &args[1..]) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("error: {error}");
+            1
+        }
+    }
 }
 
 fn args_as_utf8<I>(args: I) -> Result<Vec<String>, String>
@@ -588,6 +622,24 @@ fn main() -> io::Result<()> {
         eprintln!("error: --remote can only be used with the default launch command");
         eprintln!("run 'herdr --help' for usage");
         std::process::exit(2);
+    }
+
+    let (args, machine_route) = match machine::extract_machine_args(&args) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            eprintln!("error: {err}");
+            eprintln!("run 'herdr --help' for usage");
+            std::process::exit(2);
+        }
+    };
+
+    if let Some(route) = machine_route {
+        if remote_launch.is_some() {
+            eprintln!("error: --machine cannot be used with --remote");
+            eprintln!("run 'herdr --help' for usage");
+            std::process::exit(2);
+        }
+        std::process::exit(run_machine_routed(&args, &route));
     }
 
     match cli::maybe_run(&args) {
@@ -667,6 +719,7 @@ fn main() -> io::Result<()> {
         "--no-session",
         "--session",
         "--remote",
+        "--machine",
         "--remote-keybindings",
         "--version",
         "-V",

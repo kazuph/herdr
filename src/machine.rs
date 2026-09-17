@@ -19,6 +19,10 @@ use tracing::warn;
 /// ConnectTimeout keeps stalls fail-closed instead of hanging the CLI.
 const SSH_CONNECT_TIMEOUT_SECS: u64 = 15;
 
+/// Environment override for the remote herdr executable used by `--machine`
+/// routing (P2). Defaults to `herdr` on the remote `PATH`.
+pub(crate) const MACHINE_REMOTE_BINARY_ENV_VAR: &str = "HERDR_MACHINE_REMOTE_BINARY";
+
 /// A single saved SSH machine profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineProfile {
@@ -260,6 +264,146 @@ fn probe_ssh_reachable_with_timeout(target: &str, timeout_secs: u64) -> std::io:
     }
 }
 
+/// Remote herdr executable name for `--machine` routing (P2).
+pub(crate) fn remote_binary() -> String {
+    std::env::var(MACHINE_REMOTE_BINARY_ENV_VAR)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "herdr".to_string())
+}
+
+/// Subcommands that may be routed to a saved machine (G11 P2).
+/// Everything else is rejected so local-only commands (`run`, `inbox`,
+/// `machine` itself, …) can never silently execute against the wrong host.
+pub(crate) const ROUTABLE_SUBCOMMANDS: &[&str] = &["agent", "pane", "workspace", "worktree"];
+
+/// Parsed `--machine <label-or-id>` request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MachineRoute {
+    pub(crate) label_or_id: String,
+}
+
+/// Split `--machine` out of the argv, mirroring the `--remote` extraction
+/// shape. Returns the cleaned argv plus the routing request, if any.
+pub(crate) fn extract_machine_args(
+    args: &[String],
+) -> Result<(Vec<String>, Option<MachineRoute>), String> {
+    let mut cleaned = Vec::with_capacity(args.len());
+    if let Some(program) = args.first() {
+        cleaned.push(program.clone());
+    }
+    let mut route = None;
+    let mut index = 1;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "--" {
+            cleaned.extend_from_slice(&args[index..]);
+            break;
+        }
+        if arg == "--machine" {
+            if route.is_some() {
+                return Err("--machine can only be specified once".to_string());
+            }
+            let Some(value) = args.get(index + 1) else {
+                return Err("missing value for --machine".to_string());
+            };
+            if value.is_empty() || value.starts_with('-') {
+                return Err("--machine requires a saved machine label or id".to_string());
+            }
+            route = Some(MachineRoute {
+                label_or_id: value.clone(),
+            });
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--machine=") {
+            if route.is_some() {
+                return Err("--machine can only be specified once".to_string());
+            }
+            if value.is_empty() || value.starts_with('-') {
+                return Err("--machine requires a saved machine label or id".to_string());
+            }
+            route = Some(MachineRoute {
+                label_or_id: value.to_string(),
+            });
+            index += 1;
+            continue;
+        }
+        cleaned.push(arg.clone());
+        index += 1;
+    }
+    Ok((cleaned, route))
+}
+
+/// Build the ssh argv that executes the subcommand on the saved machine.
+/// Pure function so the exact wire shape is unit-testable without a host.
+pub(crate) fn build_routed_argv(
+    profile: &MachineProfile,
+    subcommand_args: &[String],
+) -> Vec<String> {
+    let mut argv = vec![
+        "ssh".to_string(),
+        "-o".to_string(),
+        "BatchMode=yes".to_string(),
+        "-o".to_string(),
+        format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"),
+        "--".to_string(),
+        profile.target.clone(),
+        remote_binary(),
+        "--session".to_string(),
+        profile.session.clone(),
+    ];
+    argv.extend(subcommand_args.iter().cloned());
+    argv
+}
+
+/// What `--machine` wants: local help or a routed subcommand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MachineRequest {
+    LocalHelp,
+    Route { subcommand: String },
+}
+
+/// Refuse anything that must never execute locally or remotely.
+/// Pure so the fail-closed gate is unit-testable without a host.
+pub(crate) fn classify_machine_request(args: &[String]) -> Result<MachineRequest, (String, i32)> {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        return Ok(MachineRequest::LocalHelp);
+    }
+    let Some(subcommand) = args.get(1).map(String::as_str) else {
+        return Err(("--machine requires a subcommand".to_string(), 2));
+    };
+    if !ROUTABLE_SUBCOMMANDS.contains(&subcommand) {
+        return Err((
+            "--machine can only route agent, pane, workspace, or worktree".to_string(),
+            2,
+        ));
+    }
+    Ok(MachineRequest::Route {
+        subcommand: subcommand.to_string(),
+    })
+}
+
+/// Execute a routed subcommand, inheriting stdio and the remote exit code.
+/// Any transport failure is an error: the caller must never fall back to
+/// local execution (G11 P2).
+pub(crate) fn run_routed(
+    profile: &MachineProfile,
+    subcommand_args: &[String],
+) -> std::io::Result<i32> {
+    let argv = build_routed_argv(profile, subcommand_args);
+    let status = Command::new(&argv[0])
+        .args(&argv[1..])
+        .status()
+        .map_err(|err| {
+            std::io::Error::other(format!(
+                "failed to reach saved machine {:?}: {err}; not falling back to local execution",
+                profile.label
+            ))
+        })?;
+    Ok(status.code().unwrap_or(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,5 +490,143 @@ mod tests {
     fn ssh_probe_to_unroutable_host_fails_fast() {
         let err = probe_ssh_reachable_with_timeout("invalid.invalid.invalid", 2).unwrap_err();
         assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn remote_binary_defaults_to_herdr() {
+        assert_eq!(remote_binary(), "herdr");
+    }
+
+    #[test]
+    fn extract_machine_args_parses_and_cleans() {
+        let argv = vec![
+            "herdr".to_string(),
+            "--machine".to_string(),
+            "office".to_string(),
+            "agent".to_string(),
+            "list".to_string(),
+        ];
+        let (cleaned, route) = extract_machine_args(&argv).unwrap();
+        assert_eq!(
+            route,
+            Some(MachineRoute {
+                label_or_id: "office".to_string()
+            })
+        );
+        assert_eq!(cleaned, vec!["herdr", "agent", "list"]);
+
+        let argv = vec![
+            "herdr".to_string(),
+            "--machine=office".to_string(),
+            "pane".to_string(),
+        ];
+        let (cleaned, route) = extract_machine_args(&argv).unwrap();
+        assert!(route.is_some());
+        assert_eq!(cleaned, vec!["herdr", "pane"]);
+
+        // After `--` the flag is positional, not routing.
+        let argv = vec![
+            "herdr".to_string(),
+            "run".to_string(),
+            "--".to_string(),
+            "--machine".to_string(),
+        ];
+        let (cleaned, route) = extract_machine_args(&argv).unwrap();
+        assert_eq!(route, None);
+        assert_eq!(cleaned, argv);
+
+        assert!(extract_machine_args(&["herdr".to_string(), "--machine".to_string()]).is_err());
+        assert!(extract_machine_args(&[
+            "herdr".to_string(),
+            "--machine".to_string(),
+            "a".to_string(),
+            "--machine".to_string(),
+            "b".to_string(),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn classify_machine_request_gates_routing() {
+        use MachineRequest::*;
+        let route = |argv: &[&str]| {
+            classify_machine_request(&argv.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            route(&["herdr", "agent", "list"]),
+            Ok(Route {
+                subcommand: "agent".to_string()
+            })
+        );
+        for subcommand in ["pane", "workspace", "worktree"] {
+            assert!(matches!(route(&["herdr", subcommand]), Ok(Route { .. })));
+        }
+        assert_eq!(route(&["herdr", "--help"]), Ok(LocalHelp));
+        // Anything else is refused before any resolve/spawn, so a refusal
+        // can never fall through to local execution.
+        for argv in [
+            vec!["herdr"],
+            vec!["herdr", "run", "--", "true"],
+            vec!["herdr", "machine", "list"],
+            vec!["herdr", "inbox"],
+            vec!["herdr", "send", "p1", "hi"],
+        ] {
+            let Err((_, code)) = route(&argv) else {
+                panic!("must refuse {argv:?}");
+            };
+            assert_eq!(code, 2);
+        }
+    }
+
+    #[test]
+    fn run_routed_to_unreachable_host_never_succeeds() {
+        let profile = MachineProfile {
+            id: "m1".to_string(),
+            label: "gone".to_string(),
+            target: "invalid.invalid.invalid".to_string(),
+            session: "default".to_string(),
+            enabled: true,
+        };
+        // Transport failure surfaces as Err (spawn) or a non-zero remote
+        // status (ssh 255); it is never Ok(0) and never touches local state.
+        assert!(!matches!(
+            run_routed(&profile, &["agent".to_string(), "list".to_string()]),
+            Ok(0)
+        ));
+    }
+
+    #[test]
+    fn routed_argv_shape_is_exact() {
+        let profile = MachineProfile {
+            id: "m1".to_string(),
+            label: "office".to_string(),
+            target: "ssh.example.com".to_string(),
+            session: "work".to_string(),
+            enabled: true,
+        };
+        let argv = build_routed_argv(&profile, &["agent".to_string(), "list".to_string()]);
+        assert_eq!(
+            argv,
+            vec![
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=15",
+                "--",
+                "ssh.example.com",
+                "herdr",
+                "--session",
+                "work",
+                "agent",
+                "list",
+            ]
+        );
+        assert!(ROUTABLE_SUBCOMMANDS.contains(&"agent"));
+        assert!(ROUTABLE_SUBCOMMANDS.contains(&"pane"));
+        assert!(ROUTABLE_SUBCOMMANDS.contains(&"workspace"));
+        assert!(ROUTABLE_SUBCOMMANDS.contains(&"worktree"));
+        assert!(!ROUTABLE_SUBCOMMANDS.contains(&"run"));
+        assert!(!ROUTABLE_SUBCOMMANDS.contains(&"machine"));
     }
 }
