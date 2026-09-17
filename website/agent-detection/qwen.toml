@@ -1,5 +1,5 @@
 id = "qwen"
-version = "2026.09.17.1"
+version = "2026.09.17.2"
 min_engine_version = 2
 updated_at = "2026-09-17T00:00:00Z"
 aliases = ["qwen-code", "qwen code"]
@@ -41,7 +41,7 @@ state = "blocked"
 priority = 1000
 region = "bottom_non_empty_lines(20)"
 visible_blocker = true
-line_regex = ['^\s*⠏\s+.*\.\.\.\s*$']
+line_regex = ['^\s*[⠁-⣿]\s+.*\.\.\.\s*$']
 any = [
   { contains = ["Waiting for user confirmation..."] },
   { contains = ["等待用户确认..."] },

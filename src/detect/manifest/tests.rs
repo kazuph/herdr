@@ -871,10 +871,22 @@ fn qwen_cancel_timer_is_working() {
 #[test]
 fn qwen_user_confirmation_is_blocked() {
     with_manifest_dirs("qwen-confirmation", || {
-        let screen = "⠏ Working ...\nWaiting for user confirmation...\n";
-        let result = explain(Agent::Qwen, screen);
-        assert_eq!(result.state, AgentState::Blocked);
-        assert!(result.visible_blocker);
+        // Confirmation is a contracted Blocked state. The spinner rotates
+        // through the same braille range as working detection, so Blocked
+        // must stay stable across frames while the confirmation text remains.
+        for spinner in ['⠏', '⠋'] {
+            let screen = format!("{spinner} Working ...\nWaiting for user confirmation...\n");
+            let result = explain(Agent::Qwen, &screen);
+            assert_eq!(
+                result.state,
+                AgentState::Blocked,
+                "confirmation with spinner {spinner:?} should stay blocked"
+            );
+            assert!(
+                result.visible_blocker,
+                "confirmation with spinner {spinner:?} should remain a visible blocker"
+            );
+        }
     });
 }
 
