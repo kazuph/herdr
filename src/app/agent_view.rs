@@ -11,7 +11,7 @@ use crate::api::schema::{
     AgentViewFilter, AgentViewSetParams, AgentViewSort, AgentViewSortField, AgentViewSortOrder,
     AgentViewValue,
 };
-use crate::ui::{AgentPanelEntry, agent_panel_status_key, workspace_attention_priority};
+use crate::ui::{agent_panel_status_key, workspace_attention_priority, AgentPanelEntry};
 
 use super::{AppState, Mode};
 

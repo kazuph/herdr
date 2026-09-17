@@ -473,7 +473,9 @@ fn agent_wait(args: &[String]) -> std::io::Result<i32> {
     };
 
     let mut timeout_ms = None;
-    let mut desired_status = None;
+    // Repeatable for multi-status waits (upstream `until` semantics).
+    // A single --status keeps working exactly as before.
+    let mut desired_statuses = Vec::new();
 
     let mut index = 1;
     while index < args.len() {
@@ -483,7 +485,7 @@ fn agent_wait(args: &[String]) -> std::io::Result<i32> {
                     eprintln!("missing value for --status");
                     return Ok(2);
                 };
-                desired_status = Some(parse_agent_wait_status(value)?);
+                desired_statuses.push(parse_agent_wait_status(value)?);
                 index += 2;
             }
             "--timeout" => {
@@ -505,7 +507,7 @@ fn agent_wait(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
-    let Some(agent_status) = desired_status else {
+    if desired_statuses.is_empty() {
         eprintln!("missing required --status");
         return Ok(2);
     };
@@ -517,7 +519,11 @@ fn agent_wait(args: &[String]) -> std::io::Result<i32> {
     }
     if response["result"]["agent"]["agent_status"]
         .as_str()
-        .is_some_and(|current| agent_wait_status_satisfied(agent_status, current))
+        .is_some_and(|current| {
+            desired_statuses
+                .iter()
+                .any(|desired| agent_wait_status_satisfied(*desired, current))
+        })
     {
         println!("{}", serde_json::to_string(&response).unwrap());
         return Ok(0);
@@ -528,23 +534,24 @@ fn agent_wait(args: &[String]) -> std::io::Result<i32> {
         return Ok(1);
     };
 
-    let subscriptions = if agent_status == AgentStatus::Idle {
-        vec![
-            Subscription::PaneAgentStatusChanged {
+    let mut subscriptions = Vec::new();
+    for desired in &desired_statuses {
+        if *desired == AgentStatus::Idle {
+            subscriptions.push(Subscription::PaneAgentStatusChanged {
                 pane_id: pane_id.to_owned(),
                 agent_status: Some(AgentStatus::Idle),
-            },
-            Subscription::PaneAgentStatusChanged {
+            });
+            subscriptions.push(Subscription::PaneAgentStatusChanged {
                 pane_id: pane_id.to_owned(),
                 agent_status: Some(AgentStatus::Done),
-            },
-        ]
-    } else {
-        vec![Subscription::PaneAgentStatusChanged {
-            pane_id: pane_id.to_owned(),
-            agent_status: Some(agent_status),
-        }]
-    };
+            });
+        } else {
+            subscriptions.push(Subscription::PaneAgentStatusChanged {
+                pane_id: pane_id.to_owned(),
+                agent_status: Some(*desired),
+            });
+        }
+    }
 
     super::wait_for_agent_change(
         Request {
@@ -714,7 +721,9 @@ fn print_agent_help() {
 
 #[cfg(test)]
 mod tests {
-    use super::{agent_restore, parse_agent_restore_args};
+    use super::{
+        agent_restore, agent_wait_status_satisfied, parse_agent_restore_args, AgentStatus,
+    };
 
     #[test]
     fn agent_restore_accepts_only_optional_dry_run() {
@@ -735,5 +744,19 @@ mod tests {
         for flag in ["help", "--help", "-h"] {
             assert_eq!(agent_restore(&[flag.to_string()]).unwrap(), 0);
         }
+    }
+
+    #[test]
+    fn wait_status_set_matches_any_desired_status() {
+        let set = [AgentStatus::Idle, AgentStatus::Blocked];
+        let satisfied = |current: &str| {
+            set.iter()
+                .any(|desired| agent_wait_status_satisfied(*desired, current))
+        };
+        assert!(satisfied("idle"));
+        assert!(satisfied("done"));
+        assert!(satisfied("blocked"));
+        assert!(!satisfied("working"));
+        assert!(!satisfied("unknown"));
     }
 }

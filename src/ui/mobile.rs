@@ -8,8 +8,7 @@ use ratatui::{
 
 use super::sidebar::{
     agent_panel_entries, agent_panel_entries_from, all_agent_panel_entries,
-    grouped_child_display_label,
-    next_entry_is_indented_workspace, workspace_list_entries_expanded,
+    grouped_child_display_label, next_entry_is_indented_workspace, workspace_list_entries_expanded,
     workspace_section_is_expanded, workspace_sections_for_entries, AgentPanelEntry,
     WorkspaceListEntry,
 };
@@ -530,7 +529,12 @@ fn render_mobile_switcher_content(
         let title = app
             .agent_view_override
             .as_ref()
-            .map(|view| format!("agents \u{b7} {}", view.label.as_deref().unwrap_or("filtered")))
+            .map(|view| {
+                format!(
+                    "agents \u{b7} {}",
+                    view.label.as_deref().unwrap_or("filtered")
+                )
+            })
             .unwrap_or_else(|| "agents".to_string());
         render_section_title_at(
             frame,

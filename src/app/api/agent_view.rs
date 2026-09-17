@@ -142,10 +142,8 @@ mod tests {
         assert!(app.state.agent_view_override.is_some());
         assert_eq!(app.state.agent_panel_scroll, 0);
 
-        let response = app.handle_agent_view_clear(
-            "clear".into(),
-            AgentViewClearParams { source: None },
-        );
+        let response =
+            app.handle_agent_view_clear("clear".into(), AgentViewClearParams { source: None });
         let parsed: crate::api::schema::SuccessResponse =
             serde_json::from_str(&response).expect("success response");
         let crate::api::schema::ResponseResult::AgentView { active, .. } = parsed.result else {

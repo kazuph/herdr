@@ -52,9 +52,15 @@ pub struct AgentViewClearParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum AgentViewFilter {
-    All { filters: Vec<AgentViewFilter> },
-    Any { filters: Vec<AgentViewFilter> },
-    Not { filter: Box<AgentViewFilter> },
+    All {
+        filters: Vec<AgentViewFilter>,
+    },
+    Any {
+        filters: Vec<AgentViewFilter>,
+    },
+    Not {
+        filter: Box<AgentViewFilter>,
+    },
     Eq {
         field: AgentViewField,
         value: AgentViewValue,
@@ -63,7 +69,9 @@ pub enum AgentViewFilter {
         field: AgentViewField,
         values: Vec<AgentViewValue>,
     },
-    Exists { field: AgentViewField },
+    Exists {
+        field: AgentViewField,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
