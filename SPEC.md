@@ -1731,6 +1731,19 @@
   - 本家のhosted installer・`latest.json`・self-update経路がforkの実行時に復活せず、fork install、remote binary、npm、Homebrewの手順がG8と一致する。
   - Cargo dependency、vendor、protocol/API schema、package include、generated docsの差分が、単なるrebase残骸ではなく本家v0.8.0またはG1〜G9の契約へ紐付く。
   - parity実装の完了判定は、静的/unit/CI、対象OSを含むlive runtime、package/release検証、human acceptanceを分離し、compile成功や未リリース`upstream/master`追従だけで完了扱いにしない。
+
+### UP-AUTOMATION 取込packet（自動化CLI・プラグイン基盤、2026-09-17ユーザー確定政策付き）
+- **対象本家source**: `1955406e`（serverなしlink）、`69d07dba`（plugin state共有）、`d30ab1b5`（agent views＋startup hooks）、`3f809476`（automation CLI）、`b12da239`（marketplace索引）。いずれもcherry-pickせず観測挙動の再実装とする。pre-packet baselineはfork `5016f40b`、層branchは`feat/upstream-automation-plugins`。
+- **ユーザー確定政策（2026-09-17）**: (a) agent viewsの表示差し替えのみ移植し、startup hooks・integration installer・外部設定書換えは一切入れない（G8維持）。(b) 既存fork導線（`herdr send`/`msg`/`run`/`agent wait`）を正本とし、上流との差分（additiveなflag/event）のみ移植する。既存subcommand名・help文言は変えない。(c) Windows導入は対象外。
+- **packet分割とdisposition**:
+  - UP-AUTOMATION-P1 `semantic_port`: server停止中の`herdr plugin link <path> [--disabled]`が成功し、enabled状態つきでregistryへ保存される（`1955406e`相当）。`plugin list`の既存offline経路と同型。
+  - UP-AUTOMATION-P2 `semantic_port`: plugin stateをsession横断で共有する（`69d07dba`相当）。mailbox/jobのsession分離（G9）を壊さないことを受け入れ条件に入れる。
+  - UP-AUTOMATION-P3 `semantic_port`: manifest拡張・registry永続化・`plugin list --json`出力の差分のみ（`d30ab1b5`のうちviews/hooks本体を除く）。既存manifestはそのまま読めること。
+  - UP-AUTOMATION-P4 `semantic_port`: agent viewsの表示差し替えのみ。hooksは`reject_hold`（G8）。`~/.claude`・`~/.codex`等へ何も書かず、`integrations` tab・`herdr integration`を復活させないこと。
+  - UP-AUTOMATION-P5 `semantic_port`: automation CLIの差分（wait条件・event・skill docs）のうちfork導線に欠けたadditive分のみ。既存contract不変。
+  - UP-AUTOMATION-P5b `semantic_port`: marketplace workerの収集単位拡張（manifest単位のversion/commitを追加情報として）。R2 snapshot readerを壊さないこと。
+- **受け入れ条件**: 各packetで`just check`相当・schema roundtrip・`git diff --check`に加え、G8（helpにintegration復活なし・settings tabは3つのみ）・G5（ID形式`pN`/`sN`/`sN:tN`）・G9（mailbox/job分離）の回帰を実行する。Rust/runtime変更packetはrelease binary rebuild＋live検証を親が実施する。
+- **デグレ判定**: `herdr integration install`の復活・menuへの未確定agent追加・既存help文言の変更・G9分離の破壊・R2 snapshot形式の破壊。
 - **検証方針**: 差分の根拠は`git diff v0.8.0..HEAD`、`git log 9c9490d..v0.8.0`、`git log 9c9490d..HEAD`、本家/fork各refのsource・schema・workflowを使う。全non-merge fork commitをSPEC参照または理由付きoverrideへ分類し、全active contractをmachine-readable evidence manifestへ対応させる。Lean/Alloy/Quint/Rust/liveの担当範囲と未表現次元を明記し、未分類・未解決矛盾が0になってから最初の取込packetへ進む。
 - **デグレ判定**:
   - 本家masterの最新commitをstable v0.8.0と誤記する、fork HEADのCargo versionを本家versionとして扱う、または本家/forkのrelease repository・license・asset URLを混ぜる。
