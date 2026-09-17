@@ -1,3 +1,4 @@
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
 use tracing::warn;
@@ -5,9 +6,32 @@ use tracing::warn;
 use crate::api::schema::InstalledPluginInfo;
 
 pub const MANIFEST_UNAVAILABLE_WARNING_PREFIX: &str = "manifest unavailable: ";
+const REGISTRY_LOCK_FILE: &str = ".plugins.lock";
 
+/// User-global registry location. Session-independent so every session
+/// observes the same plugin state (UP-AUTOMATION-P2).
 fn registry_path() -> PathBuf {
-    crate::session::data_dir().join("plugins.json")
+    crate::config::config_dir().join("plugins.json")
+}
+
+fn registry_lock_path() -> PathBuf {
+    crate::config::config_dir().join(REGISTRY_LOCK_FILE)
+}
+
+fn with_registry_lock<T>(operation: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
+    let lock_path = registry_lock_path();
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    // Exclusive advisory lock; released when `lock` is dropped.
+    lock.lock()?;
+    operation()
 }
 
 fn save_json_to_path<T: serde::Serialize + ?Sized>(path: &Path, value: &T) -> std::io::Result<()> {
@@ -41,30 +65,82 @@ pub fn save_to_path(path: &Path, plugins: &[InstalledPluginInfo]) -> std::io::Re
     save_json_to_path(path, plugins)
 }
 
-/// Load `plugins.json`.  Returns an empty vec on any failure so a corrupt or
-/// missing file never blocks server startup.
-pub fn load() -> Vec<InstalledPluginInfo> {
-    load_from_path(&registry_path())
+/// Atomically read, mutate, and rewrite the global registry under an
+/// exclusive file lock. Returns the mutation result and the stored entries.
+pub fn update<T>(
+    mutation: impl FnOnce(&mut Vec<InstalledPluginInfo>) -> T,
+) -> std::io::Result<(T, Vec<InstalledPluginInfo>)> {
+    with_registry_lock(|| {
+        let mut plugins = load_from_path_strict(&registry_path())?;
+        let result = mutation(&mut plugins);
+        plugins.sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));
+        save_to_path(&registry_path(), &plugins)?;
+        Ok((result, plugins))
+    })
 }
 
-pub fn load_from_path(path: &Path) -> Vec<InstalledPluginInfo> {
-    if !path.exists() {
-        return Vec::new();
+/// Strict locked read of the global registry. Unlike [`load`], parse and IO
+/// failures are returned so writers fail closed instead of clobbering.
+pub fn try_load() -> std::io::Result<Vec<InstalledPluginInfo>> {
+    with_registry_lock(|| load_from_path_strict(&registry_path()))
+}
+
+/// One-time best-effort import of a named session's legacy registry into the
+/// global registry. The per-session file is left in place as a backup.
+/// Returns true when entries were imported.
+pub fn import_legacy_session_registry() -> std::io::Result<bool> {
+    let global = registry_path();
+    if global.exists() {
+        return Ok(false);
     }
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(err) => {
-            warn!(path = %path.display(), err = %err, "failed to read plugin registry");
-            return Vec::new();
+    let session_path = crate::session::data_dir().join("plugins.json");
+    if session_path == global {
+        return Ok(false);
+    }
+    let entries = load_from_path_strict(&session_path).unwrap_or_default();
+    if entries.is_empty() {
+        return Ok(false);
+    }
+    with_registry_lock(|| {
+        if registry_path().exists() {
+            return Ok(false);
         }
-    };
-    match serde_json::from_str::<Vec<InstalledPluginInfo>>(&content) {
-        Ok(entries) => entries,
+        let mut plugins = entries;
+        plugins.sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));
+        save_to_path(&registry_path(), &plugins)?;
+        Ok(true)
+    })
+}
+
+/// Load the global registry. Returns an empty vec on any failure so a corrupt or
+/// missing file never blocks server startup; mutations still use strict reads.
+pub fn load() -> Vec<InstalledPluginInfo> {
+    match try_load() {
+        Ok(plugins) => plugins,
         Err(err) => {
-            warn!(path = %path.display(), err = %err, "failed to parse plugin registry, starting with empty registry");
+            warn!(path = %registry_path().display(), err = %err, "failed to load plugin registry");
             Vec::new()
         }
     }
+}
+
+pub fn load_from_path(path: &Path) -> Vec<InstalledPluginInfo> {
+    match load_from_path_strict(path) {
+        Ok(entries) => entries,
+        Err(err) => {
+            warn!(path = %path.display(), err = %err, "failed to read plugin registry");
+            Vec::new()
+        }
+    }
+}
+
+fn load_from_path_strict(path: &Path) -> std::io::Result<Vec<InstalledPluginInfo>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(path)?;
+    serde_json::from_str::<Vec<InstalledPluginInfo>>(&content)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
 }
 
 /// Re-read each entry's manifest from disk using the provided reload function.
@@ -163,6 +239,118 @@ mod tests {
 
         let loaded = load_from_path(&path);
         assert!(loaded.is_empty());
+    }
+
+    fn sandbox_global_config(name: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "herdr-registry-global-{name}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn update_sorts_and_persists_entries() {
+        let _lock = crate::config::test_config_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+        let previous_session = std::env::var_os(crate::session::SESSION_ENV_VAR);
+        let base = sandbox_global_config("update");
+        std::env::set_var("XDG_CONFIG_HOME", &base);
+        std::env::remove_var(crate::session::SESSION_ENV_VAR);
+
+        let (result, stored) = update(|plugins| {
+            plugins.push(sample_plugin("example.b"));
+            plugins.push(sample_plugin("example.a"));
+            42
+        })
+        .unwrap();
+        assert_eq!(result, 42);
+        let ids: Vec<_> = stored.iter().map(|p| p.plugin_id.as_str()).collect();
+        assert_eq!(ids, vec!["example.a", "example.b"]);
+
+        let reloaded = try_load().unwrap();
+        let ids: Vec<_> = reloaded.iter().map(|p| p.plugin_id.as_str()).collect();
+        assert_eq!(ids, vec!["example.a", "example.b"]);
+
+        match previous_config {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match previous_session {
+            Some(value) => std::env::set_var(crate::session::SESSION_ENV_VAR, value),
+            None => std::env::remove_var(crate::session::SESSION_ENV_VAR),
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn try_load_rejects_corrupt_registry_while_load_stays_lenient() {
+        let _lock = crate::config::test_config_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+        let previous_session = std::env::var_os(crate::session::SESSION_ENV_VAR);
+        let base = sandbox_global_config("corrupt-global");
+        std::env::set_var("XDG_CONFIG_HOME", &base);
+        std::env::remove_var(crate::session::SESSION_ENV_VAR);
+
+        let path = crate::config::config_dir().join("plugins.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"this is not valid json {{{{").unwrap();
+        assert!(try_load().is_err());
+        assert!(load().is_empty());
+
+        match previous_config {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match previous_session {
+            Some(value) => std::env::set_var(crate::session::SESSION_ENV_VAR, value),
+            None => std::env::remove_var(crate::session::SESSION_ENV_VAR),
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn import_legacy_session_registry_copies_once_and_keeps_backup() {
+        let _lock = crate::config::test_config_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+        let previous_session = std::env::var_os(crate::session::SESSION_ENV_VAR);
+        let base = sandbox_global_config("import");
+        std::env::set_var("XDG_CONFIG_HOME", &base);
+        std::env::set_var(crate::session::SESSION_ENV_VAR, "testimport");
+
+        let session_path = crate::session::data_dir().join("plugins.json");
+        std::fs::create_dir_all(session_path.parent().unwrap()).unwrap();
+        let plugins = vec![sample_plugin("example.legacy")];
+        std::fs::write(
+            &session_path,
+            serde_json::to_string_pretty(&plugins).unwrap(),
+        )
+        .unwrap();
+
+        assert!(import_legacy_session_registry().unwrap());
+        assert!(session_path.exists());
+        let global = load();
+        assert!(global.iter().any(|p| p.plugin_id == "example.legacy"));
+        assert!(!import_legacy_session_registry().unwrap());
+
+        match previous_config {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match previous_session {
+            Some(value) => std::env::set_var(crate::session::SESSION_ENV_VAR, value),
+            None => std::env::remove_var(crate::session::SESSION_ENV_VAR),
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

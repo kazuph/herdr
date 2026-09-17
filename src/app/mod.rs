@@ -231,6 +231,9 @@ fn load_plugin_registry(no_session: bool) -> crate::app::state::InstalledPluginR
     if no_session {
         return std::collections::HashMap::new();
     }
+    if let Err(err) = crate::persist::plugin_registry::import_legacy_session_registry() {
+        tracing::warn!(err = %err, "failed to import legacy session plugin registry");
+    }
     let entries = crate::persist::plugin_registry::load();
     let entries = crate::persist::plugin_registry::reload_manifests(entries, |path, enabled| {
         crate::app::api::plugins::load_plugin_manifest(path, enabled).map_err(|(_, msg)| msg)
