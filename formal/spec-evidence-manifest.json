@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 365,
+    "active_contract_count": 381,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -8867,6 +8867,240 @@
       ],
       "unrepresented_dimensions": [
         "agy notification, sound, and menu live behavior and human acceptance remain unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-b5cc284f3c",
+      "dimensions": [
+        "machine catalog persistence",
+        "fail-closed save",
+        "ssh reachability probe"
+      ],
+      "verification_methods": [
+        "rust_test_target:ssh_probe_to_unroutable_host_fails_fast",
+        "drift_source_anchor:src/cli/machine.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1758",
+        "src/cli/machine.rs:162",
+        "src/machine.rs:244"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Unit probe failure is covered; real-host add/save round-trip and refusal messaging remain live-unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-f1aeadc957",
+      "dimensions": [
+        "machine catalog validation",
+        "duplicate rejection"
+      ],
+      "verification_methods": [
+        "rust_test_target:add_rejects_bad_and_duplicate_profiles",
+        "drift_source_anchor:src/machine.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1759",
+        "src/machine.rs:88"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Duplicate and malformed inputs are unit-covered; concurrent-edit reload races remain live-unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-2d2fbcf115",
+      "dimensions": [
+        "machine list presentation",
+        "human and json output"
+      ],
+      "verification_methods": [
+        "rust_test_target:render_list_covers_empty_filled_and_json",
+        "drift_source_anchor:src/cli/machine.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1760",
+        "src/cli/machine.rs:40"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Rendering is unit-covered; terminal display of real catalogs remains live-unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-3e42305e9e",
+      "dimensions": [
+        "machine mutation guards",
+        "exact identity resolution"
+      ],
+      "verification_methods": [
+        "rust_test_target:rename_remove_enable_roundtrip",
+        "rust_test_target:resolve_rejects_unknown_and_ambiguous_references",
+        "drift_source_anchor:src/cli/machine.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1761",
+        "src/cli/machine.rs:212",
+        "src/machine.rs:155"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Refusal paths are unit-covered; interactive misuse messaging remains live-unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-db4d4ce0f5",
+      "dimensions": [
+        "machine catalog corruption tolerance",
+        "startup non-blocking"
+      ],
+      "verification_methods": [
+        "rust_test_target:catalog_persists_and_tolerates_corrupt_files",
+        "drift_source_anchor:src/machine.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1762",
+        "src/machine.rs:212"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Corrupt-file tolerance is unit-covered; real-world damaged catalogs remain live-unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-dc0a87fff3",
+      "dimensions": [
+        "machine cli routing",
+        "ssh argv shape",
+        "exit code inheritance"
+      ],
+      "verification_methods": [
+        "rust_test_target:routed_argv_shape_is_exact",
+        "drift_source_anchor:src/machine.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1780",
+        "src/machine.rs:340"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Argv shape is unit-covered; execution against a reachable SSH host remains live-unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-382b4eaa64",
+      "dimensions": [
+        "routing failure containment",
+        "no local fallback"
+      ],
+      "verification_methods": [
+        "rust_test_target:run_routed_to_unreachable_host_never_succeeds",
+        "rust_test_target:classify_machine_request_gates_routing",
+        "drift_source_anchor:src/main.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1781",
+        "src/main.rs:544",
+        "src/machine.rs:390"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Refusal-before-spawn and transport-failure containment are unit-covered; stalled-host behavior remains live-unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-58508c626a",
+      "dimensions": [
+        "machine identity resolution",
+        "fail-closed references"
+      ],
+      "verification_methods": [
+        "rust_test_target:resolve_rejects_unknown_and_ambiguous_references",
+        "drift_source_anchor:src/machine.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1782",
+        "src/machine.rs:155"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Resolution refusals are unit-covered; real catalog ambiguity messaging remains live-unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-9dea9c7301",
+      "dimensions": [
+        "routing scope guard",
+        "flag combination rejection"
+      ],
+      "verification_methods": [
+        "rust_test_target:classify_machine_request_gates_routing",
+        "rust_test_target:extract_machine_args_parses_and_cleans",
+        "drift_source_anchor:src/main.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1783",
+        "src/main.rs:544",
+        "src/machine.rs:288"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Scope and combination refusals are unit-covered; interactive misuse messaging remains live-unverified"
       ]
     }
   ]
