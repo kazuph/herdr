@@ -713,15 +713,15 @@ mod qwen_restore_tests {
     #[test]
     fn qwen_restore_rejects_unsafe_and_path_refs() {
         assert!(AgentSessionRef::id("evil;id").is_none());
-        assert!(session_ref_from_snapshot("herdr:qwen", "qwen", AgentSessionRefKind::Id, "evil;id")
-            .is_none());
-        let path = "/tmp/qwen-session".to_string();
-        assert!(plan(
+        assert!(session_ref_from_snapshot(
             "herdr:qwen",
             "qwen",
-            &AgentSessionRef::path(&path).unwrap()
+            AgentSessionRefKind::Id,
+            "evil;id"
         )
         .is_none());
+        let path = "/tmp/qwen-session".to_string();
+        assert!(plan("herdr:qwen", "qwen", &AgentSessionRef::path(&path).unwrap()).is_none());
     }
 
     #[test]
@@ -756,8 +756,13 @@ mod grok_restore_tests {
     #[test]
     fn grok_restore_rejects_unsafe_refs() {
         assert!(AgentSessionRef::id("evil;id").is_none());
-        assert!(session_ref_from_snapshot("herdr:grok", "grok", AgentSessionRefKind::Id, "evil;id")
-            .is_none());
+        assert!(session_ref_from_snapshot(
+            "herdr:grok",
+            "grok",
+            AgentSessionRefKind::Id,
+            "evil;id"
+        )
+        .is_none());
     }
 
     #[test]
@@ -779,10 +784,7 @@ mod agy_restore_tests {
         assert_eq!(agent_label(Agent::Antigravity), "agy");
         assert_eq!(identify_agent("agy"), Some(Agent::Antigravity));
         assert_eq!(identify_agent("antigravity"), Some(Agent::Antigravity));
-        assert_eq!(
-            identify_agent("antigravity-cli"),
-            Some(Agent::Antigravity)
-        );
+        assert_eq!(identify_agent("antigravity-cli"), Some(Agent::Antigravity));
     }
 
     #[test]
@@ -818,13 +820,9 @@ mod agy_restore_tests {
 
     #[test]
     fn agy_report_ref_records_id_session() {
-        let session_ref = session_ref_from_report(
-            "herdr:antigravity_cli",
-            "agy",
-            Some("agy-id".into()),
-            None,
-        )
-        .unwrap();
+        let session_ref =
+            session_ref_from_report("herdr:antigravity_cli", "agy", Some("agy-id".into()), None)
+                .unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "agy-id");
     }

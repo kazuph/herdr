@@ -1182,7 +1182,14 @@ pub struct ContextMenuState {
 impl ContextMenuState {
     pub fn items(&self) -> Vec<&'static str> {
         let mut items = self.base_items().to_vec();
-        let agent_items = ["New Claude Code agent", "New Codex agent", "New agy agent", "New grok agent", "New letta agent", "New qwen agent"];
+        let agent_items = [
+            "New Claude Code agent",
+            "New Codex agent",
+            "New agy agent",
+            "New grok agent",
+            "New letta agent",
+            "New qwen agent",
+        ];
         match self.kind {
             ContextMenuKind::Workspace { .. } | ContextMenuKind::GitWorkspace { .. } => {
                 items.splice(0..0, agent_items.into_iter().chain(["--"]));
