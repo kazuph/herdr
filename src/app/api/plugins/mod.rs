@@ -878,8 +878,7 @@ action = "bootstrap"
         let _sandbox = PluginUserDirSandbox::new("plugin-global-refresh");
         let root = unique_temp_path("plugin-global-refresh-root");
         write_manifest(&root);
-        let mut registered =
-            load_plugin_manifest(&root.display().to_string(), false).unwrap();
+        let mut registered = load_plugin_manifest(&root.display().to_string(), false).unwrap();
         registered.enabled = false;
         crate::persist::plugin_registry::update(|plugins| {
             plugins.retain(|entry| entry.plugin_id != registered.plugin_id);
@@ -924,6 +923,56 @@ action = "bootstrap"
             "stale in-memory action must not be listed: {listed}"
         );
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn startup_entries_parse_but_never_execute() {
+        let root = unique_temp_path("plugin-startup-parse");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.startup-parse"
+name = "Startup Parse"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+
+[[startup]]
+command = ["bun", "run", "init.ts"]
+
+[[startup]]
+platforms = ["linux"]
+command = ["sh", "init.sh"]
+"#,
+        );
+        let plugin = load_plugin_manifest(&root.display().to_string(), true).unwrap();
+        assert_eq!(plugin.startup.len(), 2);
+        assert_eq!(
+            plugin.startup[0].command,
+            vec!["bun".to_string(), "run".to_string(), "init.ts".to_string()]
+        );
+        // Startup hooks are parsed for forward compatibility but must never
+        // execute: no runtime entry point may consume them.
+        assert!(!plugin.startup.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn startup_entries_reject_empty_commands() {
+        let root = unique_temp_path("plugin-startup-reject");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.startup-reject"
+name = "Startup Reject"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+
+[[startup]]
+command = []
+"#,
+        );
+        assert!(load_plugin_manifest(&root.display().to_string(), true).is_err());
         let _ = std::fs::remove_dir_all(&root);
     }
 

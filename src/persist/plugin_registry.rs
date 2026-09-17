@@ -199,6 +199,7 @@ mod tests {
             enabled: true,
             platforms: None,
             build: vec![],
+            startup: vec![],
             actions: vec![],
             events: vec![],
             panes: vec![],
@@ -395,6 +396,7 @@ mod tests {
                 enabled: true, // caller would pass stored enabled; fresh parse returns true
                 platforms: None,
                 build: vec![],
+                startup: vec![],
                 actions: vec![],
                 events: vec![],
                 panes: vec![],

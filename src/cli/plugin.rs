@@ -214,8 +214,7 @@ fn plugin_install(args: &[String]) -> std::io::Result<i32> {
         let post_build_plugin = load_cli_plugin_manifest(&manifest_root, true)?;
         ensure_manifest_unchanged_after_build(&preview_plugin, &post_build_plugin)?;
 
-        let final_checkout =
-            crate::plugin_paths::managed_checkout_path(&preview_plugin.plugin_id);
+        let final_checkout = crate::plugin_paths::managed_checkout_path(&preview_plugin.plugin_id);
         let backup_checkout = temp_root.join("previous-checkout");
         let mut backup_moved = false;
         if final_checkout.exists() {
@@ -1227,6 +1226,7 @@ fn print_install_preview(
         eprintln!("  commit: {commit}");
     }
     eprintln!("  actions: {}", plugin.actions.len());
+    eprintln!("  startup commands: {}", plugin.startup.len());
     eprintln!("  events: {}", plugin.events.len());
     eprintln!("  panes: {}", plugin.panes.len());
     eprintln!("  link handlers: {}", plugin.link_handlers.len());
@@ -1241,6 +1241,9 @@ fn print_install_preview(
             )
         };
         eprintln!("    build{}: {}", support, build.command.join(" "));
+    }
+    for startup in &plugin.startup {
+        eprintln!("    startup: {}", startup.command.join(" "));
     }
     for action in &plugin.actions {
         eprintln!("    action {}: {}", action.id, action.command.join(" "));
@@ -1749,6 +1752,7 @@ mod tests {
             enabled: true,
             platforms: None,
             build: vec![],
+            startup: vec![],
             actions: vec![],
             events: vec![],
             panes: vec![],

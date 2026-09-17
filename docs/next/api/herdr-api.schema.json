@@ -6765,6 +6765,13 @@
                 "kind": "local"
               }
             },
+            "startup": {
+              "description": "Parsed for forward compatibility only; startup hooks are never executed\n(reject_hold per UP-AUTOMATION policy).",
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/PluginManifestStartup"
+              },
+              "type": "array"
+            },
             "version": {
               "type": "string"
             },
@@ -8105,6 +8112,29 @@
           "required": [
             "id",
             "title",
+            "command"
+          ],
+          "type": "object"
+        },
+        "PluginManifestStartup": {
+          "properties": {
+            "command": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "platforms": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/PluginPlatform"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          "required": [
             "command"
           ],
           "type": "object"
