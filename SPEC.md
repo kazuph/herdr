@@ -1814,3 +1814,69 @@
   - `agy` のlabel・通知・menu起動が変わる。
   - 既存menu項目の順序・文言が本entryの順序と変わる。
   - qwen承認待ちが通知対象から外れる。
+
+## G11. 複数SSHマシン管理（本家 v0.9.0/v0.9.1 段階取込）
+
+### 比較基準と取込範囲
+- **対象本家commit**: `9e9bc8a1`（複数SSHマシン管理 #3670）、`043b804c`（CLI保存マシン転送 #3918）、`b9ce9686`（マシン横断workspace移動・強調 #3755）。いずれもチェリーピックせず、観測可能な挙動だけをfork構造へ再実装する。
+- **fork前提**: machine概念はゼロから追加する。下層multiclient層（viewer別表示・endpoint-generation契約）は別packetで整備中のため、machineはUI非依存の保存・CLI転送（P1/P2）から着手し、sidebar横断・再接続（P3/P4）は将来packetとする。
+- **対象外**: Windows remote host導入（`59167658`他）はforkに検証基盤がないため本G11の範囲外とし、将来packetとする。session削除の正確名要求（`ab15da28`）は別packetとする。machine宛`herdr run`/`inbox`は経路未定義のため対象外とする。
+
+### machine保存CRUD（P1）
+- **元commit**: fork新規（観測面は本家`9e9bc8a1`の`herdr machine` CLIに準拠）。
+- **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — `machine list/add/rename/remove/enable/disable`の観測面と保存形式の概念を`semantic_port`し、remote準備パイプライン（本家`prepare_saved_ssh`相当のlive install・metadata cache・open client自動反映）は採用しない。forkはBatchMode SSH到達性probeの成功をもって保存条件とする。
+- **目的**: 保存済みSSH接続を名前付きで管理し、到達不能なマシンを保存しない。UIは持たない。
+- **UI挙動**:
+  - `herdr machine add <ssh-target> --label <label> [--remote-session <name>]` はlabel必須・target必須（`-`始まり拒否）・重複label拒否・重複`(target, session)`拒否ののち、`ssh -o BatchMode=yes -o ConnectTimeout=15 -- <target> true`のprobe成功時にだけ`session data_dir`の`machines.json`へatomic保存し、`Saved SSH machine {id}`を出す。probe失敗時は保存せずexit 1で`machine was not saved`を出す。remote側herdrの存在・version確認は初回利用時に行い、add時には主張しない。
+  - `herdr machine list [--json]` は`id\tlabel\ttarget\tsession\tstate`行を出し、空時は`No saved SSH machines.`を出す。`--json`は同内容の配列を出す。
+  - `rename/remove/enable/disable`はlabel-or-idの完全一致で解決し、曖昧label・未知IDは拒否する（exit 2またはexit 1）。無効化・削除はremote側sessionを止めない。
+  - catalogの欠落・破損は空扱いとしserver/CLI起動を阻害しない。保存失敗は黙殺せずerrorで返す。
+- **受け入れ条件**:
+  - 到達不能targetへの`machine add`は保存せずexit 1で`machine was not saved`を出し、`machines.json`に追記されない。
+  - 重複labelまたは重複`(target, session)`の`machine add`は保存せずexit 2で理由を出す。
+  - `machine list`の空・非空・`--json`の三表示が規定文言どおりになる。
+  - `rename/remove/enable/disable`が未知ID・曖昧labelを拒否し、既存他profileを変えない。
+  - 破損`machines.json`で`machine list`が空表示になりexit 0で終わる。
+- **実装方針**: 新規`src/machine.rs`（catalog・検証・永続化・probe）＋`src/cli/machine.rs`（表示・exit code）＋`src/cli.rs`のdispatch登録。既存`--remote`（`src/remote/unix.rs`）は現状維持し、畳み込みは行わない。
+- **デグレ判定**:
+  - 到達不能マシンが保存される、または保存失敗時に成功表示が出る。
+  - 曖昧labelが先勝ち解決される、または未知ID操作が成功扱いになる。
+  - 破損catalogでCLI全体が起動不能になる。
+  - `herdr integration`系の復活、`--remote`単発attachの挙動変化。
+
+### --machine CLI転送（P2）
+- **元commit**: fork新規（観測面は本家`043b804c`の`herdr --machine <label-or-id>`に準拠）。
+- **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 保存マシンへのCLI転送と失敗時Local fallback禁止を`semantic_port`し、本家のclient-endpoint転送基盤（別packetのmulticlient層）は使わず、OpenSSH stdio execで再実装する。
+- **目的**: Herdrウィンドウを開かずに保存マシン上のagent・pane・workspace・worktreeを操作する。失敗はlocalへ逃がさない。
+- **UI挙動**:
+  - `herdr --machine <label-or-id> <agent|pane|workspace|worktree> ...` はprofile解決（無効・未知・曖昧は拒否）後、`ssh -o BatchMode=yes -o ConnectTimeout=15 -- <target> <remote-bin> --session <session> <args...>`をstdio継承で実行し、remoteのexit codeをそのまま返す。`<remote-bin>`はenv `HERDR_MACHINE_REMOTE_BINARY`（既定`herdr`）で上書きできる。
+  - ssh起動・接続失敗時はexit 1でerrorを出し、local実行へfallbackしない。対象外subcommandとの併用、`--remote`との併用、`machine` subcommand自体との併用はexit 2で拒否する。
+  - `--help`/`-h`併用時は転送せずlocal helpを出す。
+- **受け入れ条件**:
+  - 転送対象4 subcommand（agent/pane/workspace/worktree）が規定のssh argvで実行され、remote exit codeが継承される。
+  - ssh失敗時にlocal実行が起きず非ゼロexitになる（回帰テスト化）。
+  - 無効・未知・曖昧マシン指定がlocal実行せずexit 2またはexit 1になる。
+  - 対象外subcommand・`--remote`併用・`machine`併用がexit 2で拒否される。
+- **実装方針**: `src/main.rs`の`extract_remote_args`処理の直後にmachine抽出・転送を置き、`cli::maybe_run`より前で完結させる。既知flag・既知commandのallowlistへ`--machine`と`machine`を追加する。転送argv組立は純粋関数として単体テストする。実SSH転送のlive検証はSSH到達可能hostがある環境で行い、本環境では未検証次元として記録する。
+- **デグレ判定**:
+  - 転送失敗時にlocal実行へ落ちる、または失敗が成功exit codeになる。
+  - `--machine`なし実行の経路・exit codeが変わる。
+  - 未知flag・未知commandの拒否（G5）が緩む。
+
+### 将来：sidebar machine group＋横断ナビ（P3・未着手）
+- **元commit**: 本家`b9ce9686`、`68c7b78e`、`be03b7a1`。
+- **分類**: PARTIAL
+- **status: fork独自・保持 (C)** — 現時点では着手しない。本家実装はclient-shell描画基盤（`src/client/shell/*`、`src/client/endpoint/*`）に依存し、forkのserver側描画とは土台が異なるため、下層multiclient層の整備後に別packetで設計する。fork独自sidebar（slim密度・sorted・section）との表示競合は着手時にactive contractを固定して解消する。
+- **デグレ判定**: P3着手前に本項の将来扱いを変える実装を混ぜる。
+
+### 将来：再接続・backoff・増分更新（P4・未着手）
+- **元commit**: 本家`d1a53b2c`、`68ae6ade`、`18061191`、`62431dbd`、`c77af189`。
+- **分類**: PARTIAL
+- **status: fork独自・保持 (C)** — 現時点では着手しない。stall時cancel・自動再接続・idle掃除・増分更新は、接続状態のserver側所有設計と性能測定条件を別packetで定めてから実装する。
+- **デグレ判定**: P4着手前に再接続・retry方針を変える実装を混ぜる。
+
+### 親判断事項（記録）
+- ID名前空間（複合ID vs machine修飾子）は未決定。P1/P2はlabel-or-id完全一致＋曖昧拒否で進め、pane解決・mailbox・`herdr run`への波及はP3着手時に親が決定する。
+- 単発`--remote`と保存machineの責務分界は現状維持（畳み込みなし）。machine側からのattach再利用は将来packetで検討する。
