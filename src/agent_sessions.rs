@@ -74,6 +74,7 @@ fn session_id_from_tokens(agent: &str, tokens: &[&str]) -> Option<String> {
         "claude" => session_id_from_claude_tokens(tokens),
         "codex" => session_id_from_codex_tokens(tokens),
         "qwen" | "grok" => session_id_from_resume_flag_tokens(tokens),
+        "agy" => session_id_from_conversation_flag_tokens(tokens),
         _ => None,
     }
 }
@@ -111,15 +112,26 @@ fn session_id_from_codex_tokens(tokens: &[&str]) -> Option<String> {
 /// grok uses the same `grok --resume <id>` shape for native restore.
 /// Only safe ids are returned; anything else stays unknown (fail-closed).
 fn session_id_from_resume_flag_tokens(tokens: &[&str]) -> Option<String> {
+    session_id_from_flag_tokens(tokens, "--resume")
+}
+
+/// `agy --conversation <id>` launch shape. `--continue` (latest) is never
+/// captured: only an explicit `--conversation` value becomes a session id.
+fn session_id_from_conversation_flag_tokens(tokens: &[&str]) -> Option<String> {
+    session_id_from_flag_tokens(tokens, "--conversation")
+}
+
+fn session_id_from_flag_tokens(tokens: &[&str], flag: &str) -> Option<String> {
+    let equals_prefix = format!("{flag}=");
     for (index, token) in tokens.iter().enumerate() {
-        if *token == "--resume" {
+        if *token == flag {
             return tokens
                 .get(index + 1)
                 .copied()
                 .filter(|id| is_safe_session_id(id))
                 .map(str::to_string);
         }
-        if let Some(session_id) = token.strip_prefix("--resume=") {
+        if let Some(session_id) = token.strip_prefix(equals_prefix.as_str()) {
             return is_safe_session_id(session_id).then(|| session_id.to_string());
         }
     }
@@ -560,6 +572,19 @@ mod tests {
         );
         assert_eq!(
             session_id_from_cmdline("grok", "grok --resume evil;id"),
+            None
+        );
+        assert_eq!(
+            session_id_from_cmdline("agy", "agy --conversation agy-session-1"),
+            Some("agy-session-1".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("agy", "agy --conversation=abc-123"),
+            Some("abc-123".into())
+        );
+        assert_eq!(session_id_from_cmdline("agy", "agy --continue"), None);
+        assert_eq!(
+            session_id_from_cmdline("agy", "agy --conversation evil;id"),
             None
         );
     }
