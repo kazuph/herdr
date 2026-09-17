@@ -335,3 +335,123 @@ describe("fetch handler", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
   });
 });
+
+describe("manifest discovery", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+
+    function discoveryFetch(): (url: URL | string) => Promise<Response> {
+      return async (input: URL | string): Promise<Response> => {
+        const url = String(input);
+        if (url.includes("/search/repositories")) {
+          return Response.json({
+            total_count: 1,
+            items: [repo({ default_branch: "main" })],
+          });
+        }
+        if (url.includes("/commits/main")) {
+          return Response.json({ sha });
+        }
+        if (url.includes("/git/trees/main")) {
+          return Response.json({
+            truncated: false,
+            tree: [
+              { path: "herdr-plugin.toml", type: "blob" },
+              { path: "extra/nested/herdr-plugin.toml", type: "blob" },
+              { path: "README.md", type: "blob" },
+            ],
+          });
+        }
+        if (url.includes("raw.githubusercontent.com")) {
+          if (url.includes("/extra/nested/herdr-plugin.toml")) {
+            return new Response('id = "example.nested"\nname = "Nested"\nversion = "0.1.0"\n', {
+              status: 200,
+            });
+          }
+          return new Response(
+            'id = "example.root"\nname = "Root"\nversion = "1.2.3"\n',
+            { status: 200 },
+          );
+        }
+        return new Response("not found", { status: 404 });
+      };
+    }
+
+    test("attaches root and nested manifests with head commit", async () => {
+      const bucket = new MemoryR2();
+      const result = await refreshPlugins(env(bucket), {
+        fetch: discoveryFetch() as typeof fetch,
+        now: new Date("2026-06-20T12:00:00.000Z"),
+        logger: { error() {} },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.snapshot.plugins[0].manifests).toEqual([
+        { path: "extra/nested/herdr-plugin.toml", commit: sha, id: "example.nested", name: "Nested", version: "0.1.0" },
+        { path: "herdr-plugin.toml", commit: sha, id: "example.root", name: "Root", version: "1.2.3" },
+      ]);
+    });
+
+    test("warns and skips repositories without a file tree", async () => {
+      const fetch = async (input: URL | string): Promise<Response> => {
+        const url = String(input);
+        if (url.includes("/search/repositories")) {
+          return Response.json({
+            total_count: 1,
+            items: [repo({ default_branch: "main" })],
+          });
+        }
+        if (url.includes("/commits/main")) {
+          return Response.json({ sha });
+        }
+        return new Response("boom", { status: 500 });
+      };
+      const bucket = new MemoryR2();
+      const result = await refreshPlugins(env(bucket), {
+        fetch: fetch as typeof fetch,
+        logger: { error() {} },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.snapshot.plugins[0].manifests).toEqual([]);
+      expect(
+        result.snapshot.source.warnings?.some((warning: string) =>
+          warning.includes("file tree unavailable"),
+        ),
+      ).toBe(true);
+    });
+
+    test("records unparseable manifests with null metadata", async () => {
+      const fetch = async (input: URL | string): Promise<Response> => {
+        const url = String(input);
+        if (url.includes("/search/repositories")) {
+          return Response.json({
+            total_count: 1,
+            items: [repo({ default_branch: "main" })],
+          });
+        }
+        if (url.includes("/commits/main")) {
+          return Response.json({ sha });
+        }
+        if (url.includes("/git/trees/main")) {
+          return Response.json({
+            truncated: false,
+            tree: [{ path: "herdr-plugin.toml", type: "blob" }],
+          });
+        }
+        return new Response("not toml at all {{{{", { status: 200 });
+      };
+      const bucket = new MemoryR2();
+      const result = await refreshPlugins(env(bucket), {
+        fetch: fetch as typeof fetch,
+        logger: { error() {} },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.snapshot.plugins[0].manifests).toEqual([
+        { path: "herdr-plugin.toml", commit: sha, id: null, name: null, version: null },
+      ]);
+    });
+  });

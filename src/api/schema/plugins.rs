@@ -49,6 +49,10 @@ pub struct InstalledPluginInfo {
     pub platforms: Option<Vec<PluginPlatform>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub build: Vec<PluginManifestBuild>,
+    /// Parsed for forward compatibility only; startup hooks are never executed
+    /// (reject_hold per UP-AUTOMATION policy).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub startup: Vec<PluginManifestStartup>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<PluginManifestAction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -226,6 +230,13 @@ mod tests {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PluginManifestBuild {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<PluginPlatform>>,
+    pub command: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PluginManifestStartup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platforms: Option<Vec<PluginPlatform>>,
     pub command: Vec<String>,

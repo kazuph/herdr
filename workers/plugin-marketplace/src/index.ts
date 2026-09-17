@@ -1,3 +1,5 @@
+import { parse as parseToml } from "smol-toml";
+
 const SNAPSHOT_KEY = "plugins/index.json";
 const SNAPSHOT_CACHE_CONTROL = "public, max-age=300, s-maxage=1800, stale-while-revalidate=3600";
 const GITHUB_QUERY = "topic:herdr-plugin is:public";
@@ -7,6 +9,16 @@ const BLACKLIST_REPO_KEY_PREFIX = "repo:";
 const PER_PAGE = 100;
 const MAX_REPOS = 1000;
 const REQUEST_TIMEOUT_MS = 10_000;
+const GITHUB_API_URL = "https://api.github.com";
+const GITHUB_RAW_URL = "https://raw.githubusercontent.com";
+const MANIFEST_FILE_NAME = "herdr-plugin.toml";
+const MANIFEST_MAX_BYTES = 32 * 1024;
+const MAX_TREE_ENTRIES = 20_000;
+const MAX_MANIFESTS_PER_REPOSITORY = 100;
+const MAX_TOTAL_MANIFESTS = 5000;
+const MAX_TOTAL_MANIFEST_BYTES = 16 * 1024 * 1024;
+const PLUGIN_ID_MAX_CHARS = 120;
+const PLUGIN_VERSION_MAX_CHARS = 64;
 
 type R2Bucket = {
   put(
@@ -50,6 +62,14 @@ type RefreshOptions = {
 
 type GitHubRepository = Record<string, unknown>;
 
+export type PluginManifestEntry = {
+  path: string;
+  commit: string;
+  id: string | null;
+  name: string | null;
+  version: string | null;
+};
+
 export type PluginListing = {
   id: number;
   fullName: string;
@@ -65,6 +85,7 @@ export type PluginListing = {
   createdAt: string | null;
   updatedAt: string | null;
   pushedAt: string | null;
+  manifests?: PluginManifestEntry[];
 };
 
 export type PluginSnapshot = {
@@ -121,6 +142,12 @@ export async function refreshPlugins(
             (plugin) => !blockedRepositories.has(plugin.fullName.toLowerCase()),
           );
 
+    const branchByRepo = defaultBranchByRepo(result.repositories);
+    const manifestScan = await discoverManifests(fetchFn, token, plugins, branchByRepo);
+    for (const plugin of plugins) {
+      plugin.manifests = manifestScan.entries.get(plugin.fullName) ?? [];
+    }
+
     const snapshot: PluginSnapshot = {
       schemaVersion: 1,
       generatedAt: (options.now ?? new Date()).toISOString(),
@@ -137,6 +164,12 @@ export async function refreshPlugins(
     if (result.truncated) {
       snapshot.source.warnings = [
         `GitHub returned ${result.totalCount} results; only the first ${result.repositories.length} were collected.`,
+      ];
+    }
+    if (manifestScan.warnings.length > 0) {
+      snapshot.source.warnings = [
+        ...(snapshot.source.warnings ?? []),
+        ...manifestScan.warnings,
       ];
     }
 
@@ -231,6 +264,220 @@ export function normalizeRepositories(repositories: GitHubRepository[]): PluginL
     .map(normalizeRepository)
     .filter((plugin): plugin is PluginListing => plugin !== null)
     .sort(comparePlugins);
+}
+
+function defaultBranchByRepo(repositories: GitHubRepository[]): Map<string, string> {
+  const branches = new Map<string, string>();
+  for (const repo of repositories) {
+    const fullName = readString(repo.full_name);
+    const branch = readString(repo.default_branch);
+    if (fullName && branch) {
+      branches.set(fullName, branch);
+    }
+  }
+  return branches;
+}
+
+type ManifestScan = {
+  entries: Map<string, PluginManifestEntry[]>;
+  warnings: string[];
+};
+
+async function discoverManifests(
+  fetchFn: FetchLike,
+  token: string,
+  plugins: PluginListing[],
+  branchByRepo: Map<string, string>,
+): Promise<ManifestScan> {
+  const entries = new Map<string, PluginManifestEntry[]>();
+  const warnings: string[] = [];
+  let totalManifests = 0;
+  let totalBytes = 0;
+
+  for (const plugin of plugins) {
+    const branch = branchByRepo.get(plugin.fullName);
+    if (!branch) {
+      continue;
+    }
+    if (totalManifests >= MAX_TOTAL_MANIFESTS || totalBytes >= MAX_TOTAL_MANIFEST_BYTES) {
+      warnings.push(
+        `Manifest discovery stopped early at ${plugin.fullName}: global caps reached.`,
+      );
+      break;
+    }
+    const headCommit = await fetchHeadCommit(fetchFn, token, plugin, branch);
+    if (!headCommit) {
+      warnings.push(`Skipped manifest scan for ${plugin.fullName}: head commit lookup failed.`);
+      continue;
+    }
+    const paths = await fetchManifestPaths(fetchFn, token, plugin, branch);
+    if (!paths) {
+      warnings.push(`Skipped manifest scan for ${plugin.fullName}: file tree unavailable.`);
+      continue;
+    }
+    if (paths.length > MAX_MANIFESTS_PER_REPOSITORY) {
+      warnings.push(
+        `${plugin.fullName} was skipped because it contains more than ${MAX_MANIFESTS_PER_REPOSITORY} plugin manifests.`,
+      );
+      continue;
+    }
+    const found: PluginManifestEntry[] = [];
+    for (const path of paths) {
+      if (totalManifests >= MAX_TOTAL_MANIFESTS || totalBytes >= MAX_TOTAL_MANIFEST_BYTES) {
+        break;
+      }
+      const text = await fetchManifestText(fetchFn, token, plugin, branch, path);
+      if (text === null) {
+        continue;
+      }
+      totalBytes += text.length;
+      totalManifests += 1;
+      const metadata = readManifestMetadata(text);
+      found.push({ path, commit: headCommit, ...metadata });
+    }
+    found.sort((a, b) => a.path.localeCompare(b.path));
+    entries.set(plugin.fullName, found);
+  }
+  return { entries, warnings };
+}
+
+async function githubApi(
+  fetchFn: FetchLike,
+  token: string,
+  url: URL,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<unknown | null> {
+  const response = await fetchWithTimeout(
+    fetchFn,
+    url,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "herdr-plugin-marketplace",
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+      },
+    },
+    timeoutMs,
+  );
+  if (!response.ok) {
+    return null;
+  }
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchHeadCommit(
+  fetchFn: FetchLike,
+  token: string,
+  plugin: PluginListing,
+  branch: string,
+): Promise<string | null> {
+  const url = new URL(
+    `${GITHUB_API_URL}/repos/${encodeURIComponent(plugin.owner)}/${encodeURIComponent(plugin.name)}/commits/${encodeURIComponent(branch)}`,
+  );
+  url.searchParams.set("per_page", "1");
+  const body = await githubApi(fetchFn, token, url);
+  if (!isObject(body)) {
+    return null;
+  }
+  const sha = readString(body.sha);
+  return sha && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
+async function fetchManifestPaths(
+  fetchFn: FetchLike,
+  token: string,
+  plugin: PluginListing,
+  branch: string,
+): Promise<string[] | null> {
+  const url = new URL(
+    `${GITHUB_API_URL}/repos/${encodeURIComponent(plugin.owner)}/${encodeURIComponent(plugin.name)}/git/trees/${encodeURIComponent(branch)}`,
+  );
+  url.searchParams.set("recursive", "1");
+  const body = await githubApi(fetchFn, token, url);
+  if (!isObject(body) || !Array.isArray(body.tree)) {
+    return null;
+  }
+  if (body.truncated === true || body.tree.length > MAX_TREE_ENTRIES) {
+    return null;
+  }
+  const paths: string[] = [];
+  for (const entry of body.tree) {
+    if (!isObject(entry) || entry.type !== "blob") {
+      continue;
+    }
+    const path = readString(entry.path);
+    if (path && (path === MANIFEST_FILE_NAME || path.endsWith(`/${MANIFEST_FILE_NAME}`))) {
+      paths.push(path);
+    }
+  }
+  return paths;
+}
+
+async function fetchManifestText(
+  fetchFn: FetchLike,
+  token: string,
+  plugin: PluginListing,
+  branch: string,
+  path: string,
+): Promise<string | null> {
+  const url = new URL(
+    `${GITHUB_RAW_URL}/${encodeURIComponent(plugin.owner)}/${encodeURIComponent(plugin.name)}/${encodeURIComponent(branch)}/${path
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/")}`,
+  );
+  const response = await fetchWithTimeout(
+    fetchFn,
+    url,
+    {
+      headers: {
+        Accept: "text/plain",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "herdr-plugin-marketplace",
+      },
+    },
+    REQUEST_TIMEOUT_MS,
+  );
+  if (!response.ok) {
+    return null;
+  }
+  const text = await response.text();
+  if (text.length > MANIFEST_MAX_BYTES) {
+    return null;
+  }
+  return text;
+}
+
+function readManifestMetadata(text: string): {
+  id: string | null;
+  name: string | null;
+  version: string | null;
+} {
+  let parsed: unknown;
+  try {
+    parsed = parseToml(text.replace(/^\uFEFF/, ""));
+  } catch {
+    return { id: null, name: null, version: null };
+  }
+  if (!isObject(parsed)) {
+    return { id: null, name: null, version: null };
+  }
+  const id = readCappedString(parsed.id, PLUGIN_ID_MAX_CHARS);
+  const name = readCappedString(parsed.name, PLUGIN_ID_MAX_CHARS);
+  const version = readCappedString(parsed.version, PLUGIN_VERSION_MAX_CHARS);
+  return { id, name, version };
+}
+
+function readCappedString(value: unknown, maxChars: number): string | null {
+  if (typeof value !== "string" || value.length === 0 || value.length > maxChars) {
+    return null;
+  }
+  return value;
 }
 
 async function readBlacklistedRepositories(env: Env): Promise<Set<string>> {

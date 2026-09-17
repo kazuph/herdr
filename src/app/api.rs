@@ -1,6 +1,7 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+mod agent_view;
 mod agents;
 mod env;
 mod jobs;
@@ -1059,6 +1060,10 @@ impl App {
             Method::AgentGet(target) => return self.handle_agent_get(request.id, target),
             Method::AgentFocus(target) => return self.handle_agent_focus(request.id, target),
             Method::AgentRename(params) => return self.handle_agent_rename(request.id, params),
+            Method::AgentViewSet(params) => return self.handle_agent_view_set(request.id, params),
+            Method::AgentViewClear(params) => {
+                return self.handle_agent_view_clear(request.id, params);
+            }
             Method::AgentStart(params) => return self.handle_agent_start(request.id, params),
             Method::AgentRestore(params) => return self.handle_agent_restore(request.id, params),
             Method::AgentRead(params) => return self.handle_agent_read(request.id, params),

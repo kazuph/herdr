@@ -69,11 +69,20 @@ fn plugin_link(args: &[String]) -> std::io::Result<i32> {
             }
         }
     }
-    print_plugin_response(Method::PluginLink(PluginLinkParams {
+    let params = PluginLinkParams {
         path,
         enabled,
         source: None,
-    }))
+    };
+    let response = match super::send_request(&Request {
+        id: "cli:plugin".into(),
+        method: Method::PluginLink(params.clone()),
+    }) {
+        Ok(response) => response,
+        Err(err) if is_connection_error(&err) => offline_plugin_link_response(&params)?,
+        Err(err) => return Err(err),
+    };
+    super::print_response(&response)
 }
 
 fn plugin_config_dir_command(args: &[String]) -> std::io::Result<i32> {
@@ -205,7 +214,7 @@ fn plugin_install(args: &[String]) -> std::io::Result<i32> {
         let post_build_plugin = load_cli_plugin_manifest(&manifest_root, true)?;
         ensure_manifest_unchanged_after_build(&preview_plugin, &post_build_plugin)?;
 
-        let final_checkout = managed_checkout_path(&preview_plugin.plugin_id);
+        let final_checkout = crate::plugin_paths::managed_checkout_path(&preview_plugin.plugin_id);
         let backup_checkout = temp_root.join("previous-checkout");
         let mut backup_moved = false;
         if final_checkout.exists() {
@@ -1082,6 +1091,25 @@ fn plugin_matches_github_source(plugin: &InstalledPluginInfo, source: &GithubPlu
         && plugin.source.subdir.as_deref() == source.subdir.as_deref()
 }
 
+fn persist_plugin_offline(plugin: &InstalledPluginInfo) -> std::io::Result<()> {
+    crate::plugin_paths::ensure_plugin_user_dirs(&plugin.plugin_id)?;
+    crate::persist::plugin_registry::update(|plugins| {
+        plugins.retain(|entry| entry.plugin_id != plugin.plugin_id);
+        plugins.push(plugin.clone());
+    })
+    .map(|_| ())
+}
+
+fn offline_plugin_link_response(params: &PluginLinkParams) -> std::io::Result<serde_json::Value> {
+    let plugin = load_cli_plugin_manifest(Path::new(&params.path), params.enabled)?;
+    persist_plugin_offline(&plugin)?;
+    serde_json::to_value(SuccessResponse {
+        id: "cli:plugin".into(),
+        result: ResponseResult::PluginLinked { plugin },
+    })
+    .map_err(std::io::Error::other)
+}
+
 fn offline_plugin_list_response(params: &PluginListParams) -> std::io::Result<serde_json::Value> {
     let entries = crate::persist::plugin_registry::load();
     let mut plugins =
@@ -1199,6 +1227,7 @@ fn print_install_preview(
         eprintln!("  commit: {commit}");
     }
     eprintln!("  actions: {}", plugin.actions.len());
+    eprintln!("  startup commands: {}", plugin.startup.len());
     eprintln!("  events: {}", plugin.events.len());
     eprintln!("  panes: {}", plugin.panes.len());
     eprintln!("  link handlers: {}", plugin.link_handlers.len());
@@ -1213,6 +1242,9 @@ fn print_install_preview(
             )
         };
         eprintln!("    build{}: {}", support, build.command.join(" "));
+    }
+    for startup in &plugin.startup {
+        eprintln!("    startup: {}", startup.command.join(" "));
     }
     for action in &plugin.actions {
         eprintln!("    action {}: {}", action.id, action.command.join(" "));
@@ -1529,23 +1561,13 @@ fn confirm(prompt: &str) -> std::io::Result<bool> {
 }
 
 fn create_plugin_temp_dir(label: &str) -> std::io::Result<PathBuf> {
-    let path = managed_plugins_dir().join(format!(
+    let path = crate::plugin_paths::managed_plugins_dir().join(format!(
         ".tmp-{label}-{}-{}",
         std::process::id(),
         current_unix_ms()
     ));
     std::fs::create_dir_all(&path)?;
     Ok(path)
-}
-
-fn managed_plugins_dir() -> PathBuf {
-    crate::session::data_dir().join("plugins")
-}
-
-fn managed_checkout_path(plugin_id: &str) -> PathBuf {
-    managed_plugins_dir()
-        .join("github")
-        .join(crate::api::schema::plugin_managed_path_component(plugin_id))
 }
 
 fn remove_managed_plugin_files(plugin: &InstalledPluginInfo) -> std::io::Result<()> {
@@ -1586,7 +1608,7 @@ fn is_expected_managed_path(plugin: &InstalledPluginInfo, path: &Path) -> bool {
     let Ok(path) = path.canonicalize() else {
         return false;
     };
-    let expected = managed_checkout_path(&plugin.plugin_id);
+    let expected = crate::plugin_paths::managed_checkout_path(&plugin.plugin_id);
     let Ok(expected) = expected.canonicalize() else {
         return false;
     };
@@ -1731,6 +1753,7 @@ mod tests {
             enabled: true,
             platforms: None,
             build: vec![],
+            startup: vec![],
             actions: vec![],
             events: vec![],
             panes: vec![],
@@ -1864,5 +1887,133 @@ mod tests {
         let _ = std::fs::remove_dir_all(config_dir);
         let _ = std::fs::remove_dir_all(state_dir);
         let _ = std::fs::remove_dir_all(legacy_dir);
+    }
+
+    fn write_minimal_plugin_manifest(dir: &std::path::Path, plugin_id: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("herdr-plugin.toml"),
+            format!(
+                "id = \"{plugin_id}\"\nname = \"Offline Link Test\"\nversion = \"0.1.0\"\nmin_herdr_version = \"0.1.0\"\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn offline_link_persists_plugin_with_enabled_state() {
+        let _sandbox = PluginUserDirSandbox::new("offline-link");
+        let plugin_id = unique_plugin_id("offline-link");
+        let manifest_dir = std::env::temp_dir().join(format!(
+            "herdr-offline-link-{}.{}.{}",
+            std::process::id(),
+            plugin_id,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        write_minimal_plugin_manifest(&manifest_dir, &plugin_id);
+
+        let response = offline_plugin_link_response(&PluginLinkParams {
+            path: manifest_dir.display().to_string(),
+            enabled: false,
+            source: None,
+        })
+        .unwrap();
+        let parsed: SuccessResponse = serde_json::from_value(response).unwrap();
+        let ResponseResult::PluginLinked { plugin } = parsed.result else {
+            panic!("offline link must return PluginLinked");
+        };
+        assert_eq!(plugin.plugin_id, plugin_id);
+        assert!(!plugin.enabled);
+
+        let entries = crate::persist::plugin_registry::load();
+        let stored = entries
+            .iter()
+            .find(|entry| entry.plugin_id == plugin_id)
+            .expect("offline link must persist the plugin");
+        assert!(!stored.enabled);
+
+        let _ = std::fs::remove_dir_all(&manifest_dir);
+    }
+
+    #[test]
+    fn offline_link_does_not_overwrite_corrupt_registry() {
+        let _sandbox = PluginUserDirSandbox::new("offline-link-corrupt");
+        let plugin_id = unique_plugin_id("offline-link-corrupt");
+        let manifest_dir = std::env::temp_dir().join(format!(
+            "herdr-offline-link-corrupt-{}.{}.{}",
+            std::process::id(),
+            plugin_id,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        write_minimal_plugin_manifest(&manifest_dir, &plugin_id);
+
+        let registry_path = crate::config::config_dir().join("plugins.json");
+        std::fs::create_dir_all(registry_path.parent().unwrap()).unwrap();
+        let corrupt = b"this is not valid json {{{{";
+        std::fs::write(&registry_path, corrupt).unwrap();
+
+        let err = offline_plugin_link_response(&PluginLinkParams {
+            path: manifest_dir.display().to_string(),
+            enabled: true,
+            source: None,
+        })
+        .expect_err("offline link must fail closed on a corrupt registry");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            std::fs::read(&registry_path).unwrap(),
+            corrupt,
+            "offline link must not clobber a corrupt plugins.json"
+        );
+
+        let _ = std::fs::remove_dir_all(&manifest_dir);
+    }
+
+    #[test]
+    fn offline_link_persists_through_locked_registry_update() {
+        let _sandbox = PluginUserDirSandbox::new("offline-link-locked-update");
+        let existing_id = unique_plugin_id("offline-link-existing");
+        let plugin_id = unique_plugin_id("offline-link-locked");
+        let existing = github_plugin(&existing_id, "owner", "repo", None);
+        crate::persist::plugin_registry::save(&[existing]).unwrap();
+        let _ = crate::persist::plugin_registry::take_update_path_used_for_test();
+
+        persist_plugin_offline(&github_plugin(&plugin_id, "owner", "repo", None)).unwrap();
+
+        assert!(
+            crate::persist::plugin_registry::take_update_path_used_for_test(),
+            "offline link must persist through plugin_registry::update"
+        );
+        let lock_path =
+            crate::config::config_dir().join(crate::persist::plugin_registry::REGISTRY_LOCK_FILE);
+        assert!(
+            lock_path.exists(),
+            "locked update must create the registry lock file"
+        );
+
+        let stored = crate::persist::plugin_registry::try_load().unwrap();
+        let ids: Vec<_> = stored
+            .iter()
+            .map(|plugin| plugin.plugin_id.as_str())
+            .collect();
+        assert!(
+            ids.contains(&existing_id.as_str()),
+            "locked update must keep existing registry entries"
+        );
+        assert!(
+            ids.contains(&plugin_id.as_str()),
+            "locked update must persist the newly linked plugin"
+        );
+        let mut sorted_ids = ids.clone();
+        sorted_ids.sort_unstable();
+        assert_eq!(
+            ids, sorted_ids,
+            "locked update must sort registry entries by plugin id"
+        );
     }
 }

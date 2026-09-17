@@ -6,6 +6,7 @@
 
 pub(crate) mod actions;
 mod agent_resume;
+pub(crate) mod agent_view;
 mod agents;
 mod api;
 mod api_helpers;
@@ -230,6 +231,9 @@ fn background_update_check_enabled(no_session: bool, check_enabled: bool) -> boo
 fn load_plugin_registry(no_session: bool) -> crate::app::state::InstalledPluginRegistry {
     if no_session {
         return std::collections::HashMap::new();
+    }
+    if let Err(err) = crate::persist::plugin_registry::import_legacy_session_registry() {
+        tracing::warn!(err = %err, "failed to import legacy session plugin registry");
     }
     let entries = crate::persist::plugin_registry::load();
     let entries = crate::persist::plugin_registry::reload_manifests(entries, |path, enabled| {
@@ -686,6 +690,7 @@ impl App {
             sidebar_section_split,
             workspace_panel_density,
             agent_panel_sort,
+            agent_view_override: None,
             sidebar_detail_view: crate::app::state::SidebarDetailView::default(),
             jobs: Vec::new(),
             jobs_scroll: 0,
