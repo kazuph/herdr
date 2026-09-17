@@ -62,10 +62,11 @@ pub enum Agent {
     Kilo,
     Qodercli,
     Maki,
+    Muse,
 }
 
 impl Agent {
-    pub const SCREEN_MANIFEST_AGENTS: [Self; 19] = [
+    pub const SCREEN_MANIFEST_AGENTS: [Self; 20] = [
         Self::Pi,
         Self::Claude,
         Self::Codex,
@@ -85,6 +86,7 @@ impl Agent {
         Self::Kilo,
         Self::Qodercli,
         Self::Maki,
+        Self::Muse,
     ];
 }
 
@@ -111,6 +113,7 @@ pub fn agent_label(agent: Agent) -> &'static str {
         Agent::Kilo => "kilo",
         Agent::Qodercli => "qodercli",
         Agent::Maki => "maki",
+        Agent::Muse => "muse",
     }
 }
 
@@ -147,6 +150,7 @@ fn lookup_agent(name: &str) -> Option<Agent> {
         "kilo" | "kilo-code" | "kilo code" => Some(Agent::Kilo),
         "qodercli" | "qoderclicn" | "qoder" | "qodercn" => Some(Agent::Qodercli),
         "maki" => Some(Agent::Maki),
+        "muse" | "muse-bin" | "muse-code" | "muse-cli" => Some(Agent::Muse),
         _ => None,
     }
 }
@@ -743,6 +747,10 @@ mod tests {
         assert_eq!(identify_agent("kilo"), Some(Agent::Kilo));
         assert_eq!(identify_agent("kilo-code"), Some(Agent::Kilo));
         assert_eq!(identify_agent("maki"), Some(Agent::Maki));
+        assert_eq!(identify_agent("muse"), Some(Agent::Muse));
+        assert_eq!(identify_agent("muse-bin"), Some(Agent::Muse));
+        assert_eq!(identify_agent("muse-code"), Some(Agent::Muse));
+        assert_eq!(identify_agent("muse-cli"), Some(Agent::Muse));
     }
 
     #[test]
@@ -768,6 +776,9 @@ mod tests {
         assert_eq!(parse_agent_label("grok-build"), Some(Agent::Grok));
         assert_eq!(parse_agent_label("hermes-agent"), Some(Agent::Hermes));
         assert_eq!(parse_agent_label("maki"), Some(Agent::Maki));
+        assert_eq!(parse_agent_label("muse"), Some(Agent::Muse));
+        assert_eq!(parse_agent_label("muse-code"), Some(Agent::Muse));
+        assert_eq!(parse_canonical_agent_label("muse"), Some(Agent::Muse));
         assert_eq!(parse_agent_label("kilo-code"), Some(Agent::Kilo));
     }
 
@@ -795,6 +806,7 @@ mod tests {
             Agent::Kilo,
             Agent::Qodercli,
             Agent::Maki,
+            Agent::Muse,
         ];
 
         for agent in agents {

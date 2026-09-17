@@ -756,3 +756,83 @@ fn codex_osc_working_beats_weak_blocker_screen() {
         );
     });
 }
+
+#[test]
+fn muse_idle_prompt_is_idle() {
+    with_manifest_dirs("muse-idle", || {
+        let screen = "Muse model · medium · /tmp/work\n⟩\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Idle);
+        assert!(result.visible_idle);
+    });
+}
+
+#[test]
+fn muse_working_interrupt_is_working() {
+    with_manifest_dirs("muse-working", || {
+        let screen = "◆ Working (12s · esc to interrupt)\n⟩ editing src/main.rs\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Working);
+        assert!(result.visible_working);
+    });
+}
+
+#[test]
+fn muse_picker_pair_is_blocked() {
+    with_manifest_dirs("muse-picker", || {
+        let screen = "Which files should I edit?\n❯ 1. src/main.rs\n  2. src/lib.rs\nEnter to select · ↑/↓ to move · Tab for an optional note · Esc to interrupt\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn muse_quoted_picker_words_are_not_blocked() {
+    with_manifest_dirs("muse-quoted-picker", || {
+        // Assistant transcript quoting picker chrome without the paired
+        // controls must not flip an idle prompt to blocked.
+        let screen = "I said press Enter to select an option.\n⟩\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Idle);
+    });
+}
+
+#[test]
+fn muse_approval_pair_is_blocked() {
+    with_manifest_dirs("muse-approval", || {
+        let screen = "Allow this stage once\nAlways allow in this workspace\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn muse_workspace_trust_is_blocked() {
+    with_manifest_dirs("muse-trust", || {
+        let screen = "Do you trust this workspace?\nTrust and continue\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn muse_theme_menu_keeps_prior_state() {
+    with_manifest_dirs("muse-menu", || {
+        let screen = "/theme\nenter confirm · esc go back\n";
+        let result = explain(Agent::Muse, screen);
+        assert!(result.skip_state_update);
+    });
+}
+
+#[test]
+fn muse_picker_screen_is_not_codex_blocked() {
+    with_manifest_dirs("muse-not-codex-blocked", || {
+        // The generic muse picker chrome must not read as a codex blocker.
+        let screen = "Which files should I edit?\n❯ 1. src/main.rs\nEnter to select · ↑/↓ to move · Tab for an optional note · Esc to interrupt\n";
+        let result = explain(Agent::Codex, screen);
+        assert_ne!(result.state, AgentState::Blocked);
+    });
+}
