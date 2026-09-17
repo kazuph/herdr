@@ -1,0 +1,98 @@
+id = "muse"
+version = "2026.09.17.1"
+min_engine_version = 2
+updated_at = "2026-09-17T00:00:00Z"
+aliases = ["muse-code", "muse-cli"]
+
+# Evidence: Muse Code terminal UI states.
+#
+# Idle shows a bare `⟩` prompt line. Active turns show an activity label with
+# an "esc to interrupt" hint. Structured questions render a picker footer with
+# paired controls ("Enter to select" with "Tab for an optional note", or
+# "Enter to toggle" with "Esc to interrupt"); a lone phrase is not enough to
+# call it blocked because assistant text can quote these words. Command and
+# network approvals render option pairs ("Allow this stage once" with
+# "Always allow in this workspace", "Allow once" with "Allow for this
+# session", "Yes, proceed" with "Yes, don't ask again this session") for the
+# same reason. First launch in an untrusted directory asks
+# "Do you trust this workspace?" together with a continue control, which is a
+# real blocker. `/theme` and `/skills` style menus render editor footer hints
+# ("enter confirm ... esc go back" shapes) and keep their prior state.
+
+[[rules]]
+id = "muse_workspace_trust"
+state = "blocked"
+priority = 970
+region = "bottom_non_empty_lines(12)"
+visible_blocker = true
+contains = ["Do you trust this workspace?"]
+any = [
+  { contains = ["Trust and continue"] },
+  { contains = ["Use Up/Down"] },
+]
+
+[[rules]]
+id = "muse_picker"
+state = "blocked"
+priority = 950
+region = "bottom_non_empty_lines(8)"
+visible_blocker = true
+any = [
+  { contains = ["Enter to select", "Tab for an optional note"] },
+  { contains = ["Enter to toggle", "Esc to interrupt"] },
+]
+
+[[rules]]
+id = "muse_menu_overlay"
+state = "unknown"
+priority = 940
+region = "bottom_non_empty_lines(8)"
+skip_state_update = true
+any = [
+  { contains = ["enter confirm", "esc go back"] },
+  { contains = ["enter save", "esc go back"] },
+  { contains = ["space toggle", "esc close", "type filter"] },
+]
+
+[[rules]]
+id = "muse_working_interrupt"
+state = "working"
+priority = 900
+region = "bottom_non_empty_lines(8)"
+visible_working = true
+contains = ["esc to interrupt"]
+not = [
+  { contains = ["Enter to select", "Tab for an optional note"] },
+  { contains = ["Enter to toggle", "Esc to interrupt"] },
+]
+
+[[rules]]
+id = "muse_approval"
+state = "blocked"
+priority = 850
+region = "bottom_non_empty_lines(8)"
+visible_blocker = true
+any = [
+  { contains = ["Allow this stage once", "Always allow in this workspace"] },
+  { contains = ["Allow once", "Allow for this session"] },
+  { contains = ["Yes, proceed", "Yes, don't ask again this session"] },
+]
+
+[[rules]]
+id = "muse_idle_prompt"
+state = "idle"
+priority = 700
+region = "bottom_non_empty_lines(5)"
+visible_idle = true
+any = [
+  { line_regex = ['^\s*⟩\s*$'] },
+  { line_regex = ['^\s*⟩\s+\S'] },
+]
+not = [
+  { contains = ["esc to interrupt"] },
+  { contains = ["Enter to select", "Tab for an optional note"] },
+  { contains = ["Enter to toggle", "Esc to interrupt"] },
+  { contains = ["enter confirm", "esc go back"] },
+  { contains = ["enter save", "esc go back"] },
+  { contains = ["space toggle", "esc close", "type filter"] },
+]

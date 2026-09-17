@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 359,
+    "active_contract_count": 365,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -8711,6 +8711,162 @@
       ],
       "unrepresented_dimensions": [
         "target OS, package, and human parity acceptance unverified"
+      ]
+    },
+    {
+      "contract_id": "G10-3df74806bb",
+      "dimensions": [
+        "agent identity",
+        "process name resolution"
+      ],
+      "verification_methods": [
+        "rust_test_target:identify_known_agents",
+        "drift_source_anchor:src/detect/mod.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1755",
+        "src/detect/mod.rs:159"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Live process-name observation on macOS/Linux and human acceptance remain unverified"
+      ]
+    },
+    {
+      "contract_id": "G10-8cfaf05d50",
+      "dimensions": [
+        "agent state detection",
+        "picker blocked precision"
+      ],
+      "verification_methods": [
+        "rust_test_target:muse_picker_pair_is_blocked",
+        "rust_test_target:muse_picker_screen_is_not_codex_blocked",
+        "drift_source_anchor:src/detect/manifests/muse.toml",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1756",
+        "src/detect/manifests/muse.toml:35"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Live Muse Code screens and human acceptance remain unverified"
+      ]
+    },
+    {
+      "contract_id": "G10-6611fa00eb",
+      "dimensions": [
+        "agent state detection",
+        "confirmation blocked notification"
+      ],
+      "verification_methods": [
+        "rust_test_target:qwen_user_confirmation_is_blocked",
+        "drift_source_anchor:src/detect/manifests/qwen.toml",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1757",
+        "src/detect/manifests/qwen.toml:39"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Live Qwen Code approval screens and human acceptance remain unverified"
+      ]
+    },
+    {
+      "contract_id": "G10-375c48c306",
+      "dimensions": [
+        "exact session restore",
+        "resume argv construction",
+        "fail-closed session ids"
+      ],
+      "verification_methods": [
+        "rust_test_target:qwen_restore_plan_uses_resume_argv",
+        "rust_test_target:grok_restore_plan_uses_resume_argv",
+        "rust_test_target:agy_restore_plan_uses_conversation_argv",
+        "rust_test_target:letta_restore_plan_uses_plain_conversation_argv",
+        "rust_test_target:session_id_from_agent_command_extracts_resume_ids",
+        "drift_source_anchor:src/agent_resume.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1758",
+        "src/agent_resume.rs:190"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Restart-exact restore with real CLI sessions and human acceptance remain unverified"
+      ]
+    },
+    {
+      "contract_id": "G10-48ba1c9eea",
+      "dimensions": [
+        "fork policy hold",
+        "integration installer stays disabled"
+      ],
+      "verification_methods": [
+        "rust_test_target:integration_mutation_methods_are_not_part_of_the_public_api",
+        "drift_source_anchor:src/cli/integration.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1759",
+        "src/cli/integration.rs:3"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Settings and JSON API surface review and human acceptance remain unverified"
+      ]
+    },
+    {
+      "contract_id": "G10-e8d758a75a",
+      "dimensions": [
+        "agent identity preservation",
+        "agy label stability"
+      ],
+      "verification_methods": [
+        "rust_test_target:agy_label_and_identity_are_unchanged",
+        "drift_source_anchor:src/agent_resume.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1760",
+        "src/agent_resume.rs:196"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "agy notification, sound, and menu live behavior and human acceptance remain unverified"
       ]
     }
   ]

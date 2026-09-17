@@ -756,3 +756,204 @@ fn codex_osc_working_beats_weak_blocker_screen() {
         );
     });
 }
+
+#[test]
+fn muse_idle_prompt_is_idle() {
+    with_manifest_dirs("muse-idle", || {
+        let screen = "Muse model · medium · /tmp/work\n⟩\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Idle);
+        assert!(result.visible_idle);
+    });
+}
+
+#[test]
+fn muse_working_interrupt_is_working() {
+    with_manifest_dirs("muse-working", || {
+        let screen = "◆ Working (12s · esc to interrupt)\n⟩ editing src/main.rs\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Working);
+        assert!(result.visible_working);
+    });
+}
+
+#[test]
+fn muse_picker_pair_is_blocked() {
+    with_manifest_dirs("muse-picker", || {
+        let screen = "Which files should I edit?\n❯ 1. src/main.rs\n  2. src/lib.rs\nEnter to select · ↑/↓ to move · Tab for an optional note · Esc to interrupt\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn muse_quoted_picker_words_are_not_blocked() {
+    with_manifest_dirs("muse-quoted-picker", || {
+        // Assistant transcript quoting picker chrome without the paired
+        // controls must not flip an idle prompt to blocked.
+        let screen = "I said press Enter to select an option.\n⟩\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Idle);
+    });
+}
+
+#[test]
+fn muse_approval_pair_is_blocked() {
+    with_manifest_dirs("muse-approval", || {
+        let screen = "Allow this stage once\nAlways allow in this workspace\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn muse_workspace_trust_is_blocked() {
+    with_manifest_dirs("muse-trust", || {
+        let screen = "Do you trust this workspace?\nTrust and continue\n";
+        let result = explain(Agent::Muse, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn muse_theme_menu_keeps_prior_state() {
+    with_manifest_dirs("muse-menu", || {
+        let screen = "/theme\nenter confirm · esc go back\n";
+        let result = explain(Agent::Muse, screen);
+        assert!(result.skip_state_update);
+    });
+}
+
+#[test]
+fn muse_picker_screen_is_not_codex_blocked() {
+    with_manifest_dirs("muse-not-codex-blocked", || {
+        // The generic muse picker chrome must not read as a codex blocker.
+        let screen = "Which files should I edit?\n❯ 1. src/main.rs\nEnter to select · ↑/↓ to move · Tab for an optional note · Esc to interrupt\n";
+        let result = explain(Agent::Codex, screen);
+        assert_ne!(result.state, AgentState::Blocked);
+    });
+}
+
+#[test]
+fn qwen_composer_hint_is_idle() {
+    with_manifest_dirs("qwen-idle", || {
+        let screen = "> type your message or @path/to/file\n";
+        let result = explain(Agent::Qwen, screen);
+        assert_eq!(result.state, AgentState::Idle);
+        assert!(result.visible_idle);
+    });
+}
+
+#[test]
+fn qwen_bare_composer_box_is_not_idle() {
+    with_manifest_dirs("qwen-bare-composer", || {
+        // The composer box stays visible while responding, so a bare `>`
+        // without an input hint is not idle evidence (no visible idle).
+        let screen = "> \n";
+        let result = explain(Agent::Qwen, screen);
+        assert!(!result.visible_idle);
+    });
+}
+
+#[test]
+fn qwen_cancel_timer_is_working() {
+    with_manifest_dirs("qwen-working", || {
+        let screen = "⠋ Reading files… (12s · esc to cancel)\n";
+        let result = explain(Agent::Qwen, screen);
+        assert_eq!(result.state, AgentState::Working);
+        assert!(result.visible_working);
+    });
+}
+
+#[test]
+fn qwen_user_confirmation_is_blocked() {
+    with_manifest_dirs("qwen-confirmation", || {
+        // Confirmation is a contracted Blocked state. The spinner rotates
+        // through the same braille range as working detection, so Blocked
+        // must stay stable across frames while the confirmation text remains.
+        for spinner in ['⠏', '⠋'] {
+            let screen = format!("{spinner} Working ...\nWaiting for user confirmation...\n");
+            let result = explain(Agent::Qwen, &screen);
+            assert_eq!(
+                result.state,
+                AgentState::Blocked,
+                "confirmation with spinner {spinner:?} should stay blocked"
+            );
+            assert!(
+                result.visible_blocker,
+                "confirmation with spinner {spinner:?} should remain a visible blocker"
+            );
+        }
+    });
+}
+
+#[test]
+fn qwen_tool_approval_is_blocked() {
+    with_manifest_dirs("qwen-approval", || {
+        let screen = "do you want to proceed?\n1. yes, allow once\n";
+        let result = explain(Agent::Qwen, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn qwen_folder_trust_is_blocked() {
+    with_manifest_dirs("qwen-trust", || {
+        let screen = "do you trust this folder? trust folder (y) don't trust (esc)\n";
+        let result = explain(Agent::Qwen, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn letta_command_approval_is_blocked() {
+    with_manifest_dirs("letta-approval", || {
+        let screen = "Run this command?\nEnter to select · Esc to cancel\n";
+        let result = explain(Agent::Letta, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn letta_running_tool_is_working() {
+    with_manifest_dirs("letta-working", || {
+        let screen = "research is … (esc to interrupt)\n└ Running... (read files)\n";
+        let result = explain(Agent::Letta, screen);
+        assert_eq!(result.state, AgentState::Working);
+        assert!(result.visible_working);
+    });
+}
+
+#[test]
+fn letta_composer_idle_is_idle() {
+    with_manifest_dirs("letta-idle", || {
+        let screen = "›\n";
+        let result = explain(Agent::Letta, screen);
+        assert_eq!(result.state, AgentState::Idle);
+        assert!(result.visible_idle);
+    });
+}
+
+#[test]
+fn letta_composer_in_use_keeps_prior_state() {
+    with_manifest_dirs("letta-composer-in-use", || {
+        let screen = "› write tests for the parser\n";
+        let result = explain(Agent::Letta, screen);
+        assert!(result.skip_state_update);
+    });
+}
+
+#[test]
+fn letta_profile_selector_keeps_prior_state() {
+    with_manifest_dirs("letta-profile", || {
+        let screen = "Create a new agent (--new)\nEnter select · Esc exit\n";
+        let result = explain(Agent::Letta, screen);
+        assert!(result.skip_state_update);
+    });
+}

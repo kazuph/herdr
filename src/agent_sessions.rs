@@ -73,6 +73,8 @@ fn session_id_from_tokens(agent: &str, tokens: &[&str]) -> Option<String> {
     match agent {
         "claude" => session_id_from_claude_tokens(tokens),
         "codex" => session_id_from_codex_tokens(tokens),
+        "qwen" | "grok" => session_id_from_resume_flag_tokens(tokens),
+        "agy" | "letta" => session_id_from_conversation_flag_tokens(tokens),
         _ => None,
     }
 }
@@ -101,6 +103,36 @@ fn session_id_from_codex_tokens(tokens: &[&str]) -> Option<String> {
                 .copied()
                 .filter(|id| is_safe_session_id(id))
                 .map(str::to_string);
+        }
+    }
+    None
+}
+
+/// `--resume <id>` / `--resume=<id>` launch shape shared by qwen-style CLIs.
+/// grok uses the same `grok --resume <id>` shape for native restore.
+/// Only safe ids are returned; anything else stays unknown (fail-closed).
+fn session_id_from_resume_flag_tokens(tokens: &[&str]) -> Option<String> {
+    session_id_from_flag_tokens(tokens, "--resume")
+}
+
+/// `agy --conversation <id>` launch shape. `--continue` (latest) is never
+/// captured: only an explicit `--conversation` value becomes a session id.
+fn session_id_from_conversation_flag_tokens(tokens: &[&str]) -> Option<String> {
+    session_id_from_flag_tokens(tokens, "--conversation")
+}
+
+fn session_id_from_flag_tokens(tokens: &[&str], flag: &str) -> Option<String> {
+    let equals_prefix = format!("{flag}=");
+    for (index, token) in tokens.iter().enumerate() {
+        if *token == flag {
+            return tokens
+                .get(index + 1)
+                .copied()
+                .filter(|id| is_safe_session_id(id))
+                .map(str::to_string);
+        }
+        if let Some(session_id) = token.strip_prefix(equals_prefix.as_str()) {
+            return is_safe_session_id(session_id).then(|| session_id.to_string());
         }
     }
     None
@@ -521,6 +553,48 @@ mod tests {
             None
         );
         assert_eq!(session_id_from_cmdline("codex", "codex resume"), None);
+        assert_eq!(
+            session_id_from_cmdline("qwen", "qwen --resume qwen-session-1"),
+            Some("qwen-session-1".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("qwen", "qwen --resume=abc-123"),
+            Some("abc-123".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("qwen", "qwen --resume evil;id"),
+            None
+        );
+        assert_eq!(session_id_from_cmdline("qwen", "qwen"), None);
+        assert_eq!(
+            session_id_from_cmdline("grok", "grok --resume grok-session-1"),
+            Some("grok-session-1".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("grok", "grok --resume evil;id"),
+            None
+        );
+        assert_eq!(
+            session_id_from_cmdline("agy", "agy --conversation agy-session-1"),
+            Some("agy-session-1".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("agy", "agy --conversation=abc-123"),
+            Some("abc-123".into())
+        );
+        assert_eq!(session_id_from_cmdline("agy", "agy --continue"), None);
+        assert_eq!(
+            session_id_from_cmdline("agy", "agy --conversation evil;id"),
+            None
+        );
+        assert_eq!(
+            session_id_from_cmdline("letta", "letta --conversation conversation-123"),
+            Some("conversation-123".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("letta", "letta --conversation default:agent-1"),
+            None
+        );
     }
 
     #[test]

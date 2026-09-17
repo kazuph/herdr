@@ -86,6 +86,8 @@ pub fn is_reserved_native_state_source(source: &str, agent: &str) -> bool {
             | ("herdr:devin", "devin")
             | ("herdr:droid", "droid")
             | ("herdr:qodercli", "qodercli")
+            | ("herdr:qwen", "qwen")
+            | ("herdr:grok", "grok")
             | ("herdr:cursor", "cursor")
     )
 }
@@ -185,6 +187,30 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
                 session_ref.value.clone(),
             ]
         }
+        ("herdr:qwen", "qwen", AgentSessionRefKind::Id) => {
+            vec!["qwen".into(), "--resume".into(), session_ref.value.clone()]
+        }
+        ("herdr:grok", "grok", AgentSessionRefKind::Id) => {
+            vec!["grok".into(), "--resume".into(), session_ref.value.clone()]
+        }
+        ("herdr:antigravity_cli", "agy", AgentSessionRefKind::Id) => {
+            vec![
+                "agy".into(),
+                "--conversation".into(),
+                session_ref.value.clone(),
+            ]
+        }
+        // Letta restores an explicit conversation only. The upstream
+        // `default:<agent>` form is intentionally not ported: automatically
+        // picking a default conversation violates fail-closed restore, and
+        // `:` never passes `is_safe_session_id` anyway.
+        ("herdr:letta", "letta", AgentSessionRefKind::Id) => {
+            vec![
+                "letta".into(),
+                "--conversation".into(),
+                session_ref.value.clone(),
+            ]
+        }
         _ => return None,
     };
 
@@ -219,6 +245,10 @@ pub(crate) fn is_official_agent_source(source: &str, agent: &str) -> bool {
             | ("herdr:qodercli", "qodercli")
             | ("herdr:kilo", "kilo")
             | ("herdr:cursor", "cursor")
+            | ("herdr:qwen", "qwen")
+            | ("herdr:grok", "grok")
+            | ("herdr:antigravity_cli", "agy")
+            | ("herdr:letta", "letta")
     )
 }
 
@@ -657,5 +687,190 @@ mod tests {
             "devin-session"
         )
         .is_some());
+    }
+}
+
+#[cfg(test)]
+mod qwen_restore_tests {
+    use super::*;
+
+    #[test]
+    fn qwen_restore_plan_uses_resume_argv() {
+        assert_eq!(
+            plan(
+                "herdr:qwen",
+                "qwen",
+                &AgentSessionRef::id("qwen-session").unwrap()
+            )
+            .unwrap()
+            .argv,
+            vec!["qwen", "--resume", "qwen-session"]
+        );
+        assert!(is_official_agent_source("herdr:qwen", "qwen"));
+        assert!(is_reserved_native_state_source("herdr:qwen", "qwen"));
+    }
+
+    #[test]
+    fn qwen_restore_rejects_unsafe_and_path_refs() {
+        assert!(AgentSessionRef::id("evil;id").is_none());
+        assert!(session_ref_from_snapshot(
+            "herdr:qwen",
+            "qwen",
+            AgentSessionRefKind::Id,
+            "evil;id"
+        )
+        .is_none());
+        let path = "/tmp/qwen-session".to_string();
+        assert!(plan("herdr:qwen", "qwen", &AgentSessionRef::path(&path).unwrap()).is_none());
+    }
+
+    #[test]
+    fn qwen_report_ref_records_id_session() {
+        let session_ref =
+            session_ref_from_report("herdr:qwen", "qwen", Some("qwen-id".into()), None).unwrap();
+        assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
+        assert_eq!(session_ref.value, "qwen-id");
+    }
+}
+
+#[cfg(test)]
+mod grok_restore_tests {
+    use super::*;
+
+    #[test]
+    fn grok_restore_plan_uses_resume_argv() {
+        assert_eq!(
+            plan(
+                "herdr:grok",
+                "grok",
+                &AgentSessionRef::id("grok-session").unwrap()
+            )
+            .unwrap()
+            .argv,
+            vec!["grok", "--resume", "grok-session"]
+        );
+        assert!(is_official_agent_source("herdr:grok", "grok"));
+        assert!(is_reserved_native_state_source("herdr:grok", "grok"));
+    }
+
+    #[test]
+    fn grok_restore_rejects_unsafe_refs() {
+        assert!(AgentSessionRef::id("evil;id").is_none());
+        assert!(session_ref_from_snapshot(
+            "herdr:grok",
+            "grok",
+            AgentSessionRefKind::Id,
+            "evil;id"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn grok_report_ref_records_id_session() {
+        let session_ref =
+            session_ref_from_report("herdr:grok", "grok", Some("grok-id".into()), None).unwrap();
+        assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
+        assert_eq!(session_ref.value, "grok-id");
+    }
+}
+
+#[cfg(test)]
+mod agy_restore_tests {
+    use super::*;
+    use crate::detect::{agent_label, identify_agent, Agent};
+
+    #[test]
+    fn agy_label_and_identity_are_unchanged() {
+        assert_eq!(agent_label(Agent::Antigravity), "agy");
+        assert_eq!(identify_agent("agy"), Some(Agent::Antigravity));
+        assert_eq!(identify_agent("antigravity"), Some(Agent::Antigravity));
+        assert_eq!(identify_agent("antigravity-cli"), Some(Agent::Antigravity));
+    }
+
+    #[test]
+    fn agy_restore_plan_uses_conversation_argv() {
+        assert_eq!(
+            plan(
+                "herdr:antigravity_cli",
+                "agy",
+                &AgentSessionRef::id("agy-session").unwrap()
+            )
+            .unwrap()
+            .argv,
+            vec!["agy", "--conversation", "agy-session"]
+        );
+        assert!(is_official_agent_source("herdr:antigravity_cli", "agy"));
+        assert!(!is_reserved_native_state_source(
+            "herdr:antigravity_cli",
+            "agy"
+        ));
+    }
+
+    #[test]
+    fn agy_restore_rejects_unsafe_refs() {
+        assert!(AgentSessionRef::id("evil;id").is_none());
+        assert!(session_ref_from_snapshot(
+            "herdr:antigravity_cli",
+            "agy",
+            AgentSessionRefKind::Id,
+            "evil;id"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn agy_report_ref_records_id_session() {
+        let session_ref =
+            session_ref_from_report("herdr:antigravity_cli", "agy", Some("agy-id".into()), None)
+                .unwrap();
+        assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
+        assert_eq!(session_ref.value, "agy-id");
+    }
+}
+
+#[cfg(test)]
+mod letta_restore_tests {
+    use super::*;
+
+    #[test]
+    fn letta_restore_plan_uses_plain_conversation_argv() {
+        assert_eq!(
+            plan(
+                "herdr:letta",
+                "letta",
+                &AgentSessionRef::id("conversation-123").unwrap()
+            )
+            .unwrap()
+            .argv,
+            vec!["letta", "--conversation", "conversation-123"]
+        );
+        assert!(is_official_agent_source("herdr:letta", "letta"));
+    }
+
+    #[test]
+    fn letta_default_conversation_form_is_not_restored() {
+        // `default:<agent>` never survives safe-id validation, so even a
+        // directly constructed snapshot ref must not produce a plan.
+        assert!(AgentSessionRef::id("default:agent-1").is_none());
+        assert!(session_ref_from_snapshot(
+            "herdr:letta",
+            "letta",
+            AgentSessionRefKind::Id,
+            "default:agent-1"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn letta_report_ref_records_id_session() {
+        let session_ref = session_ref_from_report(
+            "herdr:letta",
+            "letta",
+            Some("conversation-123".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
+        assert_eq!(session_ref.value, "conversation-123");
     }
 }
