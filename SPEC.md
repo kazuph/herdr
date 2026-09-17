@@ -1771,3 +1771,33 @@
   - generation の不一致を互換rangeの判定なしに接続全体拒否し、C1/C2のaction限定disableをhandshake後に到達不能にする。
   - C2のaction限定disableがpane解決・session復元・mailbox配送のfail-closed・exact-deliveryを崩す。
   - client-shell transportの全量採用によりG1–G9の描画・入力・復元契約が置換される。
+
+### UP-AGENTS. 新規5エージェント対応の再実装 packet
+- **本家source**: `e9b22084` (grok restore)、`679584fd` (antigravity restore)、`a4d52ab6` (qwen検出+復元)、`fc1cb77f` (letta検出+復元)、`7b675f42` (muse検出)。いずれもfork分岐点 `9c9490d` より後。cherry-pick禁止。本家manifest/rule原文の転記ではなく、観測可能な挙動をfork manifest engine制約内 (`MAX_RULES_PER_MANIFEST=128` 等) で書き起こす。
+- **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 検出ruleとresume argvの概念だけを採用し、session報告hook・`herdr integration install`・Settings/JSON API露出は採用しない (G8)。
+- **ユーザー確定事項 (2026-09-17)**: museは検出のみ。qwenのuser-confirmation (承認待ち) はBlocked通知対象にする。復元を持つgrok/agy/qwen/lettaに起動menu項目を追加する (museは追加しない)。lettaのdefault conversation自動選択は不採用で、明示sessionのみ復元する。`herdr integration install <x>` はいずれも復活させない。
+- **目的**: 本家が対応した5 CLIを、forkのhookless・fail-closed復元経路 (`agent_restore` の `plan()` + G3のpane単位session ledger) に乗せる。保存済みsessionがないpaneは復元しない。
+- **UI挙動**:
+  - muse: idle/working/approval/questionを画面判定する。汎用Pick系blocked判定 (選択肢UIのfooter対) を含む。復元は持たない。process名は `muse` / `muse-bin` / `muse-code` / `muse-cli` を認識し、表示labelは `muse`。
+  - qwen: idle/working/user-confirmationを画面判定する。承認待ちはBlockedとして通知対象にする。process名は `qwen` / `qwen-code` を認識し、表示labelは `qwen`。保存済みsession idからの復元起動は `qwen --resume <id>`。
+  - grok: 検出は現状維持。保存済みsession idからの復元起動は `grok --resume <id>`。source文字列は `herdr:grok`。
+  - agy (antigravity): 検出・表示label `agy` は現状維持 (SPEC G4のagy契約)。保存済みsession idからの復元起動は `agy --conversation <id>`。source文字列は本家互換の `herdr:antigravity_cli`。
+  - letta: idle/working/question系を画面判定する。process名は `letta` / `letta-code` を認識し、表示labelは `letta`。保存済みsession idからの復元起動は `letta --conversation <id>` のplain形式のみ。`default:` prefix付きsession値はfail-closedで復元しない (`is_safe_session_id` が `:` を拒否するため構造的に復元対象外)。
+  - hookless session観測: G3のcmdline fallback層として、`grok --resume <id>` / `qwen --resume <id>` / `agy --conversation <id>` / `letta --conversation <id>` の起動形状からsafe idだけを読み取る。runtime/session fileの現行IDがあればそちらを優先し、cmdline値は上書きしない。
+  - 起動menu: workspaceメニュー先頭とpaneメニューのagent起動群は `New Claude Code agent`、`New Codex agent`、`New agy agent`、`New grok agent`、`New letta agent`、`New qwen agent` の順になる。起動コマンドはそれぞれ `claude`、`codex`、`agy`、`grok`、`letta`、`qwen`。
+- **受け入れ条件**:
+  - `identify_agent` が5 CLIのprocess名を正しく解決し、既存agentの解決が変わらない。
+  - museの汎用Pick画面がBlockedになり、同画面がcodex等の他agent paneでBlocked誤爆しない (非衝突test)。
+  - qwenの承認待ち画面がBlocked通知対象になる。
+  - `plan()` が4復元組のsource/agent/idから正しいresume argvを作り、unsafe id・`default:` prefix・Path kind (該当なし) を拒否する。
+  - `herdr integration install` は無効のまま (G8)。Settings統合リスト・JSON integration APIに5件とも載せない。
+  - `agy` の表示label・通知・sound・menu起動が本packet前後で変わらない。
+- **実装方針**: 1エージェント=1コミット。共有match (`BUNDLED_MANIFESTS`・`identify_agent`・`plan()`・`is_official_agent_source`・sound arms) への追加armのみ。`server/client/ui/protocol/plugin/machine/mailbox/job` 系には触れない。
+- **デグレ判定**:
+  - `herdr integration install <x>` が復活する、または外部agent設定へ何かを書き込む。
+  - 保存済みsessionのないpaneが復元される、または別paneの会話が起動される。
+  - lettaのdefault conversationが自動選択される。
+  - `agy` のlabel・通知・menu起動が変わる。
+  - 既存menu項目の順序・文言が本entryの順序と変わる。
+  - qwen承認待ちが通知対象から外れる。
