@@ -1748,7 +1748,7 @@
   - 本家 `src/protocol/endpoint.rs`（275行）は本家 `ClientShellSnapshot`・`ClientSurfaceSize`・`ServerMessage::EndpointControl` に依存し、forkに該当型はない（`src/client/` にhandshake・endpoint・shellは存在しない）。忠実移植は不可。
   - 本家 `src/server/headless/client_views.rs`（789行）は本家 `ClientShellTopology`・`shell_location`・`TabSurfaceTarget` に依存し、forkに該当型はない。本家 `207be3c7`（204 files、約5万insert）はclient-shell移譲全体であり、本packetの範囲外。
 - **disposition**:
-  - PR1 endpoint互換基盤（C1–C3）: `semantic_port`。`ENDPOINT_PROTOCOL_GENERATION = 1` の契約・世代交渉・不足機能のaction限定disable・世代表示の二軸化をforkのbincode handshakeへ実装する。`PROTOCOL_VERSION` とは別次元とし、Code Conventionsのbump規約（latest release tag比較）に従う。fail-closed契約箇所（pane解決・session復元・mailbox配送）はdisableではなく拒否のまま残す判断があり得、`reviewed_but_rejected_source_hunks` に記録する。
+  - PR1 endpoint互換基盤（C1–C3）: `semantic_port`。`ENDPOINT_PROTOCOL_GENERATION = 1` の契約・世代交渉・不足機能のaction限定disable・世代表示の二軸化をforkのbincode handshakeへ実装する。`PROTOCOL_VERSION` とは別次元とし、Code Conventionsのbump規約（latest release tag比較）に従う。fail-closed契約箇所（pane解決・session復元・mailbox配送）はdisableではなく拒否のまま残す判断があり得、`reviewed_but_rejected_source_hunks` に記録する。generation は breaking-only の厳密一致軸ではなく、`generation`（実装する最高世代）と `min_generation`（話せる最低世代、既定1）の互換rangeでadditive接続を維持する。
   - PR2 client別view選択＋per-viewer sizing（A1–A3）: `semantic_port`。server側（`AppState` の純粋性を崩さない置き場所、例：headless serverのclient→{workspace, tab}選択表）にview選択を持ち、`compute_view` へのper-client `area` 導入とlast-interacted-wins所有者記録を行う。`tests/multi_client.rs` にviewer独立性assertionを追加する。
   - PR3 focus伝播＋client別title（A4–A8）: `semantic_port`。`agent focus` / `pane move --focus` のattached-client移動、background有効化の非干渉、window titleのper-client化、sidebar可視スクロール。fork title系（常時pane title・border saved-session表示・toast右上anchor）との交差部は等価条件を先に固定する。
   - PR4 client側shell描画（B1–B3）: `reject_hold`（本packetでは対象外）。`headless.rs` 約9787行の責務移動であり、forkのterminal-browser移植（pixel mouse SGR1016・delayed graphics retry・direct frame streaming）と強干渉するため。SPEC記述のみ残し、別packetで扱う。
@@ -1761,11 +1761,13 @@
   - A2: clientごとにtab配置がそのclientの端末sizeにfitする。A3: 同一tab共有時は最後に操作したclientがsize決定権を持つ。
   - A4–A8: `agent focus` / `pane move --focus` のattached-client移動、focusなし移動の非伝播、background有効化の非干渉、workspace focus時のsidebar可視scroll、window titleのper-client化（本家追随 `#3760`/`#4153`/`#4171`/`#3744`/`#3554`/`#4130` と一体確認）。
   - G1セル数学はviewer別に再表明する（既存条件の書き換えではなくviewer別追記）。
+- **決定事項（endpoint generation）**: generation は breaking-only の厳密一致軸ではない。各peerは `generation` と `min_generation` を持ち、`client.generation >= server.min_generation` かつ `server.generation >= client.min_generation` なら接続を維持する。additive機能（例: generation 2 が `machine.route` だけを追加）は `min_generation` を1のまま残し、available generation（`min(client, server)`）未満の action と server が advertise しない method だけを disable する（C1/C2）。breaking 変更だけ `min_generation` を上げ、range外は `endpoint_generation_unsupported` / `endpoint_generation_newer` で明示拒否する（C3）。gen2 client / gen1 server の simulation test がこの契約の正本。
 - **未決定事項（実装着手前に親判断が必要）**:
   - PR1のfork-native範囲。忠実移植不可のため、(a)契約＋世代交渉＋action限定disable機構の最小実装、(b)JSON endpoint層まで含む完全実装、のいずれかを選択する。(b)はtransport追加の大工事になる。
   - PR2/PR3のfork-native設計。view選択表の置き場所（headless server内table vs 新規session事実型）、render parameter化の方式、入力経路のclient別routingは、本家client-shell型がないためfork独自設計になる。規模はview table＋render parameter化＋input routingで中〜大であり、PR1と分離したmilestone分割を推奨する。
 - **デグレ判定**:
   - 単一viewerでのGREENを他viewerへ流用する。G1受け入れ条件をviewer別追記なしに書き換える。
   - `PROTOCOL_VERSION` とendpoint generationを同一値として扱う、またはbump規約を守らずにwireを変更する。
+  - generation の不一致を互換rangeの判定なしに接続全体拒否し、C1/C2のaction限定disableをhandshake後に到達不能にする。
   - C2のaction限定disableがpane解決・session復元・mailbox配送のfail-closed・exact-deliveryを崩す。
   - client-shell transportの全量採用によりG1–G9の描画・入力・復元契約が置換される。
