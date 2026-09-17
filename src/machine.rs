@@ -470,7 +470,7 @@ mod tests {
         let id = catalog.add("a", "h1", "default").unwrap();
         assert!(!catalog.remove("missing"));
         assert!(!catalog.set_enabled("missing", false));
-        assert_eq!(catalog.rename("missing", "x").unwrap(), false);
+        assert!(!catalog.rename("missing", "x").unwrap());
         assert!(catalog.rename(&id, "b").is_ok());
         assert_eq!(catalog.resolve("b").unwrap().id, id);
         assert!(catalog.set_enabled(&id, false));
