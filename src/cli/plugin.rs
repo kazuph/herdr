@@ -69,11 +69,20 @@ fn plugin_link(args: &[String]) -> std::io::Result<i32> {
             }
         }
     }
-    print_plugin_response(Method::PluginLink(PluginLinkParams {
+    let params = PluginLinkParams {
         path,
         enabled,
         source: None,
-    }))
+    };
+    let response = match super::send_request(&Request {
+        id: "cli:plugin".into(),
+        method: Method::PluginLink(params.clone()),
+    }) {
+        Ok(response) => response,
+        Err(err) if is_connection_error(&err) => offline_plugin_link_response(&params)?,
+        Err(err) => return Err(err),
+    };
+    super::print_response(&response)
 }
 
 fn plugin_config_dir_command(args: &[String]) -> std::io::Result<i32> {
@@ -1082,6 +1091,24 @@ fn plugin_matches_github_source(plugin: &InstalledPluginInfo, source: &GithubPlu
         && plugin.source.subdir.as_deref() == source.subdir.as_deref()
 }
 
+fn persist_plugin_offline(plugin: &InstalledPluginInfo) -> std::io::Result<()> {
+    crate::plugin_paths::ensure_plugin_user_dirs(&plugin.plugin_id)?;
+    let mut plugins = crate::persist::plugin_registry::load();
+    plugins.retain(|entry| entry.plugin_id != plugin.plugin_id);
+    plugins.push(plugin.clone());
+    crate::persist::plugin_registry::save(&plugins)
+}
+
+fn offline_plugin_link_response(params: &PluginLinkParams) -> std::io::Result<serde_json::Value> {
+    let plugin = load_cli_plugin_manifest(Path::new(&params.path), params.enabled)?;
+    persist_plugin_offline(&plugin)?;
+    serde_json::to_value(SuccessResponse {
+        id: "cli:plugin".into(),
+        result: ResponseResult::PluginLinked { plugin },
+    })
+    .map_err(std::io::Error::other)
+}
+
 fn offline_plugin_list_response(params: &PluginListParams) -> std::io::Result<serde_json::Value> {
     let entries = crate::persist::plugin_registry::load();
     let mut plugins =
@@ -1864,5 +1891,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(config_dir);
         let _ = std::fs::remove_dir_all(state_dir);
         let _ = std::fs::remove_dir_all(legacy_dir);
+    }
+
+    fn write_minimal_plugin_manifest(dir: &std::path::Path, plugin_id: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join("herdr-plugin.toml"),
+            format!(
+                "id = \"{plugin_id}\"\nname = \"Offline Link Test\"\nversion = \"0.1.0\"\nmin_herdr_version = \"0.1.0\"\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn offline_link_persists_plugin_with_enabled_state() {
+        let _sandbox = PluginUserDirSandbox::new("offline-link");
+        let plugin_id = unique_plugin_id("offline-link");
+        let manifest_dir = std::env::temp_dir().join(format!(
+            "herdr-offline-link-{}.{}.{}",
+            std::process::id(),
+            plugin_id,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        write_minimal_plugin_manifest(&manifest_dir, &plugin_id);
+
+        let response = offline_plugin_link_response(&PluginLinkParams {
+            path: manifest_dir.display().to_string(),
+            enabled: false,
+            source: None,
+        })
+        .unwrap();
+        let parsed: SuccessResponse = serde_json::from_value(response).unwrap();
+        let ResponseResult::PluginLinked { plugin } = parsed.result else {
+            panic!("offline link must return PluginLinked");
+        };
+        assert_eq!(plugin.plugin_id, plugin_id);
+        assert!(!plugin.enabled);
+
+        let entries = crate::persist::plugin_registry::load();
+        let stored = entries
+            .iter()
+            .find(|entry| entry.plugin_id == plugin_id)
+            .expect("offline link must persist the plugin");
+        assert!(!stored.enabled);
+
+        let _ = std::fs::remove_dir_all(&manifest_dir);
     }
 }
