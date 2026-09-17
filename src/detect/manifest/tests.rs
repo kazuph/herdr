@@ -836,3 +836,64 @@ fn muse_picker_screen_is_not_codex_blocked() {
         assert_ne!(result.state, AgentState::Blocked);
     });
 }
+
+#[test]
+fn qwen_composer_hint_is_idle() {
+    with_manifest_dirs("qwen-idle", || {
+        let screen = "> type your message or @path/to/file\n";
+        let result = explain(Agent::Qwen, screen);
+        assert_eq!(result.state, AgentState::Idle);
+        assert!(result.visible_idle);
+    });
+}
+
+#[test]
+fn qwen_bare_composer_box_is_not_idle() {
+    with_manifest_dirs("qwen-bare-composer", || {
+        // The composer box stays visible while responding, so a bare `>`
+        // without an input hint is not idle evidence (no visible idle).
+        let screen = "> \n";
+        let result = explain(Agent::Qwen, screen);
+        assert!(!result.visible_idle);
+    });
+}
+
+#[test]
+fn qwen_cancel_timer_is_working() {
+    with_manifest_dirs("qwen-working", || {
+        let screen = "⠋ Reading files… (12s · esc to cancel)\n";
+        let result = explain(Agent::Qwen, screen);
+        assert_eq!(result.state, AgentState::Working);
+        assert!(result.visible_working);
+    });
+}
+
+#[test]
+fn qwen_user_confirmation_is_blocked() {
+    with_manifest_dirs("qwen-confirmation", || {
+        let screen = "⠏ Working ...\nWaiting for user confirmation...\n";
+        let result = explain(Agent::Qwen, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn qwen_tool_approval_is_blocked() {
+    with_manifest_dirs("qwen-approval", || {
+        let screen = "do you want to proceed?\n1. yes, allow once\n";
+        let result = explain(Agent::Qwen, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn qwen_folder_trust_is_blocked() {
+    with_manifest_dirs("qwen-trust", || {
+        let screen = "do you trust this folder? trust folder (y) don't trust (esc)\n";
+        let result = explain(Agent::Qwen, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}

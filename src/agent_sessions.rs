@@ -73,6 +73,7 @@ fn session_id_from_tokens(agent: &str, tokens: &[&str]) -> Option<String> {
     match agent {
         "claude" => session_id_from_claude_tokens(tokens),
         "codex" => session_id_from_codex_tokens(tokens),
+        "qwen" => session_id_from_resume_flag_tokens(tokens),
         _ => None,
     }
 }
@@ -101,6 +102,24 @@ fn session_id_from_codex_tokens(tokens: &[&str]) -> Option<String> {
                 .copied()
                 .filter(|id| is_safe_session_id(id))
                 .map(str::to_string);
+        }
+    }
+    None
+}
+
+/// `--resume <id>` / `--resume=<id>` launch shape shared by qwen-style CLIs.
+/// Only safe ids are returned; anything else stays unknown (fail-closed).
+fn session_id_from_resume_flag_tokens(tokens: &[&str]) -> Option<String> {
+    for (index, token) in tokens.iter().enumerate() {
+        if *token == "--resume" {
+            return tokens
+                .get(index + 1)
+                .copied()
+                .filter(|id| is_safe_session_id(id))
+                .map(str::to_string);
+        }
+        if let Some(session_id) = token.strip_prefix("--resume=") {
+            return is_safe_session_id(session_id).then(|| session_id.to_string());
         }
     }
     None
@@ -521,6 +540,19 @@ mod tests {
             None
         );
         assert_eq!(session_id_from_cmdline("codex", "codex resume"), None);
+        assert_eq!(
+            session_id_from_cmdline("qwen", "qwen --resume qwen-session-1"),
+            Some("qwen-session-1".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("qwen", "qwen --resume=abc-123"),
+            Some("abc-123".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("qwen", "qwen --resume evil;id"),
+            None
+        );
+        assert_eq!(session_id_from_cmdline("qwen", "qwen"), None);
     }
 
     #[test]

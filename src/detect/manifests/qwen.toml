@@ -1,0 +1,126 @@
+id = "qwen"
+version = "2026.09.17.1"
+min_engine_version = 2
+updated_at = "2026-09-17T00:00:00Z"
+aliases = ["qwen-code", "qwen code"]
+
+# Evidence: Qwen Code terminal UI states.
+#
+# Qwen keeps its composer box visible while responding, so the prompt box
+# alone is not idle evidence. Its status-prefixed terminal titles are the
+# primary locale-independent signals: a ✳-prefixed title means blocked, a
+# ◐-prefixed title means working. Screen fallbacks cover the confirmation
+# flows: a spinner line plus a localized "waiting for confirmation" message,
+# tool-approval dialogs pairing "yes, allow once" with an action question
+# ("apply this change?", "allow execution of ...", "do you want to
+# proceed?", "shell command execution"), numbered question dialogs, and the
+# folder-trust dialog. Working turns render a braille spinner plus an
+# "(Ns · esc to cancel)" timer hint. Idle is the composer prompt (`>`) with
+# an input hint ("type your message", "@path/to/file"); the composer box
+# without a hint is not idle evidence by itself.
+
+[[rules]]
+id = "qwen_title_blocked"
+state = "blocked"
+priority = 1200
+region = "osc_title"
+visible_blocker = true
+regex = ['^\x{2733}\x{FE0E}? ']
+
+[[rules]]
+id = "qwen_title_working"
+state = "working"
+priority = 1100
+region = "osc_title"
+visible_working = true
+regex = ['^\x{25D0}\x{FE0E}? ']
+
+[[rules]]
+id = "qwen_waiting_confirmation"
+state = "blocked"
+priority = 1000
+region = "bottom_non_empty_lines(20)"
+visible_blocker = true
+line_regex = ['^\s*⠏\s+.*\.\.\.\s*$']
+any = [
+  { contains = ["Waiting for user confirmation..."] },
+  { contains = ["等待用户确认..."] },
+  { contains = ["等待用戶確認..."] },
+  { contains = ["Warten auf Benutzerbestätigung..."] },
+  { contains = ["En attente de la confirmation de l'utilisateur..."] },
+  { contains = ["ユーザーの確認を待っています..."] },
+  { contains = ["Aguardando confirmação do usuário..."] },
+  { contains = ["Ожидание подтверждения от пользователя..."] },
+  { contains = ["Esperant la confirmació de l'usuari..."] },
+]
+
+[[rules]]
+id = "qwen_tool_approval"
+state = "blocked"
+priority = 990
+region = "bottom_non_empty_lines(20)"
+visible_blocker = true
+contains = ["yes, allow once"]
+any = [
+  { contains = ["apply this change?"] },
+  { contains = ["allow execution of:"] },
+  { contains = ["allow execution of mcp tool"] },
+  { contains = ["do you want to proceed?"] },
+  { contains = ["shell command execution"] },
+]
+
+[[rules]]
+id = "qwen_question_list"
+state = "blocked"
+priority = 980
+region = "bottom_non_empty_lines(20)"
+visible_blocker = true
+line_regex = [
+  '^\s*[❯›]\s*(?:\[(?: |✓)\]\s*)?\d+\.\s+',
+  '^\s*↑/↓\s*:.*(?:Enter|Return)\s*:',
+]
+
+[[rules]]
+id = "qwen_folder_trust"
+state = "blocked"
+priority = 970
+region = "bottom_non_empty_lines(20)"
+visible_blocker = true
+contains = ["do you trust this folder?", "trust folder (", "don't trust (esc)"]
+
+[[rules]]
+id = "qwen_cancel_timer_working"
+state = "working"
+priority = 900
+region = "bottom_non_empty_lines(8)"
+visible_working = true
+line_regex = ['^\s*(?:[⠁-⣿]|\.{1,2})\s+.*\(\d+(?:m(?:\s+\d+s)?|s).*\s·\sesc to cancel\)\s*$']
+
+[[rules]]
+id = "qwen_narrow_timer_working"
+state = "working"
+priority = 890
+region = "bottom_non_empty_lines(8)"
+visible_working = true
+line_regex = ['^\s*\(\d+(?:m(?:\s+\d+s)?|s)\s·\sesc to cancel\)\s*$']
+
+[[rules]]
+id = "qwen_tool_progress_working"
+state = "working"
+priority = 850
+region = "osc_progress"
+visible_working = true
+regex = ['^4;3(?:;|$)']
+
+[[rules]]
+id = "qwen_composer_idle"
+state = "idle"
+priority = 100
+region = "bottom_non_empty_lines(30)"
+visible_idle = true
+line_regex = ['^\s*>\s*(?:type\s*)?.*$']
+any = [
+  { contains = ["type your message"] },
+  { contains = ["your message or @path/to/file"] },
+  { contains = ["@path/to/file"] },
+]
