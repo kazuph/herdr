@@ -130,6 +130,10 @@ fn print_client_status(json: bool) -> std::io::Result<()> {
         crate::config::Config::load().config.update.channel.as_str()
     );
     println!("protocol: {}", crate::protocol::PROTOCOL_VERSION);
+    println!(
+        "endpoint_generation: {}",
+        crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION
+    );
     println!("binary: {}", current_exe_label());
     Ok(())
 }
@@ -214,6 +218,7 @@ struct ClientStatusJson {
     version: String,
     channel: &'static str,
     protocol: u32,
+    endpoint_generation: u32,
     binary: String,
     session: Option<String>,
 }
@@ -247,6 +252,7 @@ fn client_status_json() -> ClientStatusJson {
         version: crate::build_info::version(),
         channel: crate::config::Config::load().config.update.channel.as_str(),
         protocol: crate::protocol::PROTOCOL_VERSION,
+        endpoint_generation: crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION,
         binary: current_exe_label(),
         session: crate::session::active_name(),
     }
