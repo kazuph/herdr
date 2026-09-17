@@ -109,7 +109,7 @@ pub fn import_legacy_session_registry() -> std::io::Result<bool> {
     if session_path == global {
         return Ok(false);
     }
-    let entries = load_from_path_strict(&session_path).unwrap_or_default();
+    let entries = load_from_path(&session_path);
     if entries.is_empty() {
         return Ok(false);
     }
