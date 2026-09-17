@@ -584,7 +584,7 @@ fn non_empty_trimmed(
     }
 }
 
-pub(super) fn normalize_plugin_id(value: &str) -> Option<String> {
+pub(crate) fn normalize_plugin_id(value: &str) -> Option<String> {
     normalize_identifier(value, PLUGIN_ID_MAX_CHARS)
 }
 

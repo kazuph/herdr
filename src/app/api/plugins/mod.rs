@@ -14,9 +14,9 @@ use crate::api::schema::{
 };
 use crate::app::App;
 use manifest::{
-    effective_platforms, ensure_platform_supported, normalize_action_id, normalize_plugin_id,
-    normalize_plugin_source,
+    effective_platforms, ensure_platform_supported, normalize_action_id, normalize_plugin_source,
 };
+pub(crate) use manifest::normalize_plugin_id;
 
 #[cfg(test)]
 use crate::api::schema::{PluginCommandStatus, PluginInvocationContext};
@@ -130,6 +130,7 @@ impl App {
             self.state
                 .plugin_panes
                 .retain(|_, record| record.plugin_id != plugin_id);
+            self.clear_agent_view_for_source(&format!("plugin:{plugin_id}"));
         }
         encode_success(id, ResponseResult::PluginUnlinked { plugin_id, removed })
     }

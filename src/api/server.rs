@@ -364,6 +364,8 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::AgentExplain(_) => "agent.explain",
         Method::AgentSend(_) => "agent.send",
         Method::AgentRename(_) => "agent.rename",
+        Method::AgentViewSet(_) => "agent.view.set",
+        Method::AgentViewClear(_) => "agent.view.clear",
         Method::AgentFocus(_) => "agent.focus",
         Method::AgentStart(_) => "agent.start",
         Method::AgentRestore(_) => "agent.restore",

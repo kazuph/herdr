@@ -747,14 +747,13 @@ impl App {
             .and_then(crate::workspace::Workspace::focused_pane_id);
         let current_idx = entries
             .iter()
-            .position(|entry| Some(entry.pane_id) == focused)
-            .unwrap_or(0);
-        let next_idx = if forward {
-            (current_idx + 1) % entries.len()
-        } else if current_idx == 0 {
-            entries.len() - 1
-        } else {
-            current_idx - 1
+            .position(|entry| Some(entry.pane_id) == focused);
+        let next_idx = match (current_idx, forward) {
+            (Some(idx), true) => (idx + 1) % entries.len(),
+            (Some(0), false) => entries.len() - 1,
+            (Some(idx), false) => idx - 1,
+            (None, true) => 0,
+            (None, false) => entries.len() - 1,
         };
         let target = entries.get(next_idx)?;
         Some((next_idx, target.ws_idx, target.pane_id))

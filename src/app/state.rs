@@ -1750,6 +1750,8 @@ pub struct AppState {
     pub sidebar_section_split: f32,
     pub workspace_panel_density: WorkspacePanelDensity,
     pub agent_panel_sort: AgentPanelSort,
+    /// Transient session-wide projection override for the built-in Agents view.
+    pub agent_view_override: Option<crate::api::schema::AgentViewSetParams>,
     /// Which list the sidebar's lower panel currently shows.
     pub sidebar_detail_view: SidebarDetailView,
     /// Background jobs started through `herdr run`, newest first.
@@ -2428,6 +2430,7 @@ impl AppState {
             sidebar_section_split: 0.5,
             workspace_panel_density: WorkspacePanelDensity::Full,
             agent_panel_sort: AgentPanelSort::Spaces,
+            agent_view_override: None,
             sidebar_detail_view: SidebarDetailView::default(),
             jobs: Vec::new(),
             jobs_scroll: 0,
