@@ -185,7 +185,10 @@ mod tests {
                 min_generation: 2,
             },
         ];
-        assert!(disabled_actions(1, &required).is_empty());
+        assert_eq!(
+            disabled_actions(1, &required),
+            vec!["machine.route".to_string()]
+        );
         assert_eq!(
             disabled_actions(0, &required),
             vec!["pane.list".to_string(), "machine.route".to_string()]
