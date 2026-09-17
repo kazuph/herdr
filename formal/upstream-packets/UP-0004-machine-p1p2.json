@@ -1,0 +1,139 @@
+{
+  "id": "UP-0004-machine-p1p2",
+  "disposition": "semantic_port",
+  "source": {
+    "commit": "9e9bc8a144667a6b7debfd4f0c7a31ff0e11493a",
+    "extra_commits": [
+      "043b804c44665b07bd503fdad896bbe0a29311a0"
+    ],
+    "allowlist": [
+      "src/cli.rs",
+      "src/cli/machine.rs",
+      "src/cli/spec.rs",
+      "src/cli/spec/machine.rs",
+      "src/main.rs",
+      "src/remote.rs",
+      "src/remote/attach.rs",
+      "src/remote/saved.rs"
+    ]
+  },
+  "reviewed_but_rejected_source_hunks": [
+    {
+      "file": "upstream remote preparation pipeline (prepare_saved_ssh, remote install, metadata cache)",
+      "reason": "Replaced by a BatchMode SSH reachability probe as the save gate; remote herdr readiness is verified on first use. Recorded in SPEC G11 P1."
+    },
+    {
+      "file": "upstream client-endpoint transfer base (src/client/endpoint/*)",
+      "reason": "Requires the separate multiclient layer; fork-native OpenSSH stdio exec is used instead. Recorded in SPEC G11 P2."
+    },
+    {
+      "file": "upstream sidebar machine groups and cross-machine navigation (b9ce9686 and fixes)",
+      "reason": "Deferred to future packet P3 pending the multiclient view base. Recorded in SPEC G11 as status C."
+    },
+    {
+      "file": "upstream reconnect/backoff/incremental updates",
+      "reason": "Deferred to future packet P4 pending a server-side connection-ownership design. Recorded in SPEC G11 as status C."
+    },
+    {
+      "file": "upstream windows remote host install (59167658 and related)",
+      "reason": "Out of scope: the fork has no Windows verification base. Recorded in SPEC G11 as out of scope."
+    },
+    {
+      "file": "upstream session-deletion exact-name rule (ab15da28)",
+      "reason": "Separate packet (session management side), not machine scope."
+    }
+  ],
+  "fork_parent": "5016f40be81f023268c3ba6ea115ee27ab88bd7a",
+  "fork_files": [
+    "SPEC.md",
+    "formal/spec-evidence-manifest.json",
+    "formal/upstream-packets/UP-0004-machine-p1p2.json",
+    "scripts/test_spec_contract_inventory.py",
+    "src/cli.rs",
+    "src/cli/machine.rs",
+    "src/cli/spec.rs",
+    "src/machine.rs",
+    "src/main.rs"
+  ],
+  "contract_impact": {
+    "direct_stage_contract": {
+      "id": "G11-machine-crud-and-routing",
+      "requirement": "Each accepted packet preserves G1-G9 after integration; new G11 contracts are covered by the evidence manifest."
+    },
+    "protected_contracts": [
+      {
+        "id": "G5-4132d3e8be",
+        "requirement": "Unknown flags are rejected before the nested guard.",
+        "status": "unchanged"
+      },
+      {
+        "name": "G8 integration surface",
+        "requirement": "Non-public integrations and self-update remain unavailable.",
+        "status": "unchanged"
+      },
+      {
+        "name": "G9 runtime ownership",
+        "requirement": "The current executable and explicit socket override remain owned by the invoking runtime.",
+        "status": "unchanged"
+      }
+    ],
+    "unaffected_contracts": [
+      {
+        "id": "G5 fail-closed pane identity",
+        "reason": "Machine resolution is a separate label-or-id namespace; pane target resolution is untouched."
+      },
+      {
+        "id": "G3 exact session restore",
+        "reason": "No session ledger, resume argv, or agent hook path is modified."
+      },
+      {
+        "id": "G9 mailbox and job routing",
+        "reason": "Machine-addressed run/inbox is out of scope; local job and mailbox paths are unchanged."
+      }
+    ]
+  },
+  "dimensions": [
+    "saved machine catalog persistence",
+    "fail-closed machine references",
+    "ssh reachability probe gate",
+    "cli routing to saved machines",
+    "no local fallback on routing failure",
+    "spec evidence coverage for new contracts"
+  ],
+  "dependencies": [
+    "multiclient endpoint-generation contract (separate layer branch; machine routing assumes generation-gated remote servers)"
+  ],
+  "owner": {
+    "file_and_contract_integration": "manager",
+    "implementation": "machine layer worker"
+  },
+  "evidence": {
+    "final_green": {
+      "result": "GREEN: 13 new machine unit tests plus cli spec registration tests pass; spec drift check and contract inventory tests pass."
+    },
+    "pre_existing_suite_flakes": {
+      "result": "Not evidence of regression: the same 14 toast/notification/sidebar tests fail on the pristine base commit when the full binary suite runs; each passes in isolation."
+    },
+    "regression_scope": {
+      "result": "Full --bin herdr suite: 2969 passed with the packet (base: 2956 passed); the 14 failures are identical pre-existing order-dependent flakes."
+    }
+  },
+  "rollback": {
+    "cascade_dependents": [
+      "future P3 sidebar groups",
+      "future P4 reconnect"
+    ],
+    "target": "the UP-0004-machine-p1p2 packet commit",
+    "trigger": "machine CLI behavior, fail-closed resolution, or no-fallback regression"
+  },
+  "relevant_formal": {
+    "reason": "The packet adds a local catalog and an ssh-exec routing path without changing modeled protocol state, identity, or ownership transitions.",
+    "value": "none"
+  },
+  "unverified_live_dimensions": [
+    "End-to-end routing against a reachable SSH host (no reachable host in this environment).",
+    "Interactive add/rename/remove flows against a real catalog.",
+    "Stalled-host cancel and reconnect behavior (future packet P4).",
+    "Windows remote hosts (out of scope)."
+  ]
+}

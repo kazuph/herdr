@@ -10,6 +10,10 @@ pub(super) fn command() -> Command {
         .arg(option("session", "NAME").help("Use or create a named persistent session"))
         .arg(option("remote", "TARGET").help("Attach through SSH to a remote Herdr server"))
         .arg(
+            option("machine", "LABEL_OR_ID")
+                .help("Route agent, pane, workspace, or worktree to a saved SSH machine"),
+        )
+        .arg(
             option("remote-keybindings", "MODE")
                 .value_parser(["local", "server"])
                 .help("Choose local or server keybindings for remote attach"),
@@ -37,6 +41,7 @@ pub(super) fn command() -> Command {
         .subcommand(wait_command())
         .subcommand(terminal_command())
         .subcommand(session_command())
+        .subcommand(machine_command())
         .subcommand(plugin_command());
     disable_auto_help(command)
 }
@@ -578,6 +583,44 @@ fn session_command() -> Command {
                 .about("Delete a stopped session")
                 .arg(required("name", "NAME"))
                 .arg(json_flag()),
+        )
+}
+
+fn machine_command() -> Command {
+    Command::new("machine")
+        .about("Manage saved SSH machines")
+        .subcommand(
+            Command::new("list")
+                .about("List saved machines")
+                .arg(json_flag()),
+        )
+        .subcommand(
+            Command::new("add")
+                .about("Probe SSH reachability and save a machine")
+                .arg(required("target", "SSH_TARGET"))
+                .arg(option("label", "LABEL"))
+                .arg(option("remote-session", "NAME")),
+        )
+        .subcommand(
+            Command::new("rename")
+                .about("Rename a saved machine")
+                .arg(required("id", "LABEL_OR_ID"))
+                .arg(option("label", "LABEL")),
+        )
+        .subcommand(
+            Command::new("remove")
+                .about("Remove a saved machine")
+                .arg(required("id", "LABEL_OR_ID")),
+        )
+        .subcommand(
+            Command::new("enable")
+                .about("Enable a saved machine")
+                .arg(required("id", "LABEL_OR_ID")),
+        )
+        .subcommand(
+            Command::new("disable")
+                .about("Disable a saved machine")
+                .arg(required("id", "LABEL_OR_ID")),
         )
 }
 
