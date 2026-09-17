@@ -73,7 +73,7 @@ fn session_id_from_tokens(agent: &str, tokens: &[&str]) -> Option<String> {
     match agent {
         "claude" => session_id_from_claude_tokens(tokens),
         "codex" => session_id_from_codex_tokens(tokens),
-        "qwen" => session_id_from_resume_flag_tokens(tokens),
+        "qwen" | "grok" => session_id_from_resume_flag_tokens(tokens),
         _ => None,
     }
 }
@@ -108,6 +108,7 @@ fn session_id_from_codex_tokens(tokens: &[&str]) -> Option<String> {
 }
 
 /// `--resume <id>` / `--resume=<id>` launch shape shared by qwen-style CLIs.
+/// grok uses the same `grok --resume <id>` shape for native restore.
 /// Only safe ids are returned; anything else stays unknown (fail-closed).
 fn session_id_from_resume_flag_tokens(tokens: &[&str]) -> Option<String> {
     for (index, token) in tokens.iter().enumerate() {
@@ -553,6 +554,14 @@ mod tests {
             None
         );
         assert_eq!(session_id_from_cmdline("qwen", "qwen"), None);
+        assert_eq!(
+            session_id_from_cmdline("grok", "grok --resume grok-session-1"),
+            Some("grok-session-1".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("grok", "grok --resume evil;id"),
+            None
+        );
     }
 
     #[test]
