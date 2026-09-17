@@ -64,10 +64,11 @@ pub enum Agent {
     Maki,
     Muse,
     Qwen,
+    Letta,
 }
 
 impl Agent {
-    pub const SCREEN_MANIFEST_AGENTS: [Self; 21] = [
+    pub const SCREEN_MANIFEST_AGENTS: [Self; 22] = [
         Self::Pi,
         Self::Claude,
         Self::Codex,
@@ -89,6 +90,7 @@ impl Agent {
         Self::Maki,
         Self::Muse,
         Self::Qwen,
+        Self::Letta,
     ];
 }
 
@@ -117,6 +119,7 @@ pub fn agent_label(agent: Agent) -> &'static str {
         Agent::Maki => "maki",
         Agent::Muse => "muse",
         Agent::Qwen => "qwen",
+        Agent::Letta => "letta",
     }
 }
 
@@ -155,6 +158,7 @@ fn lookup_agent(name: &str) -> Option<Agent> {
         "maki" => Some(Agent::Maki),
         "muse" | "muse-bin" | "muse-code" | "muse-cli" => Some(Agent::Muse),
         "qwen" | "qwen-code" | "qwen code" => Some(Agent::Qwen),
+        "letta" | "letta-code" | "letta code" => Some(Agent::Letta),
         _ => None,
     }
 }
@@ -757,6 +761,8 @@ mod tests {
         assert_eq!(identify_agent("muse-cli"), Some(Agent::Muse));
         assert_eq!(identify_agent("qwen"), Some(Agent::Qwen));
         assert_eq!(identify_agent("qwen-code"), Some(Agent::Qwen));
+        assert_eq!(identify_agent("letta"), Some(Agent::Letta));
+        assert_eq!(identify_agent("letta-code"), Some(Agent::Letta));
     }
 
     #[test]
@@ -787,6 +793,8 @@ mod tests {
         assert_eq!(parse_canonical_agent_label("muse"), Some(Agent::Muse));
         assert_eq!(parse_agent_label("qwen"), Some(Agent::Qwen));
         assert_eq!(parse_canonical_agent_label("qwen"), Some(Agent::Qwen));
+        assert_eq!(parse_agent_label("letta"), Some(Agent::Letta));
+        assert_eq!(parse_canonical_agent_label("letta"), Some(Agent::Letta));
         assert_eq!(parse_agent_label("kilo-code"), Some(Agent::Kilo));
     }
 
@@ -816,6 +824,7 @@ mod tests {
             Agent::Maki,
             Agent::Muse,
             Agent::Qwen,
+            Agent::Letta,
         ];
 
         for agent in agents {

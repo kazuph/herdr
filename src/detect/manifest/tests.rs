@@ -897,3 +897,51 @@ fn qwen_folder_trust_is_blocked() {
         assert!(result.visible_blocker);
     });
 }
+
+#[test]
+fn letta_command_approval_is_blocked() {
+    with_manifest_dirs("letta-approval", || {
+        let screen = "Run this command?\nEnter to select · Esc to cancel\n";
+        let result = explain(Agent::Letta, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        assert!(result.visible_blocker);
+    });
+}
+
+#[test]
+fn letta_running_tool_is_working() {
+    with_manifest_dirs("letta-working", || {
+        let screen = "research is … (esc to interrupt)\n└ Running... (read files)\n";
+        let result = explain(Agent::Letta, screen);
+        assert_eq!(result.state, AgentState::Working);
+        assert!(result.visible_working);
+    });
+}
+
+#[test]
+fn letta_composer_idle_is_idle() {
+    with_manifest_dirs("letta-idle", || {
+        let screen = "›\n";
+        let result = explain(Agent::Letta, screen);
+        assert_eq!(result.state, AgentState::Idle);
+        assert!(result.visible_idle);
+    });
+}
+
+#[test]
+fn letta_composer_in_use_keeps_prior_state() {
+    with_manifest_dirs("letta-composer-in-use", || {
+        let screen = "› write tests for the parser\n";
+        let result = explain(Agent::Letta, screen);
+        assert!(result.skip_state_update);
+    });
+}
+
+#[test]
+fn letta_profile_selector_keeps_prior_state() {
+    with_manifest_dirs("letta-profile", || {
+        let screen = "Create a new agent (--new)\nEnter select · Esc exit\n";
+        let result = explain(Agent::Letta, screen);
+        assert!(result.skip_state_update);
+    });
+}

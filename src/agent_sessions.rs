@@ -74,7 +74,7 @@ fn session_id_from_tokens(agent: &str, tokens: &[&str]) -> Option<String> {
         "claude" => session_id_from_claude_tokens(tokens),
         "codex" => session_id_from_codex_tokens(tokens),
         "qwen" | "grok" => session_id_from_resume_flag_tokens(tokens),
-        "agy" => session_id_from_conversation_flag_tokens(tokens),
+        "agy" | "letta" => session_id_from_conversation_flag_tokens(tokens),
         _ => None,
     }
 }
@@ -585,6 +585,14 @@ mod tests {
         assert_eq!(session_id_from_cmdline("agy", "agy --continue"), None);
         assert_eq!(
             session_id_from_cmdline("agy", "agy --conversation evil;id"),
+            None
+        );
+        assert_eq!(
+            session_id_from_cmdline("letta", "letta --conversation conversation-123"),
+            Some("conversation-123".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("letta", "letta --conversation default:agent-1"),
             None
         );
     }

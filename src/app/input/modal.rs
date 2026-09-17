@@ -1493,7 +1493,7 @@ impl App {
             (
                 ContextMenuKind::Workspace { ws_idx }
                 | ContextMenuKind::GitWorkspace { ws_idx, .. },
-                Some("New Claude Code agent" | "New Codex agent" | "New agy agent" | "New grok agent" | "New qwen agent"),
+                Some("New Claude Code agent" | "New Codex agent" | "New agy agent" | "New grok agent" | "New letta agent" | "New qwen agent"),
             ) => {
                 self.focus_workspace_idx_via_api(ws_idx);
                 let command = match item {
@@ -1501,6 +1501,7 @@ impl App {
                     Some("New Codex agent") => "codex",
                     Some("New agy agent") => "agy",
                     Some("New grok agent") => "grok",
+                    Some("New letta agent") => "letta",
                     Some("New qwen agent") => "qwen",
                     _ => unreachable!(),
                 };
@@ -1511,7 +1512,7 @@ impl App {
                 ContextMenuKind::Pane {
                     ws_idx, pane_id, ..
                 },
-                Some("New Claude Code agent" | "New Codex agent" | "New agy agent" | "New grok agent" | "New qwen agent"),
+                Some("New Claude Code agent" | "New Codex agent" | "New agy agent" | "New grok agent" | "New letta agent" | "New qwen agent"),
             ) => {
                 self.focus_pane_internal_via_api(ws_idx, pane_id);
                 let command = match item {
@@ -1519,6 +1520,7 @@ impl App {
                     Some("New Codex agent") => "codex",
                     Some("New agy agent") => "agy",
                     Some("New grok agent") => "grok",
+                    Some("New letta agent") => "letta",
                     Some("New qwen agent") => "qwen",
                     _ => unreachable!(),
                 };

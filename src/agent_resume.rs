@@ -200,6 +200,17 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
                 session_ref.value.clone(),
             ]
         }
+        // Letta restores an explicit conversation only. The upstream
+        // `default:<agent>` form is intentionally not ported: automatically
+        // picking a default conversation violates fail-closed restore, and
+        // `:` never passes `is_safe_session_id` anyway.
+        ("herdr:letta", "letta", AgentSessionRefKind::Id) => {
+            vec![
+                "letta".into(),
+                "--conversation".into(),
+                session_ref.value.clone(),
+            ]
+        }
         _ => return None,
     };
 
@@ -237,6 +248,7 @@ pub(crate) fn is_official_agent_source(source: &str, agent: &str) -> bool {
             | ("herdr:qwen", "qwen")
             | ("herdr:grok", "grok")
             | ("herdr:antigravity_cli", "agy")
+            | ("herdr:letta", "letta")
     )
 }
 
@@ -815,5 +827,52 @@ mod agy_restore_tests {
         .unwrap();
         assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
         assert_eq!(session_ref.value, "agy-id");
+    }
+}
+
+#[cfg(test)]
+mod letta_restore_tests {
+    use super::*;
+
+    #[test]
+    fn letta_restore_plan_uses_plain_conversation_argv() {
+        assert_eq!(
+            plan(
+                "herdr:letta",
+                "letta",
+                &AgentSessionRef::id("conversation-123").unwrap()
+            )
+            .unwrap()
+            .argv,
+            vec!["letta", "--conversation", "conversation-123"]
+        );
+        assert!(is_official_agent_source("herdr:letta", "letta"));
+    }
+
+    #[test]
+    fn letta_default_conversation_form_is_not_restored() {
+        // `default:<agent>` never survives safe-id validation, so even a
+        // directly constructed snapshot ref must not produce a plan.
+        assert!(AgentSessionRef::id("default:agent-1").is_none());
+        assert!(session_ref_from_snapshot(
+            "herdr:letta",
+            "letta",
+            AgentSessionRefKind::Id,
+            "default:agent-1"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn letta_report_ref_records_id_session() {
+        let session_ref = session_ref_from_report(
+            "herdr:letta",
+            "letta",
+            Some("conversation-123".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(session_ref.kind, AgentSessionRefKind::Id);
+        assert_eq!(session_ref.value, "conversation-123");
     }
 }

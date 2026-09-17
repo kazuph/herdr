@@ -1,0 +1,92 @@
+id = "letta"
+version = "2026.09.17.1"
+min_engine_version = 2
+updated_at = "2026-09-17T00:00:00Z"
+aliases = ["letta-code", "letta code"]
+
+# Evidence: Letta Code terminal UI states.
+#
+# Letta keeps completed tool rows and spinners in the transcript, so a bare
+# screen spinner is not working evidence. Prefer its live title/progress
+# signals: an "Action Required" title marker means blocked, a braille
+# spinner in the title means working. Screen fallbacks are the command
+# approval dialog pairing "Run this command?" with its select/cancel footer,
+# the running status line ("<task> is ... (esc to interrupt)") and
+# "Running..." tool rows for working. The profile selector
+# ("Create a new agent (--new)") is an overlay that keeps prior state. The
+# composer prompt (`›`) with no activity is idle; bare `›` followed by typed
+# text is a prompt in use, not idle evidence.
+
+[[rules]]
+id = "letta_title_action_required"
+state = "blocked"
+priority = 1300
+region = "osc_title"
+visible_blocker = true
+regex = ['^\[ [!.] \] Action Required(?: \| |$)']
+
+[[rules]]
+id = "letta_command_approval"
+state = "blocked"
+priority = 1200
+region = "bottom_non_empty_lines(20)"
+visible_blocker = true
+contains = ["Run this command?", "Enter to select · Esc to cancel"]
+
+[[rules]]
+id = "letta_title_spinner_working"
+state = "working"
+priority = 900
+region = "osc_title"
+visible_working = true
+regex = ['(?:^| )[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?: |$)']
+
+[[rules]]
+id = "letta_status_line_working"
+state = "working"
+priority = 850
+region = "bottom_non_empty_lines(8)"
+visible_working = true
+line_regex = ['^\s*(?:\S+\s+)+is(?: \S+)*… \((?:esc to interrupt(?: · .*)?|interrupting)\)\s*$']
+
+[[rules]]
+id = "letta_running_tool_working"
+state = "working"
+priority = 800
+region = "bottom_non_empty_lines(8)"
+visible_working = true
+line_regex = ['^\s*(?:└\s*)?Running\.\.\.\s*(?:\(.*\))?$']
+
+[[rules]]
+id = "letta_profile_selector"
+state = "unknown"
+priority = 700
+region = "bottom_non_empty_lines(12)"
+skip_state_update = true
+contains = ["Create a new agent (--new)", "Enter select · Esc exit"]
+
+[[rules]]
+id = "letta_composer_in_use"
+state = "unknown"
+priority = 150
+region = "bottom_non_empty_lines(8)"
+skip_state_update = true
+line_regex = ['^\s*›\s+\S.*$']
+not = [
+  { line_regex = ['^\s*›\s+Try\s+"'] },
+]
+
+[[rules]]
+id = "letta_composer_idle"
+state = "idle"
+priority = 100
+region = "bottom_non_empty_lines(8)"
+visible_idle = true
+any = [
+  { line_regex = ['^\s*›\s*$'] },
+  { line_regex = ['^\s*›\s+Try\s+"'] },
+]
+not = [
+  { line_regex = ['^\s*(?:\S+\s+)+is(?: \S+)*… \((?:esc to interrupt(?: · .*)?|interrupting)\)\s*$'] },
+  { line_regex = ['^\s*(?:└\s*)?Running\.\.\.\s*(?:\(.*\))?$'] },
+]

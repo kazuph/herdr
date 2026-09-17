@@ -1182,7 +1182,7 @@ pub struct ContextMenuState {
 impl ContextMenuState {
     pub fn items(&self) -> Vec<&'static str> {
         let mut items = self.base_items().to_vec();
-        let agent_items = ["New Claude Code agent", "New Codex agent", "New agy agent", "New grok agent", "New qwen agent"];
+        let agent_items = ["New Claude Code agent", "New Codex agent", "New agy agent", "New grok agent", "New letta agent", "New qwen agent"];
         match self.kind {
             ContextMenuKind::Workspace { .. } | ContextMenuKind::GitWorkspace { .. } => {
                 items.splice(0..0, agent_items.into_iter().chain(["--"]));
@@ -1292,6 +1292,7 @@ impl ContextMenuState {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "Move to left split",
@@ -1322,6 +1323,7 @@ impl ContextMenuState {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "Move to left split",
@@ -1351,6 +1353,7 @@ impl ContextMenuState {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "Close pane",
@@ -1370,6 +1373,7 @@ impl ContextMenuState {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "Move to left split",
@@ -1399,6 +1403,7 @@ impl ContextMenuState {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "Move to left split",
@@ -1427,6 +1432,7 @@ impl ContextMenuState {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "Close pane",
@@ -3018,6 +3024,7 @@ mod tests {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "Duplicate",
@@ -3054,6 +3061,7 @@ mod tests {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "Delete worktree checkout...",
@@ -3091,6 +3099,7 @@ mod tests {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "New worktree",
@@ -3129,6 +3138,7 @@ mod tests {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "New worktree",
@@ -3177,6 +3187,7 @@ mod tests {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "Close pane",
@@ -3197,6 +3208,7 @@ mod tests {
                 "New Codex agent",
                 "New agy agent",
                 "New grok agent",
+                "New letta agent",
                 "New qwen agent",
                 "--",
                 "Move to left split",
