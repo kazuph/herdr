@@ -6,7 +6,12 @@ use tracing::warn;
 use crate::api::schema::InstalledPluginInfo;
 
 pub const MANIFEST_UNAVAILABLE_WARNING_PREFIX: &str = "manifest unavailable: ";
-const REGISTRY_LOCK_FILE: &str = ".plugins.lock";
+pub(crate) const REGISTRY_LOCK_FILE: &str = ".plugins.lock";
+
+#[cfg(test)]
+thread_local! {
+    static UPDATE_PATH_USED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 /// User-global registry location. Session-independent so every session
 /// observes the same plugin state (UP-AUTOMATION-P2).
@@ -71,12 +76,19 @@ pub fn update<T>(
     mutation: impl FnOnce(&mut Vec<InstalledPluginInfo>) -> T,
 ) -> std::io::Result<(T, Vec<InstalledPluginInfo>)> {
     with_registry_lock(|| {
+        #[cfg(test)]
+        UPDATE_PATH_USED.with(|flag| flag.set(true));
         let mut plugins = load_from_path_strict(&registry_path())?;
         let result = mutation(&mut plugins);
         plugins.sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));
         save_to_path(&registry_path(), &plugins)?;
         Ok((result, plugins))
     })
+}
+
+#[cfg(test)]
+pub(crate) fn take_update_path_used_for_test() -> bool {
+    UPDATE_PATH_USED.with(|flag| flag.replace(false))
 }
 
 /// Strict locked read of the global registry. Unlike [`load`], parse and IO
@@ -305,6 +317,38 @@ mod tests {
         std::fs::write(&path, b"this is not valid json {{{{").unwrap();
         assert!(try_load().is_err());
         assert!(load().is_empty());
+
+        match previous_config {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match previous_session {
+            Some(value) => std::env::set_var(crate::session::SESSION_ENV_VAR, value),
+            None => std::env::remove_var(crate::session::SESSION_ENV_VAR),
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn update_rejects_corrupt_registry_without_overwriting() {
+        let _lock = crate::config::test_config_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_config = std::env::var_os("XDG_CONFIG_HOME");
+        let previous_session = std::env::var_os(crate::session::SESSION_ENV_VAR);
+        let base = sandbox_global_config("update-corrupt");
+        std::env::set_var("XDG_CONFIG_HOME", &base);
+        std::env::remove_var(crate::session::SESSION_ENV_VAR);
+
+        let path = crate::config::config_dir().join("plugins.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let corrupt = b"this is not valid json {{{{";
+        std::fs::write(&path, corrupt).unwrap();
+
+        let err = update(|plugins| plugins.push(sample_plugin("example.new")))
+            .expect_err("corrupt registry must fail closed");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), corrupt);
 
         match previous_config {
             Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),

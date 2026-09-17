@@ -1093,10 +1093,11 @@ fn plugin_matches_github_source(plugin: &InstalledPluginInfo, source: &GithubPlu
 
 fn persist_plugin_offline(plugin: &InstalledPluginInfo) -> std::io::Result<()> {
     crate::plugin_paths::ensure_plugin_user_dirs(&plugin.plugin_id)?;
-    let mut plugins = crate::persist::plugin_registry::load();
-    plugins.retain(|entry| entry.plugin_id != plugin.plugin_id);
-    plugins.push(plugin.clone());
-    crate::persist::plugin_registry::save(&plugins)
+    crate::persist::plugin_registry::update(|plugins| {
+        plugins.retain(|entry| entry.plugin_id != plugin.plugin_id);
+        plugins.push(plugin.clone());
+    })
+    .map(|_| ())
 }
 
 fn offline_plugin_link_response(params: &PluginLinkParams) -> std::io::Result<serde_json::Value> {
@@ -1935,5 +1936,84 @@ mod tests {
         assert!(!stored.enabled);
 
         let _ = std::fs::remove_dir_all(&manifest_dir);
+    }
+
+    #[test]
+    fn offline_link_does_not_overwrite_corrupt_registry() {
+        let _sandbox = PluginUserDirSandbox::new("offline-link-corrupt");
+        let plugin_id = unique_plugin_id("offline-link-corrupt");
+        let manifest_dir = std::env::temp_dir().join(format!(
+            "herdr-offline-link-corrupt-{}.{}.{}",
+            std::process::id(),
+            plugin_id,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        write_minimal_plugin_manifest(&manifest_dir, &plugin_id);
+
+        let registry_path = crate::config::config_dir().join("plugins.json");
+        std::fs::create_dir_all(registry_path.parent().unwrap()).unwrap();
+        let corrupt = b"this is not valid json {{{{";
+        std::fs::write(&registry_path, corrupt).unwrap();
+
+        let err = offline_plugin_link_response(&PluginLinkParams {
+            path: manifest_dir.display().to_string(),
+            enabled: true,
+            source: None,
+        })
+        .expect_err("offline link must fail closed on a corrupt registry");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            std::fs::read(&registry_path).unwrap(),
+            corrupt,
+            "offline link must not clobber a corrupt plugins.json"
+        );
+
+        let _ = std::fs::remove_dir_all(&manifest_dir);
+    }
+
+    #[test]
+    fn offline_link_persists_through_locked_registry_update() {
+        let _sandbox = PluginUserDirSandbox::new("offline-link-locked-update");
+        let existing_id = unique_plugin_id("offline-link-existing");
+        let plugin_id = unique_plugin_id("offline-link-locked");
+        let existing = github_plugin(&existing_id, "owner", "repo", None);
+        crate::persist::plugin_registry::save(&[existing]).unwrap();
+        let _ = crate::persist::plugin_registry::take_update_path_used_for_test();
+
+        persist_plugin_offline(&github_plugin(&plugin_id, "owner", "repo", None)).unwrap();
+
+        assert!(
+            crate::persist::plugin_registry::take_update_path_used_for_test(),
+            "offline link must persist through plugin_registry::update"
+        );
+        let lock_path =
+            crate::config::config_dir().join(crate::persist::plugin_registry::REGISTRY_LOCK_FILE);
+        assert!(
+            lock_path.exists(),
+            "locked update must create the registry lock file"
+        );
+
+        let stored = crate::persist::plugin_registry::try_load().unwrap();
+        let ids: Vec<_> = stored
+            .iter()
+            .map(|plugin| plugin.plugin_id.as_str())
+            .collect();
+        assert!(
+            ids.contains(&existing_id.as_str()),
+            "locked update must keep existing registry entries"
+        );
+        assert!(
+            ids.contains(&plugin_id.as_str()),
+            "locked update must persist the newly linked plugin"
+        );
+        let mut sorted_ids = ids.clone();
+        sorted_ids.sort_unstable();
+        assert_eq!(
+            ids, sorted_ids,
+            "locked update must sort registry entries by plugin id"
+        );
     }
 }
