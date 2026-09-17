@@ -278,24 +278,13 @@ fn set_enabled(args: &[String], enabled: bool) -> std::io::Result<i32> {
         Err(code) => return Ok(code),
     };
     let mut catalog = machine::load();
-    // Resolve first so unknown/ambiguous references fail before any write.
-    // Disabled profiles resolve by id/label directly for enable.
-    let id = match catalog.resolve(&raw_id) {
+    // `resolve_any` includes disabled profiles (needed for enable) but still
+    // refuses unknown and ambiguous labels. Exact id wins.
+    let id = match catalog.resolve_any(&raw_id) {
         Ok(profile) => profile.id.clone(),
-        Err(_) => {
-            // `enable` must accept currently-disabled profiles, which
-            // `resolve` rejects; fall back to an exact id/label lookup.
-            match catalog
-                .profiles
-                .iter()
-                .find(|p| p.id == raw_id || p.label == raw_id)
-            {
-                Some(profile) => profile.id.clone(),
-                None => {
-                    eprintln!("error: machine {raw_id:?} was not found");
-                    return Ok(1);
-                }
-            }
+        Err(error) => {
+            eprintln!("error: {error}");
+            return Ok(1);
         }
     };
     if !catalog.set_enabled(&id, enabled) {

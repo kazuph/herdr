@@ -149,21 +149,28 @@ impl MachineCatalog {
         }
     }
 
-    /// Resolve a label-or-id to an enabled profile. Exact id wins; otherwise
-    /// the label must match exactly one profile. Disabled, unknown, and
-    /// ambiguous references are rejected (fail-closed, no guessing).
-    pub(crate) fn resolve(&self, label_or_id: &str) -> Result<&MachineProfile, String> {
+    /// Resolve a label-or-id to a profile, including disabled ones.
+    /// Exact id wins; a label is accepted only when it matches exactly one
+    /// profile. Unknown and ambiguous references are rejected (fail-closed).
+    pub(crate) fn resolve_any(&self, label_or_id: &str) -> Result<&MachineProfile, String> {
         if let Some(profile) = self.profiles.iter().find(|p| p.id == label_or_id) {
-            return Self::require_enabled(profile);
+            return Ok(profile);
         }
         let mut matches = self.profiles.iter().filter(|p| p.label == label_or_id);
         match (matches.next(), matches.next()) {
-            (Some(profile), None) => Self::require_enabled(profile),
+            (Some(profile), None) => Ok(profile),
             (Some(_), Some(_)) => Err(format!(
                 "machine label {label_or_id:?} is ambiguous; use the profile id"
             )),
             (None, _) => Err(format!("machine {label_or_id:?} was not found")),
         }
+    }
+
+    /// Resolve a label-or-id to an enabled profile. Exact id wins; otherwise
+    /// the label must match exactly one profile. Disabled, unknown, and
+    /// ambiguous references are rejected (fail-closed, no guessing).
+    pub(crate) fn resolve(&self, label_or_id: &str) -> Result<&MachineProfile, String> {
+        Self::require_enabled(self.resolve_any(label_or_id)?)
     }
 
     fn require_enabled(profile: &MachineProfile) -> Result<&MachineProfile, String> {
@@ -335,13 +342,39 @@ pub(crate) fn extract_machine_args(
     Ok((cleaned, route))
 }
 
+/// POSIX single-quote one argv element so a remote login shell reconstructs
+/// the original argument. Every element is quoted (no "safe unquoted" path)
+/// so spaces, quotes, `;`, `$()`, and empty strings stay literal.
+fn posix_shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// Join argv into a single remote-shell command string.
+fn posix_shell_join(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| posix_shell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Build the ssh argv that executes the subcommand on the saved machine.
-/// Pure function so the exact wire shape is unit-testable without a host.
+///
+/// OpenSSH concatenates extra arguments into one remote-command string and
+/// the remote login shell parses it, so raw argv boundaries are not
+/// preserved. Each remote argv element is POSIX single-quoted and passed as
+/// that single command string. Pure so the wire shape is unit-testable
+/// without a host.
 pub(crate) fn build_routed_argv(
     profile: &MachineProfile,
     subcommand_args: &[String],
 ) -> Vec<String> {
-    let mut argv = vec![
+    let mut remote_argv = vec![
+        remote_binary(),
+        "--session".to_string(),
+        profile.session.clone(),
+    ];
+    remote_argv.extend(subcommand_args.iter().cloned());
+    vec![
         "ssh".to_string(),
         "-o".to_string(),
         "BatchMode=yes".to_string(),
@@ -349,12 +382,8 @@ pub(crate) fn build_routed_argv(
         format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"),
         "--".to_string(),
         profile.target.clone(),
-        remote_binary(),
-        "--session".to_string(),
-        profile.session.clone(),
-    ];
-    argv.extend(subcommand_args.iter().cloned());
-    argv
+        posix_shell_join(&remote_argv),
+    ]
 }
 
 /// What `--machine` wants: local help or a routed subcommand.
@@ -468,6 +497,45 @@ mod tests {
         assert!(catalog.resolve("dup").is_err());
         // Exact id still wins over the ambiguous label.
         assert_eq!(catalog.resolve(&id1).unwrap().target, "h1");
+    }
+
+    #[test]
+    fn resolve_any_accepts_disabled_and_rejects_ambiguous_labels() {
+        let mut catalog = MachineCatalog::default();
+        let id1 = catalog.add("office", "h1", "default").unwrap();
+        assert!(catalog.set_enabled(&id1, false));
+        // Unique disabled label is resolvable for enable/disable.
+        assert_eq!(catalog.resolve_any("office").unwrap().id, id1);
+        assert!(catalog.resolve("office").is_err());
+        assert!(catalog.set_enabled(&catalog.resolve_any("office").unwrap().id.clone(), true));
+        assert!(catalog.resolve("office").is_ok());
+        assert!(catalog.set_enabled(&id1, false));
+        // Exact id still works while disabled.
+        assert_eq!(catalog.resolve_any(&id1).unwrap().target, "h1");
+
+        // Corrupt/legacy duplicate labels stay fail-closed for enable.
+        catalog.profiles.push(MachineProfile {
+            id: "mdeadbeef000".to_string(),
+            label: "office".to_string(),
+            target: "h2".to_string(),
+            session: "s2".to_string(),
+            enabled: false,
+        });
+        let err = catalog.resolve_any("office").unwrap_err();
+        assert!(err.contains("ambiguous"), "{err}");
+        // Exact id still wins over the ambiguous label, including a label
+        // that equals another profile's id.
+        assert_eq!(catalog.resolve_any(&id1).unwrap().target, "h1");
+        assert_eq!(catalog.resolve_any("mdeadbeef000").unwrap().target, "h2");
+        catalog.profiles.push(MachineProfile {
+            id: "mlabelasid000".to_string(),
+            label: id1.clone(),
+            target: "h3".to_string(),
+            session: "s3".to_string(),
+            enabled: false,
+        });
+        assert_eq!(catalog.resolve_any(&id1).unwrap().target, "h1");
+        assert_eq!(catalog.resolve_any("mlabelasid000").unwrap().target, "h3");
     }
 
     #[test]
@@ -597,17 +665,11 @@ mod tests {
 
     #[test]
     fn routed_argv_shape_is_exact() {
-        let profile = MachineProfile {
-            id: "m1".to_string(),
-            label: "office".to_string(),
-            target: "ssh.example.com".to_string(),
-            session: "work".to_string(),
-            enabled: true,
-        };
+        let profile = test_route_profile();
         let argv = build_routed_argv(&profile, &["agent".to_string(), "list".to_string()]);
         assert_eq!(
-            argv,
-            vec![
+            &argv[..7],
+            [
                 "ssh",
                 "-o",
                 "BatchMode=yes",
@@ -615,18 +677,150 @@ mod tests {
                 "ConnectTimeout=15",
                 "--",
                 "ssh.example.com",
-                "herdr",
-                "--session",
-                "work",
-                "agent",
-                "list",
             ]
         );
+        assert_eq!(argv.len(), 8);
+        let remote = posix_shell_split(argv.last().expect("remote command")).unwrap();
+        assert_eq!(remote, ["herdr", "--session", "work", "agent", "list"]);
         assert!(ROUTABLE_SUBCOMMANDS.contains(&"agent"));
         assert!(ROUTABLE_SUBCOMMANDS.contains(&"pane"));
         assert!(ROUTABLE_SUBCOMMANDS.contains(&"workspace"));
         assert!(ROUTABLE_SUBCOMMANDS.contains(&"worktree"));
         assert!(!ROUTABLE_SUBCOMMANDS.contains(&"run"));
         assert!(!ROUTABLE_SUBCOMMANDS.contains(&"machine"));
+    }
+
+    fn test_route_profile() -> MachineProfile {
+        MachineProfile {
+            id: "m1".to_string(),
+            label: "office".to_string(),
+            target: "ssh.example.com".to_string(),
+            session: "work".to_string(),
+            enabled: true,
+        }
+    }
+
+    /// Inverse of `posix_shell_join` for the always-single-quoted encoding.
+    fn posix_shell_split(command: &str) -> Result<Vec<String>, String> {
+        let chars: Vec<char> = command.chars().collect();
+        let mut args = Vec::new();
+        let mut i = 0;
+        while i < chars.len() {
+            while i < chars.len() && chars[i] == ' ' {
+                i += 1;
+            }
+            if i >= chars.len() {
+                break;
+            }
+            if chars[i] != '\'' {
+                return Err(format!(
+                    "expected POSIX single-quoted argument, got {command:?}"
+                ));
+            }
+            i += 1;
+            let mut arg = String::new();
+            loop {
+                if i >= chars.len() {
+                    return Err("unterminated POSIX single quote".to_string());
+                }
+                if chars[i] == '\'' {
+                    i += 1;
+                    // `'\''` continues the same argument with a literal quote.
+                    if i + 2 < chars.len()
+                        && chars[i] == '\\'
+                        && chars[i + 1] == '\''
+                        && chars[i + 2] == '\''
+                    {
+                        arg.push('\'');
+                        i += 3;
+                        continue;
+                    }
+                    break;
+                }
+                arg.push(chars[i]);
+                i += 1;
+            }
+            args.push(arg);
+        }
+        Ok(args)
+    }
+
+    fn reconstruct_argv_via_posix_shell(command: &str) -> Vec<String> {
+        // Mimic OpenSSH: the remote command string is `$SHELL -c <command>`.
+        // Reconstruct argv without executing the first word by eval'ing
+        // `set --` against the already-quoted command passed as $1.
+        let output = Command::new("bash")
+            .arg("-c")
+            .arg(r#"eval "set -- $1"; printf '%s\0' "$@""#)
+            .arg("reconstruct")
+            .arg(command)
+            .output()
+            .expect("bash reconstruct");
+        assert!(
+            output.status.success(),
+            "posix shell reconstruct failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut got: Vec<String> = output
+            .stdout
+            .split(|byte| *byte == 0)
+            .map(|chunk| String::from_utf8(chunk.to_vec()).expect("utf8 argv"))
+            .collect();
+        if got.last().is_some_and(String::is_empty) {
+            got.pop();
+        }
+        got
+    }
+
+    #[test]
+    fn routed_remote_argv_round_trips_special_characters() {
+        let profile = test_route_profile();
+        let bodies = [
+            "hello world",
+            "it's fine",
+            "foo; rm -rf /",
+            "$(echo INJECTED)",
+            "`echo INJECTED`",
+            "a'b;c $(d) `e`",
+            "",
+            "trailing space ",
+            " say \"hi\" ",
+        ];
+        for body in bodies {
+            let subcommand = vec![
+                "agent".to_string(),
+                "send".to_string(),
+                "p1".to_string(),
+                body.to_string(),
+            ];
+            let argv = build_routed_argv(&profile, &subcommand);
+            assert_eq!(argv.len(), 8, "remote command must be one ssh argument");
+            let remote_command = argv.last().expect("remote command");
+            let expected = ["herdr", "--session", "work", "agent", "send", "p1", body];
+            assert_eq!(posix_shell_split(remote_command).unwrap(), expected);
+            assert_eq!(reconstruct_argv_via_posix_shell(remote_command), expected);
+        }
+    }
+
+    #[test]
+    fn posix_shell_join_round_trips_quotes_spaces_and_semicolons() {
+        let args = [
+            "herdr",
+            "--session",
+            "work",
+            "agent",
+            "send",
+            "p1",
+            "hello world",
+            "it's fine",
+            "foo; echo PWNED",
+        ]
+        .map(str::to_string);
+        let command = posix_shell_join(&args);
+        assert_eq!(posix_shell_split(&command).unwrap(), args);
+        assert_eq!(reconstruct_argv_via_posix_shell(&command), args);
+        assert!(command.contains("'hello world'"));
+        assert!(command.contains("'\\''"));
+        assert!(command.contains("'foo; echo PWNED'"));
     }
 }

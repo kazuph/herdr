@@ -8884,7 +8884,7 @@
       "source_anchors": [
         "SPEC.md:1758",
         "src/cli/machine.rs:162",
-        "src/machine.rs:244"
+        "src/machine.rs:251"
       ],
       "test_status": [
         "unverified"
@@ -8955,12 +8955,14 @@
       "verification_methods": [
         "rust_test_target:rename_remove_enable_roundtrip",
         "rust_test_target:resolve_rejects_unknown_and_ambiguous_references",
+        "rust_test_target:resolve_any_accepts_disabled_and_rejects_ambiguous_labels",
         "drift_source_anchor:src/cli/machine.rs",
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
         "SPEC.md:1761",
         "src/cli/machine.rs:212",
+        "src/cli/machine.rs:273",
         "src/machine.rs:155"
       ],
       "test_status": [
@@ -8986,7 +8988,7 @@
       ],
       "source_anchors": [
         "SPEC.md:1762",
-        "src/machine.rs:212"
+        "src/machine.rs:219"
       ],
       "test_status": [
         "unverified"
@@ -9007,12 +9009,14 @@
       ],
       "verification_methods": [
         "rust_test_target:routed_argv_shape_is_exact",
+        "rust_test_target:routed_remote_argv_round_trips_special_characters",
+        "rust_test_target:posix_shell_join_round_trips_quotes_spaces_and_semicolons",
         "drift_source_anchor:src/machine.rs",
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
         "SPEC.md:1780",
-        "src/machine.rs:340"
+        "src/machine.rs:367"
       ],
       "test_status": [
         "unverified"
@@ -9039,7 +9043,7 @@
       "source_anchors": [
         "SPEC.md:1781",
         "src/main.rs:544",
-        "src/machine.rs:390"
+        "src/machine.rs:419"
       ],
       "test_status": [
         "unverified"
@@ -9059,6 +9063,7 @@
       ],
       "verification_methods": [
         "rust_test_target:resolve_rejects_unknown_and_ambiguous_references",
+        "rust_test_target:resolve_any_accepts_disabled_and_rejects_ambiguous_labels",
         "drift_source_anchor:src/machine.rs",
         "platform_live_acceptance:unverified"
       ],
@@ -9091,7 +9096,7 @@
       "source_anchors": [
         "SPEC.md:1783",
         "src/main.rs:544",
-        "src/machine.rs:288"
+        "src/machine.rs:295"
       ],
       "test_status": [
         "unverified"
