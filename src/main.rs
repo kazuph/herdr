@@ -79,6 +79,7 @@ mod job;
 mod kitty_graphics;
 mod layout;
 mod logging;
+mod machine;
 mod metadata_tokens;
 mod msg;
 mod pane;
@@ -508,6 +509,7 @@ herdr run --label tests -- cargo test
 - `herdr pane current` resolves the exact caller pane.
 - `herdr pane get <target>` accepts global pane numbers, `%N`, and `pN` pane targets.
 - `herdr agent <subcommand>` controls agent identity, reads, sends, and restore actions.
+- `herdr machine <subcommand>` manages saved SSH machines (`list`, `add`, `rename`, `remove`, `enable`, `disable`).
 - `herdr workspace`, `herdr tab`, and `herdr pane` manage session layout through the socket API.
 
 ## Essential Agent Recipes
@@ -690,6 +692,7 @@ fn main() -> io::Result<()> {
                 "channel",
                 "workspace",
                 "worktree",
+                "machine",
                 "pane",
                 "wait",
                 "session",

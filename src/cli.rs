@@ -15,6 +15,7 @@ mod api;
 mod comms;
 mod completion;
 mod integration;
+mod machine;
 mod notification;
 mod pane;
 mod plugin;
@@ -94,6 +95,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "msg" => comms::run_msg_command(&args[2..])?,
         "wait" => run_wait_command(&args[2..])?,
         "integration" => integration::run_integration_command(&args[2..])?,
+        "machine" => machine::run_machine_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
         "__background-run" => comms::background_runner(&args[2..])?,
         "__pane-run" => comms::pane_runner(&args[2..])?,
