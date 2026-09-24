@@ -582,7 +582,16 @@ mod windows {
             // Enter is queued but its PTY write has not finished: shutdown and
             // keystrokes must still be able to take the lock.
             assert_eq!(parts[1].0, Bytes::from_static(b"\r"));
-            assert!(accepting.try_lock().is_ok());
+            // The forwarder may still be returning from the enqueue; the lock must
+            // come free while the Enter write stays unacknowledged.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while accepting.try_lock().is_err() {
+                assert!(
+                    Instant::now() < deadline,
+                    "accepting lock held while waiting for Enter"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
             let _ = parts[1].1.send(Ok(()));
 
             assert!(submitted.recv().expect("submission reply").is_ok());
