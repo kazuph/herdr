@@ -437,13 +437,18 @@ mod windows {
                             // A started text write is committed. Finish Enter even if the caller
                             // stops waiting so a timeout cannot leave a partial prompt.
                             std::thread::sleep(delay);
-                            let accepting = accepting
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner());
-                            if !*accepting {
-                                return Err(pty_actor_closed());
-                            }
-                            write_submission_part(&write_tx, enter, None)
+                            // Hold the lock only to order Enter against shutdown; waiting
+                            // for a blocked PTY write under it would stall input and shutdown.
+                            let completion = {
+                                let accepting = accepting
+                                    .lock()
+                                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                                if !*accepting {
+                                    return Err(pty_actor_closed());
+                                }
+                                queue_submission_part(&write_tx, enter, None)?
+                            };
+                            wait_submission_part(completion)
                         })
                     };
                     let failed = result
@@ -463,6 +468,14 @@ mod windows {
         bytes: Bytes,
         deadline: Option<Instant>,
     ) -> std::io::Result<()> {
+        wait_submission_part(queue_submission_part(write_tx, bytes, deadline)?)
+    }
+
+    fn queue_submission_part(
+        write_tx: &std_mpsc::Sender<PtyIoWriteCommand>,
+        bytes: Bytes,
+        deadline: Option<Instant>,
+    ) -> std::io::Result<std_mpsc::Receiver<std::io::Result<()>>> {
         let (reply, completion) = std_mpsc::channel();
         write_tx
             .send(PtyIoWriteCommand::SubmissionPart {
@@ -471,6 +484,12 @@ mod windows {
                 reply,
             })
             .map_err(|_| pty_actor_closed())?;
+        Ok(completion)
+    }
+
+    fn wait_submission_part(
+        completion: std_mpsc::Receiver<std::io::Result<()>>,
+    ) -> std::io::Result<()> {
         completion
             .recv()
             .unwrap_or_else(|_| Err(pty_actor_closed()))
@@ -527,6 +546,48 @@ mod windows {
                 control_rx.recv().expect("shutdown command"),
                 PtyIoControlCommand::Shutdown
             ));
+        }
+
+        #[test]
+        fn blocked_enter_write_does_not_hold_accepting_lock() {
+            let (data_tx, mut data_rx) = mpsc::channel(1);
+            let (write_tx, write_rx) = std_mpsc::channel();
+            let accepting = Arc::new(Mutex::new(true));
+            let forwarder_accepting = Arc::clone(&accepting);
+            let forwarder = std::thread::spawn(move || {
+                run_input_forwarder(&mut data_rx, write_tx, forwarder_accepting);
+            });
+            let (reply, submitted) = std_mpsc::channel();
+            data_tx
+                .blocking_send(PtyIoDataCommand::SubmitUserInput {
+                    text: Bytes::from_static(b"hello"),
+                    enter: Bytes::from_static(b"\r"),
+                    delay: Duration::from_millis(1),
+                    deadline: None,
+                    reply,
+                })
+                .expect("queue submission");
+
+            let mut parts = Vec::new();
+            for _ in 0..2 {
+                let Ok(PtyIoWriteCommand::SubmissionPart { bytes, reply, .. }) = write_rx.recv()
+                else {
+                    panic!("expected a submission part");
+                };
+                parts.push((bytes, reply));
+                if parts.len() == 1 {
+                    let _ = parts[0].1.send(Ok(()));
+                }
+            }
+            // Enter is queued but its PTY write has not finished: shutdown and
+            // keystrokes must still be able to take the lock.
+            assert_eq!(parts[1].0, Bytes::from_static(b"\r"));
+            assert!(accepting.try_lock().is_ok());
+            let _ = parts[1].1.send(Ok(()));
+
+            assert!(submitted.recv().expect("submission reply").is_ok());
+            drop(data_tx);
+            forwarder.join().expect("forwarder thread");
         }
     }
 }

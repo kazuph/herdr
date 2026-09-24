@@ -5783,7 +5783,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_name_timeout_survives_detection_noop_as_pane_update() {
+    fn managed_launch_timeout_keeps_name_on_detection_noop() {
         let mut state = app_with_workspaces(&["test"]);
         state.ensure_test_terminals();
         let pane_id = state.workspaces[0].tabs[0].root_pane;
@@ -5797,14 +5797,19 @@ mod tests {
             std::time::Duration::from_secs(3),
             std::time::Duration::from_secs(30),
         );
+        state.session_dirty = false;
         let update = state.update_terminal_state(pane_id, |terminal| {
             Some(terminal.set_detected_state_with_mutation(Some(Agent::Pi), AgentState::Working))
         });
-        assert!(state.terminals[&terminal_id].agent_name.is_none());
-        assert!(
-            update.is_some(),
-            "name-only changes must be published even when the detected state is unchanged"
+        // The launch wait ends but the fork name stays until the occupant exits.
+        assert_eq!(
+            state.terminals[&terminal_id].agent_name.as_deref(),
+            Some("reviewer")
         );
+        assert!(!state.terminals[&terminal_id].managed_agent_launch_pending());
+        // The now-persistable name is saved; no visible state changed.
+        assert!(state.session_dirty);
+        assert!(update.is_none());
     }
 
     #[test]

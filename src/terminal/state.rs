@@ -1543,7 +1543,13 @@ impl TerminalState {
                 && observed_expected
                 && known_agent.is_none();
         if clear {
-            self.clear_agent_name();
+            if process_exited {
+                self.clear_agent_name();
+            } else {
+                // Fork `agent start` names outlive the launch wait: they are
+                // released only when the occupant exits, as before prompt.
+                self.managed_agent = None;
+            }
             return true;
         }
         if managed.phase == ManagedAgentPhase::Blocked {
@@ -1570,13 +1576,9 @@ impl TerminalState {
                 return true;
             }
             if now >= deadline {
-                if managed.kind.is_some() {
-                    self.clear_agent_name();
-                } else {
-                    // The fork also names arbitrary argv jobs. No detected agent
-                    // means this is not an upstream managed-agent identity to release.
-                    self.managed_agent = None;
-                }
+                // The launch wait is over, not the agent: keep the fork name
+                // and let `agent prompt` fall back to its foreground checks.
+                self.managed_agent = None;
                 return true;
             }
             if ready_after.is_none_or(|ready_after| now >= ready_after) {
@@ -1774,8 +1776,25 @@ mod tests {
     }
 
     #[test]
-    fn managed_agent_mismatch_and_timeout_release_name() {
+    fn argv_launch_keeps_name_when_launch_wait_ends_without_ready() {
+        // Fork `agent start` launches are argv jobs whose name stays until the
+        // occupant exits. The launch wait only gates `agent prompt`; ending it
+        // (timeout, a different detected agent, or detection lost while
+        // pending) must not drop the name that `agent send` and mailbox use.
         let now = Instant::now();
+        let mut long_first_task = test_terminal();
+        long_first_task.begin_managed_argv_agent(
+            "worker".into(),
+            Some(Agent::Codex),
+            now,
+            Duration::from_secs(3),
+            Duration::from_secs(30),
+        );
+        long_first_task.set_detected_state(Some(Agent::Codex), AgentState::Working);
+        long_first_task.reconcile_managed_agent_at(now + Duration::from_secs(31), false);
+        assert_eq!(long_first_task.agent_name.as_deref(), Some("worker"));
+        assert!(!long_first_task.managed_agent_launch_pending());
+
         let mut mismatch = test_terminal();
         mismatch.begin_managed_agent(
             "reviewer".into(),
@@ -1786,19 +1805,35 @@ mod tests {
         );
         mismatch.set_detected_state(Some(Agent::Codex), AgentState::Idle);
         assert!(mismatch.reconcile_managed_agent_at(now, false));
-        assert_eq!(mismatch.agent_name, None);
+        assert_eq!(mismatch.agent_name.as_deref(), Some("reviewer"));
+        assert!(!mismatch.managed_agent_launch_pending());
 
-        let mut timed_out = test_terminal();
-        timed_out.begin_managed_agent(
+        let mut lost = test_terminal();
+        lost.begin_managed_agent(
+            "reviewer".into(),
+            Agent::Pi,
+            now,
+            Duration::from_secs(3),
+            Duration::from_secs(30),
+        );
+        lost.set_detected_state(Some(Agent::Pi), AgentState::Working);
+        lost.reconcile_managed_agent_at(now + Duration::from_millis(10), false);
+        lost.set_detected_state(None, AgentState::Unknown);
+        lost.reconcile_managed_agent_at(now + Duration::from_millis(20), false);
+        assert_eq!(lost.agent_name.as_deref(), Some("reviewer"));
+        assert!(!lost.managed_agent_launch_pending());
+
+        let mut exited = test_terminal();
+        exited.begin_managed_agent(
             "reviewer".into(),
             Agent::Pi,
             now,
             Duration::from_millis(10),
             Duration::from_millis(20),
         );
-        assert!(timed_out.reconcile_managed_agent_at(now + Duration::from_millis(20), false));
-        assert_eq!(timed_out.agent_name, None);
-        assert!(timed_out.persisted_agent_session.is_none());
+        assert!(exited.reconcile_managed_agent_at(now, true));
+        assert_eq!(exited.agent_name, None);
+        assert!(exited.persisted_agent_session.is_none());
     }
 
     #[test]
