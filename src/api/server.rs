@@ -14,7 +14,7 @@ use crate::api::schema::{
     ErrorBody, ErrorResponse, Method, Request, ResponseResult, ServerCapabilities, SuccessResponse,
 };
 use crate::api::subscriptions::ActiveSubscription;
-use crate::api::wait::{wait_for_event, wait_for_output};
+use crate::api::wait::{prompt_agent, wait_for_event, wait_for_output};
 use crate::api::{request_changes_ui, socket_path, ApiRequestMessage, ApiRequestSender, EventHub};
 use crate::ipc::{
     bind_local_listener, is_connection_closed_error, local_stream_peer_closed,
@@ -216,6 +216,38 @@ fn handle_connection(
             }
             result
         }
+        Method::AgentPrompt(params) => {
+            let Some(response) = prompt_agent(
+                request_id.clone(),
+                params,
+                &mut stream,
+                api_tx,
+                event_hub,
+                running,
+            )?
+            else {
+                crate::logging::api_request_completed(
+                    &request_id,
+                    method,
+                    "client_disconnected",
+                    changes_ui,
+                );
+                return Ok(());
+            };
+            let result = write_text_line_allow_disconnect(&mut stream, &response);
+            match &result {
+                Ok(()) => crate::logging::api_request_completed(
+                    &request_id,
+                    method,
+                    api_response_outcome(&response),
+                    changes_ui,
+                ),
+                Err(err) => {
+                    crate::logging::api_request_failed(&request_id, method, &err.to_string())
+                }
+            }
+            result
+        }
         Method::EventsWait(params) => {
             let Some(response) = wait_for_event(
                 request_id.clone(),
@@ -362,6 +394,7 @@ fn api_method_name(method: &Method) -> &'static str {
         Method::AgentGet(_) => "agent.get",
         Method::AgentRead(_) => "agent.read",
         Method::AgentExplain(_) => "agent.explain",
+        Method::AgentPrompt(_) => "agent.prompt",
         Method::AgentSend(_) => "agent.send",
         Method::AgentRename(_) => "agent.rename",
         Method::AgentViewSet(_) => "agent.view.set",
@@ -762,12 +795,45 @@ pub(super) fn dispatch_stream_frame(
     )
 }
 
+pub(super) fn dispatch_to_app_with_caller_timeout(
+    request: Request,
+    api_tx: &ApiRequestSender,
+    timeout: Option<Duration>,
+) -> String {
+    dispatch_to_app_inner(
+        request,
+        api_tx,
+        timeout,
+        None,
+        None,
+        Some(("timeout", "timed out waiting for agent status")),
+    )
+}
+
 fn dispatch_to_app(
     request: Request,
     api_tx: &ApiRequestSender,
     timeout: Option<Duration>,
     response_write_complete: Option<std::sync::mpsc::Receiver<()>>,
     stream_active: Option<Arc<AtomicBool>>,
+) -> String {
+    dispatch_to_app_inner(
+        request,
+        api_tx,
+        timeout,
+        response_write_complete,
+        stream_active,
+        None,
+    )
+}
+
+fn dispatch_to_app_inner(
+    request: Request,
+    api_tx: &ApiRequestSender,
+    timeout: Option<Duration>,
+    response_write_complete: Option<std::sync::mpsc::Receiver<()>>,
+    stream_active: Option<Arc<AtomicBool>>,
+    timeout_error: Option<(&str, &str)>,
 ) -> String {
     let request_id = request.id.clone();
     let request_active = stream_active.clone();
@@ -812,6 +878,11 @@ fn dispatch_to_app(
         Err(err) => {
             if let Some(active) = request_active {
                 active.store(false, Ordering::Release);
+            }
+            if let Some((code, message)) =
+                timeout_error.filter(|_| err.kind() == std::io::ErrorKind::TimedOut)
+            {
+                return error_response_json(request_id, code, message.to_string());
             }
             error_response_json(
                 request_id,

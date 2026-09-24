@@ -263,6 +263,7 @@ Metadata text is normalized before storage. Herdr trims surrounding whitespace, 
 herdr agent list
 herdr agent get <target>
 herdr agent read <target> [--source visible|recent|recent-unwrapped|detection] [--lines N] [--format text|ansi] [--ansi]
+herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]
 herdr agent send <target> <text>
 herdr agent rename <target> <name>|--clear
 herdr agent focus <target>
@@ -275,7 +276,15 @@ herdr agent explain --file PATH --agent LABEL [--json|--verbose]
 
 Agent targets can be terminal IDs, unique agent names, detected or reported agent labels, or legacy pane IDs. Names and labels are agent identities. Terminal IDs and legacy pane IDs are low-level escape hatches.
 
-`agent read` reads the resolved terminal stream. `agent send` writes text to the resolved AI CLI and submits it with Enter so the message is not left in the prompt input. `agent get`, `agent focus`, `agent wait`, and `agent attach` require the resolved terminal to have agent identity. `agent rename` can assign that identity.
+`agent read` reads the resolved terminal stream. `agent send` retains the fork's existing text-and-Enter delivery. `agent get`, `agent focus`, `agent wait`, and `agent attach` require the resolved terminal to have agent identity. `agent rename` can assign that identity.
+
+`agent prompt` uses the upstream 0.9.1 `agent.prompt` API. Its target is a unique agent name or a pane ID (`p_N`, `pN`, and `%N` are accepted); agent labels and terminal IDs are not prompt targets. An empty prompt returns `empty_agent_prompt`. A blocked agent returns `agent_blocked`; an unknown agent, a pending launch, or a pane whose foreground process is no longer that agent returns `agent_not_ready`. These rejections send neither text nor Enter.
+
+Prompt text preserves trailing newlines and uses bracketed paste when the terminal enables it. After the text has been written, Herdr waits 300 ms, writes Enter, and only then returns `agent_prompted` with the agent information. Copilot receives focus gained before the text. Queued submissions fail if the terminal closes.
+
+`--wait` waits for `idle`, `done`, or `blocked` by default. Repeat `--until STATUS` to select statuses (`idle`, `working`, `done`, `blocked`, or `unknown`); `--timeout MS` limits the wait. Both options require `--wait`. A prompt sent to a non-working agent must first produce observed `working` or `blocked` activity: metadata, session changes, and stale idle/done states do not satisfy this requirement. No activity within 5 seconds returns `agent_prompt_stalled`; an earlier caller deadline returns `timeout`. Loss of the target agent returns `agent_not_running`. The fork's `agent send`, durable mailbox `herdr send <to> <text> --room <room>`, and mailbox input remain available.
+
+`agent start` also waits for readiness when its argv runs through a wrapper such as `sh -lc`, `env`, or a language runtime. Readiness follows upstream's detected-agent state transitions, with a 3-second settling period and a 30-second startup deadline. Snapshots omit pending managed names and preserve active managed ownership. Named jobs that never detect an agent keep their existing fork identity.
 
 `agent explain` asks the running server to classify the same bottom-buffer detection snapshot used by screen detection, so live output reflects the server's active manifest cache. Because this uses the `agent.explain` socket method, restart or hand off to an updated server after upgrading Herdr before using live explain. Use `--file PATH --agent LABEL` to explain a saved fixture locally instead. The default output shows the agent, final state, manifest source and version, matched rule with its region evidence, and any fallback, skip, or warning reasons. Add `--verbose` for visible evidence flags, cached remote version, local override shadowing, remote update status, and the full evaluated-rules list with matcher and region evidence. Add `--json` for issue reports or tests.
 

@@ -92,6 +92,9 @@ pub enum ResponseResult {
     TabList {
         tabs: Vec<TabInfo>,
     },
+    AgentPrompted {
+        agent: AgentInfo,
+    },
     AgentInfo {
         agent: AgentInfo,
     },

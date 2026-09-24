@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod prompt_probe;
+
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};

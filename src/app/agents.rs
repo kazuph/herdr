@@ -1,7 +1,14 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use super::{terminal_targets::TerminalTargetError, App, Mode};
 use crate::api::schema::{AgentStartParams, SplitDirection};
+
+// Match upstream 0.9.1 managed-launch readiness without changing the fork argv API.
+const DEFAULT_AGENT_START_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const AGENT_START_SETTLE_DELAY: Duration = Duration::from_secs(3);
 
 impl App {
     pub(super) fn collect_agent_infos(&self) -> Vec<crate::api::schema::AgentInfo> {
@@ -18,6 +25,50 @@ impl App {
                 })
             })
             .collect()
+    }
+
+    pub(crate) fn reconcile_due_managed_agents(&mut self, now: Instant) -> bool {
+        let due_agents: Vec<_> = self
+            .state
+            .terminals
+            .values()
+            .filter(|terminal| {
+                terminal
+                    .next_managed_agent_deadline()
+                    .is_some_and(|deadline| now >= deadline)
+            })
+            .filter_map(|terminal| terminal.agent_name.clone())
+            .collect();
+        let changed = !due_agents.is_empty();
+        for target in due_agents {
+            self.reconcile_managed_agent_target(&target);
+        }
+        changed
+    }
+
+    pub(super) fn reconcile_managed_agent_target(&mut self, target: &str) {
+        let Ok(resolved) = self.resolve_agent_target(target) else {
+            return;
+        };
+        let Some(terminal_id) = self
+            .state
+            .workspaces
+            .get(resolved.ws_idx)
+            .and_then(|workspace| workspace.terminal_id(resolved.pane_id))
+            .cloned()
+        else {
+            return;
+        };
+        let changed = self
+            .state
+            .terminals
+            .get_mut(&terminal_id)
+            .is_some_and(|terminal| terminal.reconcile_managed_agent_at(Instant::now(), false));
+        if changed {
+            self.state.mark_session_dirty();
+            self.schedule_session_save();
+            self.emit_pane_updated(resolved.ws_idx, resolved.pane_id);
+        }
     }
 
     pub(super) fn agent_info_for_target(
@@ -209,7 +260,28 @@ impl App {
         let Some(terminal) = self.state.terminals.get_mut(&terminal_id) else {
             return Err(AgentStartError::SpawnFailed("terminal disappeared".into()));
         };
-        terminal.set_agent_name(name.clone());
+        let kind = argv
+            .first()
+            .and_then(|executable| std::path::Path::new(executable).file_name())
+            .and_then(|name| name.to_str())
+            .and_then(crate::detect::identify_agent);
+        if let Some(kind) = kind {
+            terminal.begin_managed_agent(
+                name.clone(),
+                kind,
+                Instant::now(),
+                AGENT_START_SETTLE_DELAY,
+                DEFAULT_AGENT_START_TIMEOUT,
+            );
+        } else {
+            terminal.begin_managed_argv_agent(
+                name.clone(),
+                None,
+                Instant::now(),
+                AGENT_START_SETTLE_DELAY,
+                DEFAULT_AGENT_START_TIMEOUT,
+            );
+        }
         terminal.set_manual_label(name);
         self.state.mark_session_dirty();
 
@@ -456,6 +528,9 @@ impl App {
             cwd: pane.cwd,
             foreground_cwd: pane.foreground_cwd,
             revision: pane.revision,
+            state_change_seq: terminal.last_agent_state_change_seq.unwrap_or(0),
+            launch_pending: terminal.managed_agent_launch_pending(),
+            interactive_ready: terminal.managed_agent_interactive_ready(),
         })
     }
 
@@ -471,6 +546,24 @@ impl App {
             })
             .collect()
     }
+}
+
+pub(super) fn runtime_hosts_agent(
+    runtime: &crate::terminal::TerminalRuntime,
+    expected: crate::detect::Agent,
+) -> bool {
+    live_runtime_agent(runtime) == Some(expected)
+}
+
+fn live_runtime_agent(runtime: &crate::terminal::TerminalRuntime) -> Option<crate::detect::Agent> {
+    let job = crate::detect::foreground_job(runtime.child_pid()?)?;
+    crate::detect::identify_agent_in_job(&job)
+        .map(|(agent, _)| agent)
+        .or_else(|| {
+            job.processes
+                .iter()
+                .find_map(|process| crate::platform::process_agent_hint(process.pid))
+        })
 }
 
 pub(super) enum AgentStartError {

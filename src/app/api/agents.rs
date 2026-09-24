@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use bytes::Bytes;
 
 use crate::api::schema::{
-    AgentRenameParams, AgentRestoreActionInfo, AgentRestoreActionStatus, AgentRestoreParams,
-    AgentSendParams, AgentStartParams, AgentTarget, PaneReadResult, ReadFormat, ReadSource,
-    ResponseResult,
+    AgentPromptParams, AgentRenameParams, AgentRestoreActionInfo, AgentRestoreActionStatus,
+    AgentRestoreParams, AgentSendParams, AgentStartParams, AgentTarget, PaneReadResult, ReadFormat,
+    ReadSource, ResponseResult,
 };
 use crate::app::{
     api::AGENT_SEND_SUBMIT_DELAY,
@@ -13,7 +15,165 @@ use crate::app::{
 
 use super::responses::{encode_error, encode_error_body, encode_success};
 
+const AGENT_PROMPT_SUBMIT_DELAY: Duration = Duration::from_millis(300);
+
+// Codex's Windows input reader does not surface bracketed paste. It detects the prompt as a
+// "paste burst" and, while that burst is buffered, rewrites a following Enter into a newline
+// instead of submitting. The burst only flushes after an idle timeout, so any size-based delay is
+// a timing guess that fails when ConPTY delivery lags it. Codex flushes a buffered burst
+// synchronously when it receives a non-character key, so appending one after the paste gives the
+// submission a deterministic paste boundary regardless of prompt size or delivery speed.
+#[cfg(windows)]
+fn append_codex_paste_boundary(runtime: &crate::terminal::TerminalRuntime, text: &mut Vec<u8>) {
+    let keys = match crate::app::api_helpers::encode_api_keys(runtime, &["right".to_string()]) {
+        Ok(keys) => keys,
+        Err(key) => {
+            tracing::warn!(key = %key, "failed to encode Codex paste boundary key");
+            return;
+        }
+    };
+    if let Some(key) = keys.into_iter().find(|bytes| !bytes.is_empty()) {
+        text.extend_from_slice(&key);
+    }
+}
+
 impl App {
+    pub(crate) fn handle_deferred_agent_api_request(
+        &mut self,
+        request: crate::api::schema::Request,
+        respond_to: std::sync::mpsc::Sender<String>,
+    ) -> bool {
+        let crate::api::schema::Method::AgentPrompt(params) = request.method else {
+            return false;
+        };
+        match self.queue_agent_prompt(request.id, params) {
+            Ok((id, agent, completion)) => {
+                std::thread::spawn(move || {
+                    let response = match completion.recv() {
+                        Ok(Ok(())) => encode_success(id, ResponseResult::AgentPrompted { agent }),
+                        Ok(Err(err)) if err.kind() == std::io::ErrorKind::TimedOut => {
+                            encode_error(id, "timeout", err.to_string())
+                        }
+                        Ok(Err(err)) => encode_error(id, "agent_prompt_failed", err.to_string()),
+                        Err(_) => encode_error(id, "agent_prompt_failed", "pty actor closed"),
+                    };
+                    let _ = respond_to.send(response);
+                });
+            }
+            Err(response) => {
+                let _ = respond_to.send(response);
+            }
+        }
+        true
+    }
+
+    fn queue_agent_prompt(
+        &mut self,
+        id: String,
+        params: AgentPromptParams,
+    ) -> Result<
+        (
+            String,
+            crate::api::schema::AgentInfo,
+            std::sync::mpsc::Receiver<std::io::Result<()>>,
+        ),
+        String,
+    > {
+        if params.text.is_empty() {
+            return Err(encode_error(
+                id,
+                "empty_agent_prompt",
+                "agent prompt must not be empty",
+            ));
+        }
+        let resolved = match self.resolve_agent_target(&params.target) {
+            Ok(resolved) => resolved,
+            Err(err) => return Err(encode_error_body(id, self.agent_target_error_body(err))),
+        };
+        let Some(terminal_id) = self
+            .state
+            .workspaces
+            .get(resolved.ws_idx)
+            .and_then(|workspace| workspace.terminal_id(resolved.pane_id))
+            .cloned()
+        else {
+            return Err(agent_not_found(id, &params.target));
+        };
+        let Some(terminal) = self.state.terminals.get(&terminal_id) else {
+            return Err(agent_not_found(id, &params.target));
+        };
+        if terminal.state == crate::detect::AgentState::Blocked {
+            return Err(encode_error(
+                id,
+                "agent_blocked",
+                format!(
+                    "agent {} is blocked and requires interactive input",
+                    params.target
+                ),
+            ));
+        }
+        let Some(expected_agent) = terminal.effective_known_agent() else {
+            return Err(agent_not_ready(id, &params.target));
+        };
+        if terminal.managed_agent_launch_pending() || terminal.pending_agent_resume_plan.is_some() {
+            return Err(agent_not_ready(id, &params.target));
+        }
+        let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id) else {
+            return Err(agent_not_found(id, &params.target));
+        };
+        if !super::super::agents::runtime_hosts_agent(runtime, expected_agent) {
+            return Err(encode_error(
+                id,
+                "agent_not_ready",
+                format!(
+                    "agent {} is no longer the pane foreground process",
+                    params.target
+                ),
+            ));
+        }
+        #[cfg(windows)]
+        let submit_deadline = params
+            .wait
+            .as_ref()
+            .and_then(|wait| wait.submission_deadline);
+        #[cfg(not(windows))]
+        let submit_deadline = None;
+        if expected_agent == crate::detect::Agent::GithubCopilot {
+            // Copilot ignores synthetic Enter after focus loss until it receives focus gained.
+            let focus = match crate::ghostty::encode_focus(crate::ghostty::FocusEvent::Gained) {
+                Ok(focus) => focus,
+                Err(err) => {
+                    return Err(encode_error(id, "agent_prompt_failed", err.to_string()));
+                }
+            };
+            if let Err(err) = runtime.try_send_bytes(Bytes::from(focus)) {
+                return Err(encode_error(id, "agent_prompt_failed", err.to_string()));
+            }
+        }
+        let (text, enter) =
+            crate::app::api_helpers::encode_api_submission_parts(runtime, &params.text);
+        #[cfg(windows)]
+        let text = if expected_agent == crate::detect::Agent::Codex {
+            let mut text = text;
+            append_codex_paste_boundary(runtime, &mut text);
+            text
+        } else {
+            text
+        };
+        let Some(agent) = self.agent_info(resolved.ws_idx, resolved.pane_id) else {
+            return Err(agent_not_found(id, &params.target));
+        };
+        let completion = runtime
+            .queue_user_input_submission(
+                Bytes::from(text),
+                Bytes::from(enter),
+                AGENT_PROMPT_SUBMIT_DELAY,
+                submit_deadline,
+            )
+            .map_err(|err| encode_error(id.clone(), "agent_prompt_failed", err.to_string()))?;
+        Ok((id, agent, completion))
+    }
+
     pub(super) fn handle_agent_list(&mut self, id: String) -> String {
         encode_success(
             id,
@@ -24,6 +184,7 @@ impl App {
     }
 
     pub(super) fn handle_agent_get(&mut self, id: String, target: AgentTarget) -> String {
+        self.reconcile_managed_agent_target(&target.target);
         let agent = match self.agent_info_for_target(&target.target) {
             Ok(agent) => agent,
             Err(err) => return encode_error_body(id, self.agent_target_error_body(err)),
@@ -324,6 +485,14 @@ impl App {
     }
 }
 
+fn agent_not_ready(id: String, target: &str) -> String {
+    encode_error(
+        id,
+        "agent_not_ready",
+        format!("agent {target} is not an active named agent"),
+    )
+}
+
 fn agent_not_found(id: String, target: &str) -> String {
     encode_error(
         id,
@@ -331,6 +500,10 @@ fn agent_not_found(id: String, target: &str) -> String {
         format!("agent target {target} not found"),
     )
 }
+
+#[cfg(all(test, unix))]
+#[path = "../../../tests/support/prompt_probe.rs"]
+mod prompt_probe;
 
 #[cfg(test)]
 mod tests {
@@ -483,5 +656,402 @@ mod tests {
         let error: ErrorResponse = serde_json::from_str(&response).unwrap();
         assert_eq!(error.error.code, "agent_not_found");
         assert!(rx.try_recv().is_err());
+    }
+
+    #[cfg(unix)]
+    mod prompt {
+        use super::*;
+        use std::{fs, path::PathBuf, time::Instant};
+
+        struct Probe {
+            app: App,
+            base: PathBuf,
+            pane: crate::layout::PaneId,
+            terminal: crate::terminal::TerminalId,
+        }
+
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                self.app.terminal_runtimes.remove(&self.terminal);
+                let _ = fs::remove_dir_all(&self.base);
+            }
+        }
+
+        impl Probe {
+            fn new(agent: Agent, bracketed: bool) -> Self {
+                let mut app = app_with_agent();
+                let pane = app.state.workspaces[0].tabs[0].root_pane;
+                let terminal = app.state.workspaces[0].tabs[0].panes[&pane]
+                    .attached_terminal_id
+                    .clone();
+                let base = PathBuf::from(format!(
+                    "/tmp/hpr-{}-{}",
+                    std::process::id(),
+                    crate::terminal::TerminalId::alloc()
+                ));
+                fs::create_dir_all(&base).unwrap();
+                let binary = prompt_probe::compile(&base);
+                let executable = base.join(crate::detect::agent_label(agent));
+                std::os::unix::fs::symlink(binary, &executable).unwrap();
+                let argv = vec![
+                    executable.to_string_lossy().into_owned(),
+                    base.join("input.jsonl").to_string_lossy().into_owned(),
+                    "-".into(),
+                    "-".into(),
+                    crate::detect::agent_label(agent).into(),
+                    if bracketed { "bracketed" } else { "raw" }.into(),
+                    "-".into(),
+                ];
+                let env = crate::pane::PaneLaunchEnv::from_extra(vec![
+                    (
+                        "XDG_CONFIG_HOME".into(),
+                        base.join("config").to_string_lossy().into_owned(),
+                    ),
+                    (
+                        "XDG_RUNTIME_DIR".into(),
+                        base.join("run").to_string_lossy().into_owned(),
+                    ),
+                    (
+                        "HERDR_SOCKET_PATH".into(),
+                        base.join("s").to_string_lossy().into_owned(),
+                    ),
+                ])
+                .without_pane_identity();
+                let runtime = crate::terminal::TerminalRuntime::spawn_argv_command(
+                    pane,
+                    24,
+                    80,
+                    base.clone(),
+                    &argv,
+                    &env,
+                    crate::pane::AgentDetection::Enabled,
+                    0,
+                    Default::default(),
+                    app.event_tx.clone(),
+                    app.render_notify.clone(),
+                    app.render_dirty.clone(),
+                )
+                .unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !runtime.recent_text(24).contains("PROMPT_AGENT_READY") {
+                    assert!(
+                        Instant::now() < deadline,
+                        "real PTY probe did not start: {}",
+                        runtime.recent_text(24)
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                assert!(crate::app::agents::runtime_hosts_agent(&runtime, agent));
+                app.terminal_runtimes.insert(terminal.clone(), runtime);
+                let state = app.state.terminals.get_mut(&terminal).unwrap();
+                state.set_agent_name("reviewer".into());
+                state.set_detected_state(Some(agent), AgentState::Idle);
+                Self {
+                    app,
+                    base,
+                    pane,
+                    terminal,
+                }
+            }
+
+            fn submit(&mut self, target: &str, text: &str) -> std::sync::mpsc::Receiver<String> {
+                let (respond_to, receiver) = std::sync::mpsc::channel();
+                assert!(self.app.handle_deferred_agent_api_request(
+                    crate::api::schema::Request {
+                        id: "prompt".into(),
+                        method: crate::api::schema::Method::AgentPrompt(AgentPromptParams {
+                            target: target.into(),
+                            text: text.into(),
+                            wait: None,
+                        }),
+                    },
+                    respond_to
+                ));
+                receiver
+            }
+
+            fn input(&self) -> Vec<u8> {
+                fs::read_to_string(self.base.join("input.jsonl"))
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                    .filter(|row| row["kind"] == "bytes")
+                    .flat_map(|row| {
+                        row["hex"]
+                            .as_str()
+                            .unwrap()
+                            .as_bytes()
+                            .chunks_exact(2)
+                            .map(|hex| {
+                                u8::from_str_radix(std::str::from_utf8(hex).unwrap(), 16).unwrap()
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            }
+
+            fn wait_input(&self, expected: &[u8]) {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while self.input().len() < expected.len() {
+                    assert!(
+                        Instant::now() < deadline,
+                        "input was not received: {:?}",
+                        self.input()
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                assert_eq!(self.input(), expected);
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn agent_prompt_and_legacy_send_keep_both_submissions_separate() {
+            for prompt_first in [false, true] {
+                let mut probe = Probe::new(Agent::Pi, true);
+                let prompt = prompt_first.then(|| probe.submit("reviewer", "new"));
+                let response: SuccessResponse = serde_json::from_str(&probe.app.handle_agent_send(
+                    "legacy".into(),
+                    AgentSendParams {
+                        target: "reviewer".into(),
+                        text: "old\n\n".into(),
+                    },
+                ))
+                .unwrap();
+                assert!(matches!(response.result, ResponseResult::Ok {}));
+                let prompt = prompt.unwrap_or_else(|| probe.submit("reviewer", "new"));
+                let response: SuccessResponse =
+                    serde_json::from_str(&prompt.recv_timeout(Duration::from_secs(5)).unwrap())
+                        .unwrap();
+                assert!(matches!(
+                    response.result,
+                    ResponseResult::AgentPrompted { .. }
+                ));
+                let expected = if prompt_first {
+                    b"\x1b[200~new\x1b[201~\r\x1b[200~old\x1b[201~\r".as_slice()
+                } else {
+                    b"\x1b[200~old\x1b[201~\r\x1b[200~new\x1b[201~\r".as_slice()
+                };
+                probe.wait_input(expected);
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn agent_prompt_copilot_focus_and_body_do_not_cross_mailbox_input() {
+            for mailbox_first in [false, true] {
+                let mut probe = Probe::new(Agent::GithubCopilot, true);
+                let (tx, rx) = std::sync::mpsc::channel();
+                let mailbox = |probe: &Probe| {
+                    probe
+                        .app
+                        .terminal_runtimes
+                        .get(&probe.terminal)
+                        .unwrap()
+                        .try_write_mailbox_bytes(
+                            bytes::Bytes::from_static(b"mail\r"),
+                            Box::new(move |result| {
+                                tx.send(result).unwrap();
+                            }),
+                        )
+                        .unwrap();
+                };
+                let prompt = if mailbox_first {
+                    mailbox(&probe);
+                    probe.submit("reviewer", "prompt")
+                } else {
+                    let prompt = probe.submit("reviewer", "prompt");
+                    mailbox(&probe);
+                    prompt
+                };
+                let _: SuccessResponse =
+                    serde_json::from_str(&prompt.recv_timeout(Duration::from_secs(5)).unwrap())
+                        .unwrap();
+                rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+                let expected = if mailbox_first {
+                    b"mail\r\x1b[I\x1b[200~prompt\x1b[201~\r".as_slice()
+                } else {
+                    b"\x1b[I\x1b[200~prompt\x1b[201~\rmail\r".as_slice()
+                };
+                probe.wait_input(expected);
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn agent_prompt_waits_for_wrapped_argv_launch_to_settle() {
+            for prefix in [
+                vec!["/bin/sh", "-lc", "exec \"$@\"", "sh"],
+                vec!["/usr/bin/env"],
+            ] {
+                let mut probe = Probe::new(Agent::Pi, true);
+                probe.app.terminal_runtimes.drain().for_each(drop);
+                probe.app.state.workspaces.clear();
+                probe.app.state.terminals.clear();
+                probe.app.state.active = None;
+                let mut argv: Vec<String> = prefix.into_iter().map(str::to_owned).collect();
+                argv.extend([
+                    probe.base.join("pi").to_string_lossy().into_owned(),
+                    probe
+                        .base
+                        .join("wrapped.jsonl")
+                        .to_string_lossy()
+                        .into_owned(),
+                    "-".into(),
+                    "-".into(),
+                    "pi".into(),
+                    "bracketed".into(),
+                    "-".into(),
+                ]);
+                let params = serde_json::from_value(
+                    serde_json::json!({"name":"wrapped", "cwd":probe.base, "argv":argv}),
+                )
+                .unwrap();
+                let extra_env = vec![
+                    (
+                        "XDG_CONFIG_HOME".into(),
+                        probe.base.join("config").to_string_lossy().into_owned(),
+                    ),
+                    (
+                        "XDG_RUNTIME_DIR".into(),
+                        probe.base.join("run").to_string_lossy().into_owned(),
+                    ),
+                    (
+                        "HERDR_SOCKET_PATH".into(),
+                        probe.base.join("s").to_string_lossy().into_owned(),
+                    ),
+                ];
+                let (agent, _) = probe
+                    .app
+                    .start_agent(params, extra_env)
+                    .unwrap_or_else(|err| {
+                        panic!("{}", probe.app.agent_start_error_body(err).message)
+                    });
+                let resolved = probe.app.resolve_agent_target(&agent.pane_id).unwrap();
+                probe.pane = resolved.pane_id;
+                probe.terminal = probe.app.state.workspaces[resolved.ws_idx]
+                    .terminal_id(probe.pane)
+                    .cloned()
+                    .unwrap();
+                let runtime = &probe.app.terminal_runtimes.get(&probe.terminal).unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !runtime.recent_text(24).contains("PROMPT_AGENT_READY") {
+                    assert!(Instant::now() < deadline, "wrapped probe did not start");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                probe
+                    .app
+                    .state
+                    .terminals
+                    .get_mut(&probe.terminal)
+                    .unwrap()
+                    .set_detected_state(Some(Agent::Pi), AgentState::Idle);
+                let response = probe
+                    .submit("wrapped", "must wait")
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+                let response: ErrorResponse = serde_json::from_str(&response)
+                    .expect("wrapped launches must reject prompts during their settle interval");
+                assert_eq!(response.error.code, "agent_not_ready");
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn agent_prompt_sends_text_then_delays_enter() {
+            for bracketed in [false, true] {
+                let mut probe = Probe::new(Agent::OpenCode, bracketed);
+                let body = "A != B\n\n";
+                let target = probe.app.public_pane_id(0, probe.pane).unwrap();
+                let began = Instant::now();
+                let response = probe.submit(&target, body);
+                assert!(response.try_recv().is_err());
+                let response: SuccessResponse =
+                    serde_json::from_str(&response.recv_timeout(Duration::from_secs(5)).unwrap())
+                        .unwrap();
+                assert!(matches!(
+                    response.result,
+                    ResponseResult::AgentPrompted { .. }
+                ));
+                assert!(began.elapsed() >= AGENT_PROMPT_SUBMIT_DELAY);
+                let expected = if bracketed {
+                    format!("\x1b[200~{body}\x1b[201~\r")
+                } else {
+                    format!("{body}\r")
+                };
+                probe.wait_input(expected.as_bytes());
+                let rejected: ErrorResponse =
+                    serde_json::from_str(&probe.submit("opencode", "wrong target").recv().unwrap())
+                        .unwrap();
+                assert_eq!(rejected.error.code, "agent_not_found");
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn agent_prompt_rejects_blocked_agent_without_writing() {
+            let mut probe = Probe::new(Agent::GithubCopilot, true);
+            probe
+                .app
+                .state
+                .terminals
+                .get_mut(&probe.terminal)
+                .unwrap()
+                .set_detected_state(Some(Agent::GithubCopilot), AgentState::Blocked);
+            let response: ErrorResponse =
+                serde_json::from_str(&probe.submit("reviewer", "unrelated prompt").recv().unwrap())
+                    .unwrap();
+            assert_eq!(response.error.code, "agent_blocked");
+            std::thread::sleep(AGENT_PROMPT_SUBMIT_DELAY + Duration::from_millis(100));
+            assert!(probe.input().is_empty());
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn agent_prompt_focuses_copilot_before_submitting() {
+            let mut probe = Probe::new(Agent::GithubCopilot, true);
+            let response: SuccessResponse =
+                serde_json::from_str(&probe.submit("reviewer", "A != B").recv().unwrap()).unwrap();
+            assert!(matches!(
+                response.result,
+                ResponseResult::AgentPrompted { .. }
+            ));
+            probe.wait_input(b"\x1b[I\x1b[200~A != B\x1b[201~\r");
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn agent_prompt_rejects_agent_while_startup_is_pending() {
+            let mut probe = Probe::new(Agent::OpenCode, true);
+            probe
+                .app
+                .state
+                .terminals
+                .get_mut(&probe.terminal)
+                .unwrap()
+                .begin_managed_agent(
+                    "reviewer".into(),
+                    Agent::OpenCode,
+                    Instant::now(),
+                    crate::app::agents::AGENT_START_SETTLE_DELAY,
+                    Duration::from_secs(30),
+                );
+            let response: ErrorResponse =
+                serde_json::from_str(&probe.submit("reviewer", "A != B").recv().unwrap()).unwrap();
+            assert_eq!(response.error.code, "agent_not_ready");
+            assert!(probe.input().is_empty());
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn agent_prompt_rejects_empty_or_unknown_agent_without_writing() {
+            let mut probe = Probe::new(Agent::Pi, false);
+            let response: ErrorResponse =
+                serde_json::from_str(&probe.submit("reviewer", "").recv().unwrap()).unwrap();
+            assert_eq!(response.error.code, "empty_agent_prompt");
+            probe
+                .app
+                .state
+                .terminals
+                .get_mut(&probe.terminal)
+                .unwrap()
+                .set_detected_state(None, AgentState::Unknown);
+            let response: ErrorResponse =
+                serde_json::from_str(&probe.submit("reviewer", "text").recv().unwrap()).unwrap();
+            assert_eq!(response.error.code, "agent_not_ready");
+            assert!(probe.input().is_empty());
+        }
     }
 }

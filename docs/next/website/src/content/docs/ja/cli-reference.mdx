@@ -246,6 +246,7 @@ herdr pane report-metadata <pane_id> \
 herdr agent list
 herdr agent get <target>
 herdr agent read <target> [--source visible|recent|recent-unwrapped|detection] [--lines N] [--format text|ansi] [--ansi]
+herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]
 herdr agent send <target> <text>
 herdr agent rename <target> <name>|--clear
 herdr agent focus <target>
@@ -258,7 +259,15 @@ herdr agent explain --file PATH --agent LABEL [--json|--verbose]
 
 エージェントターゲットには、ターミナル ID、一意なエージェント名、検出または報告されたエージェントラベル、レガシーなペイン ID が使えます。名前とラベルはエージェントのアイデンティティです。ターミナル ID とレガシーペイン ID は低レベルな逃げ道です。
 
-`agent read` は解決されたターミナルストリームを読みます。`agent send` は解決されたAI CLIへテキストを書き込み、入力欄に残らないようEnterで送信します。`agent get`、`agent focus`、`agent wait`、`agent attach` は、解決されたターミナルがエージェントのアイデンティティを持つことを要求します。`agent rename` はそのアイデンティティを割り当てられます。
+`agent read` は解決されたターミナルストリームを読みます。`agent send` は fork の従来のテキストと Enter による送信を維持します。`agent get`、`agent focus`、`agent wait`、`agent attach` は、解決されたターミナルがエージェントのアイデンティティを持つことを要求します。`agent rename` はそのアイデンティティを割り当てられます。
+
+`agent prompt` は本家 0.9.1 の `agent.prompt` API を使います。対象には一意なエージェント名またはペイン ID（`p_N`、`pN`、`%N`）を指定できます。エージェントラベルとターミナル ID は prompt の対象には使えません。空文字は `empty_agent_prompt`、承認や質問への回答待ちは `agent_blocked`、既知のエージェントがいない・起動中・前面プロセスがそのエージェントではない場合は `agent_not_ready` を返します。これらの拒否では本文も Enter も送りません。
+
+本文の末尾の改行を保持し、端末が bracketed paste を有効にしていれば、その形式で送信します。本文を書き終えてから 300 ms 待ち、Enter の書き込みに成功して初めて、エージェント情報を含む `agent_prompted` を返します。Copilot には本文より先にフォーカス取得を通知します。送信中に端末が閉じた場合は失敗を返します。
+
+`--wait` は標準で `idle`、`done`、`blocked` のいずれかを待ちます。`--until STATUS` を繰り返すと対象の状態（`idle`、`working`、`done`、`blocked`、`unknown`）を選べ、`--timeout MS` で待機時間を制限できます。どちらも `--wait` が必要です。送信時に作業中でなかった相手では、まず `working` または `blocked` への遷移を確認します。メタデータやセッションの変更、以前から続く idle/done 状態では待機を完了しません。5秒以内に活動を確認できなければ `agent_prompt_stalled`、それより短い指定時間を超えれば `timeout`、対象のエージェントが失われれば `agent_not_running` を返します。fork の `agent send`、永続メールボックスの `herdr send <to> <text> --room <room>`、メールボックス入力も引き続き利用できます。
+
+`agent start` の argv が `sh -lc`、`env`、言語ランタイムなどを経由しても、検出されたエージェントの準備完了を待ちます。検出された状態と、起動時の3秒の安定待ち・30秒の起動期限から、本家と同じ状態遷移で準備状態を判定します。保存時には起動途中の管理名を除外し、準備済みの管理情報を復元します。エージェントを検出しない通常の名前付きジョブは、fork の既存の名前を保持します。
 
 `agent explain` は、スクリーン検出が使うのと同じ下部バッファの検出スナップショットの分類を実行中のサーバーに依頼します。そのためライブの出力はサーバーのアクティブなマニフェストキャッシュを反映します。これは `agent.explain` ソケットメソッドを使うので、Herdr のアップグレード後にライブ explain を使う前に、サーバーを再起動するか更新済みサーバーへハンドオフしてください。保存済みフィクスチャをローカルで説明するには `--file PATH --agent LABEL` を使います。デフォルトの出力には、エージェント、最終状態、マニフェストのソースとバージョン、リージョンの証拠付きでマッチしたルール、そしてフォールバック・スキップ・警告の理由が表示されます。`--verbose` を付けると、可視の証拠フラグ、キャッシュされたリモートバージョン、ローカルオーバーライドのシャドーイング、リモート更新状況、マッチャーとリージョンの証拠付きの評価済みルール全リストが表示されます。issue の報告やテストには `--json` を付けてください。
 

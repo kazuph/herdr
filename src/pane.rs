@@ -1231,6 +1231,31 @@ impl PaneRuntimeIo {
         }
     }
 
+    fn queue_user_input_submission(
+        &self,
+        text: Bytes,
+        enter: Bytes,
+        delay: std::time::Duration,
+        deadline: Option<std::time::Instant>,
+    ) -> std::io::Result<std::sync::mpsc::Receiver<std::io::Result<()>>> {
+        match self {
+            PaneRuntimeIo::Actor(actor) => {
+                #[cfg(windows)]
+                return actor.queue_user_input_submission(text, enter, delay, deadline);
+                #[cfg(unix)]
+                {
+                    let _ = deadline;
+                    actor.queue_user_input_submission(text, enter, delay)
+                }
+            }
+            #[cfg(test)]
+            PaneRuntimeIo::TestChannel { .. } => Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "input submission requires a PTY actor",
+            )),
+        }
+    }
+
     fn try_write_mailbox_bytes(
         &self,
         bytes: Bytes,
@@ -2828,6 +2853,17 @@ impl PaneRuntime {
 
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), mpsc::error::SendError<Bytes>> {
         self.io.send_bytes(bytes).await
+    }
+
+    pub fn queue_user_input_submission(
+        &self,
+        text: Bytes,
+        enter: Bytes,
+        delay: std::time::Duration,
+        deadline: Option<std::time::Instant>,
+    ) -> std::io::Result<std::sync::mpsc::Receiver<std::io::Result<()>>> {
+        self.io
+            .queue_user_input_submission(text, enter, delay, deadline)
     }
 
     pub fn try_send_bytes(&self, bytes: Bytes) -> Result<(), mpsc::error::TrySendError<Bytes>> {

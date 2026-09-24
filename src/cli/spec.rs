@@ -261,6 +261,32 @@ fn agent_command() -> Command {
                 .arg(flag("ansi")),
         )
         .subcommand(
+            Command::new("prompt")
+                .about("Submit a prompt to an agent")
+                .override_usage("herdr agent prompt <TARGET> <TEXT> [OPTIONS]")
+                .arg(required("target", "TARGET"))
+                .arg(required("text", "TEXT"))
+                .arg(
+                    flag("wait")
+                        .help("Wait for the first matching state observed after submission"),
+                )
+                .arg(
+                    option("until", "STATUS")
+                        .action(ArgAction::Append)
+                        .requires("wait")
+                        .value_parser(["idle", "working", "blocked", "done", "unknown"])
+                        .help("State to match after --wait; repeat for more than one state"),
+                )
+                .arg(
+                    option("timeout", "MS")
+                        .requires("wait")
+                        .help("Fail after this many milliseconds"),
+                )
+                .after_help(
+                    "If the agent is already blocked, submission is rejected with agent_blocked before any input is sent. When an accepted submission starts from another non-working state, --wait requires an observed working or blocked state within 5000ms; otherwise it returns agent_prompt_stalled. A caller timeout that expires first returns timeout. It then matches idle, done, or blocked by default, or any exact --until state. It does not track turns: if the agent is already working, that active turn's completion may match.",
+                ),
+        )
+        .subcommand(
             Command::new("send")
                 .about("Send text to an agent")
                 .arg(required("target", "TARGET"))

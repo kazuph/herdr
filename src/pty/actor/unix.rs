@@ -16,7 +16,6 @@ use crate::pty::fd;
 // timeout is only a fallback for missed wakes; PTY and wake readiness drive
 // normal responsiveness.
 const ACTOR_IDLE_POLL_MS: i32 = 1000;
-const ACTOR_WRITE_READY_POLL_MS: i32 = 50;
 const ACTOR_COMMAND_BUFFER: usize = 1024;
 const HANDOFF_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -59,6 +58,7 @@ struct PtyResizeRequest {
 
 struct PendingWrite {
     bytes: Bytes,
+    boundary: Option<SubmissionBoundary>,
     completion: Option<Box<dyn FnOnce(std::io::Result<()>) + Send>>,
 }
 
@@ -76,8 +76,18 @@ pub(crate) struct PtyIoActorConfig {
     pub on_reader_exit: Option<ReaderExitCallback>,
 }
 
+#[expect(
+    clippy::enum_variant_names,
+    reason = "Retain upstream input command names alongside the fork's WriteMailboxInput"
+)]
 enum PtyIoDataCommand {
     WriteUserInput(Bytes),
+    SubmitUserInput {
+        text: Bytes,
+        enter: Bytes,
+        delay: Duration,
+        reply: std_mpsc::Sender<std::io::Result<()>>,
+    },
     WriteMailboxInput(Bytes, Box<dyn FnOnce(std::io::Result<()>) + Send>),
 }
 
@@ -185,20 +195,55 @@ impl PtyIoActorHandle {
                 self.wake_actor();
                 Ok(())
             }
-            Err(mpsc::error::TrySendError::Full(PtyIoDataCommand::WriteUserInput(bytes))) => {
+            Err(mpsc::error::TrySendError::Full(command)) => {
+                let PtyIoDataCommand::WriteUserInput(bytes) = command else {
+                    unreachable!("queued write returned another command")
+                };
                 Err(mpsc::error::TrySendError::Full(bytes))
             }
-            Err(mpsc::error::TrySendError::Closed(PtyIoDataCommand::WriteUserInput(bytes))) => {
+            Err(mpsc::error::TrySendError::Closed(command)) => {
+                let PtyIoDataCommand::WriteUserInput(bytes) = command else {
+                    unreachable!("queued write returned another command")
+                };
                 Err(mpsc::error::TrySendError::Closed(bytes))
             }
-            Err(mpsc::error::TrySendError::Full(PtyIoDataCommand::WriteMailboxInput(bytes, _))) => {
-                Err(mpsc::error::TrySendError::Full(bytes))
-            }
-            Err(mpsc::error::TrySendError::Closed(PtyIoDataCommand::WriteMailboxInput(
-                bytes,
-                _,
-            ))) => Err(mpsc::error::TrySendError::Closed(bytes)),
         }
+    }
+
+    pub(crate) fn queue_user_input_submission(
+        &self,
+        text: Bytes,
+        enter: Bytes,
+        delay: Duration,
+    ) -> std::io::Result<std_mpsc::Receiver<std::io::Result<()>>> {
+        let user_writes = self
+            .user_writes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !user_writes.accepting {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "pty actor closed",
+            ));
+        }
+        let (reply_tx, reply_rx) = std_mpsc::channel();
+        self.data_tx
+            .try_send(PtyIoDataCommand::SubmitUserInput {
+                text,
+                enter,
+                delay,
+                reply: reply_tx,
+            })
+            .map_err(|err| match err {
+                mpsc::error::TrySendError::Full(_) => {
+                    std::io::Error::new(std::io::ErrorKind::WouldBlock, "pty input queue is full")
+                }
+                mpsc::error::TrySendError::Closed(_) => {
+                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pty actor closed")
+                }
+            })?;
+        self.wake_actor();
+        Ok(reply_rx)
     }
 
     pub(crate) fn resize(
@@ -256,6 +301,12 @@ impl PtyIoActorHandle {
                 .user_writes
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !user_writes.accepting {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "PTY handoff is already in progress",
+                ));
+            }
             user_writes.accepting = false;
             if self
                 .control_tx
@@ -413,6 +464,8 @@ impl PtyIoActor {
             },
             pending_writes: VecDeque::new(),
             current_write_offset: 0,
+            active_submission: None,
+            pending_handoff: None,
             wake_read_fd: wake_pipe.read_fd,
             controls,
             on_read: config.on_read,
@@ -445,6 +498,8 @@ struct PtyIoActorRunner {
     state: ActorState,
     pending_writes: VecDeque<PendingWrite>,
     current_write_offset: usize,
+    active_submission: Option<ActiveSubmission>,
+    pending_handoff: Option<std_mpsc::Sender<std::io::Result<()>>>,
     wake_read_fd: OwnedFd,
     controls: Arc<Mutex<SharedPtyControls>>,
     on_read: ReadCallback,
@@ -453,11 +508,31 @@ struct PtyIoActorRunner {
     user_writes: Arc<Mutex<UserWriteGate>>,
 }
 
+struct ActiveSubmission {
+    enter: Bytes,
+    delay: Duration,
+    phase: SubmissionPhase,
+    reply: std_mpsc::Sender<std::io::Result<()>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubmissionBoundary {
+    Text,
+    Enter,
+}
+
+enum SubmissionPhase {
+    WritingText,
+    WaitingUntil(Instant),
+    WritingEnter,
+}
+
 impl PtyIoActorRunner {
     fn enqueue_write(&mut self, bytes: Bytes) {
         if !bytes.is_empty() {
             self.pending_writes.push_back(PendingWrite {
                 bytes,
+                boundary: None,
                 completion: None,
             });
         }
@@ -474,8 +549,19 @@ impl PtyIoActorRunner {
         }
         self.pending_writes.push_back(PendingWrite {
             bytes,
+            boundary: None,
             completion: Some(completion),
         });
+    }
+
+    fn enqueue_submission_write(&mut self, bytes: Bytes, boundary: SubmissionBoundary) {
+        if !bytes.is_empty() {
+            self.pending_writes.push_back(PendingWrite {
+                bytes,
+                boundary: Some(boundary),
+                completion: None,
+            });
+        }
     }
 
     fn run(&mut self) {
@@ -489,7 +575,18 @@ impl PtyIoActorRunner {
             self.apply_pending_controls();
 
             if !self.pending_writes.is_empty() {
-                self.flush_pending_writes_once();
+                match self.flush_pending_writes_once() {
+                    Ok(Some(boundary)) => self.complete_submission_boundary(boundary),
+                    Ok(None) => {}
+                    Err(err) => {
+                        self.fail_active_submission(err);
+                        break;
+                    }
+                }
+            }
+            self.schedule_submission_enter();
+            if self.active_submission.is_none() && self.pending_handoff.is_some() {
+                continue;
             }
 
             if let Some(poll_observer) = &self.poll_observer {
@@ -501,7 +598,7 @@ impl PtyIoActorRunner {
                 self.wake_read_fd.as_raw_fd(),
                 self.state == ActorState::Running,
                 !self.pending_writes.is_empty(),
-                ACTOR_IDLE_POLL_MS,
+                self.poll_timeout_ms(),
             ) {
                 Ok(readiness) => {
                     if readiness.wake_ready {
@@ -511,14 +608,21 @@ impl PtyIoActorRunner {
                         }
                         continue;
                     }
-                    if readiness.pty_write_ready && !self.pending_writes.is_empty() {
-                        self.flush_pending_writes_once();
-                    }
                     if self.state == ActorState::Running
                         && readiness.pty_read_ready
                         && !self.read_once()
                     {
                         break;
+                    }
+                    if readiness.pty_write_ready && !self.pending_writes.is_empty() {
+                        match self.flush_pending_writes_once() {
+                            Ok(Some(boundary)) => self.complete_submission_boundary(boundary),
+                            Ok(None) => {}
+                            Err(err) => {
+                                self.fail_active_submission(err);
+                                break;
+                            }
+                        }
                     }
                 }
                 Err(err) => {
@@ -528,17 +632,9 @@ impl PtyIoActorRunner {
             }
         }
 
+        self.close_input_queue();
         if let Some(on_reader_exit) = self.on_reader_exit.take() {
             on_reader_exit();
-        }
-        self.fail_pending_writes(std::io::ErrorKind::BrokenPipe, "PTY actor exited");
-        while let Ok(command) = self.data_rx.try_recv() {
-            if let PtyIoDataCommand::WriteMailboxInput(_, completion) = command {
-                completion(Err(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "PTY actor exited before mailbox write started",
-                )));
-            }
         }
         debug!(pane = self.pane_id, "PTY actor exiting");
     }
@@ -546,6 +642,13 @@ impl PtyIoActorRunner {
     fn drain_commands(&mut self) -> bool {
         if self.drain_control_commands() {
             return true;
+        }
+        if self.active_submission.is_some() {
+            return false;
+        }
+        if let Some(reply) = self.pending_handoff.take() {
+            self.defer_or_begin_handoff(reply);
+            return false;
         }
         self.drain_data_commands()
     }
@@ -579,6 +682,9 @@ impl PtyIoActorRunner {
                         should_exit = true;
                         break;
                     }
+                    if self.active_submission.is_some() {
+                        break;
+                    }
                 }
                 Err(DataTryRecvError::Empty) => break,
                 Err(DataTryRecvError::Disconnected) => {
@@ -595,6 +701,32 @@ impl PtyIoActorRunner {
             PtyIoDataCommand::WriteUserInput(bytes) => {
                 if self.state == ActorState::Running {
                     self.enqueue_write(bytes);
+                }
+            }
+            PtyIoDataCommand::SubmitUserInput {
+                text,
+                enter,
+                delay,
+                reply,
+            } => {
+                if self.state == ActorState::Running {
+                    let phase = if text.is_empty() {
+                        SubmissionPhase::WaitingUntil(Instant::now() + delay)
+                    } else {
+                        self.enqueue_submission_write(text, SubmissionBoundary::Text);
+                        SubmissionPhase::WritingText
+                    };
+                    self.active_submission = Some(ActiveSubmission {
+                        enter,
+                        delay,
+                        phase,
+                        reply,
+                    });
+                } else {
+                    let _ = reply.send(Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "pty actor is not accepting input",
+                    )));
                 }
             }
             PtyIoDataCommand::WriteMailboxInput(bytes, completion) => {
@@ -614,8 +746,7 @@ impl PtyIoActorRunner {
     fn handle_control_command(&mut self, command: PtyIoControlCommand) -> bool {
         match command {
             PtyIoControlCommand::BeginHandoff(reply) => {
-                let result = self.begin_handoff();
-                let _ = reply.send(result);
+                self.defer_or_begin_handoff(reply);
             }
             PtyIoControlCommand::DuplicateForHandoff(reply) => {
                 let result = if self.state == ActorState::Quiesced {
@@ -633,6 +764,7 @@ impl PtyIoActorRunner {
                 let _ = reply.send(result);
             }
             PtyIoControlCommand::RollbackHandoff(reply) => {
+                self.pending_handoff.take();
                 let result = if self.state == ActorState::Released {
                     Err(std::io::Error::new(
                         std::io::ErrorKind::BrokenPipe,
@@ -658,8 +790,26 @@ impl PtyIoActorRunner {
         false
     }
 
+    fn defer_or_begin_handoff(&mut self, reply: std_mpsc::Sender<std::io::Result<()>>) {
+        if self.active_submission.is_none() {
+            self.drain_pre_quiesce_commands();
+        }
+        if self.active_submission.is_some() {
+            self.pending_handoff = Some(reply);
+        } else {
+            let result = self.begin_handoff();
+            let _ = reply.send(result);
+        }
+    }
+
     fn begin_handoff(&mut self) -> std::io::Result<()> {
         self.drain_pre_quiesce_commands();
+        if self.active_submission.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "PTY input submission is still in progress",
+            ));
+        }
         self.apply_pending_controls();
         if self.state == ActorState::Released {
             return Err(std::io::Error::new(
@@ -668,26 +818,35 @@ impl PtyIoActorRunner {
             ));
         }
         let deadline = Instant::now() + HANDOFF_DRAIN_TIMEOUT;
+        let _ = self.flush_pending_writes_once()?;
         while !self.pending_writes.is_empty() {
-            if Instant::now() >= deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     "timed out draining PTY writes before handoff",
                 ));
             }
-            self.flush_pending_writes_once();
-            if self.state == ActorState::Released {
+            let timeout_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
+            let readiness = fd::poll_pty_and_wake(
+                self.file.as_raw_fd(),
+                self.wake_read_fd.as_raw_fd(),
+                true,
+                true,
+                timeout_ms,
+            )?;
+            if readiness.wake_ready {
+                fd::drain_wake_fd(self.wake_read_fd.as_raw_fd())?;
+            }
+            if readiness.pty_read_ready && !self.read_once() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
-                    "PTY actor was released while draining writes for handoff",
+                    "PTY closed while draining writes before handoff",
                 ));
             }
-        }
-        if self.state == ActorState::Released {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "PTY actor was released while quiescing for handoff",
-            ));
+            if readiness.pty_write_ready {
+                let _ = self.flush_pending_writes_once()?;
+            }
         }
         self.state = ActorState::Quiesced;
         Ok(())
@@ -695,7 +854,12 @@ impl PtyIoActorRunner {
 
     fn drain_pre_quiesce_commands(&mut self) {
         while let Ok(command) = self.data_rx.try_recv() {
-            self.handle_data_command(command);
+            if self.handle_data_command(command) {
+                break;
+            }
+            if self.active_submission.is_some() {
+                break;
+            }
         }
     }
 
@@ -746,48 +910,133 @@ impl PtyIoActorRunner {
         }
     }
 
-    fn flush_pending_writes_once(&mut self) {
+    fn complete_submission_boundary(&mut self, boundary: SubmissionBoundary) {
+        match boundary {
+            SubmissionBoundary::Text => {
+                let Some(submission) = self.active_submission.as_mut() else {
+                    return;
+                };
+                debug_assert!(matches!(submission.phase, SubmissionPhase::WritingText));
+                submission.phase = SubmissionPhase::WaitingUntil(Instant::now() + submission.delay);
+            }
+            SubmissionBoundary::Enter => {
+                let Some(submission) = self.active_submission.take() else {
+                    return;
+                };
+                debug_assert!(matches!(submission.phase, SubmissionPhase::WritingEnter));
+                let _ = submission.reply.send(Ok(()));
+            }
+        }
+    }
+
+    fn schedule_submission_enter(&mut self) {
+        let Some(ActiveSubmission {
+            enter,
+            phase: SubmissionPhase::WaitingUntil(deadline),
+            ..
+        }) = self.active_submission.as_ref()
+        else {
+            return;
+        };
+        if Instant::now() >= *deadline {
+            let enter = enter.clone();
+            if enter.is_empty() {
+                if let Some(submission) = self.active_submission.take() {
+                    let _ = submission.reply.send(Ok(()));
+                }
+            } else {
+                if let Some(submission) = self.active_submission.as_mut() {
+                    submission.phase = SubmissionPhase::WritingEnter;
+                }
+                self.enqueue_submission_write(enter, SubmissionBoundary::Enter);
+            }
+        }
+    }
+
+    fn poll_timeout_ms(&self) -> i32 {
+        let Some(ActiveSubmission {
+            phase: SubmissionPhase::WaitingUntil(deadline),
+            ..
+        }) = self.active_submission.as_ref()
+        else {
+            return ACTOR_IDLE_POLL_MS;
+        };
+        deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+            .max(1)
+            .min(ACTOR_IDLE_POLL_MS as u128) as i32
+    }
+
+    fn fail_active_submission(&mut self, err: std::io::Error) {
+        if let Some(submission) = self.active_submission.take() {
+            let _ = submission.reply.send(Err(err));
+        }
+    }
+
+    fn close_input_queue(&mut self) {
+        self.data_rx.close();
+        self.fail_active_submission(input_submission_closed_error());
+        self.fail_pending_writes(std::io::ErrorKind::BrokenPipe, "PTY actor exited");
+        while let Some(command) = self.data_rx.blocking_recv() {
+            match command {
+                PtyIoDataCommand::SubmitUserInput { reply, .. } => {
+                    let _ = reply.send(Err(input_submission_closed_error()));
+                }
+                PtyIoDataCommand::WriteMailboxInput(_, completion) => {
+                    completion(Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "PTY actor exited before mailbox write started",
+                    )));
+                }
+                PtyIoDataCommand::WriteUserInput(_) => {}
+            }
+        }
+    }
+
+    fn flush_pending_writes_once(&mut self) -> std::io::Result<Option<SubmissionBoundary>> {
         while let Some(write) = self.pending_writes.front() {
             let chunk = &write.bytes[self.current_write_offset..];
             match self.file.write(chunk) {
                 Ok(0) => {
-                    warn!(pane = self.pane_id, "PTY actor write returned zero bytes");
+                    self.state = ActorState::Released;
                     self.fail_current_write(
                         std::io::ErrorKind::WriteZero,
                         "PTY actor write returned zero bytes",
                     );
-                    self.state = ActorState::Released;
-                    self.fail_pending_writes(
-                        std::io::ErrorKind::BrokenPipe,
-                        "PTY actor stopped after write failure",
-                    );
-                    return;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "PTY actor write returned zero bytes",
+                    ));
                 }
                 Ok(written) => {
                     self.current_write_offset += written;
                     if self.current_write_offset >= write.bytes.len() {
-                        if let Some(completed) = self.pending_writes.pop_front() {
-                            if let Some(completion) = completed.completion {
-                                completion(Ok(()));
-                            }
+                        let Some(completed) = self.pending_writes.pop_front() else {
+                            return Ok(None);
+                        };
+                        if let Some(completion) = completed.completion {
+                            completion(Ok(()));
                         }
                         self.current_write_offset = 0;
+                        if let Some(boundary) = completed.boundary {
+                            self.file.flush()?;
+                            return Ok(Some(boundary));
+                        }
                     }
                 }
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    let _ = fd::poll_write_ready(self.file.as_raw_fd(), ACTOR_WRITE_READY_POLL_MS);
-                    return;
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => return,
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => return Ok(None),
                 Err(err) => {
                     warn!(pane = self.pane_id, err = %err, "PTY actor write failed");
-                    self.fail_pending_writes(err.kind(), &err.to_string());
                     self.state = ActorState::Released;
-                    return;
+                    self.fail_pending_writes(err.kind(), &err.to_string());
+                    return Err(err);
                 }
             }
         }
-        let _ = self.file.flush();
+        self.file.flush()?;
+        Ok(None)
     }
 
     fn fail_current_write(&mut self, kind: std::io::ErrorKind, message: &str) {
@@ -874,6 +1123,13 @@ impl PtyIoActorRunner {
     }
 }
 
+fn input_submission_closed_error() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "PTY actor closed during input submission",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -944,6 +1200,8 @@ mod tests {
             state: ActorState::Running,
             pending_writes: VecDeque::new(),
             current_write_offset: 0,
+            active_submission: None,
+            pending_handoff: None,
             wake_read_fd: wake_pipe.read_fd,
             controls: Arc::new(Mutex::new(SharedPtyControls::default())),
             on_read: Box::new(|_| PtyReadResult::empty()),
@@ -988,7 +1246,9 @@ mod tests {
             }),
         ));
         drop(peer);
-        runner.flush_pending_writes_once();
+        runner
+            .flush_pending_writes_once()
+            .expect_err("closed peer must fail the write");
         let err = rx
             .recv_timeout(Duration::from_secs(1))
             .expect("closed peer completion")
@@ -1035,6 +1295,402 @@ mod tests {
             .try_write_mailbox_input(Bytes::from(vec![b'x'; 4 * 1024 * 1024]), Box::new(|_| {}))
             .expect("mailbox enqueue must not wait for PTY write completion");
 
+        handle.shutdown();
+    }
+
+    #[test]
+    fn actor_delays_enter_from_completed_prompt_write() {
+        let (handle, mut peer, _read_rx) = actor_with_socket_pair(false);
+        let text = Bytes::from(vec![b'x'; 4 * 1024 * 1024]);
+        let text_len = text.len();
+        let delay = Duration::from_millis(200);
+        let reader = std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            let mut received = vec![0; text_len];
+            peer.read_exact(&mut received)
+                .expect("peer receives prompt");
+            let prompt_completed = Instant::now();
+            let mut enter = [0; 1];
+            peer.read_exact(&mut enter).expect("peer receives enter");
+            let enter_received = Instant::now();
+            let mut user = [0; 4];
+            peer.read_exact(&mut user)
+                .expect("peer receives queued input");
+            (prompt_completed, enter_received, enter, user)
+        });
+
+        let completion = handle
+            .queue_user_input_submission(text, Bytes::from_static(b"\r"), delay)
+            .expect("submission queues");
+        handle
+            .try_write_user_input(Bytes::from_static(b"user"))
+            .expect("ordinary input queues behind submission");
+        completion
+            .recv()
+            .expect("actor reports submission")
+            .expect("submission completes");
+        let (prompt_completed, enter_received, enter, user) = reader.join().expect("reader joins");
+
+        assert_eq!(enter, *b"\r");
+        assert_eq!(user, *b"user");
+        assert!(enter_received.duration_since(prompt_completed) >= delay / 2);
+
+        let err = match handle.queue_user_input_submission(
+            Bytes::from_static(b"prompt"),
+            Bytes::from_static(b"\r"),
+            Duration::ZERO,
+        ) {
+            Ok(completion) => completion
+                .recv()
+                .expect("actor reports submission")
+                .expect_err("closed PTY rejects submission"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err.kind(),
+            std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::WriteZero
+        ));
+    }
+
+    #[test]
+    fn actor_serializes_mailbox_between_complete_prompt_submissions() {
+        let (handle, mut peer, _read_rx) = actor_with_socket_pair(false);
+        let delay = Duration::from_millis(200);
+        let first = handle
+            .queue_user_input_submission(
+                Bytes::from_static(b"first"),
+                Bytes::from_static(b"\r"),
+                delay,
+            )
+            .expect("first submission queues");
+        let (mail_tx, mail_rx) = std_mpsc::channel();
+        handle
+            .try_write_mailbox_input(
+                Bytes::from_static(b"mailbox\r"),
+                Box::new(move |result| {
+                    mail_tx
+                        .send(result)
+                        .expect("mailbox completion receiver alive");
+                }),
+            )
+            .expect("mailbox queues");
+        let second = handle
+            .queue_user_input_submission(
+                Bytes::from_static(b"second"),
+                Bytes::from_static(b"\r"),
+                Duration::ZERO,
+            )
+            .expect("second submission queues");
+        let mut text = [0; 5];
+        peer.read_exact(&mut text).expect("first text arrives");
+        assert_eq!(&text, b"first");
+        assert!(
+            first.try_recv().is_err(),
+            "text alone cannot complete submission"
+        );
+        assert!(
+            mail_rx.try_recv().is_err(),
+            "mailbox cannot pass the delayed Enter"
+        );
+        let mut rest = [0; 16];
+        peer.read_exact(&mut rest).expect("ordered input arrives");
+        assert_eq!(&rest, b"\rmailbox\rsecond\r");
+        first.recv().unwrap().unwrap();
+        mail_rx.recv().unwrap().unwrap();
+        second.recv().unwrap().unwrap();
+        handle.shutdown();
+    }
+
+    #[test]
+    fn actor_completes_empty_submission_parts() {
+        let (handle, mut peer, _read_rx) = actor_with_socket_pair(false);
+        peer.set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("peer timeout");
+
+        let completion = handle
+            .queue_user_input_submission(Bytes::new(), Bytes::from_static(b"\r"), Duration::ZERO)
+            .expect("empty prompt submission queues");
+        let mut enter = [0; 1];
+        peer.read_exact(&mut enter)
+            .expect("peer receives enter for empty prompt");
+        assert_eq!(enter, *b"\r");
+        completion
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor reports empty prompt submission")
+            .expect("empty prompt submission completes");
+
+        let completion = handle
+            .queue_user_input_submission(
+                Bytes::from_static(b"prompt"),
+                Bytes::new(),
+                Duration::from_millis(40),
+            )
+            .expect("empty enter submission queues");
+        let handoff_handle = handle.clone();
+        let handoff =
+            std::thread::spawn(move || handoff_handle.begin_handoff(Duration::from_millis(250)));
+        let mut prompt = [0; 6];
+        peer.read_exact(&mut prompt)
+            .expect("peer receives prompt before empty enter");
+        assert_eq!(&prompt, b"prompt");
+        completion
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor reports empty enter submission")
+            .expect("empty enter submission completes");
+        handoff
+            .join()
+            .expect("handoff thread joins")
+            .expect("handoff resumes without an idle poll after submission");
+        handle.shutdown();
+    }
+
+    #[test]
+    fn actor_exit_disconnects_pending_handoff_without_waiting_for_timeout() {
+        let (handle, mut peer, _read_rx) = actor_with_socket_pair(false);
+        let completion = handle
+            .queue_user_input_submission(
+                Bytes::from_static(b"prompt"),
+                Bytes::from_static(b"\r"),
+                Duration::from_secs(5),
+            )
+            .unwrap();
+        peer.read_exact(&mut [0; 6]).unwrap();
+        let handoff_handle = handle.clone();
+        let started = Instant::now();
+        let handoff =
+            std::thread::spawn(move || handoff_handle.begin_handoff(Duration::from_secs(5)));
+        while handle.user_writes.lock().unwrap().accepting {
+            assert!(started.elapsed() < Duration::from_secs(1));
+            std::thread::yield_now();
+        }
+        drop(peer);
+        assert_eq!(
+            completion
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+        assert!(handoff.join().unwrap().is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "sender drop must disconnect recv_timeout immediately"
+        );
+    }
+
+    #[test]
+    fn actor_reports_peer_closure_during_submission_delay() {
+        let (handle, mut peer, _read_rx) = actor_with_socket_pair(false);
+        let completion = handle
+            .queue_user_input_submission(
+                Bytes::from_static(b"prompt"),
+                Bytes::from_static(b"\r"),
+                Duration::from_secs(1),
+            )
+            .expect("submission queues");
+        let mut prompt = [0; 6];
+        peer.read_exact(&mut prompt).expect("peer receives prompt");
+        drop(peer);
+
+        let err = completion
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor reports peer closure")
+            .expect_err("peer closure fails the active submission");
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn actor_fails_buffered_submissions_on_exit() {
+        let (handle, mut peer, _read_rx) = actor_with_socket_pair(false);
+        let active = handle
+            .queue_user_input_submission(
+                Bytes::from_static(b"first"),
+                Bytes::from_static(b"\r"),
+                Duration::from_secs(1),
+            )
+            .expect("first submission queues");
+        let mut prompt = [0; 5];
+        peer.read_exact(&mut prompt).expect("peer receives prompt");
+        let buffered = handle
+            .queue_user_input_submission(
+                Bytes::from_static(b"second"),
+                Bytes::from_static(b"\r"),
+                Duration::ZERO,
+            )
+            .expect("second submission queues");
+
+        drop(peer);
+        let active_err = active
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor reports active submission")
+            .expect_err("peer closure fails active submission");
+        let buffered_err = buffered
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor reports buffered submission")
+            .expect_err("peer closure fails buffered submission");
+
+        assert_eq!(active_err.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(buffered_err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn actor_rejects_submission_after_io_loop_exits() {
+        let (actor_socket, peer) = UnixStream::pair().expect("socket pair");
+        actor_socket
+            .set_nonblocking(true)
+            .expect("actor socket nonblocking");
+        let owned = unsafe { OwnedFd::from_raw_fd(actor_socket.into_raw_fd()) };
+        let handle_slot = Arc::new(Mutex::new(None::<PtyIoActorHandle>));
+        let (attempt_tx, attempt_rx) = std_mpsc::channel();
+        let config = PtyIoActorConfig {
+            pane_id: 1,
+            master_fd: owned,
+            initially_quiesced: false,
+            on_read: Box::new(|_| PtyReadResult::empty()),
+            on_reader_exit: Some(Box::new({
+                let handle_slot = Arc::clone(&handle_slot);
+                move || {
+                    let handle = handle_slot
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .as_ref()
+                        .expect("actor handle installed")
+                        .clone();
+                    let attempt = handle.queue_user_input_submission(
+                        Bytes::from_static(b"prompt"),
+                        Bytes::from_static(b"\r"),
+                        Duration::ZERO,
+                    );
+                    attempt_tx.send(attempt).expect("attempt receiver alive");
+                }
+            })),
+        };
+        let handle = PtyIoActor::spawn(config).expect("actor spawn");
+        *handle_slot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(handle);
+
+        drop(peer);
+        let err = match attempt_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("reader exit callback attempts submission")
+        {
+            Ok(completion) => completion
+                .recv_timeout(Duration::from_secs(1))
+                .expect("actor reports submission")
+                .expect_err("closed actor rejects submission"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn submission_boundary_does_not_wait_for_following_protocol_write() {
+        let (mut runner, _peer) = actor_runner_for_unit_test();
+        runner.enqueue_submission_write(Bytes::from_static(b"prompt"), SubmissionBoundary::Text);
+        runner.enqueue_write(Bytes::from_static(b"response"));
+
+        assert_eq!(
+            runner.flush_pending_writes_once().unwrap(),
+            Some(SubmissionBoundary::Text)
+        );
+        assert_eq!(
+            runner.pending_writes[0].bytes,
+            Bytes::from_static(b"response")
+        );
+    }
+
+    #[test]
+    fn actor_reads_output_while_input_is_backpressured() {
+        let (mut actor_socket, mut peer) = UnixStream::pair().expect("socket pair");
+        actor_socket
+            .set_nonblocking(true)
+            .expect("actor socket nonblocking");
+        peer.set_read_timeout(Some(Duration::from_secs(1)))
+            .expect("peer timeout");
+
+        let fill = [0xAA; 8192];
+        let mut prefilled = 0;
+        loop {
+            match actor_socket.write(&fill) {
+                Ok(written) => prefilled += written,
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(err) => panic!("failed to fill actor write buffer: {err}"),
+            }
+        }
+        assert!(prefilled > 0, "actor write buffer should accept some bytes");
+
+        let owned = unsafe { OwnedFd::from_raw_fd(actor_socket.into_raw_fd()) };
+        let (read_tx, read_rx) = std_mpsc::channel();
+        let handle = PtyIoActor::spawn(PtyIoActorConfig {
+            pane_id: 1,
+            master_fd: owned,
+            initially_quiesced: false,
+            on_read: Box::new(move |bytes| {
+                read_tx
+                    .send(Bytes::copy_from_slice(bytes))
+                    .expect("read callback receiver alive");
+                PtyReadResult::empty()
+            }),
+            on_reader_exit: None,
+        })
+        .expect("actor spawn");
+
+        let marker = Bytes::from_static(b"queued-input");
+        let completion = handle
+            .queue_user_input_submission(marker.clone(), Bytes::from_static(b"\r"), Duration::ZERO)
+            .expect("submission accepted");
+
+        const OUTPUT_LEN: usize = 128 * 1024;
+        let mut peer_writer = peer.try_clone().expect("clone peer writer");
+        let output_writer = std::thread::spawn(move || {
+            peer_writer
+                .write_all(&vec![0xBB; OUTPUT_LEN])
+                .expect("peer writes sustained output");
+        });
+        let deadline = Instant::now() + Duration::from_millis(500);
+        let mut output_len = 0;
+        while output_len < OUTPUT_LEN {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "actor did not keep reading blocked peer output"
+            );
+            let output = read_rx
+                .recv_timeout(remaining)
+                .expect("actor keeps reading while input remains blocked");
+            assert!(output.iter().all(|byte| *byte == 0xBB));
+            output_len += output.len();
+        }
+        assert_eq!(output_len, OUTPUT_LEN);
+        output_writer.join().expect("output writer joins");
+
+        let handoff_handle = handle.clone();
+        let handoff =
+            std::thread::spawn(move || handoff_handle.begin_handoff(Duration::from_secs(1)));
+
+        let mut received_input = vec![0; prefilled + marker.len() + 1];
+        peer.read_exact(&mut received_input)
+            .expect("peer receives prefill and queued input");
+        assert!(received_input[..prefilled].iter().all(|byte| *byte == 0xAA));
+        assert_eq!(
+            &received_input[prefilled..prefilled + marker.len()],
+            marker.as_ref()
+        );
+        assert_eq!(received_input.last(), Some(&b'\r'));
+        completion
+            .recv_timeout(Duration::from_secs(1))
+            .expect("actor reports submission")
+            .expect("submission completes");
+        handoff
+            .join()
+            .expect("handoff thread joins")
+            .expect("handoff waits for submission");
         handle.shutdown();
     }
 
@@ -1401,6 +2057,8 @@ mod tests {
             state: ActorState::Running,
             pending_writes: VecDeque::new(),
             current_write_offset: 0,
+            active_submission: None,
+            pending_handoff: None,
             wake_read_fd: fd::create_wake_pipe().expect("wake pipe").read_fd,
             controls: Arc::new(Mutex::new(SharedPtyControls::default())),
             on_read: Box::new(|_| PtyReadResult::empty()),

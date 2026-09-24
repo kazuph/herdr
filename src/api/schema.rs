@@ -115,6 +115,8 @@ pub enum Method {
     AgentRead(AgentReadParams),
     #[serde(rename = "agent.explain")]
     AgentExplain(AgentTarget),
+    #[serde(rename = "agent.prompt")]
+    AgentPrompt(AgentPromptParams),
     #[serde(rename = "agent.send")]
     AgentSend(AgentSendParams),
     #[serde(rename = "agent.rename")]

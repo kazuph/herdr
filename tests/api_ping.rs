@@ -1121,6 +1121,320 @@ fn agent_methods_round_trip_over_socket() {
     cleanup_spawned_herdr(child, base);
 }
 
+fn run_cli(socket_path: &Path, args: &[&str]) -> std::process::Output {
+    let runtime_dir = socket_path.parent().unwrap();
+    let config_home = runtime_dir.parent().unwrap().join("config");
+    std::process::Command::new(env!("CARGO_BIN_EXE_herdr"))
+        .args(args)
+        .env("XDG_CONFIG_HOME", config_home)
+        .env("XDG_RUNTIME_DIR", runtime_dir)
+        .env("HERDR_SOCKET_PATH", socket_path)
+        .env_remove("HERDR_CLIENT_SOCKET_PATH")
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn agent_prompt_cli_submits_text_with_upstream_grammar() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+    let help = run_cli(&socket_path, &["agent", "help"]);
+    assert!(help.status.success());
+    let help_text = String::from_utf8_lossy(&help.stderr);
+    assert!(help_text.contains(
+        "herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]"
+    ));
+    assert!(help_text.contains("herdr agent send <target> <text>"));
+
+    let child = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+    let api = |method: &str, params: serde_json::Value| {
+        send_request(
+            &socket_path,
+            &serde_json::json!({
+                "id": "prompt-test", "method": method, "params": params
+            })
+            .to_string(),
+        )
+    };
+    let created = api(
+        "workspace.create",
+        serde_json::json!({"cwd": base, "focus": true}),
+    );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let report = |state: &str| {
+        let response = api(
+            "pane.report_agent",
+            serde_json::json!({
+                "pane_id": pane_id, "source": "prompt-parity", "agent": "pi", "state": state
+            }),
+        );
+        assert_eq!(response["result"]["type"], "ok", "{response}");
+    };
+    let error_code = |args: &[&str], code: &str| {
+        let output = run_cli(&socket_path, args);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+        let response: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(response["error"]["code"], code, "{response}");
+    };
+    // A stale semantic report must not turn the shell into an agent input target.
+    report("idle");
+    let forbidden = base.join("must-not-exist");
+    error_code(
+        &[
+            "agent",
+            "prompt",
+            &pane_id,
+            &format!("touch {}", forbidden.display()),
+        ],
+        "agent_not_ready",
+    );
+    error_code(&["agent", "prompt", &pane_id, ""], "empty_agent_prompt");
+    assert!(!forbidden.exists());
+    let empty = api(
+        "agent.prompt",
+        serde_json::json!({"target": pane_id, "text": ""}),
+    );
+    assert_eq!(empty["error"]["code"], "empty_agent_prompt");
+
+    let binary = support::prompt_probe::compile(&base);
+    let pi = base.join("pi");
+    std::os::unix::fs::symlink(binary, &pi).unwrap();
+    let received = base.join("received.jsonl");
+    let shell_quote =
+        |value: &Path| format!("'{}'", value.display().to_string().replace('\'', "'\\''"));
+    let command = format!(
+        "{} {} {} {} pi bracketed {}",
+        shell_quote(&pi),
+        shell_quote(&received),
+        shell_quote(&socket_path),
+        pane_id,
+        shell_quote(Path::new(env!("CARGO_BIN_EXE_herdr")))
+    );
+    let started = run_cli(&socket_path, &["pane", "run", &pane_id, &command]);
+    assert!(started.status.success(), "{started:?}");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !received.exists() {
+        assert!(Instant::now() < deadline, "input probe did not start");
+        thread::sleep(Duration::from_millis(10));
+    }
+    // Wait until the terminal parser has consumed the probe's paste-mode announcement.
+    let raw_ready = api(
+        "pane.wait_for_output",
+        serde_json::json!({
+            "pane_id": pane_id, "source": "recent", "lines": 40,
+            "match": {"type": "substring", "value": "PROMPT_AGENT_READY"}, "timeout_ms": 3000
+        }),
+    );
+    assert_eq!(raw_ready["result"]["type"], "output_matched", "{raw_ready}");
+    report("idle");
+    let records = || -> Vec<serde_json::Value> {
+        fs::read_to_string(&received)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    };
+    let submissions = || -> Vec<String> {
+        records()
+            .iter()
+            .filter(|row| row["kind"] == "submission")
+            .map(|row| row["text"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let wait_submissions = |count| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while records()
+            .iter()
+            .filter(|row| row["kind"] == "settled")
+            .count()
+            < count
+        {
+            assert!(
+                Instant::now() < deadline,
+                "probe did not receive {count} submissions: {:?}",
+                records()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+    let prompt = |target: &str, text: &str| {
+        let output = run_cli(&socket_path, &["agent", "prompt", target, text]);
+        assert!(output.status.success(), "{output:?}");
+        let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["id"], "cli:agent:prompt");
+        assert_eq!(response["result"]["type"], "agent_prompted");
+        assert_eq!(response["result"]["agent"]["agent"], "pi");
+        assert!(response["result"]["agent"]["state_change_seq"].is_u64());
+    };
+    let body = "A != B\r\n\n";
+    let began = Instant::now();
+    prompt(&pane_id, body);
+    assert!(began.elapsed() >= Duration::from_millis(300));
+    wait_submissions(1);
+    assert_eq!(submissions(), [body]);
+    let input: Vec<u8> = records()
+        .iter()
+        .filter(|row| row["kind"] == "bytes")
+        .flat_map(|row| {
+            row["hex"]
+                .as_str()
+                .unwrap()
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|hex| u8::from_str_radix(std::str::from_utf8(hex).unwrap(), 16).unwrap())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(input, format!("\x1b[200~{body}\x1b[201~\r").as_bytes());
+
+    let info = api("agent.get", serde_json::json!({"target": pane_id}));
+    let global_number = info["result"]["agent"]["global_pane_number"]
+        .as_u64()
+        .unwrap();
+    for target in [
+        format!("p_{global_number}"),
+        format!("p{global_number}"),
+        format!("%{global_number}"),
+    ] {
+        prompt(&target, "aliases");
+    }
+    prompt(&pane_id, "--wait");
+    wait_submissions(5);
+    assert_eq!(submissions()[4], "--wait");
+    let before_rejected = fs::read(&received).unwrap();
+    report("blocked");
+    error_code(
+        &[
+            "agent",
+            "prompt",
+            &pane_id,
+            "unrelated prompt",
+            "--wait",
+            "--timeout",
+            "2000",
+        ],
+        "agent_blocked",
+    );
+    thread::sleep(Duration::from_millis(400));
+    assert_eq!(fs::read(&received).unwrap(), before_rejected);
+    report("idle");
+    let missing_text = run_cli(&socket_path, &["agent", "prompt", &pane_id]);
+    assert_eq!(missing_text.status.code(), Some(2));
+    for options in [
+        vec!["--until", "idle"],
+        vec!["--timeout", "1"],
+        vec!["--wait", "--until", "finished"],
+        vec!["--wait", "--timeout", "no"],
+        vec!["--wait", "--until"],
+    ] {
+        let mut args = vec!["agent", "prompt", &pane_id, "must not be sent"];
+        args.extend(options);
+        assert_eq!(run_cli(&socket_path, &args).status.code(), Some(2));
+    }
+    assert_eq!(fs::read(&received).unwrap(), before_rejected);
+    for text in ["do not transition", "done churn", "session churn"] {
+        error_code(
+            &[
+                "agent",
+                "prompt",
+                &pane_id,
+                text,
+                "--wait",
+                "--timeout",
+                "500",
+            ],
+            "timeout",
+        );
+    }
+    error_code(
+        &[
+            "agent",
+            "prompt",
+            &pane_id,
+            "do not transition",
+            "--wait",
+            "--timeout",
+            "6000",
+        ],
+        "agent_prompt_stalled",
+    );
+    for (text, expected_status) in [
+        ("block after submit", "blocked"),
+        ("Review this diff", "idle"),
+    ] {
+        report("idle");
+        let output = run_cli(
+            &socket_path,
+            &[
+                "agent",
+                "prompt",
+                &pane_id,
+                text,
+                "--wait",
+                "--timeout",
+                "2000",
+            ],
+        );
+        assert!(output.status.success(), "{output:?}");
+        let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["result"]["type"], "agent_prompted");
+        assert_eq!(response["result"]["agent"]["agent_status"], expected_status);
+    }
+    report("working");
+    let output = run_cli(
+        &socket_path,
+        &[
+            "agent",
+            "prompt",
+            &pane_id,
+            "finish active",
+            "--wait",
+            "--until",
+            "idle",
+            "--until",
+            "done",
+            "--timeout",
+            "2000",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let legacy = run_cli(
+        &socket_path,
+        &["agent", "send", &pane_id, "legacy send\r\n"],
+    );
+    assert!(legacy.status.success(), "{legacy:?}");
+    let legacy_response: serde_json::Value = serde_json::from_slice(&legacy.stdout).unwrap();
+    assert_eq!(legacy_response["result"]["type"], "ok");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !records()
+        .iter()
+        .any(|row| row["kind"] == "settled" && row["text"] == "legacy send")
+    {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    error_code(
+        &[
+            "agent",
+            "prompt",
+            &pane_id,
+            "exit after submit",
+            "--wait",
+            "--timeout",
+            "2000",
+        ],
+        "agent_not_running",
+    );
+    cleanup_spawned_herdr(child, base);
+}
+
 #[test]
 fn tab_create_with_no_focus_preserves_active_tab() {
     let _lock = test_lock();
