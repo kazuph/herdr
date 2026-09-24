@@ -549,7 +549,7 @@ mod windows {
         }
 
         #[test]
-        fn blocked_enter_write_does_not_hold_accepting_lock() {
+        fn windows_blocked_enter_write_does_not_hold_accepting_lock() {
             let (data_tx, mut data_rx) = mpsc::channel(1);
             let (write_tx, write_rx) = std_mpsc::channel();
             let accepting = Arc::new(Mutex::new(true));
