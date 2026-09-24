@@ -15,6 +15,8 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- Names given by the fork's argv-based `agent start` now stay until the named process exits instead of being dropped when the 30-second startup wait ends or detection changes, so `agent send` and mailbox delivery keep resolving them.
+- On Windows, an `agent prompt` waiting for its Enter keystroke to be written no longer holds the input lock, so a full PTY cannot stall other keystrokes or pane shutdown.
 - Message sends now reject the `*` recipient instead of broadcasting to every agent; callers must name one agent or pane target.
 - Plain popup terminals now close on Escape, all popup terminals close when their outside area is clicked, and closing a popup terminates its child process; interactive terminal apps still receive Escape when they enable terminal modes.
 - The sidebar agent list no longer draws over the sidebar width toggle: the panel's last row is reserved for the NARROW/NORMAL/WIDE button.
