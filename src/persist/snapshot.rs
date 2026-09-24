@@ -112,6 +112,8 @@ pub struct PaneSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_agent_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(
         default,
@@ -425,11 +427,20 @@ fn capture_tab(
             .get(id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id))
             .and_then(|terminal| terminal.manual_label.clone());
-        let agent_name = tab
+        let (agent_name, managed_agent_kind) = tab
             .panes
             .get(id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id))
-            .and_then(|terminal| terminal.agent_name.clone());
+            .filter(|terminal| !terminal.managed_agent_launch_pending())
+            .map(|terminal| {
+                (
+                    terminal.agent_name.clone(),
+                    terminal
+                        .managed_agent_kind()
+                        .map(|kind| crate::detect::agent_label(kind).to_string()),
+                )
+            })
+            .unwrap_or((None, None));
         let title = tab
             .panes
             .get(id)
@@ -487,6 +498,7 @@ fn capture_tab(
                 cwd,
                 label,
                 agent_name,
+                managed_agent_kind,
                 title,
                 agent_session,
                 launch_argv,
@@ -740,6 +752,7 @@ mod tests {
                 cwd: PathBuf::from("/home/can/Projects/herdr"),
                 label: None,
                 agent_name: None,
+                managed_agent_kind: None,
                 title: None,
                 agent_session: None,
                 launch_argv: None,
@@ -752,6 +765,7 @@ mod tests {
                 cwd: PathBuf::from("/home/can/Projects/website"),
                 label: Some("website".into()),
                 agent_name: None,
+                managed_agent_kind: None,
                 title: None,
                 agent_session: None,
                 launch_argv: None,
@@ -947,6 +961,40 @@ mod tests {
         assert_eq!(ws.tabs[0].root_pane, Some(0));
         assert_eq!(ws.tabs[0].panes[&0].cwd, PathBuf::from("/tmp/pion"));
         assert_eq!(ws.tabs[0].panes[&1].cwd, PathBuf::from("/tmp/herdr"));
+    }
+
+    #[test]
+    fn managed_agent_snapshot_omits_pending_and_persists_active_ownership() {
+        let mut state = state_with_workspaces(&["managed"]);
+        state.ensure_test_terminals();
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].terminal_id(pane_id).cloned().unwrap();
+        let now = std::time::Instant::now();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.begin_managed_agent(
+            "reviewer".into(),
+            crate::detect::Agent::Pi,
+            now,
+            std::time::Duration::from_secs(3),
+            std::time::Duration::from_secs(30),
+        );
+        let snapshot = capture_from_state(&state);
+        assert!(snapshot.workspaces[0].tabs[0].panes[&pane_id.raw()]
+            .agent_name
+            .is_none());
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_detected_state(
+            Some(crate::detect::Agent::Pi),
+            crate::detect::AgentState::Idle,
+        );
+        terminal.reconcile_managed_agent_at(now + std::time::Duration::from_secs(3), false);
+        let snapshot = capture_from_state(&state);
+        let pane = &snapshot.workspaces[0].tabs[0].panes[&pane_id.raw()];
+        assert_eq!(pane.agent_name.as_deref(), Some("reviewer"));
+        assert_eq!(
+            serde_json::to_value(pane).unwrap()["managed_agent_kind"],
+            "pi"
+        );
     }
 
     #[test]
@@ -1416,6 +1464,7 @@ mod tests {
                 cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test"),
                 label: None,
                 agent_name: None,
+                managed_agent_kind: None,
                 title: None,
                 agent_session: None,
                 launch_argv: None,
@@ -1430,6 +1479,7 @@ mod tests {
                     .unwrap_or_else(|_| PathBuf::from("/tmp")),
                 label: None,
                 agent_name: None,
+                managed_agent_kind: None,
                 title: None,
                 agent_session: None,
                 launch_argv: None,

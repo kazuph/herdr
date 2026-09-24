@@ -921,6 +921,8 @@ mod tests {
             harness
                 .app
                 .emit_pane_state_update(&crate::app::actions::PaneStateUpdate {
+                    agent_name_changed: false,
+                    agent_released: false,
                     pane_id,
                     ws_idx: 0,
                     previous_agent_label: Some("beta".into()),
@@ -961,6 +963,8 @@ mod tests {
             harness
                 .app
                 .emit_pane_state_update(&crate::app::actions::PaneStateUpdate {
+                    agent_name_changed: false,
+                    agent_released: false,
                     pane_id,
                     ws_idx: 0,
                     previous_agent_label: Some("beta".into()),

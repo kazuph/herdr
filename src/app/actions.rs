@@ -371,6 +371,8 @@ pub fn notification_context(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneStateUpdate {
+    pub agent_name_changed: bool,
+    pub agent_released: bool,
     pub pane_id: PaneId,
     pub ws_idx: usize,
     pub previous_agent_label: Option<String>,
@@ -1145,6 +1147,8 @@ impl AppState {
                 let change = mutation.effective_state_change?;
                 let seen = self.apply_pane_state_change(ws_idx, pane_id, &change)?;
                 let update = PaneStateUpdate {
+                    agent_name_changed: false,
+                    agent_released: false,
                     pane_id,
                     ws_idx,
                     previous_agent_label: change.previous_agent_label.clone(),
@@ -3007,15 +3011,30 @@ impl AppState {
             .attached_terminal_id
             .clone();
         let previous_seen = self.workspaces[ws_idx].pane_state(pane_id)?.seen;
-        let mutation = {
+        let now = std::time::Instant::now();
+        let (mutation, managed_changed, agent_name_changed, unchanged_change) = {
             let terminal = self.terminals.get_mut(&terminal_id)?;
-            update(terminal)?
+            let previous_agent_name = terminal.agent_name.clone();
+            let mutation = update(terminal)?;
+            let managed_changed = terminal.reconcile_managed_agent_at(now, false);
+            let agent_name_changed = terminal.agent_name != previous_agent_name;
+            let unchanged_change = (mutation.agent_released || agent_name_changed)
+                .then(|| terminal.unchanged_effective_state_change_at(now));
+            (
+                mutation,
+                managed_changed,
+                agent_name_changed,
+                unchanged_change,
+            )
         };
-        if mutation.session_ref_changed {
+        if mutation.session_ref_changed || managed_changed || agent_name_changed {
             self.mark_session_dirty();
+        }
+        if mutation.session_ref_changed {
             self.update_agent_session_ledger_for_pane(pane_id);
         }
-        let change = mutation.effective_state_change?;
+        let agent_released = mutation.agent_released;
+        let change = mutation.effective_state_change.or(unchanged_change)?;
         if change.previous_state != change.state {
             self.next_agent_state_change_seq += 1;
             if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
@@ -3024,6 +3043,8 @@ impl AppState {
         }
         let seen = self.apply_pane_state_change(ws_idx, pane_id, &change)?;
         let update = PaneStateUpdate {
+            agent_name_changed,
+            agent_released,
             pane_id,
             ws_idx,
             previous_agent_label: change.previous_agent_label.clone(),
@@ -3031,8 +3052,16 @@ impl AppState {
             previous_state: change.previous_state,
             previous_seen,
             previous_presentation: change.previous_presentation.clone(),
-            agent_label: change.agent_label.clone(),
-            known_agent: change.known_agent,
+            agent_label: if agent_released {
+                change.previous_agent_label.clone()
+            } else {
+                change.agent_label.clone()
+            },
+            known_agent: if agent_released {
+                change.previous_known_agent
+            } else {
+                change.known_agent
+            },
             state: change.state,
             seen,
             presentation: change.presentation.clone(),
@@ -5723,6 +5752,59 @@ mod tests {
             .values()
             .all(|entry| entry.pane_id != closed.raw()));
         state.assert_invariants_for_test();
+    }
+
+    #[test]
+    fn managed_blocked_launch_is_released_by_process_exit() {
+        let mut state = app_with_workspaces(&["test"]);
+        state.ensure_test_terminals();
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        let now = std::time::Instant::now();
+        terminal.begin_managed_agent(
+            "reviewer".into(),
+            Agent::Pi,
+            now,
+            std::time::Duration::from_secs(3),
+            std::time::Duration::from_secs(30),
+        );
+        terminal.set_detected_state(Some(Agent::Pi), AgentState::Blocked);
+        terminal.reconcile_managed_agent_at(now, false);
+        assert!(terminal.managed_agent_launch_pending());
+        state.publish_pane_process_exit_if_agent(pane_id).unwrap();
+        state.update_terminal_state(pane_id, |terminal| {
+            Some(terminal.set_detected_state_with_mutation(None, AgentState::Unknown))
+        });
+        let terminal = &state.terminals[&terminal_id];
+        assert!(terminal.agent_name.is_none());
+        assert!(!terminal.managed_agent_launch_pending());
+        assert!(!terminal.managed_agent_interactive_ready());
+    }
+
+    #[test]
+    fn managed_name_timeout_survives_detection_noop_as_pane_update() {
+        let mut state = app_with_workspaces(&["test"]);
+        state.ensure_test_terminals();
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_detected_state(Some(Agent::Pi), AgentState::Working);
+        terminal.begin_managed_agent(
+            "reviewer".into(),
+            Agent::Pi,
+            std::time::Instant::now() - std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(3),
+            std::time::Duration::from_secs(30),
+        );
+        let update = state.update_terminal_state(pane_id, |terminal| {
+            Some(terminal.set_detected_state_with_mutation(Some(Agent::Pi), AgentState::Working))
+        });
+        assert!(state.terminals[&terminal_id].agent_name.is_none());
+        assert!(
+            update.is_some(),
+            "name-only changes must be published even when the detected state is unchanged"
+        );
     }
 
     #[test]

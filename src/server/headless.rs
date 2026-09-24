@@ -3256,6 +3256,12 @@ impl HeadlessServer {
         };
 
         self.sync_foreground_client_state();
+        if matches!(&msg.request.method, api::schema::Method::AgentPrompt(_)) {
+            let deferred_changed = self
+                .app
+                .handle_deferred_agent_api_request(msg.request, msg.respond_to);
+            return changed | deferred_changed;
+        }
         if matches!(
             &msg.request.method,
             api::schema::Method::WorktreeCreate(_) | api::schema::Method::WorktreeRemove(_)
@@ -4098,6 +4104,7 @@ impl HeadlessServer {
         }
 
         changed |= self.app.clear_due_selection_highlight(now);
+        changed |= self.app.reconcile_due_managed_agents(now);
 
         if self.has_app_client() {
             self.app.start_git_status_refresh_if_due(now);

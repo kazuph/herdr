@@ -2,6 +2,22 @@ use std::collections::HashMap;
 
 use super::*;
 
+#[test]
+fn agent_prompt_requests_round_trip_with_upstream_wait_options() {
+    for params in [
+        serde_json::json!({"target": "reviewer", "text": "review this"}),
+        serde_json::json!({
+            "target": "reviewer", "text": "review this",
+            "wait": {"until": ["idle", "done"], "timeout_ms": 120_000}
+        }),
+    ] {
+        let json = serde_json::json!({"id": "prompt", "method": "agent.prompt", "params": params});
+        let request = serde_json::from_value::<Request>(json.clone())
+            .expect("upstream agent.prompt request must deserialize");
+        assert_eq!(serde_json::to_value(&request).unwrap(), json);
+    }
+}
+
 fn protocol_schema_entry<T: schemars::JsonSchema>(name: &str) -> serde_json::Value {
     let mut schema = serde_json::to_value(schemars::schema_for!(T)).unwrap();
     rewrite_schema_refs(&mut schema, name);

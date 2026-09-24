@@ -226,6 +226,12 @@ pub struct AgentInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foreground_cwd: Option<String>,
     pub revision: u64,
+    #[serde(default)]
+    pub state_change_seq: u64,
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub launch_pending: bool,
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub interactive_ready: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -234,4 +240,23 @@ pub struct AgentSessionInfo {
     pub agent: String,
     pub kind: crate::agent_resume::AgentSessionRefKind,
     pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AgentPromptParams {
+    pub target: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait: Option<AgentPromptWaitOptions>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AgentPromptWaitOptions {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub until: Vec<AgentStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) submission_deadline: Option<std::time::Instant>,
 }

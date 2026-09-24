@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use crate::api::schema::{
-    AgentReadParams, AgentRenameParams, AgentRestoreParams, AgentSendParams, AgentStartParams,
-    AgentStatus, AgentTarget, EmptyParams, Method, ReadFormat, ReadSource, Request, Subscription,
+    AgentPromptParams, AgentPromptWaitOptions, AgentReadParams, AgentRenameParams,
+    AgentRestoreParams, AgentSendParams, AgentStartParams, AgentStatus, AgentTarget, EmptyParams,
+    Method, ReadFormat, ReadSource, Request, Subscription,
 };
 
 pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
@@ -15,6 +16,7 @@ pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
         "list" => agent_list(&args[1..]),
         "get" => agent_get(&args[1..]),
         "read" => agent_read(&args[1..]),
+        "prompt" => agent_prompt(&args[1..]),
         "send" => agent_send(&args[1..]),
         "rename" => agent_rename(&args[1..]),
         "focus" => agent_focus(&args[1..]),
@@ -613,6 +615,89 @@ fn agent_send(args: &[String]) -> std::io::Result<i32> {
     })?)
 }
 
+fn agent_prompt(args: &[String]) -> std::io::Result<i32> {
+    let Some(target) = args.first() else {
+        eprintln!(
+            "usage: herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]"
+        );
+        return Ok(2);
+    };
+    let Some(text) = args.get(1) else {
+        eprintln!("agent prompt requires text");
+        return Ok(2);
+    };
+    let mut wait = false;
+    let mut until = Vec::new();
+    let mut timeout_ms = None;
+    let mut index = 2;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--wait" => {
+                wait = true;
+                index += 1;
+            }
+            "--until" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("--until requires at least one status");
+                    return Ok(2);
+                };
+                let status = match super::parse_agent_status(value) {
+                    Ok(status) => status,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return Ok(2);
+                    }
+                };
+                until.push(status);
+                index += 2;
+            }
+            "--timeout" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --timeout");
+                    return Ok(2);
+                };
+                timeout_ms = match parse_timeout(value) {
+                    Ok(timeout_ms) => Some(timeout_ms),
+                    Err(exit_code) => return Ok(exit_code),
+                };
+                index += 2;
+            }
+            option => {
+                eprintln!("unknown option: {option}");
+                return Ok(2);
+            }
+        }
+    }
+    if !until.is_empty() && !wait {
+        eprintln!("--until requires --wait");
+        return Ok(2);
+    }
+    if timeout_ms.is_some() && !wait {
+        eprintln!("--timeout requires --wait");
+        return Ok(2);
+    }
+    let response = super::send_request(&Request {
+        id: "cli:agent:prompt".into(),
+        method: Method::AgentPrompt(AgentPromptParams {
+            target: target.clone(),
+            text: text.clone(),
+            wait: wait.then_some(AgentPromptWaitOptions {
+                until,
+                timeout_ms,
+                submission_deadline: None,
+            }),
+        }),
+    })?;
+    super::print_response(&response)
+}
+
+fn parse_timeout(value: &str) -> Result<u64, i32> {
+    super::parse_u64_flag("--timeout", value).map_err(|err| {
+        eprintln!("{err}");
+        2
+    })
+}
+
 fn agent_read(args: &[String]) -> std::io::Result<i32> {
     let Some(target) = args.first() else {
         eprintln!("usage: herdr agent read <target> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
@@ -706,6 +791,7 @@ fn print_agent_help() {
     eprintln!("  herdr agent list");
     eprintln!("  herdr agent get <target>");
     eprintln!("  herdr agent read <target> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
+    eprintln!("  herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]");
     eprintln!("  herdr agent send <target> <text>");
     eprintln!("  herdr agent rename <target> <name>|--clear");
     eprintln!("  herdr agent focus <target>");
@@ -716,7 +802,7 @@ fn print_agent_help() {
     eprintln!("  herdr agent explain <target> [--json]");
     eprintln!("  herdr agent explain --file PATH --agent LABEL [--json]");
     eprintln!("  targets accept terminal ids, unique agent names, detected/reported agent labels, and legacy pane ids");
-    eprintln!("  agent send writes text and submits it with Enter");
+    eprintln!("  agent prompt validates the agent and confirms Enter was written; agent send submits text directly");
 }
 
 #[cfg(test)]

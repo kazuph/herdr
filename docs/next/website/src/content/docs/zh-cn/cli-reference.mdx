@@ -245,6 +245,7 @@ herdr pane report-metadata <pane_id> \
 herdr agent list
 herdr agent get <target>
 herdr agent read <target> [--source visible|recent|recent-unwrapped|detection] [--lines N] [--format text|ansi] [--ansi]
+herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]
 herdr agent send <target> <text>
 herdr agent rename <target> <name>|--clear
 herdr agent focus <target>
@@ -257,7 +258,15 @@ herdr agent explain --file PATH --agent LABEL [--json|--verbose]
 
 智能体目标可以是终端 ID、唯一的智能体名称、检测到或上报的智能体标签,以及旧式窗格 ID。名称和标签是智能体的身份。终端 ID 和旧式窗格 ID 是底层的逃生舱。
 
-`agent read` 读取解析出的终端流。`agent send` 向解析出的 AI CLI 写入文本并按 Enter 提交，避免消息停留在输入框中。`agent get`、`agent focus`、`agent wait` 和 `agent attach` 要求解析出的终端具有智能体身份。`agent rename` 可以赋予这个身份。
+`agent read` 读取解析出的终端流。`agent send` 保留 fork 原有的文本加 Enter 发送方式。`agent get`、`agent focus`、`agent wait` 和 `agent attach` 要求解析出的终端具有智能体身份。`agent rename` 可以赋予这个身份。
+
+`agent prompt` 使用上游 0.9.1 的 `agent.prompt` API。目标可以是唯一的智能体名称或窗格 ID（支持 `p_N`、`pN` 和 `%N`）；智能体标签和终端 ID 不能作为 prompt 的目标。空文本返回 `empty_agent_prompt`；正在等待批准或回答的智能体返回 `agent_blocked`；没有已知智能体、启动尚未完成或前台进程已不再是该智能体时返回 `agent_not_ready`。这些拒绝不会发送文本或 Enter。
+
+文本保留末尾换行，并在终端启用 bracketed paste 时使用该格式。Herdr 写完文本后等待 300 ms，再写入 Enter，只有写入成功后才返回包含智能体信息的 `agent_prompted`。发送给 Copilot 时先通知其获得焦点。发送期间终端关闭会导致提交失败。
+
+`--wait` 默认等待 `idle`、`done` 或 `blocked`。可重复使用 `--until STATUS` 选择状态（`idle`、`working`、`done`、`blocked`、`unknown`），用 `--timeout MS` 限制等待时间；这两个选项都要求 `--wait`。向非工作状态的智能体发送时，必须先观察到 `working` 或 `blocked` 活动；元数据变化、会话变化以及原有的 idle/done 状态不能完成等待。5 秒内没有活动则返回 `agent_prompt_stalled`，更短的调用方期限到期则返回 `timeout`，目标智能体消失则返回 `agent_not_running`。fork 的 `agent send`、持久邮箱 `herdr send <to> <text> --room <room>` 和邮箱输入保持可用。
+
+即使 `agent start` 的 argv 通过 `sh -lc`、`env` 或语言运行时启动，仍会根据检测到的状态以及 3 秒的稳定等待期和 30 秒的启动期限，按照上游的状态转换判断智能体是否就绪。快照不保存尚在启动中的托管名称，并恢复已就绪的托管信息。始终未检测到智能体的普通命名任务保留 fork 原有的名称。
 
 `agent explain` 请求运行中的服务器对屏幕检测所用的同一份底部缓冲区检测快照进行分类,因此实时输出反映服务器生效的清单缓存。因为它使用 `agent.explain` socket 方法,升级 Herdr 后,请先重启或交接到更新后的服务器,再使用实时 explain。用 `--file PATH --agent LABEL` 可以改为在本地解释一份保存的样本。默认输出显示智能体、最终状态、清单来源和版本、匹配的规则及其区域证据,以及任何回退、跳过或警告原因。加 `--verbose` 可以看到可见证据标志、缓存的远程版本、本地覆盖的遮蔽情况、远程更新状态,以及带匹配器和区域证据的完整已评估规则列表。提交问题报告或写测试时加 `--json`。
 

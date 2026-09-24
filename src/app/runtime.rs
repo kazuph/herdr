@@ -124,6 +124,17 @@ impl App {
             self.sync_prefix_input_source(previous_mode);
             return changed | deferred_changed;
         }
+        if matches!(
+            &msg.request.method,
+            crate::api::schema::Method::AgentPrompt(_)
+        ) {
+            self.drain_all_internal_events();
+            let deferred_changed =
+                self.handle_deferred_agent_api_request(msg.request, msg.respond_to);
+            changed |= self.ensure_default_workspace();
+            self.sync_prefix_input_source(previous_mode);
+            return changed | deferred_changed;
+        }
         let response = self.handle_api_request(msg.request);
         if let (Some(params), Some(active)) = (stream_open.as_ref(), stream_active) {
             self.attach_pane_graphics_stream_active(params, active, &response);
@@ -367,6 +378,7 @@ impl App {
             self.start_background_session_save();
         }
 
+        changed |= self.reconcile_due_managed_agents(now);
         changed |= self.expire_due_metadata(now);
 
         if geometry_dirty || resized {
@@ -683,6 +695,11 @@ impl App {
             self.config_diagnostic_deadline,
             self.toast_deadline,
             self.state.next_pending_agent_notification_deadline(),
+            self.state
+                .terminals
+                .values()
+                .filter_map(crate::terminal::TerminalState::next_managed_agent_deadline)
+                .min(),
             self.copy_feedback_deadline,
             self.next_animation_tick,
             include_git_refresh

@@ -594,13 +594,20 @@ impl App {
         };
         let workspace_id = self.public_workspace_id(update.ws_idx);
 
-        if update.previous_agent_label != update.agent_label {
+        if update.agent_name_changed {
+            self.emit_pane_updated(update.ws_idx, update.pane_id);
+        }
+        if update.previous_agent_label != update.agent_label || update.agent_released {
             self.emit_event(crate::api::schema::EventEnvelope {
                 event: crate::api::schema::EventKind::PaneAgentDetected,
                 data: crate::api::schema::EventData::PaneAgentDetected {
                     pane_id: pane_id.clone(),
                     workspace_id: workspace_id.clone(),
                     agent: update.agent_label.clone(),
+                    released: update.agent_released,
+                    final_status: update
+                        .agent_released
+                        .then(|| pane_agent_status(update.state, update.seen)),
                 },
             });
         }
@@ -1068,6 +1075,13 @@ impl App {
             Method::AgentRestore(params) => return self.handle_agent_restore(request.id, params),
             Method::AgentRead(params) => return self.handle_agent_read(request.id, params),
             Method::AgentExplain(target) => return self.handle_agent_explain(request.id, target),
+            Method::AgentPrompt(_) => {
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "agent.prompt is handled asynchronously by the app runtime",
+                );
+            }
             Method::AgentSend(params) => return self.handle_agent_send(request.id, params),
             Method::MsgSend(params) => match self.handle_msg_send(params) {
                 Ok(result) => return responses::encode_success(request.id, result),
@@ -2090,6 +2104,38 @@ mod tests {
         assert_eq!(tab.layout.focused(), previous_focus);
         assert!(!tab.zoomed);
         assert!(app.overlay_panes.is_empty());
+    }
+
+    #[test]
+    fn windows_agent_process_exit_emits_release_even_when_already_idle() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            event_hub.clone(),
+        );
+        let workspace = crate::workspace::Workspace::test_new("release");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.terminal_id(pane_id).cloned().unwrap();
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_agent_name("reviewer".into());
+        terminal.set_detected_state(
+            Some(crate::detect::Agent::Pi),
+            crate::detect::AgentState::Idle,
+        );
+        if let Some(update) = app.state.publish_pane_process_exit_if_agent(pane_id) {
+            app.emit_pane_state_update(&update);
+        }
+        assert!(event_hub.events_after(0).iter().any(|(_, event)| matches!(
+            &event.data,
+            crate::api::schema::EventData::PaneAgentDetected { agent, released: true, final_status: Some(crate::api::schema::AgentStatus::Idle), .. }
+                if agent.as_deref() == Some("pi")
+        )), "a respawnable pane must release its agent before returning to a shell");
     }
 
     #[tokio::test]

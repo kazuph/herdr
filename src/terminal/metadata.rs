@@ -235,6 +235,7 @@ impl TerminalState {
         }
 
         Some(TerminalStateMutation {
+            agent_released: false,
             effective_state_change,
             session_ref_changed: false,
         })
@@ -311,6 +312,7 @@ impl TerminalState {
         }
 
         Some(TerminalStateMutation {
+            agent_released: false,
             effective_state_change: self.recompute_effective_state(
                 previous_agent_label,
                 previous_known_agent,

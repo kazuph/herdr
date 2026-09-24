@@ -195,26 +195,6 @@ pub(crate) fn poll_pty_and_wake(
 }
 
 #[cfg(unix)]
-pub(crate) fn poll_write_ready(fd: RawFd, timeout_ms: i32) -> std::io::Result<bool> {
-    let mut poll_fd = libc::pollfd {
-        fd,
-        events: libc::POLLOUT,
-        revents: 0,
-    };
-    loop {
-        let result = unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) };
-        if result < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(err);
-        }
-        return Ok(result > 0 && (poll_fd.revents & (libc::POLLOUT | libc::POLLHUP)) != 0);
-    }
-}
-
-#[cfg(unix)]
 pub(crate) fn resize_pty_fd(
     fd: RawFd,
     rows: u16,
