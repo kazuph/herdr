@@ -73,7 +73,7 @@ fn session_id_from_tokens(agent: &str, tokens: &[&str]) -> Option<String> {
     match agent {
         "claude" => session_id_from_claude_tokens(tokens),
         "codex" => session_id_from_codex_tokens(tokens),
-        "qwen" | "grok" => session_id_from_resume_flag_tokens(tokens),
+        "qwen" | "grok" | "devin" => session_id_from_resume_flag_tokens(tokens),
         "agy" | "letta" => session_id_from_conversation_flag_tokens(tokens),
         _ => None,
     }
@@ -449,6 +449,70 @@ fn session_id_from_codex_file(path: &Path, cwd: &Path) -> Option<String> {
     Some(session_id.to_string())
 }
 
+/// Observe a pane's Devin session id from the lock file held by the `devin
+/// acp` child of the pane's `devin` process.
+///
+/// `devin acp` opens `~/.local/share/devin/cli/session_locks/<session
+/// id>.lock` containing its own pid. That lock is the only hook-free link
+/// between a running pane and its Devin session id. `children` carries the
+/// pane `devin` process's live child processes as `(pid, started_at)` pairs;
+/// a lock is adopted only when its recorded pid equals one of those children
+/// and the lock file is not older than the matching child's start window, so
+/// a stale lock for a dead session cannot be adopted through pid reuse.
+/// Matching is fail-closed: an unreadable lock, more than one matching lock,
+/// or no match at all yields `None` rather than a guess.
+pub fn session_id_from_devin_session_locks(children: &[(u32, SystemTime)]) -> Option<String> {
+    let home = std::env::var_os("HOME")?;
+    session_id_from_devin_session_locks_in(
+        &Path::new(&home)
+            .join(".local")
+            .join("share")
+            .join("devin")
+            .join("cli")
+            .join("session_locks"),
+        children,
+    )
+}
+
+fn session_id_from_devin_session_locks_in(
+    dir: &Path,
+    children: &[(u32, SystemTime)],
+) -> Option<String> {
+    if children.is_empty() {
+        return None;
+    }
+    let mut session_ids = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("lock") {
+            continue;
+        }
+        // An unreadable lock could hide the real match, so fail closed.
+        let content = std::fs::read_to_string(&path).ok()?;
+        let Ok(lock_pid) = content.trim().parse::<u64>() else {
+            continue;
+        };
+        let Some((_, started_at)) = children
+            .iter()
+            .find(|(child_pid, _)| u64::from(*child_pid) == lock_pid)
+        else {
+            continue;
+        };
+        let modified_at = std::fs::metadata(&path).ok()?.modified().ok()?;
+        if !time_is_after_process_start_window(modified_at, *started_at) {
+            continue;
+        }
+        let session_id = path.file_stem()?.to_str()?;
+        if is_safe_session_id(session_id) {
+            session_ids.insert(session_id.to_string());
+        }
+    }
+    (session_ids.len() == 1)
+        .then(|| session_ids.pop_first())
+        .flatten()
+}
+
 fn session_id_from_claude_file(path: &Path, cwd: &Path) -> Option<String> {
     use std::io::BufRead;
 
@@ -566,6 +630,20 @@ mod tests {
             None
         );
         assert_eq!(session_id_from_cmdline("qwen", "qwen"), None);
+        assert_eq!(
+            session_id_from_cmdline("devin", "devin --resume pinto-cicada"),
+            Some("pinto-cicada".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("devin", "devin --resume=pinto-cicada"),
+            Some("pinto-cicada".into())
+        );
+        assert_eq!(
+            session_id_from_cmdline("devin", "devin --resume evil;id"),
+            None
+        );
+        assert_eq!(session_id_from_cmdline("devin", "devin acp"), None);
+        assert_eq!(session_id_from_cmdline("devin", "devin"), None);
         assert_eq!(
             session_id_from_cmdline("grok", "grok --resume grok-session-1"),
             Some("grok-session-1".into())
@@ -860,6 +938,119 @@ mod tests {
             Some(session_id.into())
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn devin_children() -> Vec<(u32, SystemTime)> {
+        vec![(14406, SystemTime::now())]
+    }
+
+    #[test]
+    fn devin_session_lock_match_returns_the_lock_stem() {
+        let root = test_temp_dir("devin-session-lock-match");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("pinto-cicada.lock"), "14406\n").unwrap();
+        std::fs::write(root.join("other-session.lock"), "99999\n").unwrap();
+        std::fs::write(root.join("not-a-lock.txt"), "14406\n").unwrap();
+
+        assert_eq!(
+            session_id_from_devin_session_locks_in(&root, &devin_children()),
+            Some("pinto-cicada".into())
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn devin_session_lock_match_rejects_mismatch_multiple_and_missing() {
+        let root = test_temp_dir("devin-session-lock-fail-closed");
+        std::fs::create_dir_all(&root).unwrap();
+        let children = devin_children();
+
+        assert_eq!(
+            session_id_from_devin_session_locks_in(&root, &children),
+            None,
+            "no lock at all"
+        );
+        std::fs::write(root.join("stale-session.lock"), "99999\n").unwrap();
+        assert_eq!(
+            session_id_from_devin_session_locks_in(&root, &children),
+            None,
+            "lock pid does not match a devin child"
+        );
+        std::fs::write(root.join("stale-session.lock"), "14406\n").unwrap();
+        std::fs::write(root.join("second-match.lock"), "14406\n").unwrap();
+        assert_eq!(
+            session_id_from_devin_session_locks_in(&root, &children),
+            None,
+            "two locks matching the same pid is ambiguous"
+        );
+        std::fs::remove_file(root.join("second-match.lock")).unwrap();
+        std::fs::write(root.join("unparsable.lock"), "not-a-pid\n").unwrap();
+        assert_eq!(
+            session_id_from_devin_session_locks_in(&root, &children),
+            Some("stale-session".into()),
+            "non-pid lock contents never match"
+        );
+        std::fs::write(root.join("bad;id.lock"), "14406\n").unwrap();
+        assert_eq!(
+            session_id_from_devin_session_locks_in(&root, &children),
+            Some("stale-session".into()),
+            "unsafe session id stems are skipped"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn devin_session_lock_match_rejects_stale_lock_for_reused_pid() {
+        let root = test_temp_dir("devin-session-lock-stale");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("reused-pid.lock"), "14406\n").unwrap();
+        let future_child = vec![(
+            14406_u32,
+            SystemTime::now() + SESSION_START_MATCH_WINDOW + Duration::from_secs(60),
+        )];
+
+        assert_eq!(
+            session_id_from_devin_session_locks_in(&root, &future_child),
+            None,
+            "a lock older than the child's start window is stale"
+        );
+        assert_eq!(
+            session_id_from_devin_session_locks_in(&root, &[]),
+            None,
+            "no children means no adoption"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn devin_session_lock_match_fails_closed_on_unreadable_lock() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = test_temp_dir("devin-session-lock-unreadable");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("pinto-cicada.lock"), "14406\n").unwrap();
+        let unreadable = root.join("unreadable.lock");
+        std::fs::write(&unreadable, "14406\n").unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        assert_eq!(
+            session_id_from_devin_session_locks_in(&root, &devin_children()),
+            None,
+            "an unreadable lock could hide the real match, so nothing is recorded"
+        );
+
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn devin_session_lock_match_rejects_missing_dir() {
+        let root = test_temp_dir("devin-session-lock-missing-dir");
+        assert_eq!(
+            session_id_from_devin_session_locks_in(&root.join("missing"), &devin_children()),
+            None
+        );
     }
 
     fn test_temp_dir(name: &str) -> std::path::PathBuf {

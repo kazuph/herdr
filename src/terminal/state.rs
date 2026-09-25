@@ -1059,7 +1059,8 @@ impl TerminalState {
                 "herdr:codex",
                 "codex",
                 Some("startup" | "clear" | "resume" | "compact")
-            ) | ("herdr:opencode", "opencode", Some("new"))
+            ) | ("herdr:devin", "devin", Some("resume"))
+                | ("herdr:opencode", "opencode", Some("new"))
                 | ("herdr:pi", "pi", Some("new" | "resume" | "fork"))
                 | (
                     "herdr:omp",
