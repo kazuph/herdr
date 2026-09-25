@@ -2,6 +2,10 @@ id = "devin"
 version = "2026.09.25.1"
 min_engine_version = 1
 updated_at = "2026-09-25T00:00:00Z"
+# Fork-owned: this manifest carries fork-local detection rules that upstream
+# does not ship. Remote manifests fetched for this agent are still cached, but
+# the bundled manifest is always used regardless of the remote version.
+fork_owned = true
 aliases = ["devin-cli", "devin cli"]
 
 [[rules]]

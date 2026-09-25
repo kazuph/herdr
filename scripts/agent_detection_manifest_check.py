@@ -15,7 +15,15 @@ DEFAULT_BUNDLED_DIR = PROJECT_ROOT / "src" / "detect" / "manifests"
 DEFAULT_WEBSITE_DIR = PROJECT_ROOT / "website" / "agent-detection"
 ENGINE_SOURCE = PROJECT_ROOT / "src" / "detect" / "manifest_update.rs"
 
-MANIFEST_KEYS = {"id", "version", "min_engine_version", "updated_at", "aliases", "rules"}
+MANIFEST_KEYS = {
+    "id",
+    "version",
+    "min_engine_version",
+    "updated_at",
+    "fork_owned",
+    "aliases",
+    "rules",
+}
 RULE_KEYS = {
     "id",
     "state",
@@ -123,6 +131,10 @@ def validate_manifest(path: Path, engine_version: int) -> dict:
         raise CheckError(
             f"{path}: min_engine_version {min_engine} exceeds engine {engine_version}"
         )
+
+    fork_owned = manifest.get("fork_owned", False)
+    if not isinstance(fork_owned, bool):
+        raise CheckError(f"{path}: fork_owned must be a boolean")
 
     aliases = manifest.get("aliases", [])
     if not isinstance(aliases, list) or not all(isinstance(item, str) for item in aliases):
