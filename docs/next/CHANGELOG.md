@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Devin CLI panes now record their session id without integration hooks (from the lock file held by the pane's `devin acp` child), so restore reopens the same conversation with `devin --resume <id>`; ambiguous or stale locks are never adopted.
 - Experimental pane graphics now support bounded named layers, acknowledged full-RGBA primary-layer direct file frames on audited local terminals, owned BGRA fallback, exact pixel mouse input, and placement-only resize replay.
 - The sidebar's lower panel is now a pair of clickable `[agents]` / `[jobs]` tabs; `[jobs]` lists background jobs started with `herdr run`, running first, and clicking a row focuses the pane that started it.
 - terminal-browser's toolbar now carries pointer zoom controls (minus, the current percentage, plus), because the host terminal claims the keyboard zoom shortcuts on macOS; clicking the percentage returns the page to 100%.
