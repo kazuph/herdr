@@ -11,6 +11,7 @@
 - Added macOS support for the `HERDR_AGENT=<agent>` foreground-process hint, allowing agents hidden behind host-visible wrappers such as `nono` to use the named agent's screen manifest. (#679)
 
 ### Changed
+- `herdr run` JSON output now includes a `next` hint, and `herdr run --help` explains, that the caller pane is notified `[herdr run] exit=<code> label=<label> job=<id>` (`pane=<pane>` for `--pane` runs) when the job exits. Callers should end their turn and wait for that notice instead of sleeping or polling `herdr job status`/`herdr log`, then read `herdr log <job_id>`; `--completion none` runs state that no notice is sent.
 - `HERDR_PANE_ID` (and `HERDR_ACTIVE_PANE_ID` / plugin runtime `HERDR_PANE_ID`) is now exported as `p_N`, matching upstream herdr, so scripts written for either binary resolve the same pane; `pN` and `%N` remain accepted as input and API responses keep `pN`.
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
