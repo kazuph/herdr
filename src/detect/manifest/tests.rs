@@ -1,9 +1,13 @@
 use super::*;
 
 fn remote_manifest(version: &str, state: &str, contains: &str) -> String {
+    remote_manifest_for("codex", version, state, contains)
+}
+
+fn remote_manifest_for(agent_id: &str, version: &str, state: &str, contains: &str) -> String {
     format!(
         r#"
-id = "codex"
+id = "{agent_id}"
 version = "{version}"
 min_engine_version = 1
 updated_at = "2026-06-10T12:00:00Z"
@@ -59,11 +63,15 @@ fn with_manifest_dirs<T>(name: &str, f: impl FnOnce() -> T) -> T {
     result
 }
 
-fn write_remote_codex(content: &str) {
-    let path = crate::detect::manifest_update::remote_manifest_path(Agent::Codex);
+fn write_remote(agent: Agent, content: &str) {
+    let path = crate::detect::manifest_update::remote_manifest_path(agent);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, content).unwrap();
     reload_manifests();
+}
+
+fn write_remote_codex(content: &str) {
+    write_remote(Agent::Codex, content);
 }
 
 fn write_remote_codex_without_reload(content: &str) {
@@ -203,6 +211,81 @@ fn older_cached_remote_manifest_does_not_shadow_newer_bundled_manifest() {
             .as_deref()
             .is_some_and(|warning| warning.contains("older than bundled")));
     });
+}
+
+#[test]
+fn fork_owned_bundled_manifest_ignores_newer_remote_manifest() {
+    with_manifest_dirs("fork-owned-remote-ignored", || {
+        write_remote(
+            Agent::Devin,
+            &remote_manifest_for("devin", "9999.01.01.1", "blocked", "remote-ready"),
+        );
+
+        let bundled_version = bundled_manifest(Agent::Devin)
+            .and_then(|manifest| manifest.version.as_ref().map(ToString::to_string))
+            .expect("bundled devin manifest has a version");
+
+        let result = explain(Agent::Devin, "remote-ready");
+        assert_eq!(result.state, AgentState::Idle);
+        assert!(matches!(result.source, Some(ManifestSource::Bundled)));
+        assert_eq!(
+            result.manifest_version.as_deref(),
+            Some(bundled_version.as_str())
+        );
+        assert_eq!(
+            result.cached_remote_version.as_deref(),
+            Some("9999.01.01.1")
+        );
+        assert!(result
+            .warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("fork-owned")));
+
+        let working = explain(Agent::Devin, "guide devin while it works");
+        assert_eq!(working.state, AgentState::Working);
+        assert_eq!(
+            working.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+            Some("guide_while_working")
+        );
+    });
+}
+
+#[test]
+fn remote_manifest_fork_owned_field_does_not_pin_unmarked_agents() {
+    with_manifest_dirs("remote-fork-owned-inert", || {
+        write_remote_codex(
+            &remote_manifest("9999.01.01.1", "blocked", "remote-ready").replace(
+                "updated_at = \"2026-06-10T12:00:00Z\"",
+                "updated_at = \"2026-06-10T12:00:00Z\"\nfork_owned = true",
+            ),
+        );
+
+        let explain = explain(Agent::Codex, "remote-ready");
+        assert_eq!(explain.state, AgentState::Blocked);
+        assert!(matches!(
+            explain.source,
+            Some(ManifestSource::Remote { .. })
+        ));
+        assert_eq!(explain.manifest_version.as_deref(), Some("9999.01.01.1"));
+    });
+}
+
+#[test]
+fn bundled_devin_manifest_is_marked_fork_owned() {
+    let devin = bundled_manifest(Agent::Devin).expect("bundled devin manifest");
+    assert!(devin.fork_owned);
+
+    for agent in Agent::SCREEN_MANIFEST_AGENTS {
+        if agent == Agent::Devin {
+            continue;
+        }
+        let manifest = bundled_manifest(agent).expect("bundled manifest");
+        assert!(
+            !manifest.fork_owned,
+            "{} bundled manifest must not be fork-owned",
+            agent_label(agent)
+        );
+    }
 }
 
 #[test]

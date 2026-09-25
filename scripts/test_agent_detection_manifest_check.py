@@ -88,6 +88,34 @@ class AgentDetectionManifestCheckTests(unittest.TestCase):
             with self.assertRaisesRegex(check.CheckError, "unknown agent"):
                 check.validate_catalog(website, bundled_manifests, engine_version=1)
 
+    def test_accepts_boolean_fork_owned_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundled = Path(tmp) / "bundled"
+            bundled.mkdir()
+            (bundled / "codex.toml").write_text(
+                manifest("codex", "2026.06.10.1").replace(
+                    'updated_at = "2026-06-10T00:00:00Z"',
+                    'updated_at = "2026-06-10T00:00:00Z"\nfork_owned = true',
+                )
+            )
+
+            manifests = check.load_manifest_dir(bundled, engine_version=1)
+            self.assertIn("codex", manifests)
+
+    def test_rejects_non_boolean_fork_owned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundled = Path(tmp) / "bundled"
+            bundled.mkdir()
+            (bundled / "codex.toml").write_text(
+                manifest("codex", "2026.06.10.1").replace(
+                    'updated_at = "2026-06-10T00:00:00Z"',
+                    'updated_at = "2026-06-10T00:00:00Z"\nfork_owned = "yes"',
+                )
+            )
+
+            with self.assertRaisesRegex(check.CheckError, "fork_owned must be a boolean"):
+                check.load_manifest_dir(bundled, engine_version=1)
+
     def test_rejects_manifest_requiring_newer_engine(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundled = Path(tmp) / "bundled"

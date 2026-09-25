@@ -144,6 +144,8 @@ pub(crate) struct AgentManifest {
     #[serde(rename = "updated_at")]
     _updated_at: Option<String>,
     #[serde(default)]
+    fork_owned: bool,
+    #[serde(default)]
     aliases: Vec<String>,
     #[serde(default)]
     rules: Vec<ManifestRule>,
@@ -784,6 +786,18 @@ fn read_remote_manifest(agent: Agent, bundled: &AgentManifest) -> Option<LoadedM
                 .as_ref()
                 .map(ToString::to_string)
                 .unwrap_or_else(|| "unknown".to_string());
+            if bundled.fork_owned {
+                return Some(bundled_loaded_manifest(
+                    agent,
+                    bundled.clone(),
+                    Some(format!(
+                        "ignored remote manifest {} because the bundled manifest is fork-owned",
+                        path.display()
+                    )),
+                    Some(version),
+                    false,
+                ));
+            }
             if let (Some(remote_version), Some(bundled_version)) =
                 (manifest.version.as_ref(), bundled.version.as_ref())
             {
