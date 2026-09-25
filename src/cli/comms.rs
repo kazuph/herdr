@@ -26,6 +26,7 @@ struct RunSpawnOutput {
     mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pane: Option<String>,
+    next: String,
 }
 
 pub(super) fn run_msg_command(args: &[String]) -> std::io::Result<i32> {
@@ -594,7 +595,7 @@ fn run_background(
             label: label.clone(),
             cwd: cwd.display().to_string(),
             argv: command_args.to_vec(),
-            completion,
+            completion: completion.clone(),
         }),
     })?;
     if response.get("error").is_some() {
@@ -618,6 +619,7 @@ fn run_background(
     println!(
         "{}",
         serde_json::to_string(&RunSpawnOutput {
+            next: run_spawn_next_hint(&job, &label, None, &completion),
             job,
             label,
             mode,
@@ -711,6 +713,7 @@ fn run_in_pane(
     println!(
         "{}",
         serde_json::to_string(&RunSpawnOutput {
+            next: run_spawn_next_hint(&job, &label, Some(&pane), "summary"),
             job,
             label,
             mode: "pane".into(),
@@ -1184,6 +1187,17 @@ fn enqueue_job_completion(
     Ok(())
 }
 
+fn run_spawn_next_hint(job: &str, label: &str, pane: Option<&str>, completion: &str) -> String {
+    let label = one_line_field(label);
+    if let Some(pane) = pane {
+        format!("the caller pane is notified `[herdr run] exit=<code> label={label} pane={pane}` on exit; wait for the notice instead of sleeping or polling `herdr job status`/`herdr log`, then read `herdr log {job}`")
+    } else if completion == "none" {
+        format!("--completion none sends no exit notice; inspect the job yourself with `herdr run list` or `herdr log {job}`")
+    } else {
+        format!("the caller pane is notified `[herdr run] exit=<code> label={label} job={job}` on exit; end your turn and wait for the notice instead of sleeping or polling `herdr job status`/`herdr log`, then read `herdr log {job}`")
+    }
+}
+
 fn parse_completion_override(args: &[String]) -> std::io::Result<Option<String>> {
     let mut index = 0;
     while index < args.len() {
@@ -1572,6 +1586,8 @@ fn print_run_help() {
     eprintln!("usage: herdr run [--label TEXT] [--cwd PATH] [--caller <pane>] [--completion summary|full|none] [--pane [--split right|down] [--close-on-success]] -- <command...>");
     eprintln!("  default: starts a pane-less background job and returns its job id immediately");
     eprintln!("  --pane starts the command in a visible same-space pane");
+    eprintln!("  when the job exits, the caller pane is notified `[herdr run] exit=<code> label=<label> job=<id>` (`pane=<pane>` for --pane runs; --completion none sends no notice)");
+    eprintln!("  do not sleep or poll `herdr job status`/`herdr log` while waiting; end your turn, then read `herdr log <job_id>` when the notice arrives");
     eprintln!("  inspect background jobs with `herdr run list`, `herdr log <job_id>`, and `herdr run cancel <job_id>`");
     eprintln!("  caller resolution fails closed; pass --caller <pane> when needed");
     print_data_footer();
@@ -1636,6 +1652,50 @@ mod tests {
         );
         assert!(!line.contains('\n'));
         assert!(!line.contains("tail="));
+    }
+
+    #[test]
+    fn run_spawn_next_hint_points_background_jobs_at_the_exit_notice() {
+        let hint = run_spawn_next_hint("job-1", "cargo test", None, "summary");
+
+        assert!(hint.contains("[herdr run] exit=<code> label=cargo_test job=job-1"));
+        assert!(hint.contains("herdr log job-1"));
+        assert!(!hint.contains('\n'));
+    }
+
+    #[test]
+    fn run_spawn_next_hint_does_not_claim_a_notice_for_completion_none() {
+        let hint = run_spawn_next_hint("job-1", "tests", None, "none");
+
+        assert!(hint.contains("no exit notice"));
+        assert!(!hint.contains("[herdr run] exit="));
+        assert!(!hint.contains('\n'));
+    }
+
+    #[test]
+    fn run_spawn_next_hint_describes_pane_exit_notice() {
+        let hint = run_spawn_next_hint("job-1", "tests", Some("p_2"), "summary");
+
+        assert!(hint.contains("[herdr run] exit=<code> label=tests pane=p_2"));
+        assert!(!hint.contains('\n'));
+    }
+
+    #[test]
+    fn run_spawn_output_serializes_next_after_existing_keys() {
+        let output = RunSpawnOutput {
+            job: "job-1".into(),
+            label: "tests".into(),
+            mode: "background".into(),
+            pane: None,
+            next: "hint".into(),
+        };
+        let json = serde_json::to_value(&output).unwrap();
+
+        assert_eq!(json["job"], "job-1");
+        assert_eq!(json["label"], "tests");
+        assert_eq!(json["mode"], "background");
+        assert_eq!(json["next"], "hint");
+        assert!(json.get("pane").is_none());
     }
 
     #[test]
