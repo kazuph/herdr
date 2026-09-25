@@ -2790,7 +2790,9 @@ impl AppState {
                 }
                 Vec::new()
             }
-            AppEvent::AgentDetectionManifestsUpdated { updated, status } => {
+            AppEvent::AgentDetectionManifestsUpdated {
+                updated, status, ..
+            } => {
                 self.agent_manifest_update_status = status;
                 self.refresh_agent_manifest_summaries();
                 if !updated.is_empty()
@@ -5588,6 +5590,7 @@ mod tests {
                 version: crate::detect::manifest_update::ManifestVersion::parse("2026.06.10.1")
                     .unwrap(),
             }],
+            activated: Vec::new(),
             status,
         });
 

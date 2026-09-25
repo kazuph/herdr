@@ -123,6 +123,7 @@ pub enum AppEvent {
     /// Remote agent detection manifest update check finished.
     AgentDetectionManifestsUpdated {
         updated: Vec<crate::detect::manifest_update::ManifestUpdateCommit>,
+        activated: Vec<crate::detect::Agent>,
         status: crate::detect::manifest_update::ManifestUpdateStatus,
     },
     /// A pane child emitted a valid OSC 52 clipboard write. The main loop
