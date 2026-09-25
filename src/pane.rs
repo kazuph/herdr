@@ -218,7 +218,8 @@ async fn publish_agent_session_observed_event(
             agent_label,
             seq: None,
             session_ref: crate::agent_resume::AgentSessionRef::id(session_id),
-            session_start_source: (agent == Agent::Claude).then(|| "resume".into()),
+            session_start_source: matches!(agent, Agent::Claude | Agent::Devin)
+                .then(|| "resume".into()),
         })
         .await
     {
@@ -601,21 +602,66 @@ fn observed_agent_session_from_foreground_job(
     job: &crate::platform::ForegroundJob,
     agent: Agent,
 ) -> Option<String> {
-    observed_agent_session_from_foreground_job_with(job, agent, |process| {
-        let cwd = process.cwd.as_deref()?;
-        let started_at = process.started_at?;
-        match agent {
-            Agent::Claude => crate::agent_sessions::session_id_from_claude_process_record(
+    observed_agent_session_from_foreground_job_with(job, agent, |process| match agent {
+        Agent::Claude => {
+            let cwd = process.cwd.as_deref()?;
+            let started_at = process.started_at?;
+            crate::agent_sessions::session_id_from_claude_process_record(
                 process.pid,
                 cwd,
                 started_at,
             )
             .or_else(|| {
                 crate::agent_sessions::claude_session_id_from_session_files(cwd, started_at)
-            }),
-            _ => None,
+            })
         }
+        Agent::Devin => devin_child_session_id(process),
+        _ => None,
     })
+}
+
+/// The session id lives in the lock file held by the pane's `devin acp`
+/// child, so only adopt a lock whose pid belongs to a live child of this
+/// job's `devin` process. The acp child can sit outside the foreground job
+/// snapshot (leader-identified probes return the leader alone), so children
+/// are enumerated from the session rather than from `job.processes`.
+fn devin_child_session_id(process: &crate::platform::ForegroundProcess) -> Option<String> {
+    crate::agent_sessions::session_id_from_devin_session_locks(&devin_child_processes(process.pid))
+}
+
+fn devin_child_processes(devin_pid: u32) -> Vec<(u32, std::time::SystemTime)> {
+    devin_child_pids_in(
+        devin_pid,
+        &crate::platform::session_processes(devin_pid),
+        crate::platform::parent_process_id,
+    )
+    .into_iter()
+    .filter_map(|pid| crate::platform::process_started_at(pid).map(|started_at| (pid, started_at)))
+    .collect()
+}
+
+fn devin_child_pids_in(
+    devin_pid: u32,
+    session_pids: &[u32],
+    parent_process_id: impl Fn(u32) -> Option<u32>,
+) -> Vec<u32> {
+    session_pids
+        .iter()
+        .copied()
+        .filter(|pid| *pid != devin_pid && parent_process_id(*pid) == Some(devin_pid))
+        .collect()
+}
+
+fn foreground_process_matches_agent(
+    process: &crate::platform::ForegroundProcess,
+    agent: Agent,
+) -> bool {
+    crate::platform::process_agent_hint(process.pid) == Some(agent)
+        || crate::detect::identify_agent_in_job(&crate::platform::ForegroundJob {
+            process_group_id: process.pid,
+            processes: vec![process.clone()],
+        })
+        .is_some_and(|(identified, _)| identified == agent)
 }
 
 fn observed_agent_session_from_foreground_job_with(
@@ -627,14 +673,7 @@ fn observed_agent_session_from_foreground_job_with(
     let mut runtime_session_ids = std::collections::BTreeSet::new();
     let mut command_session_ids = std::collections::BTreeSet::new();
     for process in &job.processes {
-        let single_process_job = crate::platform::ForegroundJob {
-            process_group_id: process.pid,
-            processes: vec![process.clone()],
-        };
-        let process_matches_agent = crate::platform::process_agent_hint(process.pid) == Some(agent)
-            || crate::detect::identify_agent_in_job(&single_process_job)
-                .is_some_and(|(identified, _)| identified == agent);
-        if !process_matches_agent {
+        if !foreground_process_matches_agent(process, agent) {
             continue;
         }
 
@@ -3816,6 +3855,55 @@ mod tests {
                 && source == "herdr:claude"
                 && agent_label == "claude"
                 && value == "current-session"
+                && session_start_source == "resume"
+        ));
+    }
+
+    #[test]
+    fn devin_child_pids_in_selects_only_direct_children() {
+        let parent_of = |pid: u32| match pid {
+            101 => Some(100),
+            102 => Some(999),
+            103 => Some(101),
+            _ => None,
+        };
+
+        assert_eq!(
+            devin_child_pids_in(100, &[100, 101, 102, 103, 104], parent_of),
+            vec![101],
+            "only the acp child is a direct child of the pane's devin"
+        );
+        assert_eq!(
+            devin_child_pids_in(100, &[100], parent_of),
+            Vec::<u32>::new()
+        );
+    }
+
+    #[tokio::test]
+    async fn observed_devin_session_is_reported_as_resume_replacement() {
+        let (tx, mut rx) = mpsc::channel(1);
+
+        publish_agent_session_observed_event(
+            tx,
+            PaneId::from_raw(42),
+            Agent::Devin,
+            "pinto-cicada".into(),
+        )
+        .await;
+
+        assert!(matches!(
+            rx.recv().await,
+            Some(AppEvent::AgentSessionReported {
+                pane_id,
+                source,
+                agent_label,
+                session_ref: Some(crate::agent_resume::AgentSessionRef { value, .. }),
+                session_start_source: Some(session_start_source),
+                ..
+            }) if pane_id == PaneId::from_raw(42)
+                && source == "herdr:devin"
+                && agent_label == "devin"
+                && value == "pinto-cicada"
                 && session_start_source == "resume"
         ));
     }
