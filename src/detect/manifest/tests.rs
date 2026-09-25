@@ -375,6 +375,87 @@ fn devin_manifest_detects_idle_working_and_blocked_states() {
 }
 
 #[test]
+fn devin_manifest_detects_esc_twice_and_queued_footer_states() {
+    // Newer Devin builds hint "(esc twice to interrupt)" and replace the
+    // "Guide Devin while it works" input line with a queued-message bar
+    // while a turn runs. Captured from a live pane.
+    let queued_working = explain(
+        Agent::Devin,
+        " ○ Reading shell 3e130d\n │ Timeout: 4m 40s\n\n⡆⠀ Running tools · 27m 9s (esc twice to interrupt)\n── 1 queued ──── ↑ edit · ↵ send now ──\n○ [親p1834] queued message\n───────── (bypass permissions on) ─\n❭ Press Enter to send queued messages now\n─────────────────\nSWE-2 High     Context: 241k / 262k tokens (91%)\n1 shell · ↓ select",
+    );
+    assert_eq!(queued_working.state, AgentState::Working);
+    assert_eq!(
+        queued_working
+            .matched_rule
+            .as_ref()
+            .map(|rule| rule.id.as_str()),
+        Some("activity_footer_working")
+    );
+    assert!(queued_working.visible_working);
+
+    // "Thinking" and "Typing" footers carry the same interrupt hint.
+    let thinking = explain(
+        Agent::Devin,
+        "⠀⠚ Thinking · 1m 9s (esc twice to interrupt)\n─────────────────\n❭ Press Enter to send queued messages now\n─────────────────\nSWE-2 High     Context: 10k / 262k tokens (4%)",
+    );
+    assert_eq!(thinking.state, AgentState::Working);
+    assert!(thinking.visible_working);
+
+    // Narrow panes can wrap the footer itself; the interrupt hint still
+    // reaches across the break even when the timer no longer follows "·".
+    let wrapped = explain(
+        Agent::Devin,
+        "⠀⣠ Typing ·\n  19m 49s (esc twice to\n  interrupt)\n─────────────────\n❭ Press Enter to send queued messages now\n─────────────────\nSWE-2 High     Context: 10k / 262k tokens (4%)",
+    );
+    assert_eq!(wrapped.state, AgentState::Working);
+    assert_eq!(
+        wrapped.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("activity_footer_working")
+    );
+    assert!(wrapped.visible_working);
+
+    // The timer-only Thinking footer has no interrupt hint; the spinner plus
+    // "· <digit>" timer is still a working signal.
+    let timer_only = explain(
+        Agent::Devin,
+        "⠀⠚ Thinking · 26m 5s · (2962c)\n───────── (bypass permissions on) ─\n❭ Press Enter to send queued messages now\n─────────────────\nSWE-2 Max      Context: 161k / 262k tokens (61%)",
+    );
+    assert_eq!(timer_only.state, AgentState::Working);
+    assert_eq!(
+        timer_only
+            .matched_rule
+            .as_ref()
+            .map(|rule| rule.id.as_str()),
+        Some("activity_footer_working")
+    );
+
+    // Conversation text quoting the footer hint is not a live footer: the
+    // interrupt phrase only counts inside its own parentheses at a line end.
+    let quoted_hint_idle = explain(
+        Agent::Devin,
+        " 新しい Devin CLI のフッター表記は「(esc twice to interrupt)」と「(esc to\n  interrupt)」です。esc twice to interrupt は実行中を示します。\n───────── (bypass permissions on) ─\n❭ Ask Devin to build features, fix bugs, or work on your code\n─────────────────\nSWE-2 High     Context: 120k / 262k tokens (45%)",
+    );
+    assert_eq!(quoted_hint_idle.state, AgentState::Idle);
+    assert!(quoted_hint_idle.visible_idle);
+
+    // A queued-message bar without any live footer means the turn already
+    // ended: the queued input waits for the user, so this stays idle.
+    let queued_idle = explain(
+        Agent::Devin,
+        "○ [herdr run] exit=0 label=zip-bundle-spec-2\n───────── (bypass permissions on) ─\n❭ Press Enter to send queued messages now\n─────────────────\nSWE-2 Max      Context: 161k / 262k tokens (61%)\n1 shell · ↓ select",
+    );
+    assert_eq!(queued_idle.state, AgentState::Idle);
+    assert_eq!(
+        queued_idle
+            .matched_rule
+            .as_ref()
+            .map(|rule| rule.id.as_str()),
+        Some("live_prompt_footer")
+    );
+    assert!(queued_idle.visible_idle);
+}
+
+#[test]
 fn manifest_validation_rejects_unknown_fields_empty_rules_invalid_regions_and_regexes() {
     assert!(parse_manifest(
         r#"
@@ -666,6 +747,78 @@ fn claude_empty_osc_empty_screen_is_idle_fallback() {
 }
 
 #[test]
+fn claude_idle_prompt_with_background_shell_is_idle() {
+    // Captured from Claude Code after its foreground turn ended while a
+    // long-lived background shell remained active: the status bar keeps
+    // showing "1 shell", which the retired background_shell_working rule used
+    // to misread as working.
+    let screen = concat!(
+        "✻ Crunched for 22s · done 12:12 PM · 1 shell still running\n\n",
+        "────────────────────────────────────────────────────────────────\n",
+        "❯\n",
+        "────────────────────────────────────────────────────────────────\n",
+        "  ⏵⏵ auto mode on · 1 shell · ← 2 agents\n",
+    );
+    let result = osc_explain(Agent::Claude, screen, "", "");
+
+    assert_eq!(result.state, AgentState::Idle);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("live_prompt_box")
+    );
+    assert!(result.visible_idle);
+    assert!(!result.visible_working);
+}
+
+#[test]
+fn claude_mcp_elicitation_is_blocked() {
+    // MCP elicitation dialogs show Accept/Decline controls and an
+    // "Esc to cancel" footer but no Enter hint. Live capture uses curly
+    // quotes around the server name; both quote styles must classify.
+    for screen in [
+        "MCP server \u{201c}my-server\u{201d} requests your input\n\nGrant temporary access to the demo gateway for 15 minutes?\n\n\u{276f} Accept    Decline\n\nEsc to cancel \u{b7} \u{2191}/\u{2193} to navigate\n",
+        "MCP server \"my-server\" requests your input\n\nserver-supplied message\n\n\u{276f} Accept    Decline\n\nEsc to cancel \u{b7} \u{2191}/\u{2193} to navigate\n",
+    ] {
+        let result = with_manifest_dirs("claude-mcp-elicitation", || {
+            osc_explain(Agent::Claude, screen, "\u{2733} Claude Code", "")
+        });
+        assert_eq!(result.state, AgentState::Blocked, "{result:#?}");
+        assert!(result.visible_blocker, "{result:#?}");
+        assert_eq!(
+            result.matched_rule.as_ref().map(|r| r.id.as_str()),
+            Some("mcp_elicitation_prompt"),
+            "{result:#?}"
+        );
+    }
+}
+
+#[test]
+fn claude_bash_prompt_with_dont_ask_again_option_matches_bash_rule() {
+    // The "don't ask again" choice pushes No to option 3; the resting cursor
+    // layout below used to fall through to generic_permission_prompt.
+    let screen = concat!(
+        "────────────────────────────────────────────────────────────────\n",
+        " Bash command\n\n",
+        "   curl -sS -o /tmp/probe.html https://example.com\n",
+        "   Download example.com to /tmp/probe.html\n\n",
+        " This command requires approval\n\n",
+        " Do you want to proceed?\n",
+        " ❯ 1. Yes\n",
+        "   2. Yes, and don't ask again for: curl *\n",
+        "   3. No\n\n",
+        " Esc to cancel · Tab to amend · ctrl+e to explain\n",
+    );
+    let result = osc_explain(Agent::Claude, screen, "", "");
+
+    assert_eq!(result.state, AgentState::Blocked);
+    assert_eq!(
+        result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+        Some("bash_permission_prompt")
+    );
+    assert!(result.visible_blocker);
+}
+
+#[test]
 fn claude_spinner_activity_screen_fallback_is_working() {
     with_manifest_dirs("claude-spinner-screen-working", || {
         let screen = "✢ Building… (2s · thinking)\n\
@@ -678,7 +831,7 @@ fn claude_spinner_activity_screen_fallback_is_working() {
         assert_eq!(result.state, AgentState::Working);
         assert_eq!(
             result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
-            Some("spinner_activity_working")
+            Some("live_turn_working")
         );
         assert!(result.visible_working);
     });

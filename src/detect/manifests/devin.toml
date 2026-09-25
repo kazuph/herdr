@@ -1,7 +1,7 @@
 id = "devin"
-version = "2026.06.15.1"
+version = "2026.09.25.1"
 min_engine_version = 1
-updated_at = "2026-06-15T00:00:00Z"
+updated_at = "2026-09-25T00:00:00Z"
 aliases = ["devin-cli", "devin cli"]
 
 [[rules]]
@@ -25,12 +25,22 @@ visible_blocker = true
 contains = ["approve once", "select", "confirm", "esc cancel"]
 
 [[rules]]
-id = "running_tools_footer"
+id = "activity_footer_working"
 state = "working"
 priority = 200
-region = "bottom_non_empty_lines(8)"
+region = "bottom_non_empty_lines(14)"
 visible_working = true
-contains = ["running tools", "esc to interrupt"]
+# Devin's live footer is a braille spinner plus an activity and timer, e.g.
+# "⠀⠚ Thinking · 26m 5s · (2962c)" or "⡆⠀ Running tools · 27m 9s
+# (esc twice to interrupt)". The "· <digit>" timer keeps the braille Devin
+# logo from matching. Newer builds hint "(esc twice to interrupt)" and older
+# builds "(esc to interrupt)"; the second gate still requires the complete
+# parenthesized hint at a line end so quoted copies in pane text cannot
+# impersonate it, and it tolerates the pane wrapping inside the phrase.
+any = [
+  { line_regex = ['^\s*[\x{2800}-\x{28FF}]+[ \t]*\S[^·\n]*·\s*\d'] },
+  { regex = ['(?m)\(esc(?:[ \t]+|\n[ \t]*)(?:twice(?:[ \t]+|\n[ \t]*))?to(?:[ \t]+|\n[ \t]*)interrupt\s*\)\s*$'] },
+]
 not = [
   { contains = ["approve once", "esc cancel"] },
 ]
