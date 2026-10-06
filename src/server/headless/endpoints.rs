@@ -787,11 +787,14 @@ impl HeadlessServer {
                         } else { location.focus_workspace(workspace); }
                         let was_focused = self.endpoint_clients[&client_id].outer_focus == Some(true)
                             && self.endpoint_clients[&client_id].location.focused_pane_id() != location.focused_pane_id();
+                        let tab_changed = self.endpoint_clients[&client_id].location.focused_tab_id()
+                            != location.focused_tab_id();
                         if was_focused { self.send_endpoint_focus(client_id, false); }
                         let client = self.endpoint_clients.get_mut(&client_id).expect("checked client");
                         client.location = location;
                         client.surface = None;
                         client.presentation_committed = false;
+                        if tab_changed { self.claim_endpoint_geometry(client_id); }
                         request.method = match request.method {
                             api::schema::Method::WorkspaceFocus(params) => api::schema::Method::WorkspaceGet(params),
                             api::schema::Method::TabFocus(params) => api::schema::Method::TabGet(params),

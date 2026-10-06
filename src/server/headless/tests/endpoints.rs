@@ -4738,6 +4738,83 @@ while True:
         dispatch_input(&mut server).await;
         assert_eq!(server.endpoint_tab_geometry[&tab], owner);
     }
+    use interprocess::TryClone as _;
+    let readers = [&first, &second].map(|stream| {
+        let mut reader = stream.try_clone().unwrap();
+        std::thread::spawn(move || {
+            while protocol::read_message::<_, ServerMessage>(&mut reader, MAX_GRAPHICS_FRAME_SIZE)
+                .is_ok()
+            {}
+        })
+    });
+    // Workspace navigation must reclaim the PTY just like a host focus event.
+    server
+        .app
+        .state
+        .workspaces
+        .push(crate::workspace::Workspace::test_new("away"));
+    server.app.state.ensure_test_terminals();
+    let home = server.app.public_workspace_id(0);
+    let away = server.app.public_workspace_id(1);
+    protocol::write_message(
+        &mut second,
+        &ClientMessage::ClientShellFocus { focused: true },
+    )
+    .unwrap();
+    dispatch_input(&mut server).await;
+    server.stream_endpoint_views();
+    for workspace in [away, home] {
+        protocol::write_message(&mut first, &ClientMessage::ClientShellEndpointRequest {
+            boot_id: server.endpoint_boot_id.clone(),
+            request: serde_json::json!({"id":"return-space","method":"workspace.focus","params":{"workspace_id":workspace}}).to_string(),
+        }).unwrap();
+        dispatch_input(&mut server).await;
+        server.stream_endpoint_views();
+    }
+    assert_eq!(server.endpoint_tab_geometry[&tab], first_id);
+    let notify = server.app.render_notify.clone();
+    tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let changed = notify.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            server.stream_endpoint_views();
+            if server.endpoint_clients[&first_id].surface.is_some() {
+                break;
+            }
+            tokio::select! {
+                _ = changed => {},
+                event = server.endpoint_event_rx.recv() => {
+                    server.handle_endpoint_event(event.expect("endpoint remains connected"));
+                }
+            }
+        }
+    })
+    .await
+    .expect("returning workspace must publish a coherent surface");
+    let surface = server.endpoint_clients[&first_id].surface.as_ref().unwrap();
+    for pane in &surface.panes {
+        let (_, pane_id) = server.app.parse_pane_id(&pane.pane_id).unwrap();
+        let terminal = server.app.state.workspaces[0].tabs[0]
+            .terminal_id(pane_id)
+            .unwrap();
+        assert_eq!(
+            server
+                .app
+                .terminal_runtimes
+                .get(terminal)
+                .unwrap()
+                .current_size(),
+            (pane.inner_rect.height, pane.inner_rect.width),
+            "returning viewer's frame and actual PTY must have the same dimensions"
+        );
+    }
     server.stream_endpoint_views();
     shutdown_test_runtimes(&mut server);
+    drop(first);
+    drop(second);
+    drop(server);
+    for reader in readers {
+        reader.join().unwrap();
+    }
 }

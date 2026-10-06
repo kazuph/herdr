@@ -39,7 +39,7 @@ impl SidebarProjection<'_> {
         now_unix_ms: u128,
     ) -> Option<Vec<(String, Option<i32>)>> {
         let projection = self.jobs.filter(|jobs| {
-            jobs.boot_id == self.snapshot.boot_id && jobs.revision == self.snapshot.revision
+            jobs.boot_id == self.snapshot.boot_id && jobs.revision <= self.snapshot.revision
         })?;
         Some(
             projection
@@ -236,6 +236,41 @@ mod tests {
             projection.workspace_jobs("w1", now),
             Some(vec![("running".into(), None)])
         );
+        let mut newer_snapshot = snapshot.clone();
+        newer_snapshot.revision += 1;
+        let updating = SidebarProjection {
+            endpoint: &remote_id,
+            snapshot: &newer_snapshot,
+            jobs: Some(&jobs),
+        };
+        let config = crate::config::Config::default();
+        assert_eq!(
+            projection.workspace_rows(
+                &config.ui.sidebar.spaces,
+                &snapshot.workspaces[0],
+                None,
+                false,
+                2,
+                now
+            ),
+            updating.workspace_rows(
+                &config.ui.sidebar.spaces,
+                &newer_snapshot.workspaces[0],
+                None,
+                false,
+                2,
+                now
+            ),
+            "snapshot arrival must not remove job marks or shift the branch row"
+        );
+        newer_snapshot.boot_id.push_str("-new-server");
+        assert!(SidebarProjection {
+            endpoint: &remote_id,
+            snapshot: &newer_snapshot,
+            jobs: Some(&jobs),
+        }
+        .workspace_jobs("w1", now)
+        .is_none());
         jobs.jobs[0].runner_alive = Some(false);
         let projection = SidebarProjection {
             endpoint: &remote_id,
