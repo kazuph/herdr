@@ -71,6 +71,7 @@ pub(crate) struct ClientFrontend {
     prefix: bool,
     detach_requested: bool,
     draw_host_cursor: bool,
+    job_indicator_pending: bool,
     last_jobs_redraw: Instant,
     modal: Option<modal::Modal>,
     worktrees: Option<worktrees::Worktrees>,
@@ -182,6 +183,7 @@ impl ClientFrontend {
             prefix: false,
             detach_requested: false,
             draw_host_cursor: super::super::should_draw_host_cursor(config.ui.host_cursor),
+            job_indicator_pending: false,
             last_jobs_redraw: Instant::now(),
             modal: None,
             worktrees: None,
@@ -472,6 +474,23 @@ impl ClientFrontend {
         Ok(())
     }
 
+    /// True while any endpoint's projection has a finished job still inside the
+    /// sidebar indicator retention window, so the 100ms tick keeps repainting
+    /// until the dot expires.
+    fn job_indicator_expiry_pending(&self) -> bool {
+        let now_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+        self.runtime.shell.endpoints.iter().any(|endpoint| {
+            endpoint.cache.snapshot().is_some_and(|snapshot| {
+                endpoint
+                    .jobs
+                    .has_finished_indicator_pending_expiry(snapshot, now_unix_ms)
+            })
+        })
+    }
+
     async fn event_loop(
         &mut self,
         mut input_events: mpsc::Receiver<super::super::ClientLoopEvent>,
@@ -532,10 +551,15 @@ impl ClientFrontend {
                     let now = Instant::now();
                     let update = self.runtime.tick(now);
                     let repaint = self.update(update)?;
-                    let jobs_due = self.chrome.detail_view == crate::app::state::SidebarDetailView::Jobs
+                    let indicator_pending = self.job_indicator_expiry_pending();
+                    let indicator_just_expired =
+                        std::mem::replace(&mut self.job_indicator_pending, indicator_pending)
+                            && !indicator_pending;
+                    let jobs_due = (self.chrome.detail_view == crate::app::state::SidebarDetailView::Jobs
+                        || indicator_pending)
                         && now >= self.last_jobs_redraw + crate::app::JOBS_REFRESH_INTERVAL;
                     if jobs_due { self.last_jobs_redraw = now; }
-                    repaint || jobs_due
+                    repaint || jobs_due || indicator_just_expired
                 }
             };
             if repaint {

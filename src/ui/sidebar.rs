@@ -365,12 +365,32 @@ pub(crate) fn agent_panel_status_key(state: AgentState, seen: bool) -> &'static 
     }
 }
 
-fn workspace_jobs(app: &AppState, ws: &crate::workspace::Workspace) -> Vec<(String, Option<i32>)> {
+fn now_unix_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+fn workspace_jobs(
+    app: &AppState,
+    ws: &crate::workspace::Workspace,
+    now_unix_ms: u128,
+) -> Vec<(String, Option<i32>)> {
     app.jobs
         .iter()
         .filter(|job| {
             app.parse_pane_id(&job.caller_pane)
                 .is_some_and(|(index, _)| app.workspaces[index].id == ws.id)
+        })
+        .filter(|job| {
+            tokens::job_indicator_visible(
+                &job.status,
+                job.runner_pid
+                    .map(|pid| !app.dead_runner_pids.contains(&pid)),
+                job.finished_unix_ms,
+                now_unix_ms,
+            )
         })
         .map(|job| (job.status.clone(), job.exit_code))
         .collect()
@@ -401,7 +421,8 @@ fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indent
             suppress_git_details: indented,
         },
     );
-    let rows = tokens::with_job_indicators(rows, workspace_jobs(app, ws), usize::MAX);
+    let rows =
+        tokens::with_job_indicators(rows, workspace_jobs(app, ws, now_unix_ms()), usize::MAX);
     match app.workspace_panel_density {
         WorkspacePanelDensity::Full => rows.len().max(3).min(u16::MAX as usize) as u16,
         WorkspacePanelDensity::Slim => 2,
@@ -1456,7 +1477,7 @@ pub(crate) fn resolved_token_spans(
             })
             .count();
         let identity_width = identity_width + identity_count;
-        let glyph_width = display_width("○");
+        let glyph_width = display_width("●");
         let count = jobs
             .len()
             .min(max_width.saturating_sub(identity_width) / glyph_width);
@@ -1476,7 +1497,7 @@ pub(crate) fn resolved_token_spans(
         }
         for (status, exit_code) in jobs.iter().take(count) {
             spans.push(Span::styled(
-                "○",
+                "●",
                 Style::default().fg(job_status_color(status, *exit_code, p)),
             ));
         }
@@ -1819,6 +1840,7 @@ fn render_workspace_list(
     let metrics = workspace_list_scroll_metrics(app, area);
     let scrollbar_rect = workspace_list_scrollbar_rect(app, area);
     let cards = &app.view.workspace_card_areas;
+    let now_unix_ms = now_unix_ms();
 
     for header in &app.view.workspace_section_header_areas {
         render_workspace_section_header(
@@ -1908,7 +1930,7 @@ fn render_workspace_list(
 
         let rows = tokens::with_job_indicators(
             rows,
-            workspace_jobs(app, ws),
+            workspace_jobs(app, ws, now_unix_ms),
             usize::from(display_height.min(list_bottom.saturating_sub(row_y))),
         );
 
@@ -2301,10 +2323,7 @@ fn render_jobs_panel(app: &AppState, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    let now_unix_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
+    let now_unix_ms = now_unix_ms();
     for (rect, index) in jobs_panel_rows(app, area) {
         let Some(job) = app.jobs.get(index) else {
             continue;

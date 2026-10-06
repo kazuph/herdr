@@ -211,12 +211,17 @@ fn workspace_rows(
             );
             let stale = endpoint.status != ClientEndpointStatus::Online;
             let compact = chrome.settings.sidebar_collapsed;
+            let now_unix_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis();
             let tokens = projection.workspace_rows(
                 &chrome.settings.spaces,
                 &displayed,
                 None,
                 indented,
                 usize::MAX,
+                now_unix_ms,
             );
             let height = if compact {
                 1
@@ -250,6 +255,7 @@ fn workspace_rows(
                         None,
                         indented,
                         usize::from(height),
+                        now_unix_ms,
                     );
                     lines.push(token_line(
                         resolved.get(index).map_or(&[], Vec::as_slice),

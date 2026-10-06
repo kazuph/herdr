@@ -163,6 +163,7 @@ impl HeadlessServer {
         Some((key.clone(), image_id, message))
     }
 
+    #[cfg(unix)]
     fn endpoint_pane_direct_image(&self, id: u64, transfer: u64, image: u32) -> Option<u32> {
         self.app.pane_graphics.slots.values().find_map(|slot| {
             slot.direct_gate
@@ -176,6 +177,7 @@ impl HeadlessServer {
         })
     }
 
+    #[cfg(unix)]
     pub(super) fn endpoint_pane_direct_started(
         &mut self,
         id: u64,
@@ -186,6 +188,7 @@ impl HeadlessServer {
             .is_some_and(|original| self.start_direct_graphics_response(id, transfer, original))
     }
 
+    #[cfg(unix)]
     pub(super) fn endpoint_pane_direct_result(
         &mut self,
         id: u64,
@@ -198,10 +201,7 @@ impl HeadlessServer {
         };
         if !success {
             if let Some(client) = self.endpoint_clients.get_mut(&id) {
-                #[cfg(unix)]
-                {
-                    client.direct_graphics = false;
-                }
+                client.direct_graphics = false;
                 client.graphics_delivery = Default::default();
                 client.write_pending = true;
             }

@@ -3000,8 +3000,12 @@ impl AppState {
                 let _ = cache_updates;
                 Vec::new()
             }
-            AppEvent::JobsRefreshed { jobs } => {
+            AppEvent::JobsRefreshed {
+                jobs,
+                dead_runner_pids,
+            } => {
                 self.jobs = jobs;
+                self.dead_runner_pids = dead_runner_pids;
                 let max_scroll = self.jobs.len().saturating_sub(1);
                 self.jobs_scroll = self.jobs_scroll.min(max_scroll);
                 Vec::new()

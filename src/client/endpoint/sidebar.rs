@@ -33,7 +33,11 @@ impl SidebarProjection<'_> {
         }
     }
 
-    pub(crate) fn workspace_jobs(&self, workspace_id: &str) -> Option<Vec<(String, Option<i32>)>> {
+    pub(crate) fn workspace_jobs(
+        &self,
+        workspace_id: &str,
+        now_unix_ms: u128,
+    ) -> Option<Vec<(String, Option<i32>)>> {
         let projection = self.jobs.filter(|jobs| {
             jobs.boot_id == self.snapshot.boot_id && jobs.revision == self.snapshot.revision
         })?;
@@ -42,6 +46,14 @@ impl SidebarProjection<'_> {
                 .jobs
                 .iter()
                 .filter(|job| job.workspace_id.as_deref() == Some(workspace_id))
+                .filter(|job| {
+                    tokens::job_indicator_visible(
+                        &job.status,
+                        job.runner_alive,
+                        job.finished_unix_ms,
+                        now_unix_ms,
+                    )
+                })
                 .map(|job| (job.status.clone(), job.exit_code))
                 .collect(),
         )
@@ -54,6 +66,7 @@ impl SidebarProjection<'_> {
         diff_stats: Option<(usize, usize)>,
         indented: bool,
         display_height: usize,
+        now_unix_ms: u128,
     ) -> Vec<Vec<ResolvedToken>> {
         let (state, seen) = state(workspace.agent_status);
         let label = if indented {
@@ -81,7 +94,7 @@ impl SidebarProjection<'_> {
         );
         // A server without job facts contributes no invented badges. Caller
         // strings are retained facts; only the owning server resolves membership.
-        match self.workspace_jobs(&workspace.workspace_id) {
+        match self.workspace_jobs(&workspace.workspace_id, now_unix_ms) {
             Some(jobs) => tokens::with_job_indicators(rows, jobs, display_height),
             None => rows,
         }
@@ -179,7 +192,8 @@ mod tests {
         };
         assert_ne!(local.key("w1:p1"), remote.key("w1:p1"));
         assert_eq!(remote.key("w1:p1").id, "w1:p1");
-        assert!(remote.workspace_jobs("w1").is_none());
+        let now = 1_000_000;
+        assert!(remote.workspace_jobs("w1", now).is_none());
         let record = crate::job::JobRecord {
             id: "job".into(),
             label: "job".into(),
@@ -189,7 +203,7 @@ mod tests {
             caller_agent: "codex".into(),
             completion: "none".into(),
             status: "running".into(),
-            runner_pid: None,
+            runner_pid: Some(4321),
             exit_code: None,
             started_unix_ms: None,
             finished_unix_ms: None,
@@ -198,20 +212,20 @@ mod tests {
         let mut jobs = EndpointJobsProjection {
             boot_id: snapshot.boot_id.clone(),
             revision: snapshot.revision,
-            jobs: vec![EndpointJob::from_record(&record, None)],
+            jobs: vec![EndpointJob::from_record(&record, None, Some(true))],
         };
         let projection = SidebarProjection {
             jobs: Some(&jobs),
             ..remote
         };
-        assert_eq!(projection.workspace_jobs("w1"), Some(Vec::new()));
+        assert_eq!(projection.workspace_jobs("w1", now), Some(Vec::new()));
         jobs.jobs[0].workspace_id = Some("different opaque workspace".into());
         let projection = SidebarProjection {
             endpoint: &remote_id,
             snapshot: &snapshot,
             jobs: Some(&jobs),
         };
-        assert_eq!(projection.workspace_jobs("w1"), Some(Vec::new()));
+        assert_eq!(projection.workspace_jobs("w1", now), Some(Vec::new()));
         jobs.jobs[0].workspace_id = Some("w1".into());
         let projection = SidebarProjection {
             endpoint: &remote_id,
@@ -219,16 +233,24 @@ mod tests {
             jobs: Some(&jobs),
         };
         assert_eq!(
-            projection.workspace_jobs("w1"),
+            projection.workspace_jobs("w1", now),
             Some(vec![("running".into(), None)])
         );
+        jobs.jobs[0].runner_alive = Some(false);
+        let projection = SidebarProjection {
+            endpoint: &remote_id,
+            snapshot: &snapshot,
+            jobs: Some(&jobs),
+        };
+        assert_eq!(projection.workspace_jobs("w1", now), Some(Vec::new()));
+        jobs.jobs[0].runner_alive = Some(true);
         jobs.revision += 1;
         let projection = SidebarProjection {
             endpoint: &remote_id,
             snapshot: &snapshot,
             jobs: Some(&jobs),
         };
-        assert!(projection.workspace_jobs("w1").is_none());
+        assert!(projection.workspace_jobs("w1", now).is_none());
     }
 
     #[test]
@@ -266,6 +288,7 @@ rows = [["workspace", "state_text", "terminal_title_stripped", "$task"]]
             Some((2, 3)),
             false,
             2,
+            1_000_000,
         );
         rows = tokens::with_job_indicators(
             rows,
@@ -283,7 +306,7 @@ rows = [["workspace", "state_text", "terminal_title_stripped", "$task"]]
                 let spans = crate::ui::sidebar::clip_token_spans(
                     crate::ui::sidebar::resolved_token_spans(
                         row,
-                        ("●", Style::default()),
+                        ("◆", Style::default()),
                         Style::default(),
                         Style::default(),
                         Style::default(),
@@ -297,7 +320,7 @@ rows = [["workspace", "state_text", "terminal_title_stripped", "$task"]]
                 assert!(text.width() <= width, "{width}: {text}");
                 let colors = spans
                     .iter()
-                    .filter(|span| span.content == "○")
+                    .filter(|span| span.content == "●")
                     .map(|span| span.style.fg)
                     .collect::<Vec<_>>();
                 let expected = [palette.yellow, palette.overlay0, palette.green, palette.red];
