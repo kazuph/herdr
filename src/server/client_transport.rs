@@ -17,10 +17,12 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::ipc::LocalStream;
+#[cfg(test)]
+use crate::protocol::MAX_FRAME_SIZE;
 use crate::protocol::{
     self, AttachScrollDirection, AttachScrollSource, ClientInputEvent, ClientKeybindings,
     ClientLaunchMode, ClientMessage, RenderEncoding, ServerMessage, MAX_CLIPBOARD_IMAGE_PAYLOAD,
-    MAX_FRAME_SIZE, MAX_GRAPHICS_FRAME_SIZE, PROTOCOL_VERSION,
+    MAX_GRAPHICS_FRAME_SIZE, PROTOCOL_VERSION,
 };
 
 /// Minimum accepted attached client size.
@@ -35,12 +37,12 @@ const MIN_CLIENT_ROWS: u16 = 1;
 /// Set to 4 seconds (rather than 5) to guarantee the connection is closed
 /// within the 5-second deadline, even with OS timer slack, thread scheduling,
 /// and cleanup overhead.
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(4);
+pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Maximum input payload size (bytes) for a single `ClientMessage::Input`.
-const MAX_INPUT_PAYLOAD: usize = 1024 * 1024; // 1 MB
+pub(super) const MAX_INPUT_PAYLOAD: usize = 1024 * 1024; // 1 MB
 /// Maximum structured input events accepted in one client message.
-const MAX_INPUT_EVENT_BATCH: usize = 4096;
+pub(super) const MAX_INPUT_EVENT_BATCH: usize = 4096;
 /// Maximum encoded mouse report accepted with pixel geometry.
 const MAX_PIXEL_MOUSE_PAYLOAD: usize = 128;
 
@@ -54,8 +56,29 @@ pub(crate) struct ClientWriter {
 }
 
 impl ClientWriter {
+    pub(crate) fn spawn(
+        stream: LocalStream,
+        on_signal: impl Fn(ClientWriterSignal) + Send + 'static,
+    ) -> io::Result<Self> {
+        let queue = ClientWriterQueue::new();
+        let writer = Self {
+            control: ClientControlWriter::queue(queue.clone()),
+            render: ClientRenderWriter::queue(queue.clone()),
+        };
+        std::thread::Builder::new()
+            .name("client-writer".into())
+            .spawn(move || client_writer_loop_with_signals(stream, queue, on_signal))?;
+        Ok(writer)
+    }
+
     pub(crate) fn replace_with_cleanup(&self, data: Vec<u8>) {
         self.render.queue.replace_with_cleanup(data);
+    }
+
+    pub(crate) fn discard_pending_render(&self) {
+        let mut state = self.render.queue.lock_state();
+        state.render = None;
+        state.ordered.clear();
     }
 
     #[cfg(test)]
@@ -96,6 +119,12 @@ impl ClientWriter {
         });
         writer
     }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ClientWriterSignal {
+    Drained,
+    Disconnected,
 }
 
 #[derive(Debug)]
@@ -146,6 +175,11 @@ impl ClientControlWriter {
 
     pub(crate) fn send(&self, data: Vec<u8>) -> Result<(), SendError<Vec<u8>>> {
         self.queue.send_control(data)
+    }
+
+    /// Presentation fences must follow every surface already accepted by this writer.
+    pub(crate) fn send_after_render(&self, data: Vec<u8>) -> Result<(), SendError<Vec<u8>>> {
+        self.queue.send_after_render(data)
     }
 }
 
@@ -245,6 +279,19 @@ impl ClientWriterQueue {
         }
         if !state.ordered.is_empty() {
             return Err(TrySendError::Full(data));
+        }
+        if let Some(older) = state.render.take() {
+            state.ordered.push_back(older);
+        }
+        state.ordered.push_back(data);
+        self.ready.notify_one();
+        Ok(())
+    }
+
+    fn send_after_render(&self, data: Vec<u8>) -> Result<(), SendError<Vec<u8>>> {
+        let mut state = self.lock_state();
+        if !state.writer_alive {
+            return Err(SendError(data));
         }
         if let Some(older) = state.render.take() {
             state.ordered.push_back(older);
@@ -434,7 +481,7 @@ fn input_events_within_limits(events: &[ClientInputEvent]) -> bool {
 }
 
 #[cfg(windows)]
-fn set_client_recv_timeout(
+pub(super) fn set_client_recv_timeout(
     stream: &LocalStream,
     timeout: Option<Duration>,
     context: &'static str,
@@ -451,7 +498,7 @@ fn set_client_recv_timeout(
 }
 
 #[cfg(not(windows))]
-fn set_client_recv_timeout(
+pub(super) fn set_client_recv_timeout(
     stream: &LocalStream,
     timeout: Option<Duration>,
     _context: &'static str,
@@ -464,6 +511,7 @@ fn set_client_recv_timeout(
 ///
 /// Reads the `Hello` message, validates the version, sends `Welcome`,
 /// and then enters a read loop forwarding messages to the server event channel.
+#[cfg(test)]
 pub(crate) fn handle_client_handshake(
     mut stream: LocalStream,
     client_id: u64,
@@ -498,6 +546,16 @@ pub(crate) fn handle_client_handshake(
         }
     };
 
+    handle_private_hello(stream, client_id, hello, server_event_tx, should_quit)
+}
+
+pub(super) fn handle_private_hello(
+    mut stream: LocalStream,
+    client_id: u64,
+    hello: ClientMessage,
+    server_event_tx: &mpsc::Sender<ServerEvent>,
+    should_quit: &Arc<AtomicBool>,
+) -> io::Result<()> {
     let (
         client_cols,
         client_rows,
@@ -621,22 +679,35 @@ pub(crate) fn handle_client_handshake(
 
 /// The client writer loop — prioritizes control messages over render frames.
 fn client_writer_loop(
-    mut stream: LocalStream,
+    stream: LocalStream,
     client_id: u64,
     writer_queue: Arc<ClientWriterQueue>,
     server_event_tx: mpsc::Sender<ServerEvent>,
+) {
+    client_writer_loop_with_signals(stream, writer_queue, move |signal| {
+        let event = match signal {
+            ClientWriterSignal::Drained => ServerEvent::ClientWriterDrained { client_id },
+            ClientWriterSignal::Disconnected => ServerEvent::ClientDisconnected { client_id },
+        };
+        let _ = server_event_tx.blocking_send(event);
+    });
+}
+
+fn client_writer_loop_with_signals(
+    mut stream: LocalStream,
+    writer_queue: Arc<ClientWriterQueue>,
+    on_signal: impl Fn(ClientWriterSignal),
 ) {
     while let Some(item) = writer_queue.recv() {
         let written = match item {
             ClientWriteItem::Control(data) => write_framed_bytes(&mut stream, &data),
             ClientWriteItem::Render(data) => {
-                let _ =
-                    server_event_tx.blocking_send(ServerEvent::ClientWriterDrained { client_id });
+                on_signal(ClientWriterSignal::Drained);
                 write_framed_bytes(&mut stream, &data)
             }
         };
         if !written {
-            let _ = server_event_tx.blocking_send(ServerEvent::ClientDisconnected { client_id });
+            on_signal(ClientWriterSignal::Disconnected);
             break;
         }
     }
@@ -950,6 +1021,26 @@ mod tests {
     }
 
     #[test]
+    fn discard_pending_endpoint_render_preserves_reliable_control() {
+        let (writer, queue) = test_queue_writer();
+        writer.render.try_send(b"old-frame".to_vec()).unwrap();
+        writer.render.send_ordered(b"old-surface".to_vec()).unwrap();
+        writer.control.send(b"response".to_vec()).unwrap();
+        writer.discard_pending_render();
+        writer.render.send_ordered(b"new-epoch".to_vec()).unwrap();
+        assert_eq!(
+            queue.recv(),
+            Some(ClientWriteItem::Control(b"response".to_vec()))
+        );
+        assert_eq!(
+            queue.recv(),
+            Some(ClientWriteItem::Render(b"new-epoch".to_vec()))
+        );
+        drop(writer);
+        assert_eq!(queue.recv(), None);
+    }
+
+    #[test]
     fn ordered_direct_follows_older_render_and_stays_bounded() {
         let (writer, queue) = test_queue_writer();
         writer.render.try_send(b"old".to_vec()).unwrap();
@@ -971,6 +1062,19 @@ mod tests {
             writer.render.send_ordered(b"closed".to_vec()),
             Err(TrySendError::Disconnected(_))
         ));
+    }
+
+    #[test]
+    fn endpoint_presentation_fence_follows_accepted_surfaces_without_dropping_control() {
+        let queue = ClientWriterQueue::new();
+        queue.send_ordered(vec![1]).unwrap();
+        queue.try_send_render(vec![2]).unwrap();
+        queue.send_after_render(vec![3]).unwrap();
+        queue.send_control(vec![4]).unwrap();
+        assert_eq!(queue.recv(), Some(ClientWriteItem::Control(vec![4])));
+        for bytes in [1, 2, 3] {
+            assert_eq!(queue.recv(), Some(ClientWriteItem::Render(vec![bytes])));
+        }
     }
 
     #[test]

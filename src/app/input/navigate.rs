@@ -187,6 +187,7 @@ impl App {
                 self.runtime_workspace_create(
                     "tui.key.workspace.create",
                     crate::api::schema::WorkspaceCreateParams {
+                        section: None,
                         cwd: None,
                         focus: true,
                         label: None,
@@ -816,18 +817,56 @@ impl App {
         &mut self,
         binding: &crate::config::CustomCommandKeybind,
     ) -> io::Result<()> {
-        self.spawn_popup_shell_command(
-            &binding.command,
-            None,
-            self.custom_command_env().0,
-            crate::app::popup::PopupGeometry {
-                width: binding.width,
-                height: binding.height,
-            },
-        )
+        self.spawn_custom_popup_command_at(binding, None)
+    }
+
+    pub(crate) fn spawn_custom_popup_command_at(
+        &mut self,
+        binding: &crate::config::CustomCommandKeybind,
+        owner: Option<crate::app::popup::PopupOwner>,
+    ) -> io::Result<()> {
+        let geometry = crate::app::popup::PopupGeometry {
+            width: binding.width,
+            height: binding.height,
+        };
+        if let Some(owner) = owner {
+            let (env, _) = self.custom_command_env_at(Some((
+                owner.workspace_index,
+                owner.tab_index,
+                Some(owner.pane_id),
+            )));
+            self.spawn_popup_shell_command_at(owner, &binding.command, None, env, geometry)
+        } else {
+            self.spawn_popup_shell_command(
+                &binding.command,
+                None,
+                self.custom_command_env().0,
+                geometry,
+            )
+        }
     }
 
     fn custom_command_env(&self) -> (Vec<(String, String)>, Option<std::path::PathBuf>) {
+        self.custom_command_env_at(self.focused_custom_command_target())
+    }
+
+    fn focused_custom_command_target(
+        &self,
+    ) -> Option<(usize, usize, Option<crate::layout::PaneId>)> {
+        self.state.active.and_then(|ws_idx| {
+            let workspace = self.state.workspaces.get(ws_idx)?;
+            Some((
+                ws_idx,
+                workspace.active_tab_index(),
+                workspace.focused_pane_id(),
+            ))
+        })
+    }
+
+    pub(crate) fn custom_command_env_at(
+        &self,
+        target: Option<(usize, usize, Option<crate::layout::PaneId>)>,
+    ) -> (Vec<(String, String)>, Option<std::path::PathBuf>) {
         let mut env = vec![(
             crate::api::SOCKET_PATH_ENV_VAR.to_string(),
             crate::api::socket_path().display().to_string(),
@@ -840,24 +879,23 @@ impl App {
         }
 
         let mut cwd = None;
-        if let Some(ws_idx) = self.state.active {
+        if let Some((ws_idx, tab_idx, pane_id)) = target {
             env.push((
                 "HERDR_ACTIVE_WORKSPACE_ID".to_string(),
                 self.public_workspace_id(ws_idx),
             ));
             if let Some(workspace) = self.state.workspaces.get(ws_idx) {
-                let tab_idx = workspace.active_tab_index();
                 if let Some(tab_id) = self.public_tab_id(ws_idx, tab_idx) {
                     env.push(("HERDR_ACTIVE_TAB_ID".to_string(), tab_id));
                 }
-                if let Some(pane_id) = workspace.focused_pane_id() {
+                if let Some(pane_id) = pane_id {
                     if let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) {
                         env.push((
                             "HERDR_ACTIVE_PANE_ID".to_string(),
                             crate::workspace::pane_env_id_from_public(&public_pane_id),
                         ));
                     }
-                    if let Some(pane_cwd) = workspace.active_tab().and_then(|tab| {
+                    if let Some(pane_cwd) = workspace.tabs.get(tab_idx).and_then(|tab| {
                         tab.cwd_for_pane(pane_id, &self.state.terminals, &self.terminal_runtimes)
                     }) {
                         env.push((
@@ -878,12 +916,20 @@ impl App {
         &mut self,
         binding: &crate::config::CustomCommandKeybind,
     ) -> std::io::Result<()> {
+        self.spawn_custom_command_at(binding, self.focused_custom_command_target())
+    }
+
+    pub(crate) fn spawn_custom_command_at(
+        &mut self,
+        binding: &crate::config::CustomCommandKeybind,
+        target: Option<(usize, usize, Option<crate::layout::PaneId>)>,
+    ) -> std::io::Result<()> {
         let mut command = crate::platform::detached_custom_command_process(&binding.command);
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let (env, cwd) = self.custom_command_env();
+        let (env, cwd) = self.custom_command_env_at(target);
         command.envs(env);
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
@@ -923,6 +969,27 @@ impl App {
         let pane_id = ws
             .focused_pane_id()
             .ok_or_else(|| std::io::Error::other("no focused pane"))?;
+        self.open_scrollback_in_editor_at(OverlayCommandTarget {
+            workspace_index: ws_idx,
+            pane_id,
+            size: self.state.estimate_pane_size(),
+            focus: true,
+        })?;
+        Ok(())
+    }
+
+    pub(crate) fn open_scrollback_in_editor_at(
+        &mut self,
+        target: OverlayCommandTarget,
+    ) -> std::io::Result<crate::layout::PaneId> {
+        let ws_idx = target.workspace_index;
+        let pane_id = target.pane_id;
+        let tab_idx = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.find_tab_index_for_pane(pane_id))
+            .ok_or_else(|| std::io::Error::other("focused pane disappeared"))?;
         let scrollback = self
             .state
             .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
@@ -938,14 +1005,23 @@ impl App {
                 return Err(err);
             }
         };
-        let (env, _) = self.custom_command_env();
-        let new_pane = match self.spawn_overlay_argv_command(&argv, None, env, vec![path.clone()]) {
+        let (env, _) = self.custom_command_env_at(Some((ws_idx, tab_idx, Some(pane_id))));
+        let focus = target.focus;
+        let previous_focus_target = self.state.current_pane_focus_target();
+        let new_pane = match self.spawn_overlay_argv_command_at(
+            target,
+            &argv,
+            None,
+            env,
+            vec![path.clone()],
+        ) {
             Ok((_, new_pane)) => new_pane,
             Err(err) => {
                 let _ = fs::remove_file(&path);
                 return Err(err);
             }
         };
+        let new_pane_id = new_pane.pane_id;
         let terminal_id = new_pane.terminal.id.clone();
         self.terminal_runtimes
             .insert(terminal_id.clone(), new_pane.runtime);
@@ -953,7 +1029,19 @@ impl App {
             .remove_alias_shadowed_by_new_pane(new_pane.pane_id);
         self.state.terminals.insert(terminal_id, new_pane.terminal);
 
-        if let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) {
+        if focus {
+            let new_focus_target = crate::app::state::PaneFocusTarget {
+                workspace_id: self.state.workspaces[ws_idx].id.clone(),
+                pane_id: new_pane_id,
+            };
+            if previous_focus_target.as_ref() != Some(&new_focus_target) {
+                self.state.previous_pane_focus = previous_focus_target;
+            }
+            self.state.switch_workspace_tab(ws_idx, tab_idx);
+            self.state.mode = Mode::Terminal;
+        }
+
+        if let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id).filter(|_| focus) {
             self.state.toast = Some(crate::app::state::ToastNotification {
                 kind: crate::app::state::ToastKind::Finished,
                 title: "opened scrollback".to_string(),
@@ -962,7 +1050,7 @@ impl App {
                 target: None,
             });
         }
-        Ok(())
+        Ok(new_pane_id)
     }
 
     fn spawn_pane_command(
@@ -973,39 +1061,72 @@ impl App {
         let Some(ws_idx) = self.state.active else {
             return Err(std::io::Error::other("no active workspace"));
         };
+        let pane_id = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|workspace| workspace.focused_pane_id())
+            .ok_or_else(|| std::io::Error::other("no focused pane"))?;
+        self.spawn_pane_command_at(
+            OverlayCommandTarget {
+                workspace_index: ws_idx,
+                pane_id,
+                size: self.state.estimate_pane_size(),
+                focus: true,
+            },
+            command,
+            temp_files,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn spawn_pane_command_at(
+        &mut self,
+        target: OverlayCommandTarget,
+        command: &str,
+        temp_files: Vec<std::path::PathBuf>,
+    ) -> std::io::Result<crate::layout::PaneId> {
+        let ws_idx = target.workspace_index;
+        let tab_idx = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|workspace| workspace.find_tab_index_for_pane(target.pane_id))
+            .ok_or_else(|| std::io::Error::other("focused pane disappeared"))?;
         let previous_focus_target = self.state.current_pane_focus_target();
-        let (rows, cols) = self.state.estimate_pane_size();
+        let (rows, cols) = target.size;
         let new_rows = rows.max(4);
         let new_cols = cols.max(10);
-        let (env, _) = self.custom_command_env();
+        let (env, _) = self.custom_command_env_at(Some((ws_idx, tab_idx, Some(target.pane_id))));
 
         let ws = self
             .state
             .workspaces
             .get_mut(ws_idx)
             .ok_or_else(|| std::io::Error::other("active workspace disappeared"))?;
-        let tab_idx = ws.active_tab_index();
-        let previous_focus = ws
-            .focused_pane_id()
-            .ok_or_else(|| std::io::Error::other("no focused pane"))?;
-        let previous_zoomed = ws.active_tab().map(|tab| tab.zoomed).unwrap_or(false);
-        let cwd = ws.active_tab().and_then(|tab| {
+        let previous_focus = target.pane_id;
+        let previous_zoomed = ws.tabs[tab_idx].zoomed;
+        let cwd = ws.tabs.get(tab_idx).and_then(|tab| {
             tab.cwd_for_pane(
                 previous_focus,
                 &self.state.terminals,
                 &self.terminal_runtimes,
             )
         });
-        let new_pane = ws.split_focused_command(
-            Direction::Horizontal,
-            new_rows,
-            new_cols,
-            cwd,
-            command,
-            env,
-            self.state.pane_scrollback_limit_bytes,
-            self.state.host_terminal_theme,
-        )?;
+        let (_, new_pane) = ws
+            .split_pane_shell_command(
+                previous_focus,
+                Direction::Horizontal,
+                new_rows,
+                new_cols,
+                cwd,
+                command,
+                env,
+                self.state.pane_scrollback_limit_bytes,
+                self.state.host_terminal_theme,
+                target.focus,
+            )
+            .ok_or_else(|| std::io::Error::other("focused pane disappeared"))??;
         let new_pane_id = new_pane.pane_id;
         self.terminal_runtimes
             .insert(new_pane.terminal.id.clone(), new_pane.runtime);
@@ -1016,16 +1137,10 @@ impl App {
             workspace_id: ws.id.clone(),
             pane_id: new_pane_id,
         };
-        if previous_focus_target.as_ref() != Some(&new_focus_target) {
+        if target.focus && previous_focus_target.as_ref() != Some(&new_focus_target) {
             self.state.previous_pane_focus = previous_focus_target;
         }
-        ws.active_tab_mut()
-            .expect("workspace must have an active tab")
-            .layout
-            .focus_pane(new_pane_id);
-        ws.active_tab_mut()
-            .expect("workspace must have an active tab")
-            .zoomed = true;
+        ws.tabs[tab_idx].zoomed = true;
         self.overlay_panes.insert(
             new_pane_id,
             super::super::OverlayPaneState {
@@ -1037,8 +1152,10 @@ impl App {
             },
         );
         self.state.remove_alias_shadowed_by_new_pane(new_pane_id);
-        self.state.mode = Mode::Terminal;
-        Ok(())
+        if target.focus {
+            self.state.mode = Mode::Terminal;
+        }
+        Ok(new_pane_id)
     }
 
     pub(crate) fn spawn_overlay_argv_command(
@@ -1053,9 +1170,6 @@ impl App {
         };
         let previous_focus_target = self.state.current_pane_focus_target();
         let (rows, cols) = self.state.estimate_pane_size();
-        let new_rows = rows.max(4);
-        let new_cols = cols.max(10);
-
         let ws = self
             .state
             .workspaces
@@ -1064,8 +1178,53 @@ impl App {
         let previous_focus = ws
             .focused_pane_id()
             .ok_or_else(|| std::io::Error::other("no focused pane"))?;
+        let result = self.spawn_overlay_argv_command_at(
+            OverlayCommandTarget {
+                workspace_index: ws_idx,
+                pane_id: previous_focus,
+                size: (rows, cols),
+                focus: true,
+            },
+            argv,
+            cwd,
+            extra_env,
+            temp_files,
+        )?;
+        let tab_idx = self.state.workspaces[ws_idx]
+            .find_tab_index_for_pane(result.1.pane_id)
+            .ok_or_else(|| std::io::Error::other("plugin overlay tab disappeared"))?;
+        let new_focus_target = crate::app::state::PaneFocusTarget {
+            workspace_id: self.state.workspaces[ws_idx].id.clone(),
+            pane_id: result.1.pane_id,
+        };
+        if previous_focus_target.as_ref() != Some(&new_focus_target) {
+            self.state.previous_pane_focus = previous_focus_target;
+        }
+        self.state.switch_workspace_tab(ws_idx, tab_idx);
+        self.state.mode = Mode::Terminal;
+        Ok(result)
+    }
+
+    pub(crate) fn spawn_overlay_argv_command_at(
+        &mut self,
+        target: OverlayCommandTarget,
+        argv: &[String],
+        cwd: Option<std::path::PathBuf>,
+        extra_env: Vec<(String, String)>,
+        temp_files: Vec<std::path::PathBuf>,
+    ) -> std::io::Result<(usize, crate::workspace::NewPane)> {
+        let ws_idx = target.workspace_index;
+        let previous_focus = target.pane_id;
+        let ws = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .ok_or_else(|| std::io::Error::other("active workspace disappeared"))?;
+        let tab_idx = ws
+            .find_tab_index_for_pane(previous_focus)
+            .ok_or_else(|| std::io::Error::other("focused pane disappeared"))?;
         let cwd = cwd.or_else(|| {
-            ws.active_tab().and_then(|tab| {
+            ws.tabs.get(tab_idx).and_then(|tab| {
                 tab.cwd_for_pane(
                     previous_focus,
                     &self.state.terminals,
@@ -1074,24 +1233,24 @@ impl App {
             })
         });
 
-        let (tab_idx, new_pane, workspace_id) = {
+        let new_pane = {
             let ws = self
                 .state
                 .workspaces
                 .get_mut(ws_idx)
                 .ok_or_else(|| std::io::Error::other("active workspace disappeared"))?;
-            let previous_zoomed = ws.active_tab().map(|tab| tab.zoomed).unwrap_or(false);
+            let previous_zoomed = ws.tabs[tab_idx].zoomed;
             let result = ws.split_pane_argv_command(
                 previous_focus,
                 Direction::Horizontal,
-                new_rows,
-                new_cols,
+                target.size.0.max(4),
+                target.size.1.max(10),
                 cwd,
                 argv,
                 extra_env,
                 self.state.pane_scrollback_limit_bytes,
                 self.state.host_terminal_theme,
-                true,
+                target.focus,
             );
             let (tab_idx, new_pane) = match result {
                 Some(Ok(result)) => result,
@@ -1112,20 +1271,17 @@ impl App {
                     temp_files,
                 },
             );
-            (tab_idx, new_pane, ws.id.clone())
+            new_pane
         };
-
-        let new_focus_target = crate::app::state::PaneFocusTarget {
-            workspace_id,
-            pane_id: new_pane.pane_id,
-        };
-        if previous_focus_target.as_ref() != Some(&new_focus_target) {
-            self.state.previous_pane_focus = previous_focus_target;
-        }
-        self.state.switch_workspace_tab(ws_idx, tab_idx);
-        self.state.mode = Mode::Terminal;
         Ok((ws_idx, new_pane))
     }
+}
+
+pub(crate) struct OverlayCommandTarget {
+    pub(crate) workspace_index: usize,
+    pub(crate) pane_id: crate::layout::PaneId,
+    pub(crate) size: (u16, u16),
+    pub(crate) focus: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1139,8 +1295,15 @@ pub(crate) fn command_for_key(
     key: TerminalKey,
     dispatch: BindingDispatch,
 ) -> Option<crate::config::CustomCommandKeybind> {
-    state
-        .keybinds
+    custom_command_for_bindings(&state.keybinds, key, dispatch)
+}
+
+pub(crate) fn custom_command_for_bindings(
+    keybinds: &crate::config::Keybinds,
+    key: TerminalKey,
+    dispatch: BindingDispatch,
+) -> Option<crate::config::CustomCommandKeybind> {
+    keybinds
         .custom_commands
         .iter()
         .find(|binding| match dispatch {
@@ -1359,7 +1522,7 @@ pub(crate) enum NavigateAction {
     OpenNavigator,
 }
 
-fn copy_mode_survives_prefix_action(action: NavigateAction) -> bool {
+pub(crate) fn copy_mode_survives_prefix_action(action: NavigateAction) -> bool {
     matches!(
         action,
         NavigateAction::SwitchWorkspace(_)
@@ -1389,7 +1552,14 @@ fn indexed_navigation_action(
     key: TerminalKey,
     dispatch: BindingDispatch,
 ) -> Option<NavigateAction> {
-    let kb = &state.keybinds;
+    indexed_action_for_bindings(&state.keybinds, key, dispatch)
+}
+
+fn indexed_action_for_bindings(
+    kb: &crate::config::Keybinds,
+    key: TerminalKey,
+    dispatch: BindingDispatch,
+) -> Option<NavigateAction> {
     let trigger_matches = |binding: &crate::config::IndexedKeybind| match dispatch {
         BindingDispatch::Direct => binding.trigger.is_direct(),
         BindingDispatch::Prefix => binding.trigger.is_prefix(),
@@ -1446,7 +1616,23 @@ fn non_indexed_action_for_key(
     key: TerminalKey,
     dispatch: BindingDispatch,
 ) -> Option<NavigateAction> {
-    let kb = &state.keybinds;
+    non_indexed_action_for_bindings(&state.keybinds, key, dispatch)
+}
+
+pub(crate) fn navigation_action_for_bindings(
+    kb: &crate::config::Keybinds,
+    key: TerminalKey,
+    dispatch: BindingDispatch,
+) -> Option<NavigateAction> {
+    non_indexed_action_for_bindings(kb, key, dispatch)
+        .or_else(|| indexed_action_for_bindings(kb, key, dispatch))
+}
+
+fn non_indexed_action_for_bindings(
+    kb: &crate::config::Keybinds,
+    key: TerminalKey,
+    dispatch: BindingDispatch,
+) -> Option<NavigateAction> {
     for (bindings, action) in [
         (&kb.help, NavigateAction::Help),
         (&kb.settings, NavigateAction::Settings),
@@ -2979,6 +3165,63 @@ navigate_pane_down = "ctrl+j"
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn custom_command_explicit_owner_preserves_public_focus() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("local"), Workspace::test_new("owner")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Navigate;
+        let before = app.state.current_pane_focus_target();
+        let pane = app.state.workspaces[1].tabs[0].root_pane;
+        let output_path = unique_temp_path("custom-command-explicit-owner");
+        let binding = crate::config::CustomCommandKeybind {
+            bindings: crate::config::ActionKeybinds::prefix("m"),
+            label: "prefix+m".into(),
+            command: format!(
+                "printf '%s\\n%s\\n%s\\n' \"$HERDR_ACTIVE_WORKSPACE_ID\" \"$HERDR_ACTIVE_TAB_ID\" \"$HERDR_ACTIVE_PANE_ID\" > '{}'",
+                output_path.display(),
+            ),
+            action: crate::config::CustomCommandAction::Shell,
+            description: None,
+            width: None,
+            height: None,
+        };
+        app.spawn_custom_command_at(&binding, Some((1, 0, Some(pane))))
+            .expect("explicit owner command should spawn");
+        let content = wait_for_file(&output_path);
+        let child = app
+            .detached_custom_command_children
+            .last_mut()
+            .expect("owned child");
+        let pid = child.id();
+        assert!(child.wait().expect("owned command exit").success());
+        assert!(!crate::platform::process_exists(pid));
+        assert_eq!(
+            content.lines().collect::<Vec<_>>(),
+            vec![
+                app.public_workspace_id(1),
+                app.public_tab_id(1, 0).expect("owner tab"),
+                crate::workspace::pane_env_id_from_public(
+                    &app.public_pane_id(1, pane).expect("owner pane")
+                ),
+            ]
+        );
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(app.state.selected, 0);
+        assert_eq!(app.state.mode, Mode::Navigate);
+        assert_eq!(app.state.current_pane_focus_target(), before);
+        std::fs::remove_file(output_path).expect("owned output cleanup");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn custom_command_runs_from_prefix_key_in_navigate_mode() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
@@ -3062,6 +3305,107 @@ navigate_pane_down = "ctrl+j"
 
         let _ = std::fs::remove_file(output_path);
         let _ = std::fs::remove_file(release_path);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn custom_pane_and_popup_explicit_owner_preserve_public_focus() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![Workspace::test_new("local"), Workspace::test_new("owner")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Navigate;
+        let before = app.state.current_pane_focus_target();
+        let owner_pane = app.state.workspaces[1].tabs[0].root_pane;
+        let root = std::env::current_dir()
+            .expect("test cwd")
+            .join(".local")
+            .join(format!("custom-command-owner-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("owned evidence directory");
+        let pane_output = root.join("pane.txt");
+        let popup_output = root.join("popup.txt");
+        let command = |path: &std::path::Path| {
+            format!(
+            "printf '%s\\n%s\\n%s\\n' \"$HERDR_ACTIVE_WORKSPACE_ID\" \"$HERDR_ACTIVE_TAB_ID\" \"$HERDR_ACTIVE_PANE_ID\" > '{}'; read -r line",
+            path.display(),
+        )
+        };
+        let new_pane = app
+            .spawn_pane_command_at(
+                OverlayCommandTarget {
+                    workspace_index: 1,
+                    pane_id: owner_pane,
+                    size: (24, 80),
+                    focus: false,
+                },
+                &command(&pane_output),
+                Vec::new(),
+            )
+            .expect("owned pane command");
+        let pane_text = wait_for_file(&pane_output);
+        assert_eq!(app.state.workspaces[1].tabs[0].layout.focused(), owner_pane);
+        assert!(app.state.workspaces[1].tabs[0].zoomed);
+        assert!(app.overlay_panes.contains_key(&new_pane));
+        let binding = crate::config::CustomCommandKeybind {
+            bindings: crate::config::ActionKeybinds::prefix("m"),
+            label: "prefix+m".into(),
+            command: command(&popup_output),
+            action: crate::config::CustomCommandAction::Popup,
+            description: None,
+            width: Some(crate::popup_size::PopupSize::Cells(50)),
+            height: Some(crate::popup_size::PopupSize::Cells(12)),
+        };
+        app.spawn_custom_popup_command_at(
+            &binding,
+            Some(crate::app::popup::PopupOwner {
+                workspace_index: 1,
+                tab_index: 0,
+                pane_id: owner_pane,
+                terminal_area: ratatui::layout::Rect::new(0, 0, 80, 24),
+            }),
+        )
+        .expect("owned popup command");
+        let popup_text = wait_for_file(&popup_output);
+        assert_eq!(pane_text, popup_text);
+        let expected = vec![
+            app.public_workspace_id(1),
+            app.public_tab_id(1, 0).expect("owner tab"),
+            crate::workspace::pane_env_id_from_public(
+                &app.public_pane_id(1, owner_pane).expect("owner pane"),
+            ),
+        ];
+        assert_eq!(pane_text.lines().collect::<Vec<_>>(), expected);
+        let popup = app.state.popup_panes.last().expect("owned popup");
+        assert_eq!(popup.workspace_id, app.state.workspaces[1].id);
+        assert_eq!(popup.width, binding.width);
+        assert_eq!(popup.height, binding.height);
+        assert_eq!(app.state.active, Some(0));
+        assert_eq!(app.state.selected, 0);
+        assert_eq!(app.state.mode, Mode::Navigate);
+        assert_eq!(app.state.current_pane_focus_target(), before);
+        let pids: Vec<_> = app
+            .terminal_runtimes
+            .values()
+            .filter_map(|runtime| runtime.child_pid())
+            .collect();
+        assert_eq!(pids.len(), 2);
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        assert!(pids
+            .iter()
+            .all(|pid| !crate::platform::process_exists(*pid)));
+        std::fs::write(root.join("evidence.json"), serde_json::to_vec_pretty(&serde_json::json!({
+            "child_pids":pids,"test_pid":std::process::id(),"pane_output":pane_text,"popup_output":popup_text,
+            "owner_ids":expected,"public_focus_unchanged":true,"width":binding.width,"height":binding.height,
+        })).expect("evidence JSON")).expect("owned evidence");
     }
 
     #[cfg(unix)]

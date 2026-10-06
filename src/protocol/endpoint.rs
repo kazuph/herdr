@@ -30,6 +30,9 @@
 // that will call them is follow-up work, so they are unused in production.
 #![allow(dead_code)]
 
+mod core;
+pub use core::*;
+
 use serde::{Deserialize, Serialize};
 
 /// Current endpoint generation advertised by this binary.

@@ -151,6 +151,15 @@ impl App {
         params: AgentStartParams,
         extra_env: Vec<(String, String)>,
     ) -> Result<(crate::api::schema::AgentInfo, Vec<String>), AgentStartError> {
+        self.start_agent_at(params, extra_env, None)
+    }
+
+    pub(super) fn start_agent_at(
+        &mut self,
+        params: AgentStartParams,
+        extra_env: Vec<(String, String)>,
+        target: Option<crate::layout::PaneId>,
+    ) -> Result<(crate::api::schema::AgentInfo, Vec<String>), AgentStartError> {
         let name = params.name.trim().to_string();
         if name.is_empty() {
             return Err(AgentStartError::InvalidName);
@@ -191,9 +200,16 @@ impl App {
                     return Err(AgentStartError::PlacementConflict);
                 }
             }
-            let target_pane = self
-                .state
-                .implicit_pane_insertion_target(ws_idx, tab_idx)
+            let target_pane = target
+                .filter(|pane| {
+                    self.state.workspaces[ws_idx].find_tab_index_for_pane(*pane) == Some(tab_idx)
+                })
+                .or_else(|| {
+                    target
+                        .is_none()
+                        .then(|| self.state.implicit_pane_insertion_target(ws_idx, tab_idx))
+                        .flatten()
+                })
                 .ok_or_else(|| AgentStartError::TargetNotFound {
                     target: tab_id.clone(),
                 })?;

@@ -49,6 +49,35 @@ impl Default for FileStore {
 }
 
 impl FileStore {
+    /// Fixed 5da decoded export: unique owned file, with aggregate limits at the caller.
+    #[cfg(unix)]
+    pub(crate) fn export(&self, data: &[u8]) -> io::Result<OwnedExport> {
+        use std::io::Write as _;
+        if data.len() > MAX_EXPORT_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "decoded export exceeds 16 MiB",
+            ));
+        }
+        let generation = self.generation()?;
+        let id = self.next_fingerprint.fetch_add(1, Ordering::Relaxed);
+        let path = generation.source.join(format!("decoded-{id}.rgba"));
+        let mut writer = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(FILE_MODE)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&path)?;
+        let file = ExportFile {
+            path,
+            _generation: generation,
+        };
+        writer.write_all(data)?;
+        drop(writer);
+        let lease = self.lease(&file.path, data.len())?;
+        Ok(OwnedExport { lease, _file: file })
+    }
+
     fn new(base: PathBuf) -> Self {
         Self {
             base,
@@ -102,6 +131,36 @@ impl FileStore {
     }
 }
 
+#[cfg(unix)]
+pub(crate) struct OwnedExport {
+    lease: Lease,
+    _file: ExportFile,
+}
+#[cfg(unix)]
+struct ExportFile {
+    path: PathBuf,
+    _generation: Arc<Generation>,
+}
+#[cfg(unix)]
+impl OwnedExport {
+    pub(crate) fn path(&self) -> &Path {
+        self.lease.path()
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.lease.len()
+    }
+}
+#[cfg(unix)]
+impl Drop for ExportFile {
+    fn drop(&mut self) {
+        if let Err(err) = fs::remove_file(&self.path) {
+            if err.kind() != io::ErrorKind::NotFound {
+                tracing::warn!(path = %self.path.display(), err = %err, "failed to remove decoded graphics export");
+            }
+        }
+    }
+}
+
 impl Lease {
     pub(crate) fn path(&self) -> &Path {
         &self.inner.path
@@ -142,14 +201,23 @@ impl Drop for Generation {
     }
 }
 
+// Fixed 5da native export ceiling; API frames retain their existing validator.
+#[cfg(unix)]
+const MAX_EXPORT_BYTES: usize = 16 * 1024 * 1024;
+
 #[cfg(unix)]
 pub(crate) fn validate_direct_source(path: &Path, expected_len: usize) -> io::Result<()> {
+    validate_source_under(path, expected_len, runtime_base())
+}
+
+#[cfg(unix)]
+fn validate_source_under(path: &Path, expected_len: usize, base: PathBuf) -> io::Result<()> {
     let source = path.parent().ok_or_else(invalid_path)?;
     let generation = source.parent().ok_or_else(invalid_path)?;
     if !path.is_absolute()
         || path.file_name().is_none()
         || source.file_name().and_then(|name| name.to_str()) != Some("source")
-        || generation.parent() != Some(runtime_base().as_path())
+        || generation.parent() != Some(base.as_path())
         || !generation
             .file_name()
             .and_then(|name| name.to_str())
@@ -157,13 +225,33 @@ pub(crate) fn validate_direct_source(path: &Path, expected_len: usize) -> io::Re
     {
         return Err(invalid_path());
     }
-    for directory in [runtime_base(), generation.to_owned(), source.to_owned()] {
+    for directory in [base, generation.to_owned(), source.to_owned()] {
         validate_directory(&directory)?;
     }
     let file = open_no_follow(path)?;
     let metadata = file.metadata()?;
     validate_metadata(&metadata, expected_len)?;
     validate_path_identity(path, &metadata)
+}
+
+/// Unlike the API validator, accepts only the dedicated native hierarchy.
+#[cfg(unix)]
+pub(crate) fn validate_native_source(path: &Path, expected_len: usize) -> io::Result<()> {
+    if expected_len == 0 || expected_len > MAX_EXPORT_BYTES || !expected_len.is_multiple_of(4) {
+        return Err(invalid_path());
+    }
+    validate_source_under(path, expected_len, native_base())
+}
+
+fn native_base() -> PathBuf {
+    #[cfg(unix)]
+    {
+        PathBuf::from(format!("/var/tmp/herdr-native-sources-{}", effective_uid()))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from("native-sources-unavailable")
+    }
 }
 
 fn create_generation(base: &Path) -> io::Result<Generation> {

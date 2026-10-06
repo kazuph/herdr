@@ -7,6 +7,8 @@ use super::common::AgentStatus;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WorkspaceCreateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<crate::workspace::WorkspaceSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(default)]
     pub focus: bool,
@@ -20,6 +22,19 @@ pub struct WorkspaceCreateParams {
 pub struct WorkspaceRenameParams {
     pub workspace_id: String,
     pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceSetSectionParams {
+    pub workspace_id: String,
+    pub section: crate::workspace::WorkspaceSection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceDuplicateParams {
+    pub workspace_id: String,
+    #[serde(default)]
+    pub focus: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -50,6 +65,9 @@ pub struct WorkspaceInfo {
     pub pane_count: usize,
     pub tab_count: usize,
     pub active_tab_id: String,
+    /// Existing monotonic counter owned by the workspace, including closed tabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_public_tab_number: Option<usize>,
     pub agent_status: AgentStatus,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     #[schemars(schema_with = "super::common::metadata_token_values_schema")]

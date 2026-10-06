@@ -38,7 +38,7 @@ impl App {
             .resolved_identity_cwd_from(&self.state.terminals, &self.terminal_runtimes)
     }
 
-    pub(super) fn follow_cwd_for_pane_in_workspace(
+    pub(crate) fn follow_cwd_for_pane_in_workspace(
         &self,
         ws_idx: usize,
         pane_id: crate::layout::PaneId,
@@ -57,7 +57,7 @@ impl App {
         self.follow_cwd_for_pane_in_workspace(ws_idx, pane_id)
     }
 
-    pub(super) fn resolve_new_terminal_cwd(&self, follow_cwd: Option<PathBuf>) -> PathBuf {
+    pub(crate) fn resolve_new_terminal_cwd(&self, follow_cwd: Option<PathBuf>) -> PathBuf {
         resolve_new_terminal_cwd(&self.state.new_terminal_cwd, follow_cwd)
     }
 
@@ -229,6 +229,23 @@ impl App {
     }
 
     pub(super) fn duplicate_workspace(&mut self, ws_idx: usize) -> std::io::Result<()> {
+        let duplicate_idx = self.create_workspace_duplicate(ws_idx)?;
+        self.state.switch_workspace(duplicate_idx);
+        self.state.mode = Mode::Terminal;
+        self.schedule_session_save();
+        Ok(())
+    }
+
+    pub(super) fn create_workspace_duplicate(&mut self, ws_idx: usize) -> std::io::Result<usize> {
+        self.create_workspace_duplicate_at(ws_idx, None, &[])
+    }
+
+    pub(super) fn create_workspace_duplicate_at(
+        &mut self,
+        ws_idx: usize,
+        active_tab: Option<usize>,
+        focused_panes: &[(usize, crate::layout::PaneId)],
+    ) -> std::io::Result<usize> {
         if ws_idx >= self.state.workspaces.len() {
             return Err(std::io::Error::other("workspace not found"));
         }
@@ -248,6 +265,14 @@ impl App {
         );
         let mut workspace_snapshot = snapshot.workspaces.remove(ws_idx);
         workspace_snapshot.id = None;
+        if let Some(active_tab) = active_tab {
+            workspace_snapshot.active_tab = active_tab;
+        }
+        for &(tab, pane) in focused_panes {
+            if let Some(tab) = workspace_snapshot.tabs.get_mut(tab) {
+                tab.focused = Some(pane.raw());
+            }
+        }
 
         let duplicate_snapshot = crate::persist::SessionSnapshot {
             version: snapshot.version,
@@ -290,10 +315,8 @@ impl App {
         }
         self.state.workspaces.push(workspace);
         let duplicate_idx = self.state.workspaces.len() - 1;
-        self.state.switch_workspace(duplicate_idx);
-        self.state.mode = Mode::Terminal;
         self.schedule_session_save();
-        Ok(())
+        Ok(duplicate_idx)
     }
 
     pub(crate) fn run_pending_duplicate_workspace(&mut self) -> bool {
@@ -537,6 +560,7 @@ impl App {
             active_tab_id: self.public_tab_id(index, ws.active_tab).unwrap_or_else(|| {
                 crate::workspace::public_tab_id_for_number(&ws.id, ws.tabs[ws.active_tab].number)
             }),
+            next_public_tab_number: Some(ws.next_public_tab_number),
             agent_status: pane_agent_status(agg_state, seen),
             tokens: ws.metadata_tokens.values(),
             worktree: ws

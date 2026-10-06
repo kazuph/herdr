@@ -8,3 +8,8 @@ pub struct RunStartParams {
     pub argv: Vec<String>,
     pub completion: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RunLogOpenParams {
+    pub job_id: String,
+}

@@ -34,8 +34,16 @@ pub(crate) struct DirectGate {
     pub(crate) client_id: u64,
     pub(crate) deadline: std::time::Instant,
     pub(crate) written: bool,
+    pub(crate) endpoint_image_id: Option<u32>,
     pub(crate) success_response: String,
     pub(crate) respond_to: std::sync::mpsc::Sender<String>,
+}
+
+pub(crate) struct InfoRuntime {
+    pub(crate) cell_size: crate::kitty_graphics::HostCellSize,
+    pub(crate) pane_visible: bool,
+    pub(crate) direct_available: bool,
+    pub(crate) pixel_mouse: bool,
 }
 
 #[derive(Debug)]

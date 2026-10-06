@@ -66,6 +66,7 @@ mod checksum;
 mod cli;
 mod client;
 mod config;
+mod copy_mode;
 mod detect;
 mod dispatch;
 mod events;

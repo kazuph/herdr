@@ -94,6 +94,7 @@ pub enum RootSplitSide {
 }
 
 /// A node in the BSP tree. Public for serialization.
+#[derive(Clone)]
 pub enum Node {
     Pane(PaneId),
     Split {
@@ -105,6 +106,7 @@ pub enum Node {
 }
 
 /// BSP tiling layout. Tracks a tree of splits and a focused pane.
+#[derive(Clone)]
 pub struct TileLayout {
     root: Node,
     focus: PaneId,
@@ -462,31 +464,41 @@ pub fn find_in_direction(
     direction: NavDirection,
     panes: &[PaneInfo],
 ) -> Option<PaneId> {
-    let fr = focused.rect;
+    find_rect_in_direction(
+        &focused.id,
+        focused.rect,
+        direction,
+        panes.iter().map(|pane| (&pane.id, pane.rect)),
+    )
+    .copied()
+}
 
+/// The same geometry policy serves local pane identities and opaque endpoint identities.
+pub(crate) fn find_rect_in_direction<'a, T: PartialEq>(
+    focused: &T,
+    fr: Rect,
+    direction: NavDirection,
+    panes: impl IntoIterator<Item = (&'a T, Rect)>,
+) -> Option<&'a T> {
     panes
-        .iter()
+        .into_iter()
         .enumerate()
-        .filter(|(_, p)| p.id != focused.id)
-        .filter(|(_, p)| {
-            let r = p.rect;
-            match direction {
-                NavDirection::Left => {
-                    r.x + r.width <= fr.x && ranges_overlap(r.y, r.height, fr.y, fr.height)
-                }
-                NavDirection::Right => {
-                    r.x >= fr.x + fr.width && ranges_overlap(r.y, r.height, fr.y, fr.height)
-                }
-                NavDirection::Up => {
-                    r.y + r.height <= fr.y && ranges_overlap(r.x, r.width, fr.x, fr.width)
-                }
-                NavDirection::Down => {
-                    r.y >= fr.y + fr.height && ranges_overlap(r.x, r.width, fr.x, fr.width)
-                }
+        .filter(|(_, (id, _))| *id != focused)
+        .filter(|(_, (_, r))| match direction {
+            NavDirection::Left => {
+                r.x + r.width <= fr.x && ranges_overlap(r.y, r.height, fr.y, fr.height)
+            }
+            NavDirection::Right => {
+                r.x >= fr.x + fr.width && ranges_overlap(r.y, r.height, fr.y, fr.height)
+            }
+            NavDirection::Up => {
+                r.y + r.height <= fr.y && ranges_overlap(r.x, r.width, fr.x, fr.width)
+            }
+            NavDirection::Down => {
+                r.y >= fr.y + fr.height && ranges_overlap(r.x, r.width, fr.x, fr.width)
             }
         })
-        .min_by_key(|(index, p)| {
-            let r = p.rect;
+        .min_by_key(|(index, (_, r))| {
             let edge_distance = match direction {
                 NavDirection::Left => fr.x.saturating_sub(r.x + r.width),
                 NavDirection::Right => r.x.saturating_sub(fr.x + fr.width),
@@ -511,7 +523,7 @@ pub fn find_in_direction(
             };
             (edge_distance, Reverse(overlap), center_distance, *index)
         })
-        .map(|(_, p)| p.id)
+        .map(|(_, (id, _))| id)
 }
 
 fn ranges_overlap(a_start: u16, a_len: u16, b_start: u16, b_len: u16) -> bool {
@@ -1427,5 +1439,40 @@ mod tests {
             find_in_direction(&focused, NavDirection::Left, &panes),
             Some(pane(3))
         );
+    }
+
+    #[test]
+    fn directional_geometry_keeps_opaque_ids_and_translation_invariant() {
+        let ids = [
+            "opaque:center",
+            "other/p1",
+            "not-a-number",
+            "s1:t1:p1",
+            "p1",
+        ];
+        for (x, y) in [(0, 0), (31, 17)] {
+            let rects = [
+                Rect::new(x + 10, y + 10, 10, 10),
+                Rect::new(x, y + 10, 10, 10),
+                Rect::new(x + 20, y + 10, 10, 10),
+                Rect::new(x + 10, y, 10, 10),
+                Rect::new(x + 10, y + 20, 10, 10),
+            ];
+            for (direction, expected) in [
+                (NavDirection::Left, 1),
+                (NavDirection::Right, 2),
+                (NavDirection::Up, 3),
+                (NavDirection::Down, 4),
+            ] {
+                assert_eq!(
+                    find_rect_in_direction(&ids[0], rects[0], direction, ids.iter().zip(rects)),
+                    Some(&ids[expected]),
+                );
+                assert_eq!(
+                    find_rect_in_direction(&ids[0], rects[0], direction, [(&ids[0], rects[0])]),
+                    None,
+                );
+            }
+        }
     }
 }

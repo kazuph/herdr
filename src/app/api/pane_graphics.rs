@@ -36,27 +36,41 @@ impl App {
         id: String,
         target: crate::api::schema::PaneTarget,
     ) -> String {
+        self.handle_pane_graphics_info_with_runtime(id, target, None)
+    }
+
+    pub(crate) fn handle_pane_graphics_info_with_runtime(
+        &mut self,
+        id: String,
+        target: crate::api::schema::PaneTarget,
+        runtime: Option<crate::app::pane_graphics::InfoRuntime>,
+    ) -> String {
         if let Err(response) = require_enabled(self, &id) {
             return response;
         }
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
             return pane_not_found(id, &target.pane_id);
         };
-        let pane_visible = self.pane_graphics_visible(ws_idx, pane_id);
-        if !self.state.host_cell_size.is_known() {
+        let runtime = runtime.unwrap_or_else(|| crate::app::pane_graphics::InfoRuntime {
+            cell_size: self.state.host_cell_size,
+            pane_visible: self.pane_graphics_visible(ws_idx, pane_id),
+            direct_available: self.direct_graphics_available,
+            pixel_mouse: self.pixel_mouse_available,
+        });
+        if !runtime.cell_size.is_known() {
             return encode_error(id, "cell_size_unavailable", "host cell size is unavailable");
         }
-        let file_frame_directory = self
-            .direct_graphics_available
+        let file_frame_directory = runtime
+            .direct_available
             .then(|| self.pane_graphics_files.source_directory().ok())
             .flatten();
         let direct = file_frame_directory.is_some();
         encode_success(
             id,
             ResponseResult::PaneGraphicsInfo {
-                cell_width_px: self.state.host_cell_size.width_px,
-                cell_height_px: self.state.host_cell_size.height_px,
-                pane_visible,
+                cell_width_px: runtime.cell_size.width_px,
+                cell_height_px: runtime.cell_size.height_px,
+                pane_visible: runtime.pane_visible,
                 file_frame_directory: file_frame_directory
                     .map(|directory| directory.to_string_lossy().into_owned()),
                 file_frame_formats: if direct {
@@ -69,7 +83,7 @@ impl App {
                 // Damage metadata never changes the complete canonical frame contract.
                 file_frame_damage: true,
                 max_layers_per_pane: PANE_GRAPHICS_MAX_LAYERS_PER_PANE,
-                pixel_mouse: self.pixel_mouse_available,
+                pixel_mouse: runtime.pixel_mouse,
                 file_frame_transport: direct.then(|| "direct-kitty".into()),
             },
         )

@@ -14,6 +14,7 @@
 
 #[cfg(unix)]
 mod direct_graphics;
+pub(crate) mod endpoint;
 mod input;
 
 use std::collections::HashSet;

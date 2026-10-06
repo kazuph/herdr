@@ -1,4 +1,4 @@
-mod tokens;
+pub(crate) mod tokens;
 
 use ratatui::{
     layout::{Alignment, Rect},
@@ -103,6 +103,38 @@ fn agent_panel_sort_label(sort: AgentPanelSort) -> &'static str {
 const DETAIL_TAB_AGENTS: &str = "[agents]";
 const DETAIL_TAB_JOBS: &str = "[jobs]";
 
+pub(crate) fn sidebar_detail_header_lines(
+    area: Rect,
+    selected: SidebarDetailView,
+    p: &Palette,
+) -> Vec<(Rect, Line<'static>)> {
+    if area.height < 3 {
+        return Vec::new();
+    }
+    let mut lines = vec![(
+        Rect::new(area.x, area.y, area.width, 1),
+        Line::from(Span::styled(
+            "─".repeat(area.width as usize),
+            Style::default().fg(p.overlay0),
+        )),
+    )];
+    let (agents, jobs) = sidebar_detail_tab_rects(area);
+    for (rect, label, tab) in [
+        (agents, DETAIL_TAB_AGENTS, SidebarDetailView::Agents),
+        (jobs, DETAIL_TAB_JOBS, SidebarDetailView::Jobs),
+    ] {
+        if rect != Rect::default() {
+            let style = if selected == tab {
+                Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(p.overlay0)
+            };
+            lines.push((rect, Line::from(Span::styled(label, style))));
+        }
+    }
+    lines
+}
+
 /// Clickable tab labels on the detail panel's header row, left to right.
 pub(crate) fn sidebar_detail_tab_rects(area: Rect) -> (Rect, Rect) {
     if area.width == 0 || area.height < 2 {
@@ -138,6 +170,62 @@ pub(crate) fn workspace_panel_density_toggle_rect(
     }
     let width = display_width_u16(workspace_panel_density_label(density));
     Rect::new(area.x + area.width.saturating_sub(width), area.y, width, 1)
+}
+
+pub(crate) fn render_workspace_section_header(
+    frame: &mut Frame,
+    header: &crate::app::state::WorkspaceSectionHeaderArea,
+    expanded: bool,
+    p: &Palette,
+    list_bottom: u16,
+) {
+    let arrow = if expanded { "▾" } else { "▸" };
+    let new_rect = workspace_section_new_button_rect(header.rect);
+    let label_width = if new_rect == Rect::default() {
+        header.rect.width
+    } else {
+        new_rect.x.saturating_sub(header.rect.x).saturating_sub(1)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(arrow, Style::default().fg(p.accent)),
+            Span::raw(" "),
+            Span::styled(
+                truncate_end(header.section.label(), label_width as usize),
+                Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
+            ),
+        ])),
+        Rect::new(
+            header.rect.x,
+            header.rect.y,
+            label_width,
+            header.rect.height,
+        ),
+    );
+    if new_rect != Rect::default() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                "[new]",
+                Style::default()
+                    .fg(p.text)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            )),
+            new_rect,
+        );
+    }
+    for separator_y in [
+        header.rect.y.saturating_sub(1),
+        header.rect.y + header.rect.height,
+    ] {
+        if separator_y >= list_bottom {
+            continue;
+        }
+        let buf = frame.buffer_mut();
+        for x in header.rect.x..header.rect.x + header.rect.width {
+            buf[(x, separator_y)].set_symbol("─");
+            buf[(x, separator_y)].set_style(Style::default().fg(p.overlay0));
+        }
+    }
 }
 
 pub(crate) fn workspace_section_new_button_rect(header: Rect) -> Rect {
@@ -254,6 +342,17 @@ pub(crate) fn agent_panel_status_key(state: AgentState, seen: bool) -> &'static 
     }
 }
 
+fn workspace_jobs(app: &AppState, ws: &crate::workspace::Workspace) -> Vec<(String, Option<i32>)> {
+    app.jobs
+        .iter()
+        .filter(|job| {
+            app.parse_pane_id(&job.caller_pane)
+                .is_some_and(|(index, _)| app.workspaces[index].id == ws.id)
+        })
+        .map(|job| (job.status.clone(), job.exit_code))
+        .collect()
+}
+
 fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indented: bool) -> u16 {
     let (state, seen) = ws.aggregate_state(&app.terminals);
     let label = if indented {
@@ -279,6 +378,7 @@ fn workspace_row_height(app: &AppState, ws: &crate::workspace::Workspace, indent
             suppress_git_details: indented,
         },
     );
+    let rows = tokens::with_job_indicators(rows, workspace_jobs(app, ws), usize::MAX);
     match app.workspace_panel_density {
         WorkspacePanelDensity::Full => rows.len().max(3).min(u16::MAX as usize) as u16,
         WorkspacePanelDensity::Slim => 2,
@@ -459,11 +559,36 @@ pub(crate) fn workspace_sections_for_entries(
 }
 
 fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<WorkspaceListEntry> {
+    let memberships = app
+        .workspaces
+        .iter()
+        .map(|workspace| {
+            workspace
+                .worktree_space()
+                .map(|space| (space.key.as_str(), space.is_linked_worktree))
+        })
+        .collect::<Vec<_>>();
+    let visible_group_idx = if matches!(app.mode, Mode::Navigate) {
+        Some(app.selected)
+    } else {
+        app.active
+    };
+    workspace_group_entries(&memberships, visible_group_idx, force_expanded, |key| {
+        app.collapsed_space_keys.contains(key)
+    })
+}
+
+pub(crate) fn workspace_group_entries(
+    memberships: &[Option<(&str, bool)>],
+    visible_group_idx: Option<usize>,
+    force_expanded: bool,
+    is_collapsed: impl Fn(&str) -> bool,
+) -> Vec<WorkspaceListEntry> {
     let mut members_by_key = std::collections::HashMap::<String, Vec<usize>>::new();
-    for (ws_idx, ws) in app.workspaces.iter().enumerate() {
-        if let Some(space) = ws.worktree_space() {
+    for (ws_idx, membership) in memberships.iter().enumerate() {
+        if let Some((key, _)) = membership {
             members_by_key
-                .entry(space.key.clone())
+                .entry((*key).to_owned())
                 .or_default()
                 .push(ws_idx);
         }
@@ -473,34 +598,26 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
         .filter(|(_, members)| {
             members.len() >= 2
                 && members.iter().any(|idx| {
-                    app.workspaces
+                    memberships
                         .get(*idx)
-                        .and_then(|ws| ws.worktree_space())
-                        .is_some_and(|space| !space.is_linked_worktree)
+                        .and_then(|membership| *membership)
+                        .is_some_and(|(_, linked)| !linked)
                 })
         })
         .map(|(key, _)| key.clone())
         .collect::<std::collections::HashSet<_>>();
 
-    let visible_group_idx = if matches!(app.mode, Mode::Navigate) {
-        Some(app.selected)
-    } else {
-        app.active
-    };
     let active_group = visible_group_idx.and_then(|idx| {
-        app.workspaces
+        memberships
             .get(idx)
-            .and_then(|ws| ws.worktree_space())
-            .map(|space| space.key.clone())
+            .and_then(|membership| *membership)
+            .map(|(key, _)| key)
     });
 
     let mut emitted_groups = std::collections::HashSet::<String>::new();
     let mut entries = Vec::new();
-    for (ws_idx, ws) in app.workspaces.iter().enumerate() {
-        let Some(space) = ws
-            .worktree_space()
-            .filter(|space| grouped_keys.contains(&space.key))
-        else {
+    for (ws_idx, membership) in memberships.iter().enumerate() {
+        let Some((key, _)) = membership.filter(|(key, _)| grouped_keys.contains(*key)) else {
             entries.push(WorkspaceListEntry::Workspace {
                 ws_idx,
                 indented: false,
@@ -508,18 +625,18 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             continue;
         };
 
-        if !emitted_groups.insert(space.key.clone()) {
+        if !emitted_groups.insert(key.to_owned()) {
             continue;
         }
 
-        let Some(members) = members_by_key.get(&space.key) else {
+        let Some(members) = members_by_key.get(key) else {
             continue;
         };
         let Some(parent_idx) = members.iter().copied().find(|idx| {
-            app.workspaces
+            memberships
                 .get(*idx)
-                .and_then(|member| member.worktree_space())
-                .is_some_and(|member_space| !member_space.is_linked_worktree)
+                .and_then(|membership| *membership)
+                .is_some_and(|(_, linked)| !linked)
         }) else {
             entries.push(WorkspaceListEntry::Workspace {
                 ws_idx,
@@ -527,7 +644,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             });
             continue;
         };
-        let collapsed = !force_expanded && app.collapsed_space_keys.contains(&space.key);
+        let collapsed = !force_expanded && is_collapsed(key);
         entries.push(WorkspaceListEntry::Workspace {
             ws_idx: parent_idx,
             indented: false,
@@ -536,7 +653,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
         if collapsed {
             if let Some(active_idx) = visible_group_idx
                 .filter(|idx| *idx != parent_idx)
-                .filter(|_| active_group.as_deref() == Some(space.key.as_str()))
+                .filter(|_| active_group == Some(key))
             {
                 entries.push(WorkspaceListEntry::Workspace {
                     ws_idx: active_idx,
@@ -841,67 +958,180 @@ pub(crate) fn compute_workspace_list_areas(
         return (Vec::new(), Vec::new());
     }
 
-    let scroll = app.workspace_scroll;
+    let sections = sidebar_workspace_sections(app)
+        .into_iter()
+        .map(|(section, entries)| {
+            let rows = entries
+                .iter()
+                .enumerate()
+                .filter_map(|(entry_idx, entry)| {
+                    let WorkspaceListEntry::Workspace { ws_idx, indented } = entry;
+                    let ws = app.workspaces.get(*ws_idx)?;
+                    Some(WorkspaceSectionEntry {
+                        key: (*ws_idx, *indented),
+                        height: workspace_row_height(app, ws, *indented),
+                        indented: *indented,
+                        gap: workspace_entry_gap(app, &entries, entry_idx, *indented),
+                    })
+                })
+                .collect();
+            (section, workspace_section_is_expanded(app, section), rows)
+        })
+        .collect::<Vec<_>>();
+    let (cards, headers) = workspace_section_layout(
+        body,
+        app.workspace_scroll,
+        app.workspace_panel_density == WorkspacePanelDensity::Slim,
+        &sections,
+    );
+    (
+        cards
+            .into_iter()
+            .map(
+                |((ws_idx, indented), rect)| crate::app::state::WorkspaceCardArea {
+                    ws_idx,
+                    indented,
+                    rect,
+                },
+            )
+            .collect(),
+        headers,
+    )
+}
+
+pub(crate) struct WorkspaceSectionEntry<T> {
+    pub(crate) key: T,
+    pub(crate) height: u16,
+    pub(crate) indented: bool,
+    pub(crate) gap: u16,
+}
+
+pub(crate) struct WorkspaceLayoutBlock<T> {
+    pub(crate) header_rows: u16,
+    pub(crate) header_offset: u16,
+    pub(crate) expanded: bool,
+    pub(crate) entries: Vec<WorkspaceSectionEntry<T>>,
+}
+
+pub(crate) fn workspace_section_header_geometry(first: bool) -> (u16, u16) {
+    if first {
+        (0, FIRST_WORKSPACE_SECTION_HEADER_ROWS)
+    } else {
+        (1, WORKSPACE_SECTION_HEADER_ROWS)
+    }
+}
+
+/// Fork section geometry accepts client facts without constructing AppState.
+pub(crate) fn workspace_section_layout<T: Clone>(
+    body: Rect,
+    scroll: usize,
+    slim: bool,
+    sections: &[(
+        crate::workspace::WorkspaceSection,
+        bool,
+        Vec<WorkspaceSectionEntry<T>>,
+    )],
+) -> (
+    Vec<(T, Rect)>,
+    Vec<crate::app::state::WorkspaceSectionHeaderArea>,
+) {
+    let blocks = sections
+        .iter()
+        .enumerate()
+        .map(|(index, (_, expanded, entries))| {
+            let (header_offset, header_rows) = workspace_section_header_geometry(index == 0);
+            WorkspaceLayoutBlock {
+                header_rows,
+                header_offset,
+                expanded: *expanded,
+                entries: entries
+                    .iter()
+                    .map(|entry| WorkspaceSectionEntry {
+                        key: entry.key.clone(),
+                        height: entry.height,
+                        indented: entry.indented,
+                        gap: entry.gap,
+                    })
+                    .collect(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let (cards, headers) = workspace_block_layout(body, scroll, slim, &blocks);
+    (
+        cards,
+        headers
+            .into_iter()
+            .map(
+                |(index, rect)| crate::app::state::WorkspaceSectionHeaderArea {
+                    section: sections[index].0,
+                    rect,
+                },
+            )
+            .collect(),
+    )
+}
+
+pub(crate) type WorkspaceBlockAreas<T> = (Vec<(T, Rect)>, Vec<(usize, Rect)>);
+
+pub(crate) fn workspace_block_layout<T: Clone>(
+    body: Rect,
+    scroll: usize,
+    slim: bool,
+    blocks: &[WorkspaceLayoutBlock<T>],
+) -> WorkspaceBlockAreas<T> {
+    if body.width == 0 || body.height == 0 {
+        return (Vec::new(), Vec::new());
+    }
     let mut row_y = body.y;
     let body_bottom = body.y + body.height;
     let card_bottom = body_bottom.saturating_sub(WORKSPACE_BOTTOM_INSERTION_ROWS);
     let mut cards = Vec::new();
     let mut headers = Vec::new();
     let mut skipped = 0usize;
-
-    for (section_index, (section, entries)) in
-        sidebar_workspace_sections(app).into_iter().enumerate()
-    {
-        let (header_offset, header_rows) = if section_index == 0 {
-            (0, FIRST_WORKSPACE_SECTION_HEADER_ROWS)
-        } else {
-            (1, WORKSPACE_SECTION_HEADER_ROWS)
-        };
+    for (section_index, block) in blocks.iter().enumerate() {
+        let (header_offset, header_rows) = (block.header_offset, block.header_rows);
         if row_y.saturating_add(header_rows) > body_bottom {
             break;
         }
-        headers.push(crate::app::state::WorkspaceSectionHeaderArea {
-            section,
-            rect: Rect::new(body.x, row_y.saturating_add(header_offset), body.width, 1),
-        });
+        if header_rows > 0 {
+            headers.push((
+                section_index,
+                Rect::new(body.x, row_y.saturating_add(header_offset), body.width, 1),
+            ));
+        }
         row_y = row_y.saturating_add(header_rows).min(body_bottom);
-
-        if !workspace_section_is_expanded(app, section) {
+        if !block.expanded {
             continue;
         }
-
-        for (entry_idx, entry) in entries.iter().enumerate() {
+        for entry in &block.entries {
             if skipped < scroll {
                 skipped += 1;
                 continue;
             }
-            let WorkspaceListEntry::Workspace { ws_idx, indented } = entry;
-            let Some(ws) = app.workspaces.get(*ws_idx) else {
-                continue;
-            };
             let remaining_height = card_bottom.saturating_sub(row_y);
             if remaining_height == 0 {
                 return (cards, headers);
             }
-            let row_height = workspace_row_height_in_body(app, ws, *indented, remaining_height);
-            let display_height =
-                workspace_display_height_in_body(app, row_height, *indented, remaining_height);
-            let gap = workspace_entry_gap(app, &entries, entry_idx, *indented);
+            let row_height = entry.height.min(remaining_height);
+            let display_height = if slim && !entry.indented {
+                row_height.max(2)
+            } else {
+                row_height
+            }
+            .min(remaining_height);
             if row_y.saturating_add(display_height) > body_bottom {
                 return (cards, headers);
             }
-            cards.push(crate::app::state::WorkspaceCardArea {
-                ws_idx: *ws_idx,
-                rect: Rect::new(body.x, row_y, body.width, row_height),
-                indented: *indented,
-            });
+            cards.push((
+                entry.key.clone(),
+                Rect::new(body.x, row_y, body.width, row_height),
+            ));
             row_y = row_y
                 .saturating_add(display_height)
-                .saturating_add(gap)
+                .saturating_add(entry.gap)
                 .min(body_bottom);
         }
     }
-
     (cards, headers)
 }
 
@@ -1153,7 +1383,7 @@ fn render_sidebar_copy_feedback(app: &AppState, frame: &mut Frame, area: Rect) {
     );
 }
 
-fn resolved_token_spans(
+pub(crate) fn resolved_token_spans(
     resolved: &[ResolvedToken],
     state_icon: (&str, Style),
     state_text_style: Style,
@@ -1163,6 +1393,82 @@ fn resolved_token_spans(
     p: &Palette,
     max_width: usize,
 ) -> Vec<Span<'static>> {
+    if let Some(index) = resolved
+        .iter()
+        .position(|token| matches!(token.kind, ResolvedTokenKind::JobIndicators(_)))
+    {
+        let ResolvedTokenKind::JobIndicators(jobs) = &resolved[index].kind else {
+            unreachable!()
+        };
+        let render = |tokens: &[ResolvedToken], width| {
+            clip_token_spans(
+                resolved_token_spans(
+                    tokens,
+                    state_icon,
+                    state_text_style,
+                    workspace_style,
+                    secondary_style,
+                    custom_style,
+                    p,
+                    width,
+                ),
+                width,
+            )
+        };
+        let identity_width = resolved[..index]
+            .iter()
+            .map(|token| match token.kind {
+                ResolvedTokenKind::StateIcon => display_width(state_icon.0),
+                ResolvedTokenKind::WorkspaceNumber(number) => display_width(&number.to_string()),
+                _ => 0,
+            })
+            .sum::<usize>();
+        let identity_count = resolved[..index]
+            .iter()
+            .filter(|token| {
+                matches!(
+                    token.kind,
+                    ResolvedTokenKind::StateIcon | ResolvedTokenKind::WorkspaceNumber(_)
+                )
+            })
+            .count();
+        let identity_width = identity_width + identity_count;
+        let glyph_width = display_width("○");
+        let count = jobs
+            .len()
+            .min(max_width.saturating_sub(identity_width) / glyph_width);
+        let mut remaining = max_width.saturating_sub(count * glyph_width);
+        let mut spans = render(
+            &resolved[..index],
+            remaining.saturating_sub(usize::from(count > 0)),
+        );
+        let prefix_width = spans
+            .iter()
+            .map(|span| display_width(&span.content))
+            .sum::<usize>();
+        remaining = remaining.saturating_sub(prefix_width);
+        if prefix_width > 0 && count > 0 {
+            spans.push(Span::raw(" "));
+            remaining = remaining.saturating_sub(1);
+        }
+        for (status, exit_code) in jobs.iter().take(count) {
+            spans.push(Span::styled(
+                "○",
+                Style::default().fg(job_status_color(status, *exit_code, p)),
+            ));
+        }
+        let tail = render(
+            &resolved[index + 1..],
+            remaining.saturating_sub(usize::from(count > 0)),
+        );
+        if !tail.is_empty() {
+            if count > 0 {
+                spans.push(Span::raw(" "));
+            }
+            spans.extend(tail);
+        }
+        return spans;
+    }
     let fixed_widths = resolved
         .iter()
         .map(|token| match &token.kind {
@@ -1280,6 +1586,9 @@ fn resolved_token_spans(
             ));
         }
         match &token.kind {
+            ResolvedTokenKind::JobIndicators(_) => {
+                unreachable!("job indicators use the priority allocator")
+            }
             ResolvedTokenKind::StateIcon => {
                 spans.push(Span::styled(
                     state_icon.0.to_string(),
@@ -1365,6 +1674,42 @@ fn resolved_token_spans(
         }
     }
     spans
+}
+
+pub(crate) fn clip_token_spans(spans: Vec<Span<'static>>, max_width: usize) -> Vec<Span<'static>> {
+    let mut remaining = max_width;
+    let mut clipped = Vec::new();
+    for span in spans {
+        let width = display_width(&span.content);
+        if width <= remaining {
+            remaining -= width;
+            clipped.push(span);
+            if remaining == 0 {
+                break;
+            }
+            continue;
+        }
+        let mut content = String::new();
+        for glyph in span.styled_graphemes(Style::default()) {
+            let width = display_width(glyph.symbol);
+            if width > remaining {
+                break;
+            }
+            content.push_str(glyph.symbol);
+            remaining -= width;
+        }
+        if !content.is_empty() {
+            clipped.push(Span::styled(content, span.style));
+        }
+        break;
+    }
+    while clipped
+        .last()
+        .is_some_and(|span| span.content.trim().is_empty())
+    {
+        clipped.pop();
+    }
+    clipped
 }
 
 fn apply_token_style(mut style: Style, patch: crate::config::SidebarTokenStyle) -> Style {
@@ -1453,54 +1798,13 @@ fn render_workspace_list(
     let cards = &app.view.workspace_card_areas;
 
     for header in &app.view.workspace_section_header_areas {
-        let expanded = workspace_section_is_expanded(app, header.section);
-        let arrow = if expanded { "▾" } else { "▸" };
-        let new_rect = workspace_section_new_button_rect(header.rect);
-        let label_width = if new_rect == Rect::default() {
-            header.rect.width
-        } else {
-            new_rect.x.saturating_sub(header.rect.x).saturating_sub(1)
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(arrow, Style::default().fg(p.accent)),
-                Span::raw(" "),
-                Span::styled(
-                    truncate_end(header.section.label(), label_width as usize),
-                    Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-                ),
-            ])),
-            Rect::new(
-                header.rect.x,
-                header.rect.y,
-                label_width,
-                header.rect.height,
-            ),
+        render_workspace_section_header(
+            frame,
+            header,
+            workspace_section_is_expanded(app, header.section),
+            p,
+            list_bottom,
         );
-        if new_rect != Rect::default() {
-            frame.render_widget(
-                Paragraph::new(Span::styled(
-                    "[new]",
-                    Style::default()
-                        .fg(p.text)
-                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-                )),
-                new_rect,
-            );
-        }
-        for separator_y in [
-            header.rect.y.saturating_sub(1),
-            header.rect.y + header.rect.height,
-        ] {
-            if separator_y >= list_bottom {
-                continue;
-            }
-            let buf = frame.buffer_mut();
-            for x in header.rect.x..header.rect.x + header.rect.width {
-                buf[(x, separator_y)].set_symbol("─");
-                buf[(x, separator_y)].set_style(Style::default().fg(p.overlay0));
-            }
-        }
     }
 
     for card in cards {
@@ -1577,6 +1881,12 @@ fn render_workspace_list(
                 tokens: &token_values,
                 suppress_git_details: card.indented,
             },
+        );
+
+        let rows = tokens::with_job_indicators(
+            rows,
+            workspace_jobs(app, ws),
+            usize::from(display_height.min(list_bottom.saturating_sub(row_y))),
         );
 
         for (row_index, resolved) in rows.iter().enumerate() {
@@ -1693,32 +2003,9 @@ fn render_agent_detail(
         return;
     }
 
-    let sep_line = "─".repeat(area.width as usize);
-    frame.render_widget(
-        Paragraph::new(Span::styled(&sep_line, Style::default().fg(p.overlay0))),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-
-    let (agents_tab, jobs_tab) = sidebar_detail_tab_rects(area);
-    let tab_style = |selected: bool| {
-        if selected {
-            Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(p.overlay0)
-        }
-    };
     let showing_jobs = app.sidebar_detail_view == SidebarDetailView::Jobs;
-    if agents_tab != Rect::default() {
-        frame.render_widget(
-            Paragraph::new(Span::styled(DETAIL_TAB_AGENTS, tab_style(!showing_jobs))),
-            agents_tab,
-        );
-    }
-    if jobs_tab != Rect::default() {
-        frame.render_widget(
-            Paragraph::new(Span::styled(DETAIL_TAB_JOBS, tab_style(showing_jobs))),
-            jobs_tab,
-        );
+    for (rect, line) in sidebar_detail_header_lines(area, app.sidebar_detail_view, p) {
+        frame.render_widget(Paragraph::new(line), rect);
     }
     let toggle_rect = agent_panel_toggle_rect(area, app.agent_panel_sort);
     if toggle_rect != Rect::default() && !showing_jobs {
@@ -1827,17 +2114,30 @@ fn render_agent_detail(
 
 /// One visible row of the jobs list, so hit-testing and rendering agree.
 pub(crate) fn jobs_panel_rows(app: &AppState, area: Rect) -> Vec<(Rect, usize)> {
-    let body = agent_panel_body_rect(area, false);
+    jobs_panel_rows_for_count(app.jobs.len(), app.jobs_scroll, area)
+}
+
+pub(crate) fn jobs_panel_rows_for_count(
+    count: usize,
+    scroll: usize,
+    area: Rect,
+) -> Vec<(Rect, usize)> {
+    jobs_panel_rows_in_body(count, scroll, agent_panel_body_rect(area, false))
+}
+
+pub(crate) fn jobs_panel_rows_in_body(
+    count: usize,
+    scroll: usize,
+    body: Rect,
+) -> Vec<(Rect, usize)> {
     if body.width == 0 || body.height == 0 {
         return Vec::new();
     }
-    app.jobs
-        .iter()
-        .enumerate()
-        .skip(app.jobs_scroll)
+    (0..count)
+        .skip(scroll)
         .take(body.height as usize)
         .enumerate()
-        .map(|(offset, (index, _))| {
+        .map(|(offset, index)| {
             (
                 Rect::new(body.x, body.y + offset as u16, body.width, 1),
                 index,
@@ -1846,7 +2146,11 @@ pub(crate) fn jobs_panel_rows(app: &AppState, area: Rect) -> Vec<(Rect, usize)> 
         .collect()
 }
 
-fn job_status_color(status: &str, exit_code: Option<i32>, p: &Palette) -> ratatui::style::Color {
+pub(crate) fn job_status_color(
+    status: &str,
+    exit_code: Option<i32>,
+    p: &Palette,
+) -> ratatui::style::Color {
     match status {
         "running" => p.yellow,
         "queued" => p.overlay0,
@@ -1855,8 +2159,46 @@ fn job_status_color(status: &str, exit_code: Option<i32>, p: &Palette) -> ratatu
     }
 }
 
-fn job_status_label(job: &crate::job::JobRecord) -> String {
-    match job.status.as_str() {
+pub(crate) struct JobDisplay<'a> {
+    pub(crate) label: &'a str,
+    pub(crate) command: &'a str,
+    pub(crate) caller_pane: &'a str,
+    pub(crate) status: &'a str,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) started_unix_ms: Option<u128>,
+    pub(crate) finished_unix_ms: Option<u128>,
+}
+
+impl<'a> From<&'a crate::job::JobRecord> for JobDisplay<'a> {
+    fn from(job: &'a crate::job::JobRecord) -> Self {
+        Self {
+            label: &job.label,
+            command: &job.command,
+            caller_pane: &job.caller_pane,
+            status: &job.status,
+            exit_code: job.exit_code,
+            started_unix_ms: job.started_unix_ms,
+            finished_unix_ms: job.finished_unix_ms,
+        }
+    }
+}
+
+impl<'a> From<&'a crate::protocol::endpoint_jobs::EndpointJob> for JobDisplay<'a> {
+    fn from(job: &'a crate::protocol::endpoint_jobs::EndpointJob) -> Self {
+        Self {
+            label: &job.label,
+            command: &job.command,
+            caller_pane: &job.caller_pane,
+            status: &job.status,
+            exit_code: job.exit_code,
+            started_unix_ms: job.started_unix_ms,
+            finished_unix_ms: job.finished_unix_ms,
+        }
+    }
+}
+
+fn job_status_label(job: &JobDisplay<'_>) -> String {
+    match job.status {
         "running" => "run".to_string(),
         "queued" => "wait".to_string(),
         _ => match job.exit_code {
@@ -1870,7 +2212,7 @@ fn job_status_label(job: &crate::job::JobRecord) -> String {
 const JOB_PANE_FIELD_WIDTH: usize = 6;
 const JOB_AGE_MAX_VALUE: u128 = 999;
 
-fn job_age_label(job: &crate::job::JobRecord, now_unix_ms: u128) -> String {
+fn job_age_label(job: &JobDisplay<'_>, now_unix_ms: u128) -> String {
     let reference = if job.status == "running" {
         job.started_unix_ms
     } else {
@@ -1890,6 +2232,35 @@ fn job_age_label(job: &crate::job::JobRecord, now_unix_ms: u128) -> String {
         (seconds / (24 * 60 * 60), 'd')
     };
     format!("{:>3}{unit}", value.min(JOB_AGE_MAX_VALUE))
+}
+
+pub(crate) fn job_panel_line(job: JobDisplay<'_>, now_unix_ms: u128, p: &Palette) -> Line<'static> {
+    let status = job_status_label(&job);
+    let label = if job.label.is_empty() {
+        job.command
+    } else {
+        job.label
+    };
+    let pane = if job.caller_pane.is_empty() {
+        "-".to_string()
+    } else {
+        truncate_end(job.caller_pane, JOB_PANE_FIELD_WIDTH)
+    };
+    Line::from(vec![
+        Span::styled(
+            format!(" {status:<4} "),
+            Style::default().fg(job_status_color(job.status, job.exit_code, p)),
+        ),
+        Span::styled(
+            format!("{pane:<width$} ", width = JOB_PANE_FIELD_WIDTH),
+            Style::default().fg(p.subtext0),
+        ),
+        Span::styled(
+            format!("{} ", job_age_label(&job, now_unix_ms)),
+            Style::default().fg(p.overlay0),
+        ),
+        Span::styled(label.to_string(), Style::default().fg(p.text)),
+    ])
 }
 
 fn render_jobs_panel(app: &AppState, frame: &mut Frame, area: Rect) {
@@ -1917,32 +2288,7 @@ fn render_jobs_panel(app: &AppState, frame: &mut Frame, area: Rect) {
         let Some(job) = app.jobs.get(index) else {
             continue;
         };
-        let status = job_status_label(job);
-        let label = if job.label.is_empty() {
-            job.command.as_str()
-        } else {
-            job.label.as_str()
-        };
-        let pane = if job.caller_pane.is_empty() {
-            "-".to_string()
-        } else {
-            truncate_end(&job.caller_pane, JOB_PANE_FIELD_WIDTH)
-        };
-        let line = Line::from(vec![
-            Span::styled(
-                format!(" {status:<4} "),
-                Style::default().fg(job_status_color(&job.status, job.exit_code, p)),
-            ),
-            Span::styled(
-                format!("{pane:<width$} ", width = JOB_PANE_FIELD_WIDTH),
-                Style::default().fg(p.subtext0),
-            ),
-            Span::styled(
-                format!("{} ", job_age_label(job, now_unix_ms)),
-                Style::default().fg(p.overlay0),
-            ),
-            Span::styled(label.to_string(), Style::default().fg(p.text)),
-        ]);
+        let line = job_panel_line(job.into(), now_unix_ms, p);
         frame.render_widget(Paragraph::new(line), rect);
     }
 }
@@ -2478,12 +2824,18 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             finished_unix_ms: Some(10_000),
             log_path: "/tmp/job.log".into(),
         };
-        assert_eq!(job_age_label(&job, 13_000), " 12s");
+        assert_eq!(job_age_label(&(&job).into(), 13_000), " 12s");
         job.status = "finished".into();
-        assert_eq!(job_age_label(&job, 4 * 60 * 1000 + 10_000), "  4m");
-        assert_eq!(job_age_label(&job, 2 * 60 * 60 * 1000 + 10_000), "  2h");
         assert_eq!(
-            job_age_label(&job, 3 * 24 * 60 * 60 * 1000 + 10_000),
+            job_age_label(&(&job).into(), 4 * 60 * 1000 + 10_000),
+            "  4m"
+        );
+        assert_eq!(
+            job_age_label(&(&job).into(), 2 * 60 * 60 * 1000 + 10_000),
+            "  2h"
+        );
+        assert_eq!(
+            job_age_label(&(&job).into(), 3 * 24 * 60 * 60 * 1000 + 10_000),
             "  3d"
         );
     }
@@ -3682,3 +4034,6 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(agent_panel_entries(&app)[0].ws_idx, 0);
     }
 }
+
+#[cfg(test)]
+mod job_tests;

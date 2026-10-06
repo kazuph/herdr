@@ -11,7 +11,7 @@
 pub mod bindings;
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -1240,8 +1240,52 @@ impl Terminal {
         }
         placements.extend(self.kitty_virtual_image_placements(graphics, &mut needs_data)?);
         placements.sort_by_key(|placement| placement.z);
-        self.prune_kitty_fingerprints(&placements);
+        self.prune_kitty_fingerprints(graphics);
         Ok(placements)
+    }
+
+    /// Stored-image identity from the existing transmit-time cache, including
+    /// images whose placements have scrolled outside the viewport.
+    pub(crate) fn kitty_image_fingerprints(
+        &self,
+        image_ids: &[u32],
+    ) -> Result<Vec<Option<u64>>, Error> {
+        let mut graphics: ffi::GhosttyKittyGraphics = ptr::null_mut();
+        unsafe {
+            ffi::ghostty_terminal_get(
+                self.raw,
+                ffi::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS,
+                (&mut graphics as *mut ffi::GhosttyKittyGraphics).cast(),
+            )
+            .into_result()?;
+        }
+        if graphics.is_null() {
+            return Ok(vec![None; image_ids.len()]);
+        }
+        image_ids
+            .iter()
+            .map(|&id| {
+                let image = unsafe { ffi::ghostty_kitty_graphics_image(graphics, id) };
+                if image.is_null() {
+                    return Ok(None);
+                }
+                let transmit_time_ns = kitty_image_u64(
+                    image,
+                    ffi::GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_TRANSMIT_TIME_NS,
+                )?;
+                let (data_ptr, data_len) = kitty_image_data_ptr_len(image)?;
+                Ok(self.kitty_fingerprints.lock().ok().and_then(|cache| {
+                    cache
+                        .get(&id)
+                        .filter(|entry| {
+                            entry.transmit_time_ns == transmit_time_ns
+                                && entry.data_ptr == data_ptr as usize
+                                && entry.data_len == data_len
+                        })
+                        .map(|entry| entry.fingerprint)
+                }))
+            })
+            .collect()
     }
 
     /// Fingerprint for `image`, cached per image id and recomputed only when
@@ -1290,16 +1334,11 @@ impl Terminal {
         fingerprint
     }
 
-    fn prune_kitty_fingerprints(&self, placements: &[KittyImagePlacement]) {
+    fn prune_kitty_fingerprints(&self, graphics: ffi::GhosttyKittyGraphics) {
         if let Ok(mut cache) = self.kitty_fingerprints.lock() {
-            if cache.is_empty() {
-                return;
-            }
-            let live: HashSet<u32> = placements
-                .iter()
-                .map(|placement| placement.image_id)
-                .collect();
-            cache.retain(|image_id, _| live.contains(image_id));
+            cache.retain(|image_id, _| {
+                !unsafe { ffi::ghostty_kitty_graphics_image(graphics, *image_id) }.is_null()
+            });
         }
     }
 
@@ -2942,6 +2981,36 @@ mod tests {
         let changed_outside_sampled_windows =
             kitty_image_fingerprint(data.as_ptr(), data.len(), 100, 50, KittyImageFormat::Png);
         assert_ne!(original, changed_outside_sampled_windows);
+    }
+
+    #[test]
+    fn kitty_retained_fingerprint_tracks_hidden_replaced_and_deleted_real_images() {
+        let mut terminal = Terminal::new(10, 5, 0).unwrap();
+        terminal.write(b"\x1b_Ga=T,f=32,t=d,i=7,p=3,s=1,v=1,c=10,r=5,q=2;/wAA/w==\x1b\\");
+        let placed = terminal.kitty_image_placements().unwrap();
+        let fingerprint = placed[0].data_fingerprint;
+        assert_eq!(
+            terminal.kitty_image_fingerprints(&[7, 8]).unwrap(),
+            vec![Some(fingerprint), None]
+        );
+        // Lowercase d removes placements but preserves the server-owned pixels.
+        terminal.write(b"\x1b_Ga=d,d=i,i=7,q=2;\x1b\\");
+        assert!(terminal.kitty_image_placements().unwrap().is_empty());
+        assert_eq!(
+            terminal.kitty_image_fingerprints(&[7]).unwrap(),
+            vec![Some(fingerprint)]
+        );
+        terminal.write(b"\x1b_Ga=t,f=32,t=d,i=7,s=1,v=1,q=2;AAAAAA==\x1b\\");
+        assert_eq!(terminal.kitty_image_fingerprints(&[7]).unwrap(), vec![None]);
+        terminal.write(b"\x1b_Ga=p,i=7,p=3,c=10,r=5,q=2;\x1b\\");
+        let replaced = terminal.kitty_image_placements().unwrap();
+        assert_ne!(replaced[0].data_fingerprint, fingerprint);
+        assert_eq!(
+            terminal.kitty_image_fingerprints(&[7]).unwrap(),
+            vec![Some(replaced[0].data_fingerprint)]
+        );
+        terminal.write(b"\x1b_Ga=d,d=I,i=7,q=2;\x1b\\");
+        assert_eq!(terminal.kitty_image_fingerprints(&[7]).unwrap(), vec![None]);
     }
 
     #[test]

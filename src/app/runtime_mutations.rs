@@ -94,7 +94,7 @@ impl App {
     }
 
     pub(crate) fn runtime_pane_focus(&mut self, id: &'static str, pane_id: String) -> String {
-        self.dispatch_runtime_mutation(id, Method::PaneFocus(PaneTarget { pane_id }))
+        self.dispatch_runtime_mutation(id, Method::PaneFocus(PaneTarget { pane_id }.into()))
     }
 
     pub(crate) fn runtime_pane_close(&mut self, id: &'static str, pane_id: String) -> String {

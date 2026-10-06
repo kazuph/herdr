@@ -92,11 +92,14 @@ impl App {
         }
     }
 
-    pub(super) fn save_pane_history_persistence(&mut self, enabled: bool) {
+    pub(super) fn save_pane_history_persistence(&mut self, enabled: bool) -> bool {
         if self.update_config_file("pane screen history", |content| {
             crate::config::upsert_section_bool(content, "experimental", "pane_history", enabled)
         }) {
             self.apply_config_from_disk(false);
+            true
+        } else {
+            false
         }
     }
 

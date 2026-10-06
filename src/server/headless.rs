@@ -63,6 +63,7 @@ use crate::server::socket_paths::{
 };
 use crate::server::terminal_attach::paste_payload_for_runtime;
 
+pub(super) mod endpoints;
 mod pane_graphics;
 
 use crate::protocol::MAX_GRAPHICS_FRAME_SIZE;
@@ -127,6 +128,7 @@ enum LoopEvent {
     MailboxWrite(MailboxWriteCompletion),
     Api(Box<api::ApiRequestMessage>),
     ServerEvent(ServerEvent),
+    EndpointEvent(crate::server::endpoint_transport::EndpointTransportEvent),
     RenderRequested,
 }
 
@@ -251,6 +253,13 @@ pub struct HeadlessServer {
     client_socket_path: PathBuf,
     client_socket_identity: SocketFileIdentity,
     clients: HashMap<u64, ClientConnection>,
+    endpoint_clients: HashMap<u64, endpoints::EndpointClient>,
+    #[cfg(unix)]
+    endpoint_native: endpoints::native_graphics::NativeGraphics,
+    endpoint_tab_geometry: HashMap<String, u64>,
+    endpoint_boot_id: String,
+    endpoint_event_rx: mpsc::Receiver<crate::server::endpoint_transport::EndpointTransportEvent>,
+    endpoint_event_tx: mpsc::Sender<crate::server::endpoint_transport::EndpointTransportEvent>,
     #[cfg(unix)]
     next_client_id: u64,
     /// The client currently driving the shared pane runtime size, theme, and input keybindings.
@@ -362,6 +371,7 @@ fn spawn_windows_client_accept_thread(
     listener: LocalListener,
     should_quit: Arc<AtomicBool>,
     server_event_tx: mpsc::Sender<ServerEvent>,
+    endpoint_event_tx: mpsc::Sender<crate::server::endpoint_transport::EndpointTransportEvent>,
 ) {
     std::thread::spawn(move || {
         let mut next_client_id = 1_u64;
@@ -388,11 +398,13 @@ fn spawn_windows_client_accept_thread(
 
             let should_quit = should_quit.clone();
             let server_event_tx = server_event_tx.clone();
+            let endpoint_event_tx = endpoint_event_tx.clone();
             std::thread::spawn(move || {
-                if let Err(err) = crate::server::client_transport::handle_client_handshake(
+                if let Err(err) = crate::server::endpoint_transport::handle_socket_handshake(
                     stream,
                     client_id,
                     &server_event_tx,
+                    &endpoint_event_tx,
                     &should_quit,
                 ) {
                     debug!(client_id, err = %err, "client handshake failed");
@@ -431,8 +443,14 @@ impl HeadlessServer {
 
         // Channel for server events from client threads.
         let (server_event_tx, server_event_rx) = mpsc::channel(64);
+        let (endpoint_event_tx, endpoint_event_rx) = mpsc::channel(64);
         #[cfg(windows)]
-        spawn_windows_client_accept_thread(listener, should_quit.clone(), server_event_tx.clone());
+        spawn_windows_client_accept_thread(
+            listener,
+            should_quit.clone(),
+            server_event_tx.clone(),
+            endpoint_event_tx.clone(),
+        );
 
         let server_keybindings = app_keybindings(&app);
         let (server_config_diagnostic, server_config_diagnostic_without_keybindings) =
@@ -449,6 +467,13 @@ impl HeadlessServer {
             client_socket_path: client_path,
             client_socket_identity,
             clients: HashMap::new(),
+            endpoint_clients: HashMap::new(),
+            #[cfg(unix)]
+            endpoint_native: Default::default(),
+            endpoint_tab_geometry: HashMap::new(),
+            endpoint_boot_id: endpoints::new_boot_id(),
+            endpoint_event_rx,
+            endpoint_event_tx,
             #[cfg(unix)]
             next_client_id: 1,
             foreground_client_id: None,
@@ -590,6 +615,16 @@ impl HeadlessServer {
                 crate::render_prof::event("full_render_cause.server_events");
             }
 
+            for _ in 0..self.endpoint_event_rx.max_capacity() {
+                let Ok(event) = self.endpoint_event_rx.try_recv() else {
+                    break;
+                };
+                if self.handle_endpoint_event(event) {
+                    needs_render = true;
+                    needs_full_render = true;
+                }
+            }
+
             // 6. Handle scheduled tasks.
             let now = Instant::now();
             if self.handle_scheduled_tasks_headless(now, needs_render) {
@@ -605,7 +640,9 @@ impl HeadlessServer {
                 needs_graphics_render = false;
             }
 
-            if latest_app_client(&self.clients).is_some() && self.app.ensure_default_workspace() {
+            if (latest_app_client(&self.clients).is_some() || !self.endpoint_clients.is_empty())
+                && self.app.ensure_default_workspace()
+            {
                 needs_render = true;
                 needs_full_render = true;
                 needs_graphics_render = false;
@@ -615,6 +652,10 @@ impl HeadlessServer {
             if self.app.pane_graphics.retain_live_panes(&self.app.state) {
                 needs_render = true;
                 needs_graphics_render = true;
+            }
+            #[cfg(unix)]
+            if self.expire_endpoint_native(now) {
+                needs_render = true;
             }
             if self.expire_direct_graphics(now) {
                 needs_render = true;
@@ -660,8 +701,10 @@ impl HeadlessServer {
                     crate::render_prof::event("full_render.invoke");
                     self.render_and_stream();
                 }
+                self.stream_endpoint_views();
                 self.app.last_render_at = Some(now);
-                needs_render = false;
+                // Continue bounded endpoint payloads through the existing render deadline.
+                needs_render = self.endpoint_graphics_pending();
                 needs_full_render = false;
                 needs_graphics_render = false;
                 continue;
@@ -689,6 +732,10 @@ impl HeadlessServer {
                     },
                     maybe_completion = self.app.mailbox_write_rx.recv() => match maybe_completion {
                         Some(completion) => LoopEvent::MailboxWrite(completion),
+                        None => LoopEvent::Timer,
+                    },
+                    maybe_endpoint_ev = self.endpoint_event_rx.recv() => match maybe_endpoint_ev {
+                        Some(ev) => LoopEvent::EndpointEvent(ev),
                         None => LoopEvent::Timer,
                     },
                     maybe_server_ev = self.server_event_rx.recv() => match maybe_server_ev {
@@ -730,6 +777,12 @@ impl HeadlessServer {
                             }
                         }
                     } else if self.handle_api_request_with_shutdown_check(*msg) {
+                        needs_render = true;
+                        needs_full_render = true;
+                    }
+                }
+                LoopEvent::EndpointEvent(ev) => {
+                    if self.handle_endpoint_event(ev) {
                         needs_render = true;
                         needs_full_render = true;
                     }
@@ -902,6 +955,7 @@ impl HeadlessServer {
         self.dispatch_headless_runtime_mutation(
             id,
             api::schema::Method::WorkspaceCreate(api::schema::WorkspaceCreateParams {
+                section: None,
                 cwd,
                 focus: true,
                 label,
@@ -1454,12 +1508,16 @@ impl HeadlessServer {
     }
 
     fn direct_graphics_available(&self) -> bool {
-        self.app_client_count() == 1
-            && self.foreground_client_id.is_some_and(|id| {
-                self.clients.get(&id).is_some_and(|client| {
-                    client.is_full_app_client() && client.writer.is_some() && client.direct_graphics
-                })
-            })
+        self.endpoint_has_direct_host()
+            || (self.app_client_count() == 1
+                && !self.endpoint_has_active_graphics_surface()
+                && self.foreground_client_id.is_some_and(|id| {
+                    self.clients.get(&id).is_some_and(|client| {
+                        client.is_full_app_client()
+                            && client.writer.is_some()
+                            && client.direct_graphics
+                    })
+                }))
     }
 
     fn has_app_client(&self) -> bool {
@@ -1593,6 +1651,7 @@ impl HeadlessServer {
             &mut self.next_client_id,
             &self.should_quit,
             &self.server_event_tx,
+            &self.endpoint_event_tx,
         )
     }
 
@@ -1931,12 +1990,31 @@ impl HeadlessServer {
         body: Option<String>,
         target_pane_id: Option<String>,
     ) -> bool {
-        self.send_to_foreground_client(ServerMessage::Notify {
+        let notification = ServerMessage::Notify {
             kind,
             message: message.into(),
             body,
             target_pane_id,
-        })
+        };
+        let endpoint_notification = matches!(
+            &notification,
+            ServerMessage::Notify {
+                kind: protocol::NotifyKind::Toast | protocol::NotifyKind::Sound,
+                ..
+            }
+        ) || matches!(
+            &notification,
+            ServerMessage::Notify {
+                kind: protocol::NotifyKind::SystemToast,
+                ..
+            }
+        );
+        if endpoint_notification {
+            if let Some(sent) = self.send_endpoint_notification(&notification) {
+                return sent;
+            }
+        }
+        self.send_to_foreground_client(notification)
     }
 
     fn send_flat_toast_to_foreground_client(
@@ -2342,6 +2420,7 @@ impl HeadlessServer {
                 self.app.handle_internal_event(ev);
 
                 if self.app.find_pane(pane_id_val).is_none() {
+                    self.restore_endpoint_editor_after_exit(pane_id_val);
                     if let Some(terminal_id) = terminal_id {
                         self.shutdown_terminal_stream_clients(
                             &terminal_id,
@@ -3148,6 +3227,24 @@ impl HeadlessServer {
         }
 
         let metadata_expired = self.app.expire_due_metadata(Instant::now());
+        if let api::schema::Method::PaneFocus(target) = &msg.request.method {
+            if target.viewer.is_some() {
+                let response = self.route_viewer_pane_focus(&msg.request.id, target);
+                let _ = msg.respond_to.send(response);
+                return metadata_expired;
+            }
+        }
+        if let api::schema::Method::PaneGraphicsInfo(target) = &msg.request.method {
+            if let Some(runtime) = self.endpoint_graphics_info_runtime(&target.pane_id) {
+                let response = self.app.handle_pane_graphics_info_with_runtime(
+                    msg.request.id.clone(),
+                    target.clone(),
+                    Some(runtime),
+                );
+                let _ = msg.respond_to.send(response);
+                return metadata_expired;
+            }
+        }
         let stream_open = match &msg.request.method {
             api::schema::Method::PaneGraphicsStreamOpen(params) => Some(params.clone()),
             _ => None,
@@ -4625,6 +4722,9 @@ mod tests {
     use crate::protocol::CursorState;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    #[cfg(unix)]
+    #[path = "endpoints.rs"]
+    mod endpoint_tests;
     #[path = "pane_graphics.rs"]
     mod pane_graphics_tests;
 
@@ -4662,10 +4762,16 @@ mod tests {
             .set_nonblocking(ListenerNonblockingMode::Accept)
             .expect("set listener nonblocking");
         let (server_event_tx, server_event_rx) = mpsc::channel(64);
+        let (endpoint_event_tx, endpoint_event_rx) = mpsc::channel(64);
         #[cfg(windows)]
         let should_quit = Arc::new(AtomicBool::new(false));
         #[cfg(windows)]
-        spawn_windows_client_accept_thread(listener, should_quit.clone(), server_event_tx.clone());
+        spawn_windows_client_accept_thread(
+            listener,
+            should_quit.clone(),
+            server_event_tx.clone(),
+            endpoint_event_tx.clone(),
+        );
         let server_keybindings = app_keybindings(&app);
 
         HeadlessServer {
@@ -4678,6 +4784,13 @@ mod tests {
             client_socket_path: socket_path,
             client_socket_identity,
             clients: HashMap::new(),
+            endpoint_clients: HashMap::new(),
+            #[cfg(unix)]
+            endpoint_native: Default::default(),
+            endpoint_tab_geometry: HashMap::new(),
+            endpoint_boot_id: endpoints::new_boot_id(),
+            endpoint_event_rx,
+            endpoint_event_tx,
             #[cfg(unix)]
             next_client_id: 1,
             foreground_client_id: None,
@@ -5768,6 +5881,7 @@ next_tab = ""
     #[test]
     fn pending_terminal_attach_client_does_not_enable_headless_git_refresh() {
         let mut server = test_headless_server();
+        server.app.jobs_refresh_in_flight = true;
         server
             .app
             .state
@@ -5802,6 +5916,7 @@ next_tab = ""
     #[test]
     fn writerless_app_client_does_not_enable_headless_git_refresh() {
         let mut server = test_headless_server();
+        server.app.jobs_refresh_in_flight = true;
         server
             .app
             .state
@@ -6186,7 +6301,7 @@ next_tab = ""
     }
 
     #[test]
-    fn headless_scheduled_tasks_refresh_jobs_for_the_jobs_sidebar() {
+    fn headless_scheduled_tasks_refresh_jobs_for_both_sidebar_tabs() {
         let _guard = crate::msg::msg_db_env_lock().lock().unwrap();
         let dir = std::env::temp_dir().join(format!(
             "herdr-headless-jobs-{}-{}",
@@ -6217,20 +6332,25 @@ next_tab = ""
             .unwrap();
 
         let mut server = test_headless_server();
-        server.app.state.sidebar_detail_view = crate::app::state::SidebarDetailView::Jobs;
-        let now = server.app.last_jobs_refresh + app::JOBS_REFRESH_INTERVAL;
+        for view in [
+            crate::app::state::SidebarDetailView::Agents,
+            crate::app::state::SidebarDetailView::Jobs,
+        ] {
+            server.app.state.sidebar_detail_view = view;
+            let now = server.app.last_jobs_refresh + app::JOBS_REFRESH_INTERVAL;
 
-        assert!(!server.handle_scheduled_tasks_headless(now, false));
-        assert!(server.app.jobs_refresh_in_flight);
-        let event = server
-            .app
-            .event_rx
-            .blocking_recv()
-            .expect("jobs refresh event channel closed");
-        assert!(server.handle_internal_event_with_forwarding(event));
-        assert_eq!(server.app.state.jobs.len(), 1);
-        assert_eq!(server.app.state.jobs[0].id, "headless-job");
-        assert!(!server.app.jobs_refresh_in_flight);
+            assert!(!server.handle_scheduled_tasks_headless(now, false));
+            assert!(server.app.jobs_refresh_in_flight);
+            let event = server
+                .app
+                .event_rx
+                .blocking_recv()
+                .expect("jobs refresh event channel closed");
+            assert!(server.handle_internal_event_with_forwarding(event));
+            assert_eq!(server.app.state.jobs.len(), 1);
+            assert_eq!(server.app.state.jobs[0].id, "headless-job");
+            assert!(!server.app.jobs_refresh_in_flight);
+        }
 
         match previous_db_path {
             Some(path) => std::env::set_var(crate::msg::MSG_DB_PATH_ENV_VAR, path),

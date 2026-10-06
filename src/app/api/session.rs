@@ -13,7 +13,7 @@ impl App {
         )
     }
 
-    fn session_snapshot(&self) -> SessionSnapshot {
+    pub(crate) fn session_snapshot(&self) -> SessionSnapshot {
         let focused_workspace_id = self
             .state
             .active
@@ -53,6 +53,13 @@ impl App {
             panes: self.collect_panes_for_workspace(None).unwrap_or_default(),
             layouts,
             agents: self.collect_agent_infos(),
+            agent_session_warnings: Some(
+                self.state
+                    .restart_missing_agent_sessions()
+                    .iter()
+                    .map(crate::api::schema::AgentSessionWarningInfo::from)
+                    .collect(),
+            ),
         }
     }
 }

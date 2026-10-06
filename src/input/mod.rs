@@ -2,6 +2,7 @@ mod encode;
 mod model;
 pub(crate) mod mouse;
 mod parse;
+pub(crate) mod rename;
 
 #[allow(unused_imports)]
 pub use encode::{

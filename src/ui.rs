@@ -32,11 +32,19 @@ mod panes;
 mod release_notes;
 mod scrollbar;
 mod settings;
-mod sidebar;
+pub(crate) mod sidebar;
 mod status;
+pub(crate) mod tab_surface;
 mod tabs;
 mod text;
 mod widgets;
+
+pub(crate) use text::truncate_end;
+
+pub(crate) use dialogs::render_confirm_danger_from;
+pub(crate) use menus::{render_copy_overlay, render_global_menu_from, render_resize_overlay_facts};
+pub(crate) use panes::automatic_selection_style;
+pub(crate) use widgets::panel_contrast_fg;
 
 use self::dialogs::{
     render_confirm_close_overlay, render_confirm_danger_overlay,
@@ -48,12 +56,18 @@ use self::menus::{
     render_context_menu, render_copy_mode_overlay, render_global_launcher_menu,
     render_navigate_overlay, render_prefix_overlay, render_resize_overlay,
 };
+pub(crate) use self::menus::{render_context_menu_from, render_navigate_overlay_from};
 use self::mobile::{
     compute_mobile_header_hit_areas, is_mobile_width, mobile_switcher_max_scroll_for_height,
-    mobile_toast_banner_rect, render_mobile_header, render_mobile_panel,
-    render_mobile_toast_banner,
+    render_mobile_header, render_mobile_panel,
 };
+pub(crate) use self::mobile::{mobile_toast_banner_rect, render_mobile_toast_banner};
 use self::navigator::render_navigator_overlay;
+pub(crate) use self::navigator::{
+    navigator_body_rect, navigator_detail_rect, navigator_footer_rect, navigator_inner_rect,
+    navigator_popup_rect, navigator_search_rect,
+};
+pub(crate) use self::navigator::{render_navigator_from, NavigatorRender};
 pub(crate) use self::onboarding::onboarding_welcome_continue_rect;
 use self::onboarding::render_onboarding_overlay;
 pub(crate) use self::panes::popup_pane_rects;
@@ -62,8 +76,8 @@ use self::panes::{
 };
 pub(crate) use self::release_notes::{
     product_announcement_display_lines, release_notes_close_button_rect,
-    release_notes_display_lines, release_notes_wrapped_line_count, PRODUCT_ANNOUNCEMENT_MODAL_SIZE,
-    RELEASE_NOTES_MODAL_SIZE,
+    release_notes_display_lines, release_notes_wrapped_line_count, render_release_notes_from,
+    PRODUCT_ANNOUNCEMENT_MODAL_SIZE, RELEASE_NOTES_MODAL_SIZE,
 };
 use self::release_notes::{render_product_announcement_overlay, render_release_notes_overlay};
 pub(crate) use self::scrollbar::{
@@ -71,12 +85,18 @@ pub(crate) use self::scrollbar::{
     scrollbar_offset_from_row, scrollbar_thumb_grab_offset, should_show_scrollbar,
 };
 use self::settings::render_settings_overlay;
+pub(crate) use self::sidebar::agent_panel_entries_from;
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};
 use self::status::{
-    copy_feedback_rect, pane_action_bar_rects, pane_action_copy_label_width,
-    render_config_diagnostic, render_copy_feedback, render_pane_action_bar,
-    render_toast_notification, toast_notification_rect,
+    copy_feedback_rect, pane_action_copy_label_width, render_config_diagnostic,
+    render_copy_feedback, render_pane_action_bar,
 };
+pub(crate) use self::status::{
+    pane_action_bar_rects, pane_action_copy_label, render_pane_action_bar_with_palette,
+    PaneActionBarRects,
+};
+pub(crate) use self::status::{render_toast_notification, state_label, toast_notification_rect};
+pub(crate) use self::status::{state_label_color, state_summary_icon};
 use self::tabs::render_tab_bar;
 pub(crate) use self::{
     dialogs::{
@@ -85,9 +105,13 @@ pub(crate) use self::{
         new_linked_worktree_inner_rect, open_existing_worktree_button_rects,
         open_existing_worktree_inner_rect, open_existing_worktree_max_visible_rows,
         open_existing_worktree_visible_start, remove_worktree_button_rects,
-        remove_worktree_popup_rect, rename_button_rects,
+        remove_worktree_popup_rect, rename_button_rects, render_confirm_close_dialog,
+        render_rename_dialog, render_worktree_create, render_worktree_open, render_worktree_remove,
     },
-    settings::{settings_button_rects, settings_popup_height, SETTINGS_POPUP_WIDTH},
+    settings::{
+        render_settings_from, settings_button_rects, settings_popup_height, SettingsRenderFacts,
+        SETTINGS_POPUP_WIDTH,
+    },
     sidebar::{
         agent_entry_gap, agent_entry_height_in_body, agent_panel_body_rect, agent_panel_entries,
         agent_panel_scroll_for_target, agent_panel_scroll_metrics, agent_panel_scrollbar_rect,
@@ -105,10 +129,17 @@ pub(crate) use self::{
     },
 };
 pub(crate) use self::{
-    keybind_help::keybind_help_lines,
+    keybind_help::{keybind_help_lines, keybind_help_lines_from, render_keybind_help_from},
     mobile::{
-        mobile_switcher_areas, mobile_switcher_max_scroll, mobile_switcher_target_at,
-        mobile_switcher_workspace_doc_range, MobileSwitcherTarget,
+        inset_for_left_scrollbar as mobile_switcher_content_rect, mobile_header_hit_areas,
+        mobile_item_bg as mobile_switcher_item_bg, mobile_switcher_areas,
+        mobile_switcher_areas_for_screen, mobile_switcher_max_scroll, mobile_switcher_target_at,
+        mobile_switcher_workspace_doc_range, render_action_row_at as render_mobile_action_row,
+        render_left_scrollbar as render_mobile_scrollbar, render_mobile_header_from,
+        render_mobile_panel_frame, render_one_line_item as render_mobile_one_line_item,
+        render_section_title_at as render_mobile_section_title,
+        render_two_line_item as render_mobile_two_line_item, GlobalAgentCounts, MobileHeaderFacts,
+        MobileHeaderWorkspace, MobileSwitcherAreas, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
     tabs::compute_tab_bar_view,
@@ -217,8 +248,23 @@ fn desktop_tab_bar_terminal_and_action_area(
     ws: &crate::workspace::Workspace,
     main_area: Rect,
 ) -> (Rect, Rect, Rect) {
-    let show_tab_bar =
-        app.show_tab_bar && !(app.hide_tab_bar_when_single_tab && ws.tabs.len() == 1);
+    desktop_shell_regions(
+        app.show_tab_bar,
+        app.hide_tab_bar_when_single_tab,
+        ws.tabs.len(),
+        app.active.is_some(),
+        main_area,
+    )
+}
+
+pub(crate) fn desktop_shell_regions(
+    show_tab_bar: bool,
+    hide_single_tab: bool,
+    tab_count: usize,
+    workspace_available: bool,
+    main_area: Rect,
+) -> (Rect, Rect, Rect) {
+    let show_tab_bar = show_tab_bar && !(hide_single_tab && tab_count == 1);
     let (tab_bar_rect, main_body_area) = if show_tab_bar && main_area.height > 1 {
         let [tab_bar_rect, terminal_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
@@ -227,12 +273,23 @@ fn desktop_tab_bar_terminal_and_action_area(
         (Rect::default(), main_area)
     };
 
-    if app.active.is_some() && main_body_area.height > 1 {
+    if workspace_available && main_body_area.height > 1 {
         let [terminal_area, pane_action_bar_rect] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(main_body_area);
         (tab_bar_rect, terminal_area, pane_action_bar_rect)
     } else {
         (tab_bar_rect, main_body_area, Rect::default())
+    }
+}
+
+pub(crate) fn mobile_shell_regions(area: Rect) -> (Rect, Rect) {
+    let header_h = area.height.min(2);
+    if area.height > header_h {
+        let [header, terminal] =
+            Layout::vertical([Constraint::Length(header_h), Constraint::Min(1)]).areas(area);
+        (header, terminal)
+    } else {
+        (area, Rect::default())
     }
 }
 
@@ -385,13 +442,7 @@ fn compute_mobile_view(
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
     let header_h = area.height.min(2);
-    let (header_rect, terminal_area) = if area.height > header_h {
-        let [header_rect, terminal_area] =
-            Layout::vertical([Constraint::Length(header_h), Constraint::Min(1)]).areas(area);
-        (header_rect, terminal_area)
-    } else {
-        (area, Rect::default())
-    };
+    let (header_rect, terminal_area) = mobile_shell_regions(area);
 
     if app.mode == Mode::Navigate {
         let switcher_viewport_h = area.height.saturating_sub(header_h + 1);

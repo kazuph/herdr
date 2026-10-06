@@ -30,9 +30,9 @@ enum Phase {
 
 /// A text selection within a terminal pane.
 #[derive(Debug, Clone)]
-pub struct Selection {
+pub struct TextSelection<Owner> {
     /// Which pane the selection belongs to.
-    pub pane_id: PaneId,
+    pub pane_id: Owner,
     /// Anchor position in screen-buffer coordinates (row, col).
     anchor: (u32, u16),
     /// Current/final position in screen-buffer coordinates (row, col).
@@ -41,11 +41,13 @@ pub struct Selection {
     phase: Phase,
 }
 
-impl Selection {
+pub type Selection = TextSelection<PaneId>;
+
+impl<Owner> TextSelection<Owner> {
     /// Start a potential selection. This records the anchor but doesn't
     /// make anything visible yet — the user might just be clicking.
     pub fn anchor(
-        pane_id: PaneId,
+        pane_id: Owner,
         viewport_row: u16,
         col: u16,
         metrics: Option<ScrollMetrics>,
@@ -61,7 +63,7 @@ impl Selection {
 
     /// Create an active selection from an explicit viewport-row range.
     pub(crate) fn range(
-        pane_id: PaneId,
+        pane_id: Owner,
         viewport_row: u16,
         start_col: u16,
         end_col: u16,
@@ -77,7 +79,7 @@ impl Selection {
     }
 
     pub(crate) fn line_range(
-        pane_id: PaneId,
+        pane_id: Owner,
         anchor_row: u32,
         cursor_row: u32,
         end_col: u16,
@@ -100,6 +102,15 @@ impl Selection {
         metrics: Option<ScrollMetrics>,
     ) -> u32 {
         absolute_row_for_viewport_row(viewport_row, metrics)
+    }
+
+    pub(crate) fn absolute_range(pane_id: Owner, anchor: (u32, u16), cursor: (u32, u16)) -> Self {
+        Self {
+            pane_id,
+            anchor,
+            cursor,
+            phase: Phase::Dragging,
+        }
     }
 
     /// Convert the anchor's absolute row and pane-relative column back to

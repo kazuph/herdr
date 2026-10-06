@@ -55,6 +55,9 @@ pub struct WorktreeSourceInfo {
     pub repo_name: String,
     pub repo_root: String,
     pub source_checkout_path: String,
+    /// Server-owned checkout prefix, including its native separator; clients append only the branch slug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout_path_prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_workspace_id: Option<String>,
 }
@@ -71,4 +74,24 @@ pub struct WorktreeInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_workspace_id: Option<String>,
     pub label: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worktree_source_checkout_prefix_is_optional_json_and_owner_opaque() {
+        let legacy = r#"{"repo_key":"opaque","repo_name":"repo","repo_root":"/remote/repo","source_checkout_path":"/remote/repo"}"#;
+        let mut source: WorktreeSourceInfo = serde_json::from_str(legacy).unwrap();
+        assert!(source.checkout_path_prefix.is_none());
+        assert!(serde_json::to_value(&source)
+            .unwrap()
+            .get("checkout_path_prefix")
+            .is_none());
+        source.checkout_path_prefix = Some(r"C:\remote-owner\worktrees\repo\".into());
+        let decoded: WorktreeSourceInfo =
+            serde_json::from_str(&serde_json::to_string(&source).unwrap()).unwrap();
+        assert_eq!(decoded, source);
+    }
 }

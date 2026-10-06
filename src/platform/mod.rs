@@ -153,8 +153,12 @@ pub fn process_has_ancestor_named(mut pid: u32, name: &str) -> bool {
     false
 }
 
+#[cfg(unix)]
+mod endpoint_io;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(unix)]
+pub(crate) use endpoint_io::wait_client_stream_readable;
 #[cfg(target_os = "linux")]
 pub use linux::*;
 

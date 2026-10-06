@@ -66,6 +66,7 @@ fn request_uses_dot_method_names() {
     let request = Request {
         id: "req_1".into(),
         method: Method::WorkspaceCreate(WorkspaceCreateParams {
+            section: None,
             cwd: Some("/tmp".into()),
             focus: true,
             label: Some("api".into()),
@@ -590,6 +591,8 @@ fn success_response_round_trips() {
             capabilities: Some(ServerCapabilities {
                 live_handoff: true,
                 detached_server_daemon: true,
+                endpoint_protocol_generation: None,
+                endpoint_protocol_min_generation: None,
             }),
         },
     };
@@ -624,6 +627,7 @@ fn session_snapshot_request_and_response_round_trip() {
                 panes: Vec::new(),
                 layouts: Vec::new(),
                 agents: Vec::new(),
+                agent_session_warnings: None,
             }),
         },
     };
@@ -660,6 +664,7 @@ fn worktree_request_and_response_round_trip() {
                 pane_count: 1,
                 tab_count: 1,
                 active_tab_id: "w_1:1".into(),
+                next_public_tab_number: None,
                 agent_status: AgentStatus::Unknown,
                 tokens: HashMap::new(),
                 worktree: Some(WorkspaceWorktreeInfo {
@@ -746,6 +751,7 @@ fn worktree_lifecycle_events_round_trip() {
         pane_count: 1,
         tab_count: 1,
         active_tab_id: "w_2:1".into(),
+        next_public_tab_number: None,
         agent_status: AgentStatus::Unknown,
         tokens: HashMap::new(),
         worktree: Some(WorkspaceWorktreeInfo {
@@ -1038,9 +1044,12 @@ fn authority_mutation_requests_round_trip() {
 
     let pane_focus = Request {
         id: "focus_pane".into(),
-        method: Method::PaneFocus(PaneTarget {
-            pane_id: "w1:1".into(),
-        }),
+        method: Method::PaneFocus(
+            PaneTarget {
+                pane_id: "w1:1".into(),
+            }
+            .into(),
+        ),
     };
     let json = serde_json::to_value(&pane_focus).unwrap();
     assert_eq!(json["method"], "pane.focus");

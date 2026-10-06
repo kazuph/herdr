@@ -12,6 +12,13 @@ pub(crate) struct PopupGeometry {
     pub height: Option<PopupSize>,
 }
 
+pub(crate) struct PopupOwner {
+    pub(crate) workspace_index: usize,
+    pub(crate) tab_index: usize,
+    pub(crate) pane_id: PaneId,
+    pub(crate) terminal_area: ratatui::layout::Rect,
+}
+
 impl App {
     pub(crate) fn popup_runtime(&self) -> Option<&TerminalRuntime> {
         let terminal_id = &self.state.active_popup_pane()?.terminal_id;
@@ -103,6 +110,39 @@ impl App {
         )
     }
 
+    pub(crate) fn spawn_popup_shell_command_at(
+        &mut self,
+        owner: PopupOwner,
+        command: &str,
+        cwd: Option<PathBuf>,
+        extra_env: Vec<(String, String)>,
+        geometry: PopupGeometry,
+    ) -> std::io::Result<()> {
+        self.spawn_popup_command_at(
+            owner,
+            cwd,
+            extra_env,
+            geometry,
+            |pane_id, rows, cols, cwd, launch_env, app| {
+                TerminalRuntime::spawn_shell_command(
+                    pane_id,
+                    rows,
+                    cols,
+                    cwd,
+                    command,
+                    launch_env,
+                    crate::pane::AgentDetection::Disabled,
+                    app.state.pane_scrollback_limit_bytes,
+                    app.state.host_terminal_theme,
+                    app.event_tx.clone(),
+                    app.render_notify.clone(),
+                    app.render_dirty.clone(),
+                )
+                .map(|runtime| (runtime, None))
+            },
+        )
+    }
+
     pub(crate) fn spawn_popup_argv_command(
         &mut self,
         argv: &[String],
@@ -113,6 +153,50 @@ impl App {
         self.spawn_popup_command(
             cwd,
             extra_env,
+            geometry,
+            |pane_id, rows, cols, cwd, launch_env, app| {
+                TerminalRuntime::spawn_argv_command(
+                    pane_id,
+                    rows,
+                    cols,
+                    cwd,
+                    argv,
+                    launch_env,
+                    crate::pane::AgentDetection::Disabled,
+                    app.state.pane_scrollback_limit_bytes,
+                    app.state.host_terminal_theme,
+                    app.event_tx.clone(),
+                    app.render_notify.clone(),
+                    app.render_dirty.clone(),
+                )
+                .map(|runtime| (runtime, Some(argv.to_vec())))
+            },
+        )
+    }
+
+    pub(crate) fn job_log_target(
+        &self,
+        id: &str,
+    ) -> Option<(crate::job::JobRecord, usize, PaneId)> {
+        let job = self.state.jobs.iter().find(|job| job.id == id)?.clone();
+        if !std::path::Path::new(&job.log_path).is_file() {
+            return None;
+        }
+        let (workspace, pane) = self.parse_pane_id(&job.caller_pane)?;
+        Some((job, workspace, pane))
+    }
+
+    pub(crate) fn spawn_popup_argv_at(
+        &mut self,
+        owner: PopupOwner,
+        argv: &[String],
+        cwd: PathBuf,
+        geometry: PopupGeometry,
+    ) -> std::io::Result<()> {
+        self.spawn_popup_command_at(
+            owner,
+            Some(cwd),
+            Vec::new(),
             geometry,
             |pane_id, rows, cols, cwd, launch_env, app| {
                 TerminalRuntime::spawn_argv_command(
@@ -159,16 +243,74 @@ impl App {
             .workspaces
             .get(ws_idx)
             .ok_or_else(|| std::io::Error::other("active workspace disappeared"))?;
+        if self.state.popup_pane_for_workspace(&ws.id).is_some() {
+            return Err(std::io::Error::other("popup already open"));
+        }
+        let pane_id = ws
+            .focused_pane_id()
+            .ok_or_else(|| std::io::Error::other("active tab has no focused pane"))?;
+        let tab_index = ws
+            .find_tab_index_for_pane(pane_id)
+            .ok_or_else(|| std::io::Error::other("active tab disappeared"))?;
+        let terminal_area = if self.state.view.terminal_area.width >= 4
+            && self.state.view.terminal_area.height >= 4
+        {
+            self.state.view.terminal_area
+        } else {
+            let (rows, cols) = self.state.estimate_pane_size();
+            ratatui::layout::Rect::new(0, 0, cols, rows)
+        };
+        self.spawn_popup_command_at(
+            PopupOwner {
+                workspace_index: ws_idx,
+                tab_index,
+                pane_id,
+                terminal_area,
+            },
+            cwd,
+            extra_env,
+            geometry,
+            spawn,
+        )?;
+        self.state.mode = Mode::Terminal;
+        Ok(())
+    }
+
+    fn spawn_popup_command_at<F>(
+        &mut self,
+        owner: PopupOwner,
+        cwd: Option<PathBuf>,
+        extra_env: Vec<(String, String)>,
+        geometry: PopupGeometry,
+        spawn: F,
+    ) -> std::io::Result<()>
+    where
+        F: FnOnce(
+            PaneId,
+            u16,
+            u16,
+            PathBuf,
+            &PaneLaunchEnv,
+            &mut App,
+        ) -> std::io::Result<(TerminalRuntime, Option<Vec<String>>)>,
+    {
+        let ws = self
+            .state
+            .workspaces
+            .get(owner.workspace_index)
+            .ok_or_else(|| std::io::Error::other("active workspace disappeared"))?;
         let workspace_id = ws.id.clone();
         if self.state.popup_pane_for_workspace(&workspace_id).is_some() {
             return Err(std::io::Error::other("popup already open"));
         }
         let active_tab = ws
-            .active_tab()
+            .tabs
+            .get(owner.tab_index)
             .ok_or_else(|| std::io::Error::other("active tab disappeared"))?;
-        let focused_pane = ws
-            .focused_pane_id()
-            .ok_or_else(|| std::io::Error::other("active tab has no focused pane"))?;
+        let focused_pane = owner.pane_id;
+        if !active_tab.layout.pane_ids().contains(&focused_pane) {
+            return Err(std::io::Error::other("active tab has no focused pane"));
+        }
         let cwd = cwd.or_else(|| {
             active_tab.cwd_for_pane(focused_pane, &self.state.terminals, &self.terminal_runtimes)
         });
@@ -176,14 +318,7 @@ impl App {
         let pane_id = PaneId::alloc();
         let terminal_id = TerminalId::alloc();
         let launch_env = PaneLaunchEnv::from_extra(extra_env).without_pane_identity();
-        let terminal_area = if self.state.view.terminal_area.width >= 4
-            && self.state.view.terminal_area.height >= 4
-        {
-            self.state.view.terminal_area
-        } else {
-            let (estimated_rows, estimated_cols) = self.state.estimate_pane_size();
-            ratatui::layout::Rect::new(0, 0, estimated_cols, estimated_rows)
-        };
+        let terminal_area = owner.terminal_area;
         let Some(resolved_geometry) =
             resolve_popup_geometry(geometry.width, geometry.height, terminal_area)
         else {
@@ -207,7 +342,6 @@ impl App {
                 width: geometry.width,
                 height: geometry.height,
             });
-        self.state.mode = Mode::Terminal;
         Ok(())
     }
 }

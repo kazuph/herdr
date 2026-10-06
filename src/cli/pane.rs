@@ -287,13 +287,56 @@ fn parse_pane_neighbor_args(args: &[String]) -> Result<PaneNeighborParams, Strin
     Ok(PaneNeighborParams { pane_id, direction })
 }
 
-fn parse_pane_focus_target(args: &[String]) -> Result<PaneTarget, String> {
-    let [pane_id] = args else {
+fn parse_pane_focus_target(args: &[String]) -> Result<crate::api::schema::PaneFocusParams, String> {
+    let Some(pane_id) = args.first() else {
         return Err("usage: herdr pane focus <pane_id>".into());
     };
-    Ok(PaneTarget {
+    let mut target: crate::api::schema::PaneFocusParams = PaneTarget {
         pane_id: super::normalize_pane_id(pane_id),
-    })
+    }
+    .into();
+    if args.len() == 1 {
+        return Ok(target);
+    }
+    let mut client_id = None;
+    let mut boot_id = None;
+    let mut endpoint_id = None;
+    let mut generation = None;
+    let mut options = args[1..].chunks_exact(2);
+    for pair in &mut options {
+        match pair[0].as_str() {
+            "--viewer" if client_id.is_none() => {
+                client_id = Some(pair[1].parse::<u64>().map_err(|_| "invalid viewer ID")?)
+            }
+            "--boot" if boot_id.is_none() && !pair[1].is_empty() => boot_id = Some(pair[1].clone()),
+            "--endpoint" if endpoint_id.is_none() && !pair[1].is_empty() => {
+                endpoint_id = Some(pair[1].clone())
+            }
+            "--generation" if generation.is_none() => {
+                generation = Some(
+                    pair[1]
+                        .parse::<u64>()
+                        .map_err(|_| "invalid connection generation")?,
+                )
+            }
+            _ => return Err("usage: herdr pane focus <pane_id>".into()),
+        }
+    }
+    if !options.remainder().is_empty() {
+        return Err("usage: herdr pane focus <pane_id>".into());
+    }
+    let (Some(client_id), Some(boot_id), Some(endpoint_id), Some(generation)) =
+        (client_id, boot_id, endpoint_id, generation)
+    else {
+        return Err("viewer focus requires --viewer, --boot, --endpoint and --generation".into());
+    };
+    target.viewer = Some(crate::api::schema::PaneFocusViewer {
+        client_id,
+        boot_id,
+        endpoint_id,
+        generation,
+    });
+    Ok(target)
 }
 
 fn parse_pane_resize_args(args: &[String]) -> Result<PaneResizeParams, String> {
@@ -1723,6 +1766,45 @@ mod tests {
             parse_pane_focus_target(&args(&["issue-2", "extra"])).unwrap_err(),
             "usage: herdr pane focus <pane_id>"
         );
+    }
+
+    #[test]
+    fn pane_focus_viewer_requires_complete_opaque_owner() {
+        let target = parse_pane_focus_target(&args(&[
+            "opaque:pane",
+            "--viewer",
+            "7",
+            "--boot",
+            "boot",
+            "--endpoint",
+            "machine-key",
+            "--generation",
+            "3",
+        ]))
+        .unwrap();
+        assert_eq!(target.pane_id, "opaque:pane");
+        assert_eq!(target.viewer.unwrap().generation, 3);
+        assert!(parse_pane_focus_target(&args(&["opaque:pane", "--viewer", "7"])).is_err());
+        assert!(parse_pane_focus_target(&args(&[
+            "opaque:pane",
+            "--viewer",
+            "7",
+            "--boot",
+            "boot",
+            "--endpoint",
+            "machine-key",
+            "--generation",
+            "invalid"
+        ]))
+        .is_err());
+        assert!(
+            parse_pane_focus_target(&args(&["opaque:pane", "--viewer", "7", "--viewer", "8"]))
+                .is_err()
+        );
+        assert!(parse_pane_focus_target(&args(&["opaque:pane"]))
+            .unwrap()
+            .viewer
+            .is_none());
     }
 
     #[test]

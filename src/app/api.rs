@@ -962,6 +962,30 @@ impl App {
                 };
                 return serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_string());
             }
+            Method::ServerPaneHistoryGet(_) => SuccessResponse {
+                id: request.id,
+                result: ResponseResult::PaneHistory {
+                    enabled: self.state.pane_history_persistence_enabled(),
+                },
+            },
+            Method::ServerPaneHistorySet(params) => {
+                if !self.save_pane_history_persistence(params.enabled) {
+                    return serde_json::to_string(&ErrorResponse {
+                        id: request.id,
+                        error: ErrorBody {
+                            code: "config_write_failed".into(),
+                            message: self.state.config_diagnostic.clone().unwrap_or_default(),
+                        },
+                    })
+                    .unwrap_or_else(|_| "{}".to_owned());
+                }
+                SuccessResponse {
+                    id: request.id,
+                    result: ResponseResult::PaneHistory {
+                        enabled: self.state.pane_history_persistence_enabled(),
+                    },
+                }
+            }
             Method::ServerReloadConfig(_) => {
                 let report = self.reload_config();
                 SuccessResponse {
@@ -1023,11 +1047,17 @@ impl App {
             Method::WorkspaceCreate(params) => {
                 return self.handle_workspace_create(request.id, params);
             }
+            Method::WorkspaceDuplicate(params) => {
+                return self.handle_workspace_duplicate(request.id, params);
+            }
             Method::WorkspaceFocus(target) => {
                 return self.handle_workspace_focus(request.id, target)
             }
             Method::WorkspaceRename(params) => {
                 return self.handle_workspace_rename(request.id, params);
+            }
+            Method::WorkspaceSetSection(params) => {
+                return self.handle_workspace_set_section(request.id, params);
             }
             Method::WorkspaceMove(params) => {
                 return self.handle_workspace_move(request.id, params);
@@ -1100,11 +1130,45 @@ impl App {
                 Err(error) => return responses::encode_error_body(request.id, error),
             },
             Method::RunStart(params) => return self.handle_run_start(request.id, params),
+            Method::RunLogOpen(params) => {
+                let job = self.job_log_target(&params.job_id);
+                let before_popup = self.state.active_popup_pane().map(|popup| popup.pane_id);
+                if let Some(index) = self
+                    .state
+                    .jobs
+                    .iter()
+                    .position(|job| job.id == params.job_id)
+                {
+                    self.activate_job(index);
+                }
+                return responses::encode_success(
+                    request.id,
+                    ResponseResult::RunLogOpened {
+                        caller_pane: job.map(|(job, _, _)| job.caller_pane),
+                        popup_opened: self
+                            .state
+                            .active_popup_pane()
+                            .is_some_and(|popup| Some(popup.pane_id) != before_popup),
+                    },
+                );
+            }
             Method::PaneSplit(params) => return self.handle_pane_split(request.id, params),
+            Method::PaneAgentStart(params) => {
+                return self.handle_pane_agent_start(request.id, params, true);
+            }
+            Method::PaneCommandExecute(params) => {
+                let size = self.state.estimate_pane_size();
+                return self.handle_pane_command_execute(request.id, params, size, true);
+            }
+            Method::PaneScrollbackEdit(params) => {
+                let size = self.state.estimate_pane_size();
+                return self.handle_pane_scrollback_edit(request.id, params, size, true);
+            }
             Method::PaneSwap(params) => return self.handle_pane_swap(request.id, params),
             Method::PaneMove(params) => return self.handle_pane_move(request.id, params),
             Method::PaneZoom(params) => return self.handle_pane_zoom(request.id, params),
             Method::PaneLayout(params) => return self.handle_pane_layout(request.id, params),
+            Method::PaneArrange(params) => return self.handle_pane_arrange(request.id, params),
             Method::PaneProcessInfo(params) => {
                 return self.handle_pane_process_info(request.id, params);
             }
@@ -1122,9 +1186,36 @@ impl App {
             Method::PaneList(params) => return self.handle_pane_list(request.id, params),
             Method::PaneCurrent(params) => return self.handle_pane_current(request.id, params),
             Method::PaneGet(target) => return self.handle_pane_get(request.id, target),
-            Method::PaneFocus(target) => return self.handle_pane_focus(request.id, target),
+            Method::PaneFocus(target) => {
+                if target.viewer.is_some() {
+                    return responses::encode_error(
+                        request.id,
+                        "viewer_unavailable",
+                        "viewer focus requires its owning server",
+                    );
+                }
+                return self.handle_pane_focus(
+                    request.id,
+                    crate::api::schema::PaneTarget {
+                        pane_id: target.pane_id,
+                    },
+                );
+            }
             Method::PaneRename(params) => return self.handle_pane_rename(request.id, params),
             Method::PaneRead(params) => return self.handle_pane_read(request.id, params),
+            Method::PaneSelectionRead(params) => {
+                return self.handle_pane_selection_read(request.id, params)
+            }
+            Method::PaneScroll(params) => return self.handle_pane_scroll(request.id, params),
+            method @ (Method::PopupGet(_)
+            | Method::PopupSelectionRead(_)
+            | Method::PopupScroll(_)) => return self.handle_popup_content(request.id, method),
+            Method::PaneCopyMotion(params) => {
+                return self.handle_pane_copy_motion(request.id, params)
+            }
+            Method::PaneCopySearch(params) => {
+                return self.handle_pane_copy_search(request.id, params)
+            }
             Method::PaneGraphicsSet(params) => {
                 return self.handle_pane_graphics_set(request.id, params);
             }

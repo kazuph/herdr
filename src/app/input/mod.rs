@@ -45,6 +45,16 @@ mod selection;
 mod settings;
 mod sidebar;
 mod terminal;
+pub(crate) use terminal::popup_child_claims_escape;
+
+pub(crate) use modal::{
+    global_menu_action_label, global_menu_actions_for, navigator_key_action,
+    workspace_section_for_menu_item, ContextMenuInput, GlobalMenuAction, GlobalMenuInput,
+    NavigatorKeyAction,
+};
+pub(crate) use mouse::{context_menu_item_at_from, context_menu_rect_from};
+pub(crate) use settings::{SettingsAction, SettingsInput};
+pub(crate) use sidebar::global_menu_rect_from;
 
 pub(crate) use self::{
     modal::{
@@ -52,7 +62,10 @@ pub(crate) use self::{
         handle_navigator_key, insert_navigator_search_text, insert_rename_input_text,
     },
     navigate::{
-        terminal_direct_indexed_navigation_action, terminal_direct_non_indexed_navigation_action,
+        copy_mode_survives_prefix_action, custom_command_for_bindings,
+        navigation_action_for_bindings, terminal_direct_indexed_navigation_action,
+        terminal_direct_non_indexed_navigation_action, BindingDispatch, NavigateAction,
+        OverlayCommandTarget,
     },
 };
 use self::{
@@ -60,7 +73,6 @@ use self::{
         modal_action_from_key, ModalAction, ONBOARDING_WELCOME_ACTIONS, RELEASE_NOTES_ACTIONS,
     },
     mouse::MouseAction,
-    settings::SettingsAction,
 };
 use super::state::{AppState, Mode};
 use super::App;
@@ -328,7 +340,7 @@ impl App {
                         self.save_agent_border_labels(enabled)
                     }
                     SettingsAction::SavePaneHistory(enabled) => {
-                        self.save_pane_history_persistence(enabled)
+                        self.save_pane_history_persistence(enabled);
                     }
                     SettingsAction::SaveSwitchAsciiInputSourceInPrefix(enabled) => {
                         self.save_switch_ascii_input_source_in_prefix(enabled)
@@ -408,17 +420,16 @@ impl App {
         self.sync_selection_autoscroll_deadline();
     }
 
-    fn activate_job(&mut self, index: usize) {
-        let Some(job) = self.state.jobs.get(index).cloned() else {
+    pub(crate) fn activate_job(&mut self, index: usize) {
+        let Some((job, ws_idx, caller_pane)) = self
+            .state
+            .jobs
+            .get(index)
+            .and_then(|job| self.job_log_target(&job.id))
+        else {
             return;
         };
         let log_path = std::path::PathBuf::from(&job.log_path);
-        if !log_path.is_file() {
-            return;
-        }
-        let Some((ws_idx, caller_pane)) = self.parse_pane_id(&job.caller_pane) else {
-            return;
-        };
         let caller_is_focused = self.state.active == Some(ws_idx)
             && self.state.workspaces[ws_idx].focused_pane_id() == Some(caller_pane);
         if !caller_is_focused {

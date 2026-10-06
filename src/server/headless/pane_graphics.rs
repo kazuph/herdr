@@ -47,6 +47,9 @@ impl HeadlessServer {
                 )
             })
         });
+        let endpoint_direct = direct
+            .as_ref()
+            .and_then(|params| self.endpoint_pane_direct_owner(&params.pane_id));
         let direct_client = self
             .direct_graphics_available()
             .then_some(self.foreground_client_id)
@@ -57,7 +60,8 @@ impl HeadlessServer {
             .slots
             .values()
             .any(|slot| slot.direct_gate.is_some());
-        self.app.direct_graphics_available = direct_client.is_some() && !gate_busy;
+        self.app.direct_graphics_available =
+            (direct_client.is_some() || endpoint_direct.is_some()) && !gate_busy;
         let response = self
             .app
             .handle_api_request_after_internal_events_drained(msg.request);
@@ -65,6 +69,28 @@ impl HeadlessServer {
         let succeeded = serde_json::from_str::<api::schema::SuccessResponse>(&response).is_ok();
 
         if succeeded {
+            if let (Some(client_id), Some(key)) = (endpoint_direct, direct_key.as_ref()) {
+                if let Some(slot) = self.app.pane_graphics.slots.get_mut(key) {
+                    if let Some(lease) = slot
+                        .layer
+                        .as_ref()
+                        .and_then(crate::app::pane_graphics::Layer::direct_lease)
+                    {
+                        slot.direct_gate = Some(crate::app::pane_graphics::DirectGate {
+                            client_id,
+                            transfer_id: lease.fingerprint(),
+                            deadline: std::time::Instant::now()
+                                + crate::app::pane_graphics::DIRECT_DELIVERY_TIMEOUT,
+                            written: false,
+                            endpoint_image_id: None,
+                            success_response: response,
+                            respond_to: msg.respond_to,
+                        });
+                        self.request_endpoint_graphics(client_id);
+                        return RenderImpact::Graphics;
+                    }
+                }
+            }
             if let (Some(params), Some(client_id)) = (direct, direct_client) {
                 let direct_frame = direct_key.as_ref().and_then(|key| {
                     self.app.pane_graphics.slots.get(key).and_then(|slot| {
@@ -148,6 +174,7 @@ impl HeadlessServer {
                                     deadline: std::time::Instant::now()
                                         + crate::app::pane_graphics::DIRECT_DELIVERY_TIMEOUT,
                                     written: false,
+                                    endpoint_image_id: None,
                                     success_response: response,
                                     respond_to: msg.respond_to,
                                 });
@@ -397,7 +424,23 @@ impl HeadlessServer {
                     .map(|gate| (key.clone(), gate.client_id))
             })
             .collect::<Vec<_>>();
+        let mut retired = false;
         for (key, client_id) in &expired {
+            if let Some((transfer, image)) = self
+                .app
+                .pane_graphics
+                .slots
+                .get(key)
+                .and_then(|slot| slot.direct_gate.as_ref())
+                .and_then(|gate| {
+                    gate.endpoint_image_id
+                        .map(|image| (gate.transfer_id, image))
+                })
+            {
+                if !self.retire_endpoint_pane_graphics(*client_id, transfer, image) {
+                    continue;
+                }
+            }
             if let Some(slot) = self.app.pane_graphics.slots.get(key) {
                 if let Some(gate) = &slot.direct_gate {
                     self.send_to_client(
@@ -413,12 +456,13 @@ impl HeadlessServer {
                 client.direct_graphics = false;
             }
             self.retire_direct_gate(key);
+            retired = true;
         }
-        if !expired.is_empty() {
+        if retired {
             self.app.direct_graphics_available = false;
             self.retire_all_direct_graphics();
         }
-        !expired.is_empty()
+        retired
     }
 
     pub(super) fn retire_all_direct_graphics(&mut self) {

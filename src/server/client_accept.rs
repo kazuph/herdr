@@ -6,7 +6,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
 use crate::ipc::LocalListener;
-use crate::server::client_transport::{self, ServerEvent};
+use crate::server::client_transport::ServerEvent;
+use crate::server::endpoint_transport::EndpointTransportEvent;
 
 /// Accepts pending thin-client connections and starts their handshake readers.
 pub(crate) fn accept_pending_client_connections(
@@ -14,6 +15,7 @@ pub(crate) fn accept_pending_client_connections(
     next_client_id: &mut u64,
     should_quit: &Arc<AtomicBool>,
     server_event_tx: &mpsc::Sender<ServerEvent>,
+    endpoint_event_tx: &mpsc::Sender<EndpointTransportEvent>,
 ) -> io::Result<()> {
     loop {
         match listener.accept() {
@@ -28,11 +30,13 @@ pub(crate) fn accept_pending_client_connections(
 
                 let should_quit = should_quit.clone();
                 let server_event_tx = server_event_tx.clone();
+                let endpoint_event_tx = endpoint_event_tx.clone();
                 std::thread::spawn(move || {
-                    if let Err(err) = client_transport::handle_client_handshake(
+                    if let Err(err) = super::endpoint_transport::handle_socket_handshake(
                         stream,
                         client_id,
                         &server_event_tx,
+                        &endpoint_event_tx,
                         &should_quit,
                     ) {
                         debug!(client_id, err = %err, "client handshake failed");

@@ -4,6 +4,30 @@ use crate::app::state::{AppState, ViewLayout};
 
 use super::ScrollbarClickTarget;
 
+pub(crate) fn global_menu_rect_from(
+    screen: Rect,
+    launcher: Rect,
+    labels: &[&str],
+    item_has_badge: impl Fn(&str) -> bool,
+) -> Rect {
+    let content_width = labels
+        .iter()
+        .map(|label| {
+            let badge_width = if item_has_badge(label) { 2 } else { 0 };
+            label.chars().count() as u16 + badge_width
+        })
+        .max()
+        .unwrap_or(8)
+        .saturating_add(2);
+    let menu_w = content_width.saturating_add(2).min(screen.width.max(1));
+    let menu_h = (labels.len() as u16 + 2).min(screen.height.max(1));
+    let max_x = screen.x + screen.width.saturating_sub(menu_w);
+    let desired_x = launcher.x + launcher.width.saturating_sub(menu_w);
+    let x = desired_x.min(max_x);
+    let y = launcher.y.saturating_sub(menu_h);
+    Rect::new(x, y, menu_w, menu_h)
+}
+
 impl AppState {
     pub(super) fn workspace_list_rect(&self) -> Rect {
         let sidebar = self.view.sidebar_rect;
@@ -219,29 +243,12 @@ impl AppState {
     }
 
     pub(crate) fn global_menu_rect(&self) -> Rect {
-        let screen = self.screen_rect();
-        let launcher = self.global_launcher_rect();
-        let labels = self.global_menu_labels();
-        let content_width = labels
-            .iter()
-            .map(|label| {
-                let badge_width = if self.global_menu_item_has_badge(label) {
-                    2
-                } else {
-                    0
-                };
-                label.chars().count() as u16 + badge_width
-            })
-            .max()
-            .unwrap_or(8)
-            .saturating_add(2);
-        let menu_w = content_width.saturating_add(2).min(screen.width.max(1));
-        let menu_h = (labels.len() as u16 + 2).min(screen.height.max(1));
-        let max_x = screen.x + screen.width.saturating_sub(menu_w);
-        let desired_x = launcher.x + launcher.width.saturating_sub(menu_w);
-        let x = desired_x.min(max_x);
-        let y = launcher.y.saturating_sub(menu_h);
-        Rect::new(x, y, menu_w, menu_h)
+        global_menu_rect_from(
+            self.screen_rect(),
+            self.global_launcher_rect(),
+            &self.global_menu_labels(),
+            |label| self.global_menu_item_has_badge(label),
+        )
     }
 
     pub(super) fn on_sidebar_divider(&self, col: u16, row: u16) -> bool {
@@ -510,17 +517,18 @@ impl AppState {
         ws_idx: usize,
         section: crate::workspace::WorkspaceSection,
     ) {
-        let Some(workspace) = self.workspaces.get_mut(ws_idx) else {
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
             return;
         };
         if workspace.section == section {
             return;
         }
-        workspace.section = section;
+        if !self.set_workspace_section_runtime(ws_idx, section) {
+            return;
+        }
         self.collapsed_workspace_sections.remove(&section);
         self.workspace_scroll = 0;
         self.agent_panel_scroll = 0;
-        self.mark_session_dirty();
     }
 
     pub(super) fn toggle_workspace_section(&mut self, section: crate::workspace::WorkspaceSection) {

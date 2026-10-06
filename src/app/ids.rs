@@ -5,18 +5,14 @@ impl App {
         &self,
         pane_id: crate::layout::PaneId,
     ) -> Option<(usize, &crate::pane::PaneState)> {
-        self.state
-            .workspaces
-            .iter()
-            .enumerate()
-            .find_map(|(ws_idx, ws)| ws.pane_state(pane_id).map(|pane| (ws_idx, pane)))
+        self.state.find_pane(pane_id)
     }
 
-    pub(super) fn public_workspace_id(&self, ws_idx: usize) -> String {
+    pub(crate) fn public_workspace_id(&self, ws_idx: usize) -> String {
         self.state.workspaces[ws_idx].id.clone()
     }
 
-    pub(super) fn public_tab_id(&self, ws_idx: usize, tab_idx: usize) -> Option<String> {
+    pub(crate) fn public_tab_id(&self, ws_idx: usize, tab_idx: usize) -> Option<String> {
         let ws = self.state.workspaces.get(ws_idx)?;
         let tab_number = ws.public_tab_number(tab_idx)?;
         Some(crate::workspace::public_tab_id_for_number(
@@ -54,7 +50,7 @@ impl App {
         )
     }
 
-    pub(super) fn parse_workspace_id(&self, id: &str) -> Option<usize> {
+    pub(crate) fn parse_workspace_id(&self, id: &str) -> Option<usize> {
         self.state
             .workspaces
             .iter()
@@ -70,7 +66,7 @@ impl App {
             .or_else(|| id.parse::<usize>().ok()?.checked_sub(1))
     }
 
-    pub(super) fn parse_tab_id(&self, id: &str) -> Option<(usize, usize)> {
+    pub(crate) fn parse_tab_id(&self, id: &str) -> Option<(usize, usize)> {
         if let Some(rest) = id.strip_prefix("t_") {
             let (ws_raw, tab_raw) = rest.rsplit_once('_')?;
             let ws_idx = self.parse_workspace_id(ws_raw)?;
@@ -96,8 +92,24 @@ impl App {
         Some((ws_idx, tab_idx))
     }
 
+    pub(crate) fn parse_pane_id(&self, id: &str) -> Option<(usize, crate::layout::PaneId)> {
+        self.state.parse_pane_id(id)
+    }
+}
+
+impl super::state::AppState {
+    pub(crate) fn find_pane(
+        &self,
+        pane_id: crate::layout::PaneId,
+    ) -> Option<(usize, &crate::pane::PaneState)> {
+        self.workspaces
+            .iter()
+            .enumerate()
+            .find_map(|(ws_idx, ws)| ws.pane_state(pane_id).map(|pane| (ws_idx, pane)))
+    }
+
     fn resolve_raw_pane_id(&self, raw: u32) -> Option<crate::layout::PaneId> {
-        if let Some(alias) = self.state.pane_id_aliases.get(&raw).copied() {
+        if let Some(alias) = self.pane_id_aliases.get(&raw).copied() {
             return self.find_pane(alias).map(|_| alias);
         }
         let pane_id = crate::layout::PaneId::from_raw(raw);
@@ -108,7 +120,7 @@ impl App {
     }
 
     pub(crate) fn parse_pane_id(&self, id: &str) -> Option<(usize, crate::layout::PaneId)> {
-        if let Some(alias) = self.state.public_pane_id_aliases.get(id).copied() {
+        if let Some(alias) = self.public_pane_id_aliases.get(id).copied() {
             return self.find_pane(alias).map(|(ws_idx, _)| (ws_idx, alias));
         }
 
