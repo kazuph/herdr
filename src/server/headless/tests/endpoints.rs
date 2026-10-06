@@ -2171,6 +2171,16 @@ async fn endpoint_commands_live_server_qualified_response_and_disconnect_without
         .unwrap()
         .is_none());
     registry.disconnect(&remote);
+    // Consume the old socket's actual retirement before waiting for its replacement.
+    loop {
+        let event = next_event(&mut server).await;
+        let retired = matches!(event, EndpointTransportEvent::Disconnected { client_id } if client_id == remote_id);
+        server.handle_endpoint_event(event);
+        if retired {
+            break;
+        }
+    }
+    assert!(!server.endpoint_clients.contains_key(&remote_id));
     assert!(registry.accepts(&local, 7));
     assert_eq!(registry.active_id(), &local);
     assert_eq!(server.app.state.active, Some(0));
@@ -4239,7 +4249,7 @@ async fn endpoint_real_pty_incremental_and_inactive_surface_bytes() {
         id: u64,
         stream: &mut crate::ipc::LocalStream,
     ) -> Vec<ServerMessage> {
-        // Measurement marker shares the actual ordered render queue with the preceding frames.
+        // The existing presentation fence follows every accepted render batch.
         server.endpoint_measurement_barrier(id);
         let mut messages = Vec::new();
         loop {

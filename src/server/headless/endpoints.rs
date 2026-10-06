@@ -155,8 +155,8 @@ impl HeadlessServer {
         };
         self.endpoint_clients[&client_id]
             .writer
-            .render
-            .send_ordered(framed(&message).unwrap())
+            .control
+            .send_after_render(framed(&message).unwrap())
             .unwrap();
     }
 
