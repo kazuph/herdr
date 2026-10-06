@@ -120,7 +120,7 @@ fn workspace_rows(
         let projection = SidebarProjection {
             endpoint: &endpoint.endpoint_id,
             snapshot,
-            jobs: endpoint.jobs.for_snapshot(snapshot),
+            jobs: endpoint.jobs.for_presentation(snapshot),
         };
         let memberships = snapshot
             .workspaces
@@ -681,7 +681,7 @@ fn agent_rows(chrome: &ClientChrome, shell: &ClientShellState, width: u16) -> Ve
         let projection = SidebarProjection {
             endpoint: &endpoint.endpoint_id,
             snapshot,
-            jobs: endpoint.jobs.for_snapshot(snapshot),
+            jobs: endpoint.jobs.for_presentation(snapshot),
         };
         for id in &snapshot.agent_order {
             let Some(agent) = snapshot.agents.iter().find(|agent| &agent.pane_id == id) else {
@@ -888,7 +888,7 @@ pub(super) fn compute(chrome: &mut ClientChrome, shell: &ClientShellState, view:
                 endpoint
                     .cache
                     .snapshot()
-                    .and_then(|snapshot| endpoint.jobs.for_snapshot(snapshot))
+                    .and_then(|snapshot| endpoint.jobs.for_presentation(snapshot))
             })
         {
             chrome.jobs_scroll = chrome.jobs_scroll.min(jobs.jobs.len().saturating_sub(1));

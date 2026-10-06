@@ -277,6 +277,25 @@ fn mouse_input(
             return context::zoom_pane(frontend, target);
         }
     }
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+        let actions = view.pane_actions;
+        let position = (mouse.column, mouse.row).into();
+        let item = if actions.cycle_layout.contains(position) {
+            Some("Cycle pane layout")
+        } else if actions.rotate.contains(position) {
+            Some("Rotate panes")
+        } else if actions.equalize.contains(position) {
+            Some("Equalize pane sizes")
+        } else {
+            None
+        };
+        if let Some(item) = item {
+            if let Some(target) = focused_pane(frontend) {
+                return context::pane_action(frontend, target, item);
+            }
+            return Ok(());
+        }
+    }
     if resize::mouse(frontend, view.layout.pane_surface, mouse)? {
         return Ok(());
     }

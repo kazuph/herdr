@@ -290,6 +290,7 @@ impl ClientFrontend {
             self.modal = None;
         }
         if let Some(error) = update.error {
+            tracing::warn!(endpoint = ?self.runtime.shell.active_endpoint_id, %error, "endpoint presentation failed");
             self.focus_history.cancel();
             self.notice = Some(error);
         }
@@ -435,7 +436,7 @@ impl ClientFrontend {
                     }
                 }
             }),
-            self.runtime.input_lease_current()
+            (self.runtime.input_lease_current() || self.runtime.awaiting_surface_pair())
                 && self.mobile.is_none()
                 && self.navigator.is_none()
                 && self.menu.is_none()
@@ -503,6 +504,10 @@ impl ClientFrontend {
             watch,
         };
         let mut live_catalog = LiveCatalog::default();
+        let mut maintenance = tokio::time::interval(Duration::from_millis(100));
+        maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut animation = tokio::time::interval(crate::app::HEADLESS_ANIMATION_INTERVAL);
+        animation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         self.draw()?;
         while !quit.load(Ordering::Acquire) && !self.detach_requested {
             let repaint = tokio::select! {
@@ -547,7 +552,18 @@ impl ClientFrontend {
                 }
                 // Existing fork client timer interval. This schedules health and retry work;
                 // endpoint connections execute on independent workers, never on this loop.
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                _ = animation.tick() => {
+                    self.chrome.spinner_tick = self.chrome.spinner_tick
+                        .wrapping_add(crate::app::HEADLESS_ANIMATION_TICK_STEP);
+                    self.runtime.shell.endpoints.iter().any(|endpoint| {
+                        endpoint.cache.snapshot().is_some_and(|snapshot| {
+                            snapshot.workspaces.iter().any(|workspace| {
+                                workspace.agent_status == crate::api::schema::AgentStatus::Working
+                            })
+                        })
+                    })
+                }
+                _ = maintenance.tick() => {
                     let now = Instant::now();
                     let update = self.runtime.tick(now);
                     let repaint = self.update(update)?;

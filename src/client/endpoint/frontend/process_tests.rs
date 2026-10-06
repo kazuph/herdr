@@ -4174,6 +4174,53 @@ async fn endpoint_frontend_title_click_zooms_each_position_actual_socket() {
                 .await;
             }
         }
+        for action in ["cycle", "rotate", "equalize"] {
+            let before = frontend.runtime.shell.pane_surface.clone().unwrap();
+            let view =
+                frontend
+                    .chrome
+                    .compute_view(&frontend.runtime.shell, frontend.cols, frontend.rows);
+            let rect = match action {
+                "cycle" => view.pane_actions.cycle_layout,
+                "rotate" => view.pane_actions.rotate,
+                _ => view.pane_actions.equalize,
+            };
+            assert!(!rect.is_empty());
+            frontend
+                .dispatch_input(RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::Down(
+                        crossterm::event::MouseButton::Left,
+                    ),
+                    column: rect.x + rect.width / 2,
+                    row: rect.y,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                }))
+                .unwrap();
+            assert!(
+                frontend.context.is_some(),
+                "action was not queued: {action}"
+            );
+            pump(&mut frontend, |f| {
+                f.context.is_none() && f.runtime.input_lease_current()
+            })
+            .await;
+            let after = frontend.runtime.shell.pane_surface.as_ref().unwrap();
+            assert_eq!(after.panes.len(), 3);
+            if action != "equalize" {
+                let placement = |surface: &wire::PaneSurfaceFrame| {
+                    surface
+                        .panes
+                        .iter()
+                        .map(|pane| (pane.pane_id.clone(), pane.rect))
+                        .collect::<Vec<_>>()
+                };
+                assert_ne!(
+                    placement(&before),
+                    placement(after),
+                    "layout unchanged: {action}"
+                );
+            }
+        }
         drop(frontend);
         server.stop();
     }

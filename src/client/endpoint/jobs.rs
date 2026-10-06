@@ -50,6 +50,17 @@ impl EndpointJobsCache {
             .filter(|jobs| jobs.boot_id == snapshot.boot_id && jobs.revision == snapshot.revision)
     }
 
+    /// Snapshot and job facts arrive separately. Retain the last accepted display
+    /// until its replacement arrives, without reusing it across a server boot.
+    pub(crate) fn for_presentation(
+        &self,
+        snapshot: &ClientShellSnapshot,
+    ) -> Option<&EndpointJobsProjection> {
+        self.projection
+            .as_ref()
+            .filter(|jobs| jobs.boot_id == snapshot.boot_id && jobs.revision <= snapshot.revision)
+    }
+
     /// True while a finished job is still inside the sidebar indicator
     /// retention window, so the frontend keeps repainting until it expires.
     pub(crate) fn has_finished_indicator_pending_expiry(
@@ -57,7 +68,7 @@ impl EndpointJobsCache {
         snapshot: &ClientShellSnapshot,
         now_unix_ms: u128,
     ) -> bool {
-        self.for_snapshot(snapshot).is_some_and(|projection| {
+        self.for_presentation(snapshot).is_some_and(|projection| {
             projection.jobs.iter().any(|job| {
                 !matches!(job.status.as_str(), "running" | "cancelling" | "queued")
                     && crate::ui::sidebar::tokens::job_indicator_visible(
@@ -122,6 +133,30 @@ mod tests {
         assert!(jobs.for_snapshot(&current).is_none());
         assert!(jobs.replace(2, &cache, projection(&current)));
         assert!(!jobs.begin_connection(1));
+    }
+
+    #[test]
+    fn sidebar_jobs_remain_visible_between_snapshot_and_jobs_messages() {
+        let mut cache = EndpointCache::default();
+        let mut jobs = EndpointJobsCache::default();
+        cache.begin_connection(1);
+        jobs.begin_connection(1);
+        let current = snapshot(7);
+        cache.replace_snapshot(1, current.clone());
+        let mut initial = projection(&current);
+        initial.jobs.push(endpoint_job("running", None));
+        assert!(jobs.replace(1, &cache, initial.clone()));
+        let next = snapshot(8);
+        cache.replace_snapshot(1, next.clone());
+        assert!(jobs.for_snapshot(&next).is_none());
+        assert_eq!(jobs.for_presentation(&next), Some(&initial));
+        assert!(jobs.replace(1, &cache, projection(&next)));
+        assert!(jobs.for_presentation(&next).unwrap().jobs.is_empty());
+        let mut new_boot = next.clone();
+        new_boot.boot_id = "new boot".into();
+        assert!(jobs.for_presentation(&new_boot).is_none());
+        jobs.begin_connection(2);
+        assert!(jobs.for_presentation(&next).is_none());
     }
 
     fn endpoint_job(

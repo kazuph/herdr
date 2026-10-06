@@ -338,11 +338,19 @@ pub(super) fn zoom_pane(
     frontend: &mut ClientFrontend,
     target: super::super::ResourceKey,
 ) -> io::Result<()> {
+    pane_action(frontend, target, "Zoom")
+}
+
+pub(super) fn pane_action(
+    frontend: &mut ClientFrontend,
+    target: super::super::ResourceKey,
+    item: &str,
+) -> io::Result<()> {
     open_pane(frontend, target.clone(), 0, 0);
     let Some(context) = frontend.context.as_mut() else {
         return Ok(());
     };
-    context.pending = action(context, "Zoom");
+    context.pending = action(context, item);
     let update = frontend.runtime.activate(
         target.endpoint,
         Some(super::super::FocusTarget::Pane(target.id)),

@@ -4253,10 +4253,12 @@ impl HeadlessServer {
             changed = true;
         }
 
-        if geometry_dirty {
-            self.app.pending_agent_resume_deadline = None;
-        } else if self.foreground_client_id.is_none() {
+        if self.foreground_client_id.is_none() {
+            // Endpoint clients do not drive the legacy foreground layout. This path
+            // computes its own geometry; unrelated repaints must not starve restore.
             changed |= self.sync_headless_pending_agent_resumes(now);
+        } else if geometry_dirty {
+            self.app.pending_agent_resume_deadline = None;
         } else {
             self.app.sync_pending_agent_resume_deadline(now);
             changed |= self
@@ -6473,6 +6475,45 @@ next_tab = ""
             .pending_agent_resume_plan
             .is_some());
         assert!(server.app.pending_agent_resume_deadline.is_none());
+    }
+
+    #[tokio::test]
+    async fn headless_agent_restore_progresses_during_endpoint_repaints() {
+        let mut server = test_headless_server();
+        let workspace = crate::workspace::Workspace::test_new("restored");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.terminal_id(pane_id).cloned().unwrap();
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.ensure_test_terminals();
+        server.foreground_client_id = None;
+        server.app.headless_agent_restore_enabled = true;
+        server
+            .app
+            .state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .pending_agent_resume_plan = Some(crate::agent_resume::AgentResumePlan {
+            agent: "codex".into(),
+            argv: vec!["/bin/sh".into(), "-c".into(), "read input".into()],
+            dedupe_key: "owned-restore-repaint".into(),
+        });
+        let now = Instant::now();
+        assert!(!server.handle_scheduled_tasks_headless(now, true));
+        let deadline = server.app.pending_agent_resume_deadline.unwrap();
+        assert_eq!(deadline, now + server.app.pending_agent_resume_wait);
+        assert!(server.handle_scheduled_tasks_headless(deadline, true));
+        let runtime = server.app.terminal_runtimes.remove(&terminal_id).unwrap();
+        runtime.shutdown();
+        assert!(server
+            .app
+            .state
+            .terminals
+            .get(&terminal_id)
+            .unwrap()
+            .pending_agent_resume_plan
+            .is_none());
     }
 
     #[tokio::test]
