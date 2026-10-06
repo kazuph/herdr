@@ -1808,6 +1808,9 @@ pub struct AppState {
     pub sidebar_detail_view: SidebarDetailView,
     /// Background jobs started through `herdr run`, newest first.
     pub(crate) jobs: Vec<crate::job::JobRecord>,
+    /// Runner pids of `running`/`cancelling` jobs in `jobs` whose process no
+    /// longer exists, refreshed together with `jobs`.
+    pub(crate) dead_runner_pids: std::collections::HashSet<u32>,
     /// First visible row of the jobs list.
     pub jobs_scroll: usize,
     pub sidebar_agents: crate::config::AgentsSidebarConfig,
@@ -2485,6 +2488,7 @@ impl AppState {
             agent_view_override: None,
             sidebar_detail_view: SidebarDetailView::default(),
             jobs: Vec::new(),
+            dead_runner_pids: std::collections::HashSet::new(),
             jobs_scroll: 0,
             sidebar_agents: crate::config::AgentsSidebarConfig::default(),
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),

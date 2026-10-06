@@ -4,7 +4,7 @@ use crate::workspace::Workspace;
 use ratatui::{backend::TestBackend, Terminal};
 
 fn job(caller: String, status: &str, exit_code: Option<i32>) -> crate::job::JobRecord {
-    crate::job::JobRecord {
+    let mut job = crate::job::JobRecord {
         id: status.into(),
         label: status.into(),
         command: "true".into(),
@@ -18,7 +18,13 @@ fn job(caller: String, status: &str, exit_code: Option<i32>) -> crate::job::JobR
         started_unix_ms: None,
         finished_unix_ms: None,
         log_path: String::new(),
+    };
+    match status {
+        "running" | "cancelling" => job.runner_pid = Some(std::process::id()),
+        "queued" => {}
+        _ => job.finished_unix_ms = Some(now_unix_ms()),
     }
+    job
 }
 
 fn spans(tokens: &[ResolvedToken], width: usize, p: &Palette) -> Vec<Span<'static>> {
@@ -59,6 +65,7 @@ fn endpoint_and_local_jobs_share_exact_labels_colors_age_and_caller_width() {
         let endpoint = crate::protocol::endpoint_jobs::EndpointJob::from_record(
             &local,
             Some("opaque:owner".into()),
+            None,
         );
         let local_line = job_panel_line((&local).into(), 70_000, &p);
         assert_eq!(local_line, job_panel_line((&endpoint).into(), 70_000, &p));
@@ -68,12 +75,61 @@ fn endpoint_and_local_jobs_share_exact_labels_colors_age_and_caller_width() {
         );
         assert!(local_line.spans.last().unwrap().content.contains("👩🏽‍💻"));
         local.label.clear();
-        let endpoint = crate::protocol::endpoint_jobs::EndpointJob::from_record(&local, None);
+        let endpoint = crate::protocol::endpoint_jobs::EndpointJob::from_record(&local, None, None);
         assert_eq!(
             job_panel_line((&local).into(), 70_000, &p),
             job_panel_line((&endpoint).into(), 70_000, &p)
         );
     }
+}
+
+#[test]
+fn workspace_job_indicators_keep_only_meaningful_states() {
+    let mut app = AppState::test_new();
+    app.workspaces = vec![Workspace::test_new("one")];
+    let caller = format!("p{}", app.workspaces[0].tabs[0].root_pane.raw());
+    let now = now_unix_ms();
+    let retention = tokens::JOB_INDICATOR_FINISHED_RETENTION_MS;
+    let dead_pid = 4_294_000_000u32;
+
+    let mut fresh_exit = job(caller.clone(), "exited", Some(0));
+    fresh_exit.finished_unix_ms = Some(now.saturating_sub(retention - 1));
+    let mut boundary_exit = job(caller.clone(), "exited", Some(0));
+    boundary_exit.finished_unix_ms = Some(now.saturating_sub(retention));
+    let mut stale_exit = job(caller.clone(), "exited", Some(1));
+    stale_exit.finished_unix_ms = Some(now.saturating_sub(retention + 1_000));
+    let mut undated_exit = job(caller.clone(), "exited", Some(0));
+    undated_exit.finished_unix_ms = None;
+    let mut dead_runner = job(caller.clone(), "running", None);
+    dead_runner.runner_pid = Some(dead_pid);
+    let mut dead_cancelling = job(caller.clone(), "cancelling", None);
+    dead_cancelling.runner_pid = Some(dead_pid);
+    let mut missing_pid = job(caller.clone(), "running", None);
+    missing_pid.runner_pid = None;
+
+    app.jobs = vec![
+        job(caller.clone(), "queued", None),
+        job(caller, "running", None),
+        fresh_exit,
+        boundary_exit,
+        stale_exit,
+        undated_exit,
+        dead_runner,
+        dead_cancelling,
+        missing_pid,
+    ];
+    app.dead_runner_pids = [dead_pid].into_iter().collect();
+
+    assert_eq!(
+        workspace_jobs(&app, &app.workspaces[0], now),
+        vec![
+            ("queued".to_string(), None),
+            ("running".to_string(), None),
+            ("exited".to_string(), Some(0)),
+        ],
+        "queued, verified-live running, and recently finished jobs are the only dots"
+    );
+    assert_eq!(app.jobs.len(), 9, "the jobs list itself is unchanged");
 }
 
 #[test]
@@ -99,10 +155,10 @@ fn job_priority_clipping_preserves_complete_display_graphemes_and_styles() {
             )])),
             ResolvedToken::unstyled(ResolvedTokenKind::Custom(grapheme.into())),
         ];
-        let output = spans(&tokens, display_width("○ ") + width, &p);
-        assert_eq!(text(&output), format!("○ {grapheme}"));
+        let output = spans(&tokens, display_width("● ") + width, &p);
+        assert_eq!(text(&output), format!("● {grapheme}"));
         assert_eq!(output[0].style.fg, Some(p.yellow));
-        assert_eq!(display_width(&text(&output)), display_width("○ ") + width);
+        assert_eq!(display_width(&text(&output)), display_width("● ") + width);
     }
 }
 
@@ -140,7 +196,7 @@ fn job_indicators_preserve_status_order_colors_and_physical_width_before_git() {
             deletions: usize::MAX,
         }),
     ];
-    let glyph_width = display_width("○");
+    let glyph_width = display_width("●");
     for width in 0..=cases.len() * glyph_width + 90 {
         let output = spans(&tokens, width, &p);
         assert!(
@@ -150,7 +206,7 @@ fn job_indicators_preserve_status_order_colors_and_physical_width_before_git() {
                 .sum::<usize>()
                 <= width
         );
-        let indicators: Vec<_> = output.iter().filter(|span| span.content == "○").collect();
+        let indicators: Vec<_> = output.iter().filter(|span| span.content == "●").collect();
         assert_eq!(
             indicators.len(),
             cases.len().min(width / glyph_width),
@@ -160,7 +216,7 @@ fn job_indicators_preserve_status_order_colors_and_physical_width_before_git() {
             assert_eq!(indicator.style.fg, Some(cases[index].2));
             assert_eq!(indicator.style.add_modifier, Modifier::empty());
         }
-        assert!(text(&output).starts_with(&"○".repeat(indicators.len())));
+        assert!(text(&output).starts_with(&"●".repeat(indicators.len())));
     }
     let simple = vec![
         tokens[0].clone(),
@@ -168,7 +224,7 @@ fn job_indicators_preserve_status_order_colors_and_physical_width_before_git() {
     ];
     assert_eq!(
         text(&spans(&simple, cases.len() + 5, &p)),
-        format!("{} main", "○".repeat(cases.len()))
+        format!("{} main", "●".repeat(cases.len()))
     );
     let mut changed_palette = p;
     std::mem::swap(&mut changed_palette.yellow, &mut changed_palette.green);
@@ -230,7 +286,7 @@ fn job_row_composition_handles_hidden_git_group_custom_empty_and_duplicate_token
         1,
     );
     let p = AppState::test_new().palette;
-    assert_eq!(text(&spans(&grouped[0], 20, &p)), "● 3 ○ repo");
+    assert_eq!(text(&spans(&grouped[0], 20, &p)), "● 3 ● repo");
     for width in 0..20 {
         assert!(display_width(&text(&spans(&grouped[0], width, &p))) <= width);
     }
@@ -256,16 +312,25 @@ fn job_membership_uses_live_aliases_all_tabs_and_follows_move_and_close() {
     .map(|caller| job(caller, "running", None))
     .collect();
     app.jobs_scroll = app.jobs.len() - 1;
-    assert_eq!(workspace_jobs(&app, &app.workspaces[0]).len(), 3);
-    assert!(workspace_jobs(&app, &app.workspaces[1]).is_empty());
+    assert_eq!(
+        workspace_jobs(&app, &app.workspaces[0], now_unix_ms()).len(),
+        3
+    );
+    assert!(workspace_jobs(&app, &app.workspaces[1], now_unix_ms()).is_empty());
     let moved = app.workspaces[0].tabs.pop().unwrap();
     app.workspaces[1].tabs.push(moved);
-    assert!(workspace_jobs(&app, &app.workspaces[0]).is_empty());
-    assert_eq!(workspace_jobs(&app, &app.workspaces[1]).len(), 3);
+    assert!(workspace_jobs(&app, &app.workspaces[0], now_unix_ms()).is_empty());
+    assert_eq!(
+        workspace_jobs(&app, &app.workspaces[1], now_unix_ms()).len(),
+        3
+    );
     app.workspaces.swap(0, 1);
-    assert_eq!(workspace_jobs(&app, &app.workspaces[0]).len(), 3);
+    assert_eq!(
+        workspace_jobs(&app, &app.workspaces[0], now_unix_ms()).len(),
+        3
+    );
     app.workspaces[0].tabs.pop();
-    assert!(workspace_jobs(&app, &app.workspaces[0]).is_empty());
+    assert!(workspace_jobs(&app, &app.workspaces[0], now_unix_ms()).is_empty());
     assert_eq!(app.jobs.len(), 5);
 }
 
@@ -306,7 +371,7 @@ fn space_job_cells_preserve_geometry_and_render_is_pure() {
             .enumerate()
         {
             let cell = &buffer[(x + offset as u16, y)];
-            assert_eq!(cell.symbol(), "○");
+            assert_eq!(cell.symbol(), "●");
             assert_eq!(cell.fg, color);
             assert_eq!(cell.modifier, Modifier::empty());
         }
@@ -367,10 +432,10 @@ fn grouped_child_jobs_hide_with_the_child_without_aggregating_into_parent() {
             .buffer()
             .content()
             .iter()
-            .filter(|cell| cell.symbol() == "○")
+            .filter(|cell| cell.symbol() == "●")
             .collect();
         assert_eq!(glyphs.len(), usize::from(!collapsed));
-        assert!(workspace_jobs(&app, &app.workspaces[0]).is_empty());
+        assert!(workspace_jobs(&app, &app.workspaces[0], now_unix_ms()).is_empty());
         assert_eq!(app.jobs.len(), 1);
     }
 }

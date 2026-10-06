@@ -2496,6 +2496,7 @@ async fn endpoint_jobs_live_sqlite_inactive_view_updates_and_owning_server_calle
         .unwrap();
     server.handle_internal_event_with_forwarding(AppEvent::JobsRefreshed {
         jobs: store.list_recent(2).unwrap(),
+        dead_runner_pids: std::collections::HashSet::new(),
     });
     let (id, mut stream) = connect_with_interest(&mut server, false).await;
     server.stream_endpoint_views();
@@ -2504,6 +2505,7 @@ async fn endpoint_jobs_live_sqlite_inactive_view_updates_and_owning_server_calle
     assert_eq!(owned.caller_pane, caller);
     assert_eq!(owned.workspace_id.as_deref(), Some(workspace_id.as_str()));
     assert_eq!(owned.status, "running");
+    assert_eq!(owned.runner_alive, Some(true));
     assert!(jobs
         .jobs
         .iter()
@@ -2513,9 +2515,19 @@ async fn endpoint_jobs_live_sqlite_inactive_view_updates_and_owning_server_calle
         .is_none());
     assert!(server.endpoint_clients[&id].surface.is_none());
     assert_eq!(server.app.state.active, Some(0));
+    server.handle_internal_event_with_forwarding(AppEvent::JobsRefreshed {
+        jobs: store.list_recent(2).unwrap(),
+        dead_runner_pids: [std::process::id()].into_iter().collect(),
+    });
+    server.stream_endpoint_views();
+    let (_, jobs) = receive_jobs(&mut stream);
+    let owned = jobs.jobs.iter().find(|job| job.id == "owned-job").unwrap();
+    assert_eq!(owned.status, "running");
+    assert_eq!(owned.runner_alive, Some(false));
     store.mark_finished("owned-job", Some(17), 2).unwrap();
     server.handle_internal_event_with_forwarding(AppEvent::JobsRefreshed {
         jobs: store.list_recent(2).unwrap(),
+        dead_runner_pids: [std::process::id()].into_iter().collect(),
     });
     server.stream_endpoint_views();
     let (after, jobs) = receive_jobs(&mut stream);
@@ -2526,6 +2538,7 @@ async fn endpoint_jobs_live_sqlite_inactive_view_updates_and_owning_server_calle
     let owned = jobs.jobs.iter().find(|job| job.id == "owned-job").unwrap();
     assert_eq!(owned.exit_code, Some(17));
     assert_eq!(owned.status, "exited");
+    assert_eq!(owned.runner_alive, None);
     assert_eq!(owned.workspace_id.as_deref(), Some(workspace_id.as_str()));
     assert!(server.endpoint_clients[&id].surface.is_none());
     assert_eq!(server.app.state.active, Some(0));

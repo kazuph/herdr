@@ -31,10 +31,20 @@ pub(crate) struct EndpointJob {
     pub(crate) log_path: String,
     /// The owning server resolves this with its existing caller resolver.
     pub(crate) workspace_id: Option<String>,
+    /// Server-verified liveness of `runner_pid` for `running`/`cancelling`
+    /// jobs. `None` when the server did not verify (finished or queued job, no
+    /// runner pid, or a server that predates this fact). Runner pids live in
+    /// the server's namespace, so only the server can report this.
+    #[serde(default)]
+    pub(crate) runner_alive: Option<bool>,
 }
 
 impl EndpointJob {
-    pub(crate) fn from_record(job: &crate::job::JobRecord, workspace_id: Option<String>) -> Self {
+    pub(crate) fn from_record(
+        job: &crate::job::JobRecord,
+        workspace_id: Option<String>,
+        runner_alive: Option<bool>,
+    ) -> Self {
         Self {
             id: job.id.clone(),
             label: job.label.clone(),
@@ -50,6 +60,7 @@ impl EndpointJob {
             finished_unix_ms: job.finished_unix_ms,
             log_path: job.log_path.clone(),
             workspace_id,
+            runner_alive,
         }
     }
 }
@@ -78,6 +89,7 @@ mod tests {
                 finished_unix_ms: None,
                 log_path: "/remote log".into(),
                 workspace_id: Some("opaque:workspace".into()),
+                runner_alive: Some(true),
             }],
         };
         let json = serde_json::to_string(&projection).unwrap();

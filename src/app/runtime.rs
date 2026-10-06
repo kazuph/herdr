@@ -640,7 +640,16 @@ impl App {
             let jobs = crate::job::JobStore::open_active()
                 .and_then(|store| store.list_recent(super::SIDEBAR_JOBS_LIMIT))
                 .unwrap_or_default();
-            let _ = event_tx.blocking_send(AppEvent::JobsRefreshed { jobs });
+            let dead_runner_pids = jobs
+                .iter()
+                .filter(|job| matches!(job.status.as_str(), "running" | "cancelling"))
+                .filter_map(|job| job.runner_pid)
+                .filter(|pid| !crate::platform::process_exists(*pid))
+                .collect();
+            let _ = event_tx.blocking_send(AppEvent::JobsRefreshed {
+                jobs,
+                dead_runner_pids,
+            });
         });
     }
 

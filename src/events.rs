@@ -146,7 +146,12 @@ pub enum AppEvent {
         cache_updates: Vec<(std::path::PathBuf, GitStatusCacheEntry)>,
     },
     /// Background job rows read from the dispatch store, newest first.
-    JobsRefreshed { jobs: Vec<crate::job::JobRecord> },
+    /// `dead_runner_pids` holds runner pids of `running`/`cancelling` jobs
+    /// whose process no longer exists, probed off the render path.
+    JobsRefreshed {
+        jobs: Vec<crate::job::JobRecord>,
+        dead_runner_pids: std::collections::HashSet<u32>,
+    },
     /// A plugin action or event command finished.
     PluginCommandFinished {
         log_id: String,

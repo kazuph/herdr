@@ -87,9 +87,14 @@ impl App {
             return;
         }
 
-        if let AppEvent::JobsRefreshed { jobs } = ev {
+        if let AppEvent::JobsRefreshed {
+            jobs,
+            dead_runner_pids,
+        } = ev
+        {
             self.jobs_refresh_in_flight = false;
             self.state.jobs = jobs;
+            self.state.dead_runner_pids = dead_runner_pids;
             let max_scroll = self.state.jobs.len().saturating_sub(1);
             self.state.jobs_scroll = self.state.jobs_scroll.min(max_scroll);
             // Without this the panel keeps the frame it drew before the worker
