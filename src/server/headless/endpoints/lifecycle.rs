@@ -89,13 +89,33 @@ impl HeadlessServer {
         });
     }
 
+    pub(super) fn claim_endpoint_geometry(&mut self, client_id: u64) -> bool {
+        let Some(client) = self.endpoint_clients.get_mut(&client_id) else {
+            return false;
+        };
+        if !client.active {
+            return false;
+        }
+        let Some(tab) = client.location.focused_tab_id() else {
+            return false;
+        };
+        if self.endpoint_tab_geometry.get(tab) == Some(&client_id) {
+            return false;
+        }
+        self.endpoint_tab_geometry.insert(tab.into(), client_id);
+        client.surface = None;
+        client.write_pending = true;
+        true
+    }
+
     pub(super) fn set_endpoint_focus(&mut self, client_id: u64, focused: bool) -> bool {
         let stamp = focused.then(|| self.allocate_activity_stamp());
         let Some(client) = self.endpoint_clients.get_mut(&client_id) else {
             return false;
         };
         if client.outer_focus == Some(focused) {
-            return false;
+            // Another device can become active without this terminal reporting focus loss.
+            return focused && self.claim_endpoint_geometry(client_id);
         }
         client.outer_focus = Some(focused);
         if let Some(stamp) = stamp {

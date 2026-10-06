@@ -377,6 +377,7 @@ impl HeadlessServer {
                             height_px: cell_height_px,
                         };
                         client.surface = None;
+                        self.claim_endpoint_geometry(client_id);
                         true
                     }
                     ClientMessage::ClientShellEndpointRequest { boot_id, request } => {
@@ -1599,6 +1600,9 @@ impl HeadlessServer {
         if let Some(error) = failure {
             self.endpoint_error(client_id, error);
             return false;
+        }
+        if !accepted.is_empty() {
+            self.claim_endpoint_geometry(client_id);
         }
         true
     }

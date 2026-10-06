@@ -4628,3 +4628,116 @@ async fn endpoint_clipboard_image_actual_socket_stages_only_published_pane_and_c
     shutdown_test_runtimes(&mut server);
     assert!(!crate::platform::process_exists(pid));
 }
+
+#[tokio::test]
+async fn endpoint_phone_pc_return_reclaims_actual_pty_geometry() {
+    let mut server = test_headless_server();
+    server.app.state.default_shell = "/bin/sh".into();
+    server.app.state.shell_mode = crate::config::ShellModeConfig::NonLogin;
+    server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("same-tab")];
+    server.app.state.active = Some(0);
+    let first_pane = server.app.state.workspaces[0].tabs[0].root_pane;
+    let second_pane = server.app.state.workspaces[0]
+        .test_split_pane(first_pane, ratatui::layout::Direction::Horizontal, false)
+        .unwrap();
+    server.app.state.ensure_test_terminals();
+    let first_terminal = server.app.state.workspaces[0].tabs[0]
+        .terminal_id(first_pane)
+        .unwrap()
+        .clone();
+    let second_terminal = server.app.state.workspaces[0].tabs[0]
+        .terminal_id(second_pane)
+        .unwrap()
+        .clone();
+    // Each owned PTY reports the exact bytes it receives, including terminal focus reports.
+    for (pane_id, terminal) in [
+        (first_pane, &first_terminal),
+        (second_pane, &second_terminal),
+    ] {
+        let command = r#"import os,tty
+tty.setraw(0)
+os.write(1,b'\x1b[?1004h\x1b[>11u\x1b[?1003h\x1b[?1006hREADY\r\n')
+data=b''
+while True:
+ b=os.read(0,1024)
+ data+=b
+ gains=data.count(b'\x1b[I')
+ losses=data.count(b'\x1b[O')
+ os.write(1,b.hex().encode()+f':G{gains}L{losses}\r\n'.encode())
+"#;
+        let runtime = crate::terminal::TerminalRuntime::spawn_argv_command(
+            pane_id,
+            24,
+            80,
+            std::env::current_dir().unwrap(),
+            &[
+                "/usr/bin/python3".into(),
+                "-u".into(),
+                "-c".into(),
+                command.into(),
+            ],
+            &crate::pane::PaneLaunchEnv::default(),
+            crate::pane::AgentDetection::Disabled,
+            0,
+            crate::terminal_theme::TerminalTheme::default(),
+            server.app.event_tx.clone(),
+            server.app.render_notify.clone(),
+            server.app.render_dirty.clone(),
+        )
+        .unwrap();
+        assert!(runtime
+            .child_pid()
+            .is_some_and(|pid| pid != std::process::id()));
+        server
+            .app
+            .terminal_runtimes
+            .insert(terminal.clone(), runtime);
+        wait_output(&server, terminal, "READY").await;
+    }
+    let (first_id, mut first) = connect_with_interest(&mut server, true).await;
+    let (second_id, mut second) = connect_with_interest(&mut server, true).await;
+    server.stream_endpoint_views();
+    receive_view(&mut first);
+    receive_view(&mut second);
+    let tab = server.endpoint_clients[&first_id]
+        .location
+        .focused_tab_id()
+        .unwrap()
+        .to_owned();
+    for (owner, cols) in [(first_id, 160), (second_id, 40), (first_id, 160)] {
+        let stream = if owner == first_id {
+            &mut first
+        } else {
+            &mut second
+        };
+        protocol::write_message(
+            stream,
+            &ClientMessage::ClientShellResize {
+                surface_size: wire::ClientSurfaceSize { cols, rows: 24 },
+                cell_width_px: 0,
+                cell_height_px: 0,
+                pixel_mouse: false,
+            },
+        )
+        .unwrap();
+        assert!(dispatch_input(&mut server).await);
+        assert_eq!(server.endpoint_tab_geometry[&tab], owner);
+        server.stream_endpoint_views();
+        let (_, surface) = receive_view(stream);
+        assert_eq!(surface.frame.width, cols);
+    }
+    // Returning to a terminal may repeat focus=true without an intervening loss.
+    for owner in [first_id, second_id, first_id] {
+        let stream = if owner == first_id {
+            &mut first
+        } else {
+            &mut second
+        };
+        protocol::write_message(stream, &ClientMessage::ClientShellFocus { focused: true })
+            .unwrap();
+        dispatch_input(&mut server).await;
+        assert_eq!(server.endpoint_tab_geometry[&tab], owner);
+    }
+    server.stream_endpoint_views();
+    shutdown_test_runtimes(&mut server);
+}
