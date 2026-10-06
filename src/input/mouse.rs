@@ -85,6 +85,26 @@ impl HostPixels {
     }
 }
 
+pub(crate) fn cell_center_pixels(
+    column: u16,
+    row: u16,
+    cols: u16,
+    rows: u16,
+    width_px: u32,
+    height_px: u32,
+) -> Option<Position> {
+    Some(Position::Pixels {
+        x: cell_center_axis(column, cols, width_px)?,
+        y: cell_center_axis(row, rows, height_px)?,
+    })
+}
+
+fn cell_center_axis(index: u16, count: u16, extent: u32) -> Option<u32> {
+    let start = boundary(index, count, extent)?;
+    let end = boundary(index.checked_add(1)?, count, extent)?;
+    u32::try_from((u64::from(start) + 1 + u64::from(end)) / 2).ok()
+}
+
 pub(crate) fn parse_report(data: &[u8]) -> Option<(u32, u32)> {
     let body = data.strip_prefix(b"\x1b[<")?;
     let body = body
@@ -181,6 +201,34 @@ mod tests {
             .pane_position(inner, 636, 1_225),
             Some(Position::Pixels { x: 636, y: 1_225 })
         );
+    }
+
+    #[test]
+    fn cell_center_pixels_maps_cells_to_midpoint_pixels() {
+        assert_eq!(
+            cell_center_pixels(0, 0, 4, 2, 40, 20),
+            Some(Position::Pixels { x: 5, y: 5 })
+        );
+        assert_eq!(
+            cell_center_pixels(1, 1, 4, 2, 40, 20),
+            Some(Position::Pixels { x: 15, y: 15 })
+        );
+        assert_eq!(
+            cell_center_pixels(3, 1, 4, 2, 40, 20),
+            Some(Position::Pixels { x: 35, y: 15 })
+        );
+        assert_eq!(
+            cell_center_pixels(1, 0, 3, 1, 10, 7),
+            Some(Position::Pixels { x: 5, y: 4 })
+        );
+        assert_eq!(
+            cell_center_pixels(0, 0, 10, 10, 10, 10),
+            Some(Position::Pixels { x: 1, y: 1 })
+        );
+        assert_eq!(cell_center_pixels(4, 0, 4, 2, 40, 20), None);
+        assert_eq!(cell_center_pixels(0, 2, 4, 2, 40, 20), None);
+        assert_eq!(cell_center_pixels(0, 0, 4, 2, 0, 20), None);
+        assert_eq!(cell_center_pixels(0, 0, 0, 2, 40, 20), None);
     }
 
     #[test]

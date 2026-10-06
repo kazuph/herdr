@@ -322,10 +322,22 @@ fn apply_terminal_attach_scroll(
     match runtime.wheel_routing() {
         Some(crate::pane::WheelRouting::MouseReport) => {
             runtime.scroll_reset();
-            let position = crate::input::mouse::Position::Cell {
-                column: column.unwrap_or(0),
-                row: row.unwrap_or(0),
-            };
+            let column = column.unwrap_or(0);
+            let row = row.unwrap_or(0);
+            let mut position = crate::input::mouse::Position::Cell { column, row };
+            let wants_pixels = runtime.input_state().is_some_and(|state| {
+                state.mouse_protocol_encoding == crate::input::MouseProtocolEncoding::SgrPixels
+            });
+            if wants_pixels {
+                if let Some((width_px, height_px)) = runtime.pixel_size() {
+                    let (rows, cols) = runtime.current_size();
+                    if let Some(pixels) = crate::input::mouse::cell_center_pixels(
+                        column, row, cols, rows, width_px, height_px,
+                    ) {
+                        position = pixels;
+                    }
+                }
+            }
             let Some(bytes) = runtime.encode_mouse_wheel(
                 wheel_kind,
                 position,
@@ -6038,6 +6050,46 @@ next_tab = ""
         .expect("scroll down");
         let metrics = runtime.scroll_metrics().expect("scroll metrics");
         assert_eq!(metrics.offset_from_bottom, 1);
+        drop(runtime);
+        drop(_runtime_guard);
+        rt.shutdown_timeout(Duration::from_millis(100));
+    }
+
+    #[test]
+    fn terminal_attach_scroll_reports_cell_center_pixels_for_pixel_mode() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let _runtime_guard = rt.enter();
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                20,
+                5,
+                4096,
+                b"\x1b[?1002h\x1b[?1006h\x1b[?1016h",
+                4,
+            );
+        runtime.resize(5, 20, 10, 20);
+
+        apply_terminal_attach_scroll(
+            &runtime,
+            AttachScrollSource::Wheel,
+            AttachScrollDirection::Up,
+            3,
+            Some(3),
+            Some(2),
+            0,
+        )
+        .expect("wheel up");
+
+        // Cell (3, 2) in a 20x5 grid at 10x20 px cells covers 1-based pixels
+        // 31..=40 x 41..=60, so its center is (35, 50).
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded wheel"),
+            Bytes::from_static(b"\x1b[<64;35;50M")
+        );
+
         drop(runtime);
         drop(_runtime_guard);
         rt.shutdown_timeout(Duration::from_millis(100));

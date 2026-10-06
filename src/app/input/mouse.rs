@@ -1850,21 +1850,57 @@ impl AppState {
         let column = mouse.column.saturating_sub(inner.x);
         let row = mouse.row.saturating_sub(inner.y);
         let cell = crate::input::mouse::Position::Cell { column, row };
-        let Some(host) = self.host_mouse_pixels else {
-            return Some(cell);
-        };
         let wants_pixels = runtime.input_state().is_some_and(|state| {
             state.mouse_protocol_encoding == crate::input::MouseProtocolEncoding::SgrPixels
         });
         if !wants_pixels {
             return Some(cell);
         }
-        let Some((width_px, height_px)) = runtime.pixel_size() else {
-            return Some(cell);
-        };
-        Some(
-            host.pane_position(inner, width_px, height_px)
-                .unwrap_or(cell),
+        if let Some(host) = self.host_mouse_pixels {
+            let Some((width_px, height_px)) = runtime.pixel_size() else {
+                return Some(cell);
+            };
+            return Some(
+                host.pane_position(inner, width_px, height_px)
+                    .unwrap_or(cell),
+            );
+        }
+        self.cell_center_pixel_position(runtime, inner, column, row)
+            .or(Some(cell))
+    }
+
+    fn cell_center_pixel_position(
+        &self,
+        runtime: &crate::terminal::TerminalRuntime,
+        inner: Rect,
+        column: u16,
+        row: u16,
+    ) -> Option<crate::input::mouse::Position> {
+        if let Some((width_px, height_px)) = runtime.pixel_size() {
+            return crate::input::mouse::cell_center_pixels(
+                column,
+                row,
+                inner.width,
+                inner.height,
+                width_px,
+                height_px,
+            );
+        }
+        let cell_size = self.host_cell_size;
+        if !cell_size.is_known() {
+            return None;
+        }
+        let width_px =
+            u32::try_from(u64::from(inner.width) * u64::from(cell_size.width_px)).ok()?;
+        let height_px =
+            u32::try_from(u64::from(inner.height) * u64::from(cell_size.height_px)).ok()?;
+        crate::input::mouse::cell_center_pixels(
+            column,
+            row,
+            inner.width,
+            inner.height,
+            width_px,
+            height_px,
         )
     }
 
@@ -2526,7 +2562,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ordinary_cell_mouse_downgrades_pixel_mode_to_cell_coordinates() {
+    async fn ordinary_cell_mouse_reports_cell_center_pixels_for_pixel_mode() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
         let pane_id = ws.tabs[0].root_pane;
@@ -2557,15 +2593,120 @@ mod tests {
         assert!(info.inner_rect.x > 0, "sidebar offset should be present");
         assert!(info.inner_rect.y > 0, "tab bar offset should be present");
 
+        // No host pixel coordinates: cell (2, 3) covers 1-based pixels
+        // 21..=30 x 61..=80 in a 10x20 cell grid, so its center is (25, 70).
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            info.inner_rect.x + 2,
+            info.inner_rect.y + 3,
+        ));
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded mouse down"),
+            Bytes::from_static(b"\x1b[<0;25;70M")
+        );
+
         app.handle_mouse(mouse(
             MouseEventKind::Moved,
             info.inner_rect.x + 2,
             info.inner_rect.y + 3,
         ));
-
         assert_eq!(
             input_rx.try_recv().expect("forwarded mouse motion"),
-            Bytes::from_static(b"\x1b[<35;3;4M")
+            Bytes::from_static(b"\x1b[<35;25;70M")
+        );
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollUp,
+            info.inner_rect.x + 2,
+            info.inner_rect.y + 3,
+        ));
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded mouse wheel"),
+            Bytes::from_static(b"\x1b[<64;25;70M")
+        );
+        assert!(input_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn ordinary_cell_mouse_preserves_exact_host_pixels_for_pixel_mode() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                18,
+                0,
+                b"\x1b[?1003h\x1b[?1006h\x1b[?1016h",
+                4,
+            );
+        ws.insert_test_runtime(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.mouse_capture = false;
+        app.state.host_cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let inner = app.state.view.pane_infos[0].inner_rect;
+        app.state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap()
+            .resize(inner.height, inner.width, 10, 20);
+
+        let geometry = crate::input::mouse::HostGeometry::new(106, 20, 1_060, 400).unwrap();
+        let x = u32::from(inner.x + 2) * 10 + 8;
+        let y = u32::from(inner.y + 3) * 20 + 9;
+        assert!(app.route_client_pixel_mouse(format!("\x1b[<0;{x};{y}M").as_bytes(), geometry));
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded exact mouse down"),
+            Bytes::from_static(b"\x1b[<0;28;69M")
+        );
+        assert!(input_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn ordinary_cell_mouse_stays_cell_coordinates_for_cell_mode_pane() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                18,
+                0,
+                b"\x1b[?1003h\x1b[?1006h",
+                4,
+            );
+        ws.insert_test_runtime(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.host_cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 10,
+            height_px: 20,
+        };
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let info = app.state.view.pane_infos[0].clone();
+        app.state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap()
+            .resize(info.inner_rect.height, info.inner_rect.width, 10, 20);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            info.inner_rect.x + 2,
+            info.inner_rect.y + 3,
+        ));
+        assert_eq!(
+            input_rx.try_recv().expect("forwarded mouse down"),
+            Bytes::from_static(b"\x1b[<0;3;4M")
         );
         assert!(input_rx.try_recv().is_err());
     }
