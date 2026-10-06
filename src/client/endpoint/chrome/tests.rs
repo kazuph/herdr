@@ -167,3 +167,119 @@ fn endpoint_chrome_composition_keeps_exact_cells_hyperlinks_cursor_and_unicode_w
     ));
     assert_eq!(target, before);
 }
+
+#[test]
+fn endpoint_selected_workspace_retains_original_accent_band() {
+    for density in [
+        crate::config::WorkspacePanelDensityConfig::Slim,
+        crate::config::WorkspacePanelDensityConfig::Full,
+    ] {
+        let config = crate::config::Config::default();
+        let mut settings = ChromeSettings::from_config(&config, Palette::catppuccin(), None);
+        settings.density = density;
+        let mut chrome = ClientChrome::new(settings);
+        let snapshot: crate::protocol::endpoint_wire::ClientShellSnapshot =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/upstream-gen1-endpoint-snapshot-v1.json"
+            )))
+            .unwrap();
+        let mut snapshot = crate::protocol::endpoint_projection::SnapshotJson::from(snapshot);
+        for workspace in &snapshot.snapshot.workspaces {
+            snapshot.workspace_facts.insert(
+                workspace.workspace_id.clone(),
+                crate::protocol::endpoint_projection::WorkspaceFacts {
+                    git_space: None,
+                    section: Some(crate::workspace::WorkspaceSection::ALL[0]),
+                },
+            );
+        }
+        let remote = ClientEndpointId::Ssh("band-owner".into());
+        let mut shell = ClientShellState::new();
+        shell.set_endpoint_catalog(&[crate::machine::MachineProfile {
+            id: "band-owner".into(),
+            label: "Remote".into(),
+            target: "unused".into(),
+            session: "owned".into(),
+            enabled: true,
+        }]);
+        for id in [ClientEndpointId::Local, remote.clone()] {
+            assert!(shell.begin_connection(&id, 1));
+            assert!(shell.receive_snapshot(&id, 1, snapshot.clone()));
+        }
+        let workspace = snapshot.focused_workspace_id.clone().unwrap();
+        for selected_endpoint in [ClientEndpointId::Local, remote.clone()] {
+            chrome.navigate_selection = Some(ResourceKey {
+                endpoint: selected_endpoint.clone(),
+                id: workspace.clone(),
+            });
+            let view = chrome.compute_view(&shell, 160, 60);
+            let frame = chrome.render(&view);
+            assert_eq!(view.machine_headers.len(), 1);
+            assert_eq!(view.machine_headers[0].1, "Remote");
+            assert_eq!(view.section_headers.len(), 1);
+            assert_eq!(
+                view.section_headers[0].0.section,
+                crate::workspace::WorkspaceSection::ALL[0]
+            );
+            let remote_new = view.hits.iter().find(|hit| matches!(&hit.target, ChromeTarget::NewWorkspaceInSection(id, crate::workspace::WorkspaceSection::None) if id == &remote)).unwrap();
+            assert_eq!(remote_new.rect.y, view.machine_headers[0].0.y);
+            assert!(!view.hits.iter().any(
+                |hit| matches!(&hit.target, ChromeTarget::WorkspaceSection(id, _) if id == &remote)
+            ));
+            for hit in &view.hits {
+                if let ChromeTarget::Machine(id) = &hit.target {
+                    let text = (hit.rect.x..hit.rect.right())
+                        .map(|x| {
+                            frame.cells[usize::from(hit.rect.y) * usize::from(frame.width)
+                                + usize::from(x)]
+                            .symbol
+                            .as_str()
+                        })
+                        .collect::<String>();
+                    let label = if id.is_local() { "Local" } else { "Remote" };
+                    assert!(text.contains(label), "machine header overwritten: {text:?}");
+                }
+            }
+            let mut selected_cards = 0;
+            for hit in &view.hits {
+                let ChromeTarget::Workspace(key) = &hit.target else {
+                    continue;
+                };
+                let selected = key.endpoint == selected_endpoint && key.id == workspace;
+                selected_cards += usize::from(selected);
+                for y in hit.rect.y..hit.rect.bottom() {
+                    let cell = &frame.cells
+                        [usize::from(y) * usize::from(frame.width) + usize::from(hit.rect.x)];
+                    assert_eq!(cell.symbol == "▌", selected, "{key:?} at {y}");
+                    if selected {
+                        let mut expected = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 1, 1));
+                        expected[(0, 0)].set_fg(chrome.settings.palette.accent);
+                        let expected =
+                            crate::protocol::FrameData::from_ratatui_buffer(&expected, None);
+                        assert_eq!(cell.fg, expected.cells[0].fg);
+                    }
+                }
+            }
+            assert_eq!(selected_cards, 1);
+        }
+        chrome
+            .collapsed_sections
+            .insert((remote.clone(), crate::workspace::WorkspaceSection::ALL[0]));
+        assert!(
+            sidebar::visual_workspace_targets(&chrome, &shell, 26, false)
+                .iter()
+                .any(|key| key.endpoint == remote && key.id == workspace)
+        );
+        chrome.collapsed_machines.insert(remote.clone());
+        let collapsed = chrome.compute_view(&shell, 160, 60);
+        assert_eq!(collapsed.machine_headers.len(), 1);
+        assert!(!collapsed.machine_headers[0].2);
+        assert!(!collapsed.hits.iter().any(
+            |hit| matches!(&hit.target, ChromeTarget::Workspace(key) if key.endpoint == remote)
+        ));
+        assert!(collapsed.hits.iter().any(
+            |hit| matches!(&hit.target, ChromeTarget::NewWorkspaceInSection(id, _) if id == &remote)
+        ));
+    }
+}

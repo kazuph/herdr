@@ -106,10 +106,9 @@ fn workspace_rows(
     force_expanded: bool,
 ) -> Vec<Row> {
     let mut rows = Vec::new();
-    let multiple = shell.endpoints.len() > 1;
     for endpoint in &shell.endpoints {
         let collapsed = chrome.collapsed_machines.contains(&endpoint.endpoint_id);
-        if multiple {
+        if endpoint.endpoint_id != super::super::ClientEndpointId::Local {
             rows.push(machine_row(endpoint, collapsed, &chrome.settings.palette));
         }
         if collapsed || endpoint.status == ClientEndpointStatus::Disabled {
@@ -334,7 +333,7 @@ pub(super) fn visual_workspace_targets(
                 .and_then(|fact| fact.section)
                 .is_some()
         });
-        if provided {
+        if provided && endpoint.endpoint_id.is_local() {
             for section in crate::workspace::WorkspaceSection::ALL {
                 if chrome
                     .collapsed_sections
@@ -388,10 +387,6 @@ fn place_workspace_sections(
     let mut blocks = Vec::new();
     let mut owners = Vec::new();
     for endpoint in &shell.endpoints {
-        if let Some(index) = rows.iter().position(|row| matches!(&row.target, Some(ChromeTarget::Machine(id)) if id == &endpoint.endpoint_id)) {
-            blocks.push(crate::ui::sidebar::WorkspaceLayoutBlock { header_rows: rows[index].lines.len() as u16, header_offset: 0, expanded: false, entries: Vec::new() });
-            owners.push(WorkspaceHeader::Machine(index));
-        }
         let cards = rows
             .iter()
             .enumerate()
@@ -402,6 +397,31 @@ fn place_workspace_sections(
                 _ => None,
             })
             .collect::<Vec<_>>();
+        if endpoint.endpoint_id != super::super::ClientEndpointId::Local {
+            let Some(row) = rows.iter().position(|row| matches!(&row.target, Some(ChromeTarget::Machine(id)) if id == &endpoint.endpoint_id)) else { continue; };
+            let (header_offset, header_rows) =
+                crate::ui::sidebar::workspace_section_header_geometry(blocks.is_empty());
+            let len = cards.len();
+            blocks.push(crate::ui::sidebar::WorkspaceLayoutBlock {
+                header_rows,
+                header_offset,
+                expanded: !chrome.collapsed_machines.contains(&endpoint.endpoint_id),
+                entries: cards
+                    .iter()
+                    .enumerate()
+                    .map(
+                        |(index, (card, _))| crate::ui::sidebar::WorkspaceSectionEntry {
+                            key: *card,
+                            height: rows[*card].lines.len() as u16,
+                            indented: rows[*card].indented,
+                            gap: if index + 1 < len { rows[*card].gap } else { 0 },
+                        },
+                    )
+                    .collect(),
+            });
+            owners.push(WorkspaceHeader::Machine(row));
+            continue;
+        }
         if cards.is_empty() {
             continue;
         }
@@ -491,9 +511,9 @@ fn place_workspace_sections(
     });
     if selected != chrome.last_workspace_selection {
         chrome.last_workspace_selection = selected.clone();
-        if let Some(selected) = selected {
+        if let Some(selected) = &selected {
             if let Some(target) = rows.iter().position(
-                |row| matches!(&row.target, Some(ChromeTarget::Workspace(key)) if key == &selected),
+                |row| matches!(&row.target, Some(ChromeTarget::Workspace(key)) if key == selected),
             ) {
                 let entry_index = blocks
                     .iter()
@@ -558,17 +578,45 @@ fn place_workspace_sections(
                 line.clone(),
             ));
         }
+        if matches!(&row.target, Some(ChromeTarget::Workspace(key)) if Some(key) == selected.as_ref())
+        {
+            view.workspace_selection_band = Some(rect);
+        }
     }
     for (index, rect) in headers {
         match &owners[index] {
             WorkspaceHeader::Machine(row) => {
-                let row = &rows[*row];
-                view.lines.push((rect, row.lines[0].clone()));
-                if let Some(target) = &row.target {
+                if let Some(ChromeTarget::Machine(id)) = &rows[*row].target {
+                    let Some(endpoint) = shell.endpoint(id) else {
+                        continue;
+                    };
+                    let expanded = !chrome.collapsed_machines.contains(id);
+                    let new = crate::ui::sidebar::workspace_section_new_button_rect(rect);
+                    let label = Rect::new(
+                        rect.x,
+                        rect.y,
+                        if new.is_empty() {
+                            rect.width
+                        } else {
+                            new.x.saturating_sub(rect.x)
+                        },
+                        rect.height,
+                    );
                     view.hits.push(ChromeHit {
-                        rect,
-                        target: target.clone(),
+                        rect: label,
+                        target: ChromeTarget::Machine(id.clone()),
                     });
+                    if !new.is_empty() {
+                        view.hits.push(ChromeHit {
+                            rect: new,
+                            target: ChromeTarget::NewWorkspaceInSection(
+                                id.clone(),
+                                crate::workspace::WorkspaceSection::None,
+                            ),
+                        });
+                    }
+                    view.machine_headers
+                        .push((rect, endpoint.label.clone(), expanded));
                 }
             }
             WorkspaceHeader::Section(endpoint, section) => {

@@ -128,6 +128,8 @@ pub(crate) struct ChromeView {
     pub(crate) lines: Vec<(Rect, Line<'static>)>,
     pub(crate) backgrounds: Vec<(Rect, Style)>,
     pub(crate) surface: Option<crate::protocol::endpoint_wire::PaneSurfaceFrame>,
+    workspace_selection_band: Option<Rect>,
+    machine_headers: Vec<(Rect, String, bool)>,
     pub(crate) section_headers: Vec<(crate::app::state::WorkspaceSectionHeaderArea, bool)>,
     pub(crate) pane_actions: crate::ui::PaneActionBarRects,
 }
@@ -230,6 +232,8 @@ impl ClientChrome {
             lines: Vec::new(),
             backgrounds: Vec::new(),
             section_headers: Vec::new(),
+            workspace_selection_band: None,
+            machine_headers: Vec::new(),
             surface: shell.pane_surface.clone(),
             pane_actions: crate::ui::pane_action_bar_rects(
                 layout.pane_actions,
@@ -371,6 +375,14 @@ impl ClientChrome {
                 for (rect, line) in &view.lines {
                     frame.render_widget(Paragraph::new(line.clone()), *rect);
                 }
+                if let Some(rect) = view.workspace_selection_band {
+                    crate::ui::sidebar::render_workspace_selection_band(
+                        frame,
+                        rect,
+                        &self.settings.palette,
+                        view.workspace_body.bottom(),
+                    );
+                }
                 if let Some(facts) = &view.mobile_header_facts {
                     crate::ui::render_mobile_header_from(
                         frame,
@@ -378,6 +390,16 @@ impl ClientChrome {
                         view.menu_launcher,
                         &self.settings.palette,
                         facts,
+                    );
+                }
+                for (rect, label, expanded) in &view.machine_headers {
+                    crate::ui::sidebar::render_workspace_group_header(
+                        frame,
+                        *rect,
+                        label,
+                        *expanded,
+                        &self.settings.palette,
+                        view.workspace_body.bottom(),
                     );
                 }
                 for (header, expanded) in &view.section_headers {

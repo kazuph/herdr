@@ -1523,10 +1523,17 @@ async fn endpoint_frontend_independent_processes_same_ids_input_and_reconnect() 
         .iter()
         .position(|key| key.endpoint == other_id && key.id == duplicate_id)
         .unwrap();
-    assert_ne!(
-        frontend.runtime.shell.aggregate_workspaces()[indexed_position],
-        visual_order[indexed_position]
-    );
+    let visible_workspace_order = frontend
+        .chrome
+        .compute_view(&frontend.runtime.shell, frontend.cols, frontend.rows)
+        .hits
+        .into_iter()
+        .filter_map(|hit| match hit.target {
+            ChromeTarget::Workspace(key) => Some(key),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(visible_workspace_order, visual_order);
     let mut indexed_config = crate::config::Config::default();
     indexed_config.keys.prefix = config.keys.prefix.clone();
     indexed_config.keys.switch_tab = crate::config::BindingConfig::empty();

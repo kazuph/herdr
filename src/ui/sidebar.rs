@@ -172,6 +172,19 @@ pub(crate) fn workspace_panel_density_toggle_rect(
     Rect::new(area.x + area.width.saturating_sub(width), area.y, width, 1)
 }
 
+pub(crate) fn render_workspace_selection_band(
+    frame: &mut Frame,
+    rect: Rect,
+    palette: &Palette,
+    list_bottom: u16,
+) {
+    let buf = frame.buffer_mut();
+    for y in rect.y..rect.bottom().min(list_bottom) {
+        buf[(rect.x, y)].set_symbol("▌");
+        buf[(rect.x, y)].set_style(Style::default().fg(palette.accent));
+    }
+}
+
 pub(crate) fn render_workspace_section_header(
     frame: &mut Frame,
     header: &crate::app::state::WorkspaceSectionHeaderArea,
@@ -179,28 +192,41 @@ pub(crate) fn render_workspace_section_header(
     p: &Palette,
     list_bottom: u16,
 ) {
+    render_workspace_group_header(
+        frame,
+        header.rect,
+        header.section.label(),
+        expanded,
+        p,
+        list_bottom,
+    );
+}
+
+pub(crate) fn render_workspace_group_header(
+    frame: &mut Frame,
+    rect: Rect,
+    label: &str,
+    expanded: bool,
+    p: &Palette,
+    list_bottom: u16,
+) {
     let arrow = if expanded { "▾" } else { "▸" };
-    let new_rect = workspace_section_new_button_rect(header.rect);
+    let new_rect = workspace_section_new_button_rect(rect);
     let label_width = if new_rect == Rect::default() {
-        header.rect.width
+        rect.width
     } else {
-        new_rect.x.saturating_sub(header.rect.x).saturating_sub(1)
+        new_rect.x.saturating_sub(rect.x).saturating_sub(1)
     };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(arrow, Style::default().fg(p.accent)),
             Span::raw(" "),
             Span::styled(
-                truncate_end(header.section.label(), label_width as usize),
+                truncate_end(label, label_width as usize),
                 Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
             ),
         ])),
-        Rect::new(
-            header.rect.x,
-            header.rect.y,
-            label_width,
-            header.rect.height,
-        ),
+        Rect::new(rect.x, rect.y, label_width, rect.height),
     );
     if new_rect != Rect::default() {
         frame.render_widget(
@@ -213,15 +239,12 @@ pub(crate) fn render_workspace_section_header(
             new_rect,
         );
     }
-    for separator_y in [
-        header.rect.y.saturating_sub(1),
-        header.rect.y + header.rect.height,
-    ] {
+    for separator_y in [rect.y.saturating_sub(1), rect.y + rect.height] {
         if separator_y >= list_bottom {
             continue;
         }
         let buf = frame.buffer_mut();
-        for x in header.rect.x..header.rect.x + header.rect.width {
+        for x in rect.x..rect.x + rect.width {
             buf[(x, separator_y)].set_symbol("─");
             buf[(x, separator_y)].set_style(Style::default().fg(p.overlay0));
         }
@@ -1939,14 +1962,12 @@ fn render_workspace_list(
         }
 
         if is_active {
-            let buf = frame.buffer_mut();
-            for y in row_y..row_y + display_height {
-                if y >= list_bottom {
-                    break;
-                }
-                buf[(card.rect.x, y)].set_symbol("▌");
-                buf[(card.rect.x, y)].set_style(Style::default().fg(p.accent));
-            }
+            render_workspace_selection_band(
+                frame,
+                Rect::new(card.rect.x, row_y, card.rect.width, display_height),
+                p,
+                list_bottom,
+            );
         }
     }
 

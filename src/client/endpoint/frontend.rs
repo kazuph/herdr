@@ -497,7 +497,9 @@ impl ClientFrontend {
                     let update = self.runtime.supervisor_event(event, Instant::now());
                     self.update(update)?
                 }
-                event = input_events.recv() => {
+                // Keep input in the existing bounded channel across a split snapshot /
+                // surface update instead of consuming it while the lease rejects it.
+                event = input_events.recv(), if !self.runtime.awaiting_surface_pair() => {
                     let Some(event) = event else { break };
                     input::handle(self, event)?
                 }

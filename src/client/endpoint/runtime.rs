@@ -693,9 +693,37 @@ impl EndpointRuntime {
                     .coherent_surface(generation, self.options.surface_size)
             })
             .cloned();
-        if self.shell.endpoint_is_active(id) {
+        // Snapshot and surface arrive separately. Keep the last presentation until the
+        // replacement pair is coherent; input_lease_current still rejects stale input.
+        if self.shell.endpoint_is_active(id) && surface.is_some() {
             self.shell.pane_surface = surface;
         }
+    }
+
+    pub(crate) fn awaiting_surface_pair(&self) -> bool {
+        if self.pending.is_some() || self.presentation_frozen {
+            return false;
+        }
+        let Some(displayed) = self.shell.pane_surface.as_ref() else {
+            return false;
+        };
+        let Some(endpoint) = self.shell.endpoint(self.endpoints.active_id()) else {
+            return false;
+        };
+        endpoint.generation.is_some_and(|generation| {
+            endpoint
+                .cache
+                .live_snapshot(generation)
+                .is_some_and(|snapshot| {
+                    snapshot.boot_id == displayed.boot_id
+                        && displayed.frame.width == self.options.surface_size.cols
+                        && displayed.frame.height == self.options.surface_size.rows
+                        && endpoint
+                            .cache
+                            .coherent_surface(generation, self.options.surface_size)
+                            .is_none()
+                })
+        })
     }
 
     pub(crate) fn input_lease_current(&self) -> bool {
@@ -959,5 +987,99 @@ impl EndpointRuntime {
         self.supervisors
             .spawn_due(now, self.options, &self.supervisor_tx);
         update
+    }
+}
+
+#[cfg(test)]
+mod display_regression_tests {
+    use super::*;
+    use crate::protocol::endpoint_wire::{
+        ClientShellSnapshot, ClientSurfaceSize, FrameData, PaneSurfaceFrame, SurfaceGraphicsScene,
+    };
+
+    #[test]
+    fn endpoint_display_retains_pixels_between_snapshot_and_surface_without_authority() {
+        let mut snapshot: ClientShellSnapshot = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/upstream-gen1-endpoint-snapshot-v1.json"
+        )))
+        .unwrap();
+        let size = ClientSurfaceSize { cols: 80, rows: 24 };
+        let options = EndpointConnectOptions {
+            surface_size: size,
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_geometry_exact: false,
+            endpoint_keybindings: false,
+            mouse_capture: true,
+            surface_active: true,
+        };
+        let mut runtime = EndpointRuntime::new(
+            ClientShellState::new(),
+            EndpointRegistry::empty(),
+            EndpointSupervisors::new(&[], Instant::now()),
+            options,
+        );
+        let id = ClientEndpointId::Local;
+        assert!(runtime.shell.begin_connection(&id, 1));
+        assert!(runtime.shell.receive_snapshot(&id, 1, snapshot.clone()));
+        let mut buffer =
+            ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, size.cols, size.rows));
+        buffer[(0, 0)].set_symbol("A");
+        let mut surface = PaneSurfaceFrame {
+            boot_id: snapshot.boot_id.clone(),
+            projection_revision: snapshot.revision,
+            surface_revision: 1,
+            frame: FrameData::from_ratatui_buffer(&buffer, None),
+            panes: vec![],
+            splits: vec![],
+            popup: None,
+            graphics: SurfaceGraphicsScene::default(),
+        };
+        assert!(runtime.shell.receive_surface(&id, 1, surface.clone()));
+        runtime.publish_surface(&id, 1);
+        assert_eq!(runtime.shell.pane_surface.as_ref(), Some(&surface));
+        runtime.presentation_frozen = false;
+        assert!(!runtime.awaiting_surface_pair());
+        snapshot.revision += 1;
+        assert!(runtime.shell.receive_snapshot(&id, 1, snapshot.clone()));
+        runtime.publish_surface(&id, 1);
+        assert_eq!(runtime.shell.pane_surface.as_ref(), Some(&surface));
+        assert!(runtime
+            .shell
+            .endpoint(&id)
+            .unwrap()
+            .cache
+            .coherent_surface(1, size)
+            .is_none());
+        assert!(!runtime.shell.endpoint_surface_matches(&id, 1, &surface));
+        assert!(runtime.awaiting_surface_pair());
+        surface.projection_revision = snapshot.revision;
+        surface.surface_revision += 1;
+        surface.frame.cells[0].symbol = "B".into();
+        assert!(runtime.shell.receive_surface(&id, 1, surface.clone()));
+        runtime.publish_surface(&id, 1);
+        assert_eq!(runtime.shell.pane_surface.as_ref(), Some(&surface));
+        assert!(runtime.shell.endpoint_surface_matches(&id, 1, &surface));
+        assert!(!runtime.awaiting_surface_pair());
+        let previous = surface.clone();
+        surface.projection_revision += 1;
+        surface.surface_revision += 1;
+        assert!(runtime.shell.receive_surface(&id, 1, surface.clone()));
+        runtime.publish_surface(&id, 1);
+        assert_eq!(runtime.shell.pane_surface.as_ref(), Some(&previous));
+        assert!(runtime.awaiting_surface_pair());
+        snapshot.revision = surface.projection_revision;
+        assert!(runtime.shell.receive_snapshot(&id, 1, snapshot));
+        runtime.publish_surface(&id, 1);
+        assert_eq!(runtime.shell.pane_surface.as_ref(), Some(&surface));
+        assert!(!runtime.awaiting_surface_pair());
+        assert!(runtime.shell.disconnect(&id, 1));
+        assert!(!runtime.awaiting_surface_pair());
+        assert!(runtime.shell.pane_surface.is_none());
+        assert!(runtime.shell.begin_connection(&id, 2));
+        assert!(!runtime.shell.receive_surface(&id, 1, surface));
+        runtime.publish_surface(&id, 2);
+        assert!(runtime.shell.pane_surface.is_none());
     }
 }
