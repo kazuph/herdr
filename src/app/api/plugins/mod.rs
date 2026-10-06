@@ -226,6 +226,14 @@ impl App {
         &mut self,
         action_id: String,
     ) -> Result<(), String> {
+        self.invoke_plugin_action_from_keybind_at(action_id, None)
+    }
+
+    pub(crate) fn invoke_plugin_action_from_keybind_at(
+        &mut self,
+        action_id: String,
+        target: Option<(usize, crate::layout::PaneId)>,
+    ) -> Result<(), String> {
         self.refresh_installed_plugins()
             .map_err(|err| format!("failed to load plugin registry: {err}"))?;
         let (plugin, action) = self
@@ -239,7 +247,10 @@ impl App {
             &action.qualified_id(),
         )
         .map_err(|(_, message)| message)?;
-        let mut context = self.current_plugin_context("keybinding");
+        let mut context = match target {
+            Some((workspace, pane)) => self.plugin_context_for_pane(workspace, pane, "keybinding"),
+            None => self.current_plugin_context("keybinding"),
+        };
         context.invocation_source = Some("keybinding".to_string());
         self.start_plugin_command(
             &plugin,

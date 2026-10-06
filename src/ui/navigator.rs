@@ -15,45 +15,133 @@ use super::{
 use crate::app::state::{AppState, NavigatorRow, NavigatorStateFilter, NavigatorTarget};
 use crate::terminal::TerminalRuntimeRegistry;
 
+pub(crate) fn navigator_popup_rect(area: Rect) -> Rect {
+    let margin_x = (area.width / 16).max(2);
+    let margin_y = (area.height / 10).max(1);
+    let width = area.width.saturating_sub(margin_x.saturating_mul(2));
+    let height = area.height.saturating_sub(margin_y.saturating_mul(2));
+    Rect::new(
+        area.x + margin_x,
+        area.y + margin_y,
+        width.max(4),
+        height.max(4),
+    )
+}
+
+pub(crate) fn navigator_inner_rect(popup: Rect) -> Rect {
+    ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .inner(popup)
+}
+
+pub(crate) fn navigator_search_rect(inner: Rect) -> Rect {
+    Rect::new(inner.x, inner.y, inner.width, inner.height.min(1))
+}
+
+pub(crate) fn navigator_body_rect(inner: Rect) -> Rect {
+    if inner.height <= 4 {
+        return Rect::default();
+    }
+    Rect::new(
+        inner.x,
+        inner.y + 2,
+        inner.width,
+        inner.height.saturating_sub(4),
+    )
+}
+
+pub(crate) fn navigator_detail_rect(inner: Rect) -> Rect {
+    Rect::new(
+        inner.x,
+        inner.y + inner.height.saturating_sub(2),
+        inner.width,
+        inner.height.min(1),
+    )
+}
+
+pub(crate) fn navigator_footer_rect(inner: Rect) -> Rect {
+    Rect::new(
+        inner.x,
+        inner.y + inner.height.saturating_sub(1),
+        inner.width,
+        inner.height.min(1),
+    )
+}
+
+pub(crate) struct NavigatorRender<'a, T> {
+    pub palette: &'a crate::app::state::Palette,
+    pub navigator: &'a crate::app::state::NavigatorState,
+    pub spinner_tick: u32,
+    pub rows: &'a [NavigatorRow<T>],
+    pub pane_count: usize,
+    pub detail: &'a str,
+    pub popup: Rect,
+    pub search: Rect,
+    pub body: Rect,
+    pub detail_area: Rect,
+    pub footer: Rect,
+}
+
 pub(super) fn render_navigator_overlay(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
     frame: &mut Frame,
 ) {
-    let popup = app.navigator_popup_rect();
+    let rows = app.navigator_rows_from(terminal_runtimes);
+    let detail = selected_detail(app, terminal_runtimes);
+    render_navigator_from(
+        &NavigatorRender {
+            palette: &app.palette,
+            navigator: &app.navigator,
+            spinner_tick: app.spinner_tick,
+            rows: &rows,
+            pane_count: app
+                .workspaces
+                .iter()
+                .flat_map(|workspace| workspace.tabs.iter())
+                .map(|tab| tab.panes.len())
+                .sum(),
+            detail: &detail,
+            popup: app.navigator_popup_rect(),
+            search: app.navigator_search_rect(),
+            body: app.navigator_body_rect(),
+            detail_area: app.navigator_detail_rect(),
+            footer: app.navigator_footer_rect(),
+        },
+        frame,
+    );
+}
+
+pub(crate) fn render_navigator_from<T>(app: &NavigatorRender<'_, T>, frame: &mut Frame) {
+    let popup = app.popup;
     let Some(inner) = render_panel_shell(frame, popup, app.palette.accent, app.palette.panel_bg)
     else {
         return;
     };
 
-    let search = app.navigator_search_rect();
-    let body = app.navigator_body_rect();
-    let detail = app.navigator_detail_rect();
-    let footer = app.navigator_footer_rect();
+    let search = app.search;
+    let body = app.body;
+    let detail = app.detail_area;
+    let footer = app.footer;
     render_search(app, frame, search);
 
     if body.height > 0 {
         render_separator(frame, Rect::new(inner.x, search.y + 1, inner.width, 1), app);
-        render_rows(app, terminal_runtimes, frame, body);
-        render_navigator_scrollbar(app, terminal_runtimes, frame, body);
+        render_rows(app, frame, body);
+        render_navigator_scrollbar(app, frame, body);
     }
-    render_detail(app, terminal_runtimes, frame, detail);
+    render_detail(app, frame, detail);
     render_footer(app, frame, footer);
 }
 
-fn render_search(app: &AppState, frame: &mut Frame, area: Rect) {
-    let p = &app.palette;
+fn render_search<T>(app: &NavigatorRender<'_, T>, frame: &mut Frame, area: Rect) {
+    let p = app.palette;
     let focus_style = if app.navigator.search_focused {
         Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(p.overlay0)
     };
-    let count = app
-        .workspaces
-        .iter()
-        .flat_map(|workspace| workspace.tabs.iter())
-        .map(|tab| tab.panes.len())
-        .sum::<usize>();
+    let count = app.pane_count;
     let mut spans = vec![Span::styled(" / ", focus_style)];
     let query = app.navigator.query.trim();
     match app.navigator.state_filter {
@@ -105,26 +193,26 @@ fn render_search(app: &AppState, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn push_state_chip(
+fn push_state_chip<T>(
     spans: &mut Vec<Span<'static>>,
     state: crate::detect::AgentState,
     seen: bool,
     tick: u32,
     label: &'static str,
-    app: &AppState,
+    app: &NavigatorRender<'_, T>,
 ) {
-    let (icon, icon_style) = agent_icon(state, seen, tick, &app.palette);
+    let (icon, icon_style) = agent_icon(state, seen, tick, app.palette);
     spans.push(Span::styled(icon, icon_style.add_modifier(Modifier::BOLD)));
     spans.push(Span::raw(" "));
     spans.push(Span::styled(
         label,
         Style::default()
-            .fg(state_label_color(state, seen, &app.palette))
+            .fg(state_label_color(state, seen, app.palette))
             .add_modifier(Modifier::BOLD),
     ));
 }
 
-fn render_separator(frame: &mut Frame, area: Rect, app: &AppState) {
+fn render_separator<T>(frame: &mut Frame, area: Rect, app: &NavigatorRender<'_, T>) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -135,13 +223,8 @@ fn render_separator(frame: &mut Frame, area: Rect, app: &AppState) {
     );
 }
 
-fn render_rows(
-    app: &AppState,
-    terminal_runtimes: &TerminalRuntimeRegistry,
-    frame: &mut Frame,
-    body: Rect,
-) {
-    let rows = app.navigator_rows_from(terminal_runtimes);
+fn render_rows<T>(app: &NavigatorRender<'_, T>, frame: &mut Frame, body: Rect) {
+    let rows = app.rows;
     let start = app.navigator.scroll.min(rows.len());
     let end = rows.len().min(start.saturating_add(body.height as usize));
     for (visible_idx, row) in rows[start..end].iter().enumerate() {
@@ -153,8 +236,14 @@ fn render_rows(
     }
 }
 
-fn render_row(app: &AppState, frame: &mut Frame, rect: Rect, row: &NavigatorRow, selected: bool) {
-    let p = &app.palette;
+fn render_row<T>(
+    app: &NavigatorRender<'_, T>,
+    frame: &mut Frame,
+    rect: Rect,
+    row: &NavigatorRow<T>,
+    selected: bool,
+) {
+    let p = app.palette;
     frame.render_widget(Clear, rect);
     let base_style = if selected {
         Style::default().bg(p.accent).fg(panel_contrast_fg(p))
@@ -238,16 +327,11 @@ fn render_row(app: &AppState, frame: &mut Frame, rect: Rect, row: &NavigatorRow,
     }
 }
 
-fn render_navigator_scrollbar(
-    app: &AppState,
-    terminal_runtimes: &TerminalRuntimeRegistry,
-    frame: &mut Frame,
-    body: Rect,
-) {
+fn render_navigator_scrollbar<T>(app: &NavigatorRender<'_, T>, frame: &mut Frame, body: Rect) {
     if body.width <= 1 || body.height == 0 {
         return;
     }
-    let rows = app.navigator_rows_from(terminal_runtimes).len();
+    let rows = app.rows.len();
     let viewport = body.height as usize;
     if rows <= viewport {
         return;
@@ -285,21 +369,16 @@ fn metadata_width(width: u16) -> u16 {
     }
 }
 
-fn render_detail(
-    app: &AppState,
-    terminal_runtimes: &TerminalRuntimeRegistry,
-    frame: &mut Frame,
-    area: Rect,
-) {
+fn render_detail<T>(app: &NavigatorRender<'_, T>, frame: &mut Frame, area: Rect) {
     if area.height == 0 || area.width == 0 {
         return;
     }
     render_separator(frame, area, app);
-    let detail = selected_detail(app, terminal_runtimes);
+    let detail = app.detail;
     if detail.is_empty() {
         return;
     }
-    let text = middle_elide(&detail, area.width.saturating_sub(2) as usize);
+    let text = middle_elide(detail, area.width.saturating_sub(2) as usize);
     frame.render_widget(
         Paragraph::new(format!(" {text}")).style(Style::default().fg(app.palette.overlay0)),
         area,
@@ -469,11 +548,11 @@ fn display_state(state: crate::detect::AgentState, seen: bool) -> &'static str {
     }
 }
 
-fn render_footer(app: &AppState, frame: &mut Frame, area: Rect) {
+fn render_footer<T>(app: &NavigatorRender<'_, T>, frame: &mut Frame, area: Rect) {
     if area.height == 0 {
         return;
     }
-    let p = &app.palette;
+    let p = app.palette;
     let key = Style::default().fg(p.accent).add_modifier(Modifier::BOLD);
     let dim = Style::default().fg(p.overlay0);
     let line = if app.navigator.search_focused {

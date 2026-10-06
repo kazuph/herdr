@@ -5,6 +5,46 @@ mod unix;
 pub(crate) use unix::*;
 
 #[cfg(windows)]
+pub(crate) fn connect_saved_ssh(
+    _profile_id: &str,
+    _target: &str,
+    _session: &str,
+) -> std::io::Result<(crate::ipc::LocalStream, Box<dyn Send>)> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "saved SSH endpoints are not supported on Windows yet",
+    ))
+}
+
+// Fixed upstream remote/saved.rs: authentication/configuration failures affect only this endpoint.
+pub(crate) fn saved_ssh_failure_needs_attention(error: &std::io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::InvalidInput
+            | std::io::ErrorKind::InvalidData
+            | std::io::ErrorKind::NotFound
+            | std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::Unsupported
+    ) {
+        return true;
+    }
+    let message = error.to_string().to_ascii_lowercase();
+    [
+        "permission denied",
+        "host key verification failed",
+        "remote host identification has changed",
+        "no matching host key",
+        "unsupported remote platform",
+        "not ready",
+        "install or update",
+        "protocol",
+        "handshake",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
+#[cfg(windows)]
 pub(crate) const REATTACH_COMMAND_ENV_VAR: &str = "HERDR_REATTACH_COMMAND";
 #[cfg(windows)]
 pub(crate) const REMOTE_KEYBINDINGS_ENV_VAR: &str = "HERDR_REMOTE_KEYBINDINGS";

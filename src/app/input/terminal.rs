@@ -309,7 +309,7 @@ impl App {
     }
 }
 
-fn popup_child_claims_escape(rt: &crate::terminal::TerminalRuntime) -> bool {
+pub(crate) fn popup_child_claims_escape(rt: &crate::terminal::TerminalRuntime) -> bool {
     let input_claimed = rt.input_state().is_some_and(|state| {
         state.alternate_screen
             || state.application_cursor

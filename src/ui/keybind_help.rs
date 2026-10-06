@@ -59,17 +59,21 @@ fn indexed_range_prefix(bindings: &[crate::config::IndexedKeybind]) -> Option<&s
     Some(prefix)
 }
 
+#[cfg(test)]
 pub(super) fn keybind_help_groups(app: &AppState) -> Vec<HelpGroup> {
-    let kb = &app.keybinds;
+    keybind_help_groups_from((app.prefix_code, app.prefix_mods), &app.keybinds)
+}
+
+fn keybind_help_groups_from(
+    prefix: (crossterm::event::KeyCode, crossterm::event::KeyModifiers),
+    kb: &crate::config::Keybinds,
+) -> Vec<HelpGroup> {
     let mut groups = Vec::new();
 
     groups.push((
         "global",
         vec![
-            help_entry(
-                crate::config::format_key_combo((app.prefix_code, app.prefix_mods)),
-                "prefix mode",
-            ),
+            help_entry(crate::config::format_key_combo(prefix), "prefix mode"),
             help_entry(keybind_label(&kb.help), "keybinds"),
             help_entry(keybind_label(&kb.settings), "settings"),
             help_entry(keybind_label(&kb.detach), "detach"),
@@ -187,15 +191,27 @@ pub(super) fn keybind_help_groups(app: &AppState) -> Vec<HelpGroup> {
 }
 
 pub(crate) fn keybind_help_lines(app: &AppState) -> Vec<(usize, Line<'static>)> {
+    keybind_help_lines_from(
+        (app.prefix_code, app.prefix_mods),
+        &app.keybinds,
+        &app.palette,
+    )
+}
+
+pub(crate) fn keybind_help_lines_from(
+    prefix: (crossterm::event::KeyCode, crossterm::event::KeyModifiers),
+    keybinds: &crate::config::Keybinds,
+    palette: &crate::app::state::Palette,
+) -> Vec<(usize, Line<'static>)> {
     let heading_style = Style::default()
-        .fg(app.palette.accent)
+        .fg(palette.accent)
         .add_modifier(Modifier::BOLD);
     let key_style = Style::default()
-        .fg(app.palette.mauve)
+        .fg(palette.mauve)
         .add_modifier(Modifier::BOLD);
-    let label_style = Style::default().fg(app.palette.text);
+    let label_style = Style::default().fg(palette.text);
 
-    let groups = keybind_help_groups(app);
+    let groups = keybind_help_groups_from(prefix, keybinds);
     let key_width = groups
         .iter()
         .flat_map(|(_, entries)| entries.iter().map(|(key, _)| key.chars().count()))
@@ -227,9 +243,25 @@ pub(crate) fn keybind_help_lines(app: &AppState) -> Vec<(usize, Line<'static>)> 
 }
 
 pub(super) fn render_keybind_help_overlay(app: &AppState, frame: &mut Frame) {
+    render_keybind_help_from(
+        frame,
+        &app.palette,
+        keybind_help_lines(app),
+        app.keybind_help.scroll,
+        app.keybind_help_max_scroll(),
+    );
+}
+
+pub(crate) fn render_keybind_help_from(
+    frame: &mut Frame,
+    palette: &crate::app::state::Palette,
+    lines: Vec<(usize, Line<'static>)>,
+    scroll: u16,
+    max_scroll: u16,
+) {
     super::dim_background(frame, frame.area());
 
-    let Some(inner) = render_modal_shell(frame, frame.area(), 76, 22, &app.palette) else {
+    let Some(inner) = render_modal_shell(frame, frame.area(), 76, 22, palette) else {
         return;
     };
     if inner.height < 6 || inner.width < 20 {
@@ -240,29 +272,27 @@ pub(super) fn render_keybind_help_overlay(app: &AppState, frame: &mut Frame) {
     let header_rows =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas::<2>(stack.header);
 
-    render_modal_header(frame, header_rows[0], "keybinds", &app.palette);
+    render_modal_header(frame, header_rows[0], "keybinds", palette);
     render_action_button(
         frame,
         release_notes_close_button_rect(header_rows[0]),
         Some("esc"),
         "close",
         Style::default()
-            .fg(panel_contrast_fg(&app.palette))
-            .bg(app.palette.accent)
+            .fg(panel_contrast_fg(palette))
+            .bg(palette.accent)
             .add_modifier(Modifier::BOLD),
     );
     frame.render_widget(
         Paragraph::new(" available commands and configured shortcuts")
-            .style(Style::default().fg(app.palette.overlay1)),
+            .style(Style::default().fg(palette.overlay1)),
         header_rows[1],
     );
 
     let body_area = stack.content;
     let metrics = crate::pane::ScrollMetrics {
-        offset_from_bottom: app
-            .keybind_help_max_scroll()
-            .saturating_sub(app.keybind_help.scroll) as usize,
-        max_offset_from_bottom: app.keybind_help_max_scroll() as usize,
+        offset_from_bottom: max_scroll.saturating_sub(scroll) as usize,
+        max_offset_from_bottom: max_scroll as usize,
         viewport_rows: body_area.height.max(1) as usize,
     };
     let track = release_notes_scrollbar_rect(body_area, metrics);
@@ -277,36 +307,31 @@ pub(super) fn render_keybind_help_overlay(app: &AppState, frame: &mut Frame) {
         })
         .unwrap_or(body_area);
 
-    let body = Paragraph::new(
-        keybind_help_lines(app)
-            .into_iter()
-            .map(|(_, line)| line)
-            .collect::<Vec<_>>(),
-    )
-    .wrap(Wrap { trim: false })
-    .scroll((app.keybind_help.scroll, 0));
+    let body = Paragraph::new(lines.into_iter().map(|(_, line)| line).collect::<Vec<_>>())
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
     frame.render_widget(body, text_area);
     if let Some(track) = track {
         render_scrollbar(
             frame,
             metrics,
             track,
-            app.palette.overlay0,
-            app.palette.overlay1,
+            palette.overlay0,
+            palette.overlay1,
             "▐",
         );
     }
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" scroll ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("wheel ↑↓", Style::default().fg(app.palette.text)),
-            Span::styled("  ·  ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("jump", Style::default().fg(app.palette.overlay0)),
-            Span::styled(" pgup / pgdn ", Style::default().fg(app.palette.text)),
-            Span::styled("  ·  ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("close", Style::default().fg(app.palette.overlay0)),
-            Span::styled(" esc / enter ", Style::default().fg(app.palette.text)),
+            Span::styled(" scroll ", Style::default().fg(palette.overlay0)),
+            Span::styled("wheel ↑↓", Style::default().fg(palette.text)),
+            Span::styled("  ·  ", Style::default().fg(palette.overlay0)),
+            Span::styled("jump", Style::default().fg(palette.overlay0)),
+            Span::styled(" pgup / pgdn ", Style::default().fg(palette.text)),
+            Span::styled("  ·  ", Style::default().fg(palette.overlay0)),
+            Span::styled("close", Style::default().fg(palette.overlay0)),
+            Span::styled(" esc / enter ", Style::default().fg(palette.text)),
         ])),
         stack.footer.unwrap_or_default(),
     );

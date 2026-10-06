@@ -14,9 +14,19 @@ mod config_io;
 mod creation;
 mod ids;
 mod input;
+pub(crate) use actions::{launch_label, state_label_text};
+pub(crate) use input::{
+    context_menu_item_at_from, context_menu_rect_from, copy_mode_survives_prefix_action,
+    custom_command_for_bindings, global_menu_action_label, global_menu_actions_for,
+    global_menu_rect_from, navigation_action_for_bindings, navigator_key_action,
+    popup_child_claims_escape, workspace_section_for_menu_item, BindingDispatch, ContextMenuInput,
+    GlobalMenuAction, GlobalMenuInput, NavigateAction, NavigatorKeyAction, SettingsAction,
+    SettingsInput,
+};
 mod msg;
 pub(crate) mod pane_graphics;
 mod popup;
+pub(crate) use popup::{PopupGeometry, PopupOwner};
 mod runtime;
 mod runtime_mutations;
 mod session;
@@ -40,7 +50,7 @@ pub(crate) const HEADLESS_ANIMATION_TICK_STEP: u32 = 8;
 pub(crate) const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(30);
 const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
-/// How often the sidebar re-reads background jobs while their list is open.
+/// How often the sidebar re-reads background jobs for Jobs and space indicators.
 pub(crate) const JOBS_REFRESH_INTERVAL: Duration = Duration::from_millis(1000);
 /// How many job rows the sidebar keeps; the dispatch store holds every job ever run.
 const SIDEBAR_JOBS_LIMIT: usize = 200;
@@ -323,7 +333,7 @@ fn sibling_theme_names(name: &str) -> (String, String) {
     }
 }
 
-fn theme_runtime_config(
+pub(crate) fn theme_runtime_config(
     config: &crate::config::Config,
     use_legacy_ui_accent: bool,
 ) -> state::ThemeRuntimeConfig {
@@ -375,7 +385,7 @@ fn resolve_palette_for_theme_name(
     palette
 }
 
-fn resolve_effective_theme(
+pub(crate) fn resolve_effective_theme(
     runtime: &state::ThemeRuntimeConfig,
     appearance: Option<crate::terminal_theme::HostAppearance>,
 ) -> (state::Palette, String) {
@@ -1048,6 +1058,7 @@ impl App {
                 self.runtime_workspace_create(
                     "tui.workspace.create",
                     crate::api::schema::WorkspaceCreateParams {
+                        section: None,
                         cwd: None,
                         focus: true,
                         label: None,
@@ -1096,6 +1107,7 @@ impl App {
                 self.runtime_workspace_create(
                     "tui.workspace.create_cwd",
                     crate::api::schema::WorkspaceCreateParams {
+                        section: None,
                         cwd: Some(cwd.display().to_string()),
                         focus: true,
                         label: None,
@@ -4659,6 +4671,7 @@ mod tests {
     #[test]
     fn next_loop_deadline_includes_session_save_deadline() {
         let mut app = test_app();
+        app.jobs_refresh_in_flight = true;
         let now = Instant::now();
         app.session_save_deadline = Some(now + Duration::from_secs(2));
         app.next_resize_poll = now + Duration::from_secs(5);
@@ -4673,6 +4686,7 @@ mod tests {
     #[test]
     fn headless_next_loop_deadline_ignores_resize_poll() {
         let mut app = test_app();
+        app.jobs_refresh_in_flight = true;
         let now = Instant::now();
         app.next_resize_poll = now + Duration::from_millis(100);
         app.session_save_deadline = Some(now + Duration::from_secs(2));
@@ -4687,6 +4701,7 @@ mod tests {
     #[test]
     fn headless_next_loop_deadline_returns_none_when_resize_poll_is_only_deadline() {
         let mut app = test_app();
+        app.jobs_refresh_in_flight = true;
         let now = Instant::now();
         app.next_resize_poll = now - Duration::from_millis(1);
         app.config_diagnostic_deadline = None;
@@ -4780,6 +4795,7 @@ mod tests {
     #[test]
     fn next_loop_deadline_includes_selection_autoscroll_deadline() {
         let mut app = test_app();
+        app.jobs_refresh_in_flight = true;
         let now = Instant::now();
         app.next_resize_poll = now + Duration::from_millis(300);
         app.selection_autoscroll_deadline = Some(now + Duration::from_millis(5));

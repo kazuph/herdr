@@ -42,8 +42,8 @@ use self::agent_detection::{
 };
 use self::terminal::{GhosttyPaneTerminal, PaneTerminal};
 pub(crate) use self::terminal::{
-    TerminalDirtyPatch, TerminalDirtyPatchOutcome, TerminalTextMatch, TerminalTextPoint,
-    TerminalWordMotion,
+    TerminalDirtyPatch, TerminalDirtyPatchOutcome, TerminalSearchDirection, TerminalSearchWindow,
+    TerminalTextMatch, TerminalTextPoint, TerminalWordMotion,
 };
 pub use self::{
     state::PaneState,
@@ -1133,6 +1133,9 @@ pub struct PaneRuntime {
     child_wait_completed: Option<Arc<AtomicBool>>,
     kitty_keyboard_flags: Arc<AtomicU16>,
     detection_content_seq: Arc<AtomicU64>,
+    // Stable endpoint surfaces use the fixed upstream content-write sequence.
+    content_seq: Arc<AtomicU64>,
+    content_write_lock: Arc<Mutex<()>>,
     full_lifecycle_authority_active: Arc<AtomicBool>,
     detect_reset_notify: Arc<Notify>,
     pending_release: Arc<Mutex<Option<PendingAgentRelease>>>,
@@ -1993,6 +1996,8 @@ impl PaneRuntime {
         let reported_cwd = Arc::new(Mutex::new(None));
         let kitty_keyboard_flags = Arc::new(AtomicU16::new(keyboard_protocol_flags));
         let detection_content_seq = Arc::new(AtomicU64::new(0));
+        let content_seq = Arc::new(AtomicU64::new(0));
+        let content_write_lock = Arc::new(Mutex::new(()));
 
         let io = {
             let terminal = terminal.clone();
@@ -2005,10 +2010,18 @@ impl PaneRuntime {
             let reported_cwd = reported_cwd.clone();
             let rt = tokio::runtime::Handle::current();
             let delay_rt = rt.clone();
+            let content_seq = content_seq.clone();
+            let content_write_lock = content_write_lock.clone();
             let on_read = Box::new(move |bytes: &[u8]| {
+                let guard = content_write_lock
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                content_seq.fetch_add(1, Ordering::AcqRel);
                 let shell_pid = child_pid.load(Ordering::Acquire);
                 let result =
                     terminal.process_pty_bytes(pane_id, shell_pid, bytes, &response_writer);
+                content_seq.fetch_add(1, Ordering::Release);
+                drop(guard);
                 observe_detection_content_change(bytes, &detection_content_seq);
                 if result.request_render && !render_dirty.swap(true, Ordering::AcqRel) {
                     render_notify.notify_one();
@@ -2073,6 +2086,8 @@ impl PaneRuntime {
             child_wait_completed: None,
             kitty_keyboard_flags,
             detection_content_seq,
+            content_seq,
+            content_write_lock,
             full_lifecycle_authority_active,
             detect_reset_notify,
             pending_release,
@@ -2129,6 +2144,8 @@ impl PaneRuntime {
         let reported_cwd = Arc::new(Mutex::new(None));
         let child_wait_completed = Arc::new(AtomicBool::new(false));
         let detection_content_seq = Arc::new(AtomicU64::new(0));
+        let content_seq = Arc::new(AtomicU64::new(0));
+        let content_write_lock = Arc::new(Mutex::new(()));
         let full_lifecycle_authority_active = Arc::new(AtomicBool::new(false));
         {
             let child_pid = child_pid.clone();
@@ -2166,10 +2183,18 @@ impl PaneRuntime {
             let events = events.clone();
             let reported_cwd = reported_cwd.clone();
             let rt = tokio::runtime::Handle::current();
+            let content_seq = content_seq.clone();
+            let content_write_lock = content_write_lock.clone();
             let on_read = Box::new(move |bytes: &[u8]| {
+                let guard = content_write_lock
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                content_seq.fetch_add(1, Ordering::AcqRel);
                 let shell_pid = child_pid.load(Ordering::Acquire);
                 let result =
                     terminal.process_pty_bytes(pane_id, shell_pid, bytes, &response_writer);
+                content_seq.fetch_add(1, Ordering::Release);
+                drop(guard);
                 if agent_detection == AgentDetection::Enabled {
                     observe_detection_content_change(bytes, &detection_content_seq);
                 }
@@ -2651,6 +2676,8 @@ impl PaneRuntime {
             child_wait_completed: Some(child_wait_completed),
             kitty_keyboard_flags,
             detection_content_seq,
+            content_seq,
+            content_write_lock,
             full_lifecycle_authority_active,
             detect_reset_notify,
             pending_release,
@@ -2706,9 +2733,16 @@ impl PaneRuntime {
             return;
         }
         self.current_size.set(size);
+        let guard = self
+            .content_write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.content_seq.fetch_add(1, Ordering::AcqRel);
         let terminal_responses = self
             .terminal
             .resize(rows, cols, cell_width_px, cell_height_px);
+        self.content_seq.fetch_add(1, Ordering::Release);
+        drop(guard);
         mark_detection_content_changed(&self.detection_content_seq);
         self.io.resize(
             rows,
@@ -2769,6 +2803,28 @@ impl PaneRuntime {
         self.terminal.text_matches_are_current(text_matches)
     }
 
+    pub(crate) fn search_text_window(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        direction: TerminalSearchDirection,
+        cursor: TerminalTextPoint,
+        previous: Option<(TerminalTextPoint, TerminalTextPoint)>,
+        limit: usize,
+    ) -> TerminalSearchWindow {
+        self.terminal
+            .search_text_window(query, case_sensitive, direction, cursor, previous, limit)
+    }
+    pub(crate) fn terminal_dimensions(&self) -> Option<(u16, u16)> {
+        self.terminal.dimensions()
+    }
+    pub(crate) fn paragraph_motion_target(
+        &self,
+        row: u32,
+        direction: i8,
+    ) -> Option<TerminalTextPoint> {
+        self.terminal.paragraph_motion_target(row, direction)
+    }
     pub(crate) fn word_motion_target(
         &self,
         row: u32,
@@ -2800,6 +2856,14 @@ impl PaneRuntime {
 
     pub fn synchronized_output_active(&self) -> bool {
         self.terminal.synchronized_output_active()
+    }
+
+    pub(crate) fn content_seq(&self) -> u64 {
+        self.content_seq.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn synchronized_output_state(&self) -> (bool, u64) {
+        self.terminal.synchronized_output_state()
     }
 
     pub fn visible_text(&self) -> String {
@@ -2865,6 +2929,10 @@ impl PaneRuntime {
 
     pub fn visible_hyperlinks(&self, area: Rect) -> Vec<((u16, u16), String, String)> {
         self.terminal.visible_hyperlinks(area)
+    }
+
+    pub(crate) fn kitty_image_fingerprints(&self, image_ids: &[u32]) -> Vec<Option<u64>> {
+        self.terminal.kitty_image_fingerprints(image_ids)
     }
 
     pub fn kitty_image_placements_with_data_filter<F>(
@@ -3110,6 +3178,8 @@ impl PaneRuntime {
             child_wait_completed: None,
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
             detection_content_seq: Arc::new(AtomicU64::new(0)),
+            content_seq: Arc::new(AtomicU64::new(0)),
+            content_write_lock: Arc::new(Mutex::new(())),
             full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
             detect_reset_notify: Arc::new(Notify::new()),
             pending_release: Arc::new(Mutex::new(None)),
@@ -3138,8 +3208,15 @@ impl PaneRuntime {
     }
 
     pub(crate) fn test_process_pty_bytes(&self, bytes: &[u8]) {
+        let guard = self
+            .content_write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.content_seq.fetch_add(1, Ordering::AcqRel);
         let (tx, _rx) = mpsc::channel(1);
         let _ = self.terminal.process_pty_bytes(self.pane_id, 0, bytes, &tx);
+        self.content_seq.fetch_add(1, Ordering::Release);
+        drop(guard);
     }
 
     pub(crate) fn test_with_scrollback_bytes(
@@ -3180,6 +3257,8 @@ impl PaneRuntime {
                 child_wait_completed: None,
                 kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
                 detection_content_seq: Arc::new(AtomicU64::new(0)),
+                content_seq: Arc::new(AtomicU64::new(0)),
+                content_write_lock: Arc::new(Mutex::new(())),
                 full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
                 detect_reset_notify: Arc::new(Notify::new()),
                 pending_release: Arc::new(Mutex::new(None)),
@@ -3194,6 +3273,69 @@ impl PaneRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn endpoint_content_sequence_tracks_real_owned_pty_output_and_resize() {
+        let (events, _receiver) = mpsc::channel(64);
+        let notify = Arc::new(Notify::new());
+        let dirty = Arc::new(AtomicBool::new(false));
+        let runtime = PaneRuntime::spawn_argv_command(
+            PaneId::alloc(), 24, 80, std::env::current_dir().unwrap(),
+            &["/bin/sh".into(), "-c".into(),
+                "printf 'EPOCH-READY\\n'; while IFS= read -r line; do printf '%s\\n' \"$line\"; done".into()],
+            &PaneLaunchEnv::default(), AgentDetection::Disabled, 0,
+            crate::terminal_theme::TerminalTheme::default(), events, notify.clone(), dirty.clone(),
+        ).unwrap();
+        assert!(runtime
+            .child_pid()
+            .is_some_and(|pid| pid != std::process::id()));
+        async fn received(
+            runtime: &PaneRuntime,
+            notify: &Notify,
+            dirty: &AtomicBool,
+            marker: &str,
+        ) {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let notified = notify.notified();
+                    tokio::pin!(notified);
+                    notified.as_mut().enable();
+                    dirty.store(false, Ordering::Release);
+                    if runtime.visible_text().contains(marker) {
+                        return;
+                    }
+                    notified.await;
+                }
+            })
+            .await
+            .expect("owned PTY must emit its marker");
+        }
+        received(&runtime, &notify, &dirty, "EPOCH-READY").await;
+        let settled_sequence = || {
+            let _guard = runtime.content_write_lock.lock().unwrap();
+            runtime.content_seq()
+        };
+        let first = settled_sequence();
+        assert!(first > 0 && first.is_multiple_of(2));
+        runtime
+            .send_bytes(Bytes::from_static(b"EPOCH-INPUT\n"))
+            .await
+            .unwrap();
+        received(&runtime, &notify, &dirty, "EPOCH-INPUT").await;
+        let after_input = settled_sequence();
+        assert!(after_input > first && after_input.is_multiple_of(2));
+        runtime.resize(29, 74, 8, 16);
+        let after_resize = settled_sequence();
+        assert!(after_resize > after_input && after_resize.is_multiple_of(2));
+        assert_eq!(runtime.current_size(), (29, 74));
+        let _guard = runtime.content_write_lock.lock().unwrap();
+        let before_unchanged_resize = runtime.content_seq();
+        runtime.resize(29, 74, 8, 16);
+        assert_eq!(runtime.content_seq(), before_unchanged_resize);
+        drop(_guard);
+        drop(runtime);
+    }
 
     #[test]
     fn shutdown_liveness_treats_reaped_direct_child_as_gone() {
@@ -3650,6 +3792,8 @@ mod tests {
             child_wait_completed: None,
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
             detection_content_seq: Arc::new(AtomicU64::new(0)),
+            content_seq: Arc::new(AtomicU64::new(0)),
+            content_write_lock: Arc::new(Mutex::new(())),
             full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
             detect_reset_notify: Arc::new(Notify::new()),
             pending_release: Arc::new(Mutex::new(None)),
@@ -3681,6 +3825,8 @@ mod tests {
             child_wait_completed: None,
             kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
             detection_content_seq: Arc::new(AtomicU64::new(0)),
+            content_seq: Arc::new(AtomicU64::new(0)),
+            content_write_lock: Arc::new(Mutex::new(())),
             full_lifecycle_authority_active: Arc::new(AtomicBool::new(false)),
             detect_reset_notify: Arc::new(Notify::new()),
             pending_release: Arc::new(Mutex::new(None)),

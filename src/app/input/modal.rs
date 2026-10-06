@@ -89,6 +89,12 @@ pub(crate) enum GlobalMenuAction {
 }
 
 pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
+    global_menu_actions_for(state.latest_release_notes_available)
+}
+
+pub(crate) fn global_menu_actions_for(
+    latest_release_notes_available: bool,
+) -> Vec<GlobalMenuAction> {
     let mut actions = vec![
         GlobalMenuAction::NewWorkspace,
         GlobalMenuAction::NewTab,
@@ -100,7 +106,7 @@ pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
         GlobalMenuAction::SidebarNormal,
         GlobalMenuAction::SidebarWide,
     ];
-    if state.latest_release_notes_available {
+    if latest_release_notes_available {
         actions.push(GlobalMenuAction::WhatsNew);
     }
     actions.extend([
@@ -115,7 +121,7 @@ pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
     actions
 }
 
-pub(super) fn global_menu_action_label(action: GlobalMenuAction) -> &'static str {
+pub(crate) fn global_menu_action_label(action: GlobalMenuAction) -> &'static str {
     match action {
         GlobalMenuAction::NewWorkspace => "new workspace",
         GlobalMenuAction::NewTab => "new tab",
@@ -214,36 +220,64 @@ pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuA
     }
 }
 
-pub(crate) fn handle_global_menu_key(state: &mut AppState, key: KeyEvent) {
-    let actions = global_menu_actions(state);
-    match key.code {
-        KeyCode::Esc => leave_modal(state),
-        KeyCode::Up | KeyCode::Char('k') => move_global_menu_selection(state, &actions, false),
-        KeyCode::Down | KeyCode::Char('j') => move_global_menu_selection(state, &actions, true),
-        KeyCode::Enter => {
-            if let Some(action) = actions.get(state.global_menu.highlighted).copied() {
-                apply_global_menu_action(state, action);
+pub(crate) struct GlobalMenuInput<'a> {
+    pub state: &'a mut MenuListState,
+    pub actions: &'a [GlobalMenuAction],
+    pub closed: bool,
+}
+
+impl GlobalMenuInput<'_> {
+    pub(crate) fn key(&mut self, key: KeyEvent) -> Option<GlobalMenuAction> {
+        match key.code {
+            KeyCode::Esc => self.closed = true,
+            KeyCode::Up | KeyCode::Char('k') => {
+                move_global_menu_selection(self.state, self.actions, false)
             }
+            KeyCode::Down | KeyCode::Char('j') => {
+                move_global_menu_selection(self.state, self.actions, true)
+            }
+            KeyCode::Enter => return self.actions.get(self.state.highlighted).copied(),
+            _ => {}
         }
-        _ => {}
+        None
     }
 }
 
-fn move_global_menu_selection(state: &mut AppState, actions: &[GlobalMenuAction], forward: bool) {
+pub(crate) fn handle_global_menu_key(state: &mut AppState, key: KeyEvent) {
+    let actions = global_menu_actions(state);
+    let mut input = GlobalMenuInput {
+        state: &mut state.global_menu,
+        actions: &actions,
+        closed: false,
+    };
+    let action = input.key(key);
+    let closed = input.closed;
+    if closed {
+        leave_modal(state);
+    }
+    if let Some(action) = action {
+        apply_global_menu_action(state, action);
+    }
+}
+
+fn move_global_menu_selection(
+    state: &mut MenuListState,
+    actions: &[GlobalMenuAction],
+    forward: bool,
+) {
     if actions.is_empty() {
         return;
     }
     for _ in 0..actions.len() {
-        state.global_menu.highlighted = if forward {
-            (state.global_menu.highlighted + 1) % actions.len()
+        state.highlighted = if forward {
+            (state.highlighted + 1) % actions.len()
         } else {
             state
-                .global_menu
                 .highlighted
                 .checked_sub(1)
                 .unwrap_or(actions.len() - 1)
         };
-        if actions[state.global_menu.highlighted] != GlobalMenuAction::Separator {
+        if actions[state.highlighted] != GlobalMenuAction::Separator {
             return;
         }
     }
@@ -254,113 +288,144 @@ pub(crate) fn handle_navigator_key(
     terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
     key: KeyEvent,
 ) {
-    if state.navigator.search_focused {
+    let height = state.navigator_body_rect().height;
+    let count = state.navigator_rows_from(terminal_runtimes).len();
+    match navigator_key_action(&mut state.navigator, key, height, count) {
+        NavigatorKeyAction::None => {}
+        NavigatorKeyAction::Close => leave_modal(state),
+        NavigatorKeyAction::Accept => {
+            state.accept_navigator_selection_from(terminal_runtimes);
+        }
+        NavigatorKeyAction::Clamp => state.clamp_navigator_selection_from(terminal_runtimes),
+        NavigatorKeyAction::Move(delta) => {
+            state.move_navigator_selection_from(terminal_runtimes, delta)
+        }
+        NavigatorKeyAction::EnsureVisible => {
+            state.ensure_navigator_selection_visible_from(terminal_runtimes)
+        }
+        NavigatorKeyAction::ToggleWorkspace => {
+            state.toggle_selected_navigator_workspace_from(terminal_runtimes)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NavigatorKeyAction {
+    None,
+    Close,
+    Accept,
+    Clamp,
+    Move(isize),
+    EnsureVisible,
+    ToggleWorkspace,
+}
+
+pub(crate) fn navigator_key_action(
+    state: &mut crate::app::state::NavigatorState,
+    key: KeyEvent,
+    body_height: u16,
+    row_count: usize,
+) -> NavigatorKeyAction {
+    if state.search_focused {
         match key.code {
             KeyCode::Esc => {
-                state.navigator.search_focused = false;
+                state.search_focused = false;
             }
             KeyCode::Enter => {
-                state.accept_navigator_selection_from(terminal_runtimes);
+                return NavigatorKeyAction::Accept;
             }
             KeyCode::Backspace => {
-                state.navigator.state_filter = None;
-                state.navigator.query.pop();
-                state.clamp_navigator_selection_from(terminal_runtimes);
+                state.state_filter = None;
+                state.query.pop();
+                return NavigatorKeyAction::Clamp;
             }
-            KeyCode::Up => state.move_navigator_selection_from(terminal_runtimes, -1),
-            KeyCode::Down => state.move_navigator_selection_from(terminal_runtimes, 1),
+            KeyCode::Up => return NavigatorKeyAction::Move(-1),
+            KeyCode::Down => return NavigatorKeyAction::Move(1),
             KeyCode::Char('n') if key.modifiers == KeyModifiers::CONTROL => {
-                state.move_navigator_selection_from(terminal_runtimes, 1)
+                return NavigatorKeyAction::Move(1)
             }
             KeyCode::Char('p') if key.modifiers == KeyModifiers::CONTROL => {
-                state.move_navigator_selection_from(terminal_runtimes, -1)
+                return NavigatorKeyAction::Move(-1)
             }
             KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
-                state.navigator.query.clear();
-                state.navigator.state_filter = None;
-                state.clamp_navigator_selection_from(terminal_runtimes);
+                state.query.clear();
+                state.state_filter = None;
+                return NavigatorKeyAction::Clamp;
             }
             KeyCode::Char(c)
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
-                insert_navigator_search_text(state, terminal_runtimes, &c.to_string());
+                state.state_filter = None;
+                state.query.push(c);
+                return NavigatorKeyAction::Clamp;
             }
             _ => {}
         }
-        return;
+        return NavigatorKeyAction::None;
     }
 
     match key.code {
         KeyCode::Esc => {
-            leave_modal(state);
+            return NavigatorKeyAction::Close;
         }
         KeyCode::Enter => {
-            state.accept_navigator_selection_from(terminal_runtimes);
+            return NavigatorKeyAction::Accept;
         }
         KeyCode::Char('/') => {
-            state.navigator.state_filter = None;
-            state.navigator.search_focused = true;
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.state_filter = None;
+            state.search_focused = true;
+            return NavigatorKeyAction::Clamp;
         }
-        KeyCode::Backspace if state.navigator.state_filter.is_some() => {
-            state.navigator.state_filter = None;
-            state.clamp_navigator_selection_from(terminal_runtimes);
+        KeyCode::Backspace if state.state_filter.is_some() => {
+            state.state_filter = None;
+            return NavigatorKeyAction::Clamp;
         }
         KeyCode::Char('a') if key.modifiers.is_empty() => {
-            state.navigator.query.clear();
-            state.navigator.state_filter = None;
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.query.clear();
+            state.state_filter = None;
+            return NavigatorKeyAction::Clamp;
         }
         KeyCode::Char('b') if key.modifiers.is_empty() => {
-            state.navigator.query.clear();
-            state.navigator.state_filter = Some(NavigatorStateFilter::Blocked);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.query.clear();
+            state.state_filter = Some(NavigatorStateFilter::Blocked);
+            return NavigatorKeyAction::Clamp;
         }
         KeyCode::Char('w') if key.modifiers.is_empty() => {
-            state.navigator.query.clear();
-            state.navigator.state_filter = Some(NavigatorStateFilter::Working);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.query.clear();
+            state.state_filter = Some(NavigatorStateFilter::Working);
+            return NavigatorKeyAction::Clamp;
         }
         KeyCode::Char('i') if key.modifiers.is_empty() => {
-            state.navigator.query.clear();
-            state.navigator.state_filter = Some(NavigatorStateFilter::Idle);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.query.clear();
+            state.state_filter = Some(NavigatorStateFilter::Idle);
+            return NavigatorKeyAction::Clamp;
         }
         KeyCode::Char('d') if key.modifiers.is_empty() => {
-            state.navigator.query.clear();
-            state.navigator.state_filter = Some(NavigatorStateFilter::Done);
-            state.clamp_navigator_selection_from(terminal_runtimes);
+            state.query.clear();
+            state.state_filter = Some(NavigatorStateFilter::Done);
+            return NavigatorKeyAction::Clamp;
         }
-        KeyCode::Char('j') | KeyCode::Down => {
-            state.move_navigator_selection_from(terminal_runtimes, 1)
+        KeyCode::Char('j') | KeyCode::Down => return NavigatorKeyAction::Move(1),
+        KeyCode::Char('k') | KeyCode::Up => return NavigatorKeyAction::Move(-1),
+        KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL => {
+            return NavigatorKeyAction::Move((body_height / 2).max(1) as isize)
         }
-        KeyCode::Char('k') | KeyCode::Up => {
-            state.move_navigator_selection_from(terminal_runtimes, -1)
+        KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => {
+            return NavigatorKeyAction::Move(-((body_height / 2).max(1) as isize))
         }
-        KeyCode::Char('d') if key.modifiers == KeyModifiers::CONTROL => state
-            .move_navigator_selection_from(
-                terminal_runtimes,
-                (state.navigator_body_rect().height / 2).max(1) as isize,
-            ),
-        KeyCode::Char('u') if key.modifiers == KeyModifiers::CONTROL => state
-            .move_navigator_selection_from(
-                terminal_runtimes,
-                -((state.navigator_body_rect().height / 2).max(1) as isize),
-            ),
-        KeyCode::Char(' ') => state.toggle_selected_navigator_workspace_from(terminal_runtimes),
+        KeyCode::Char(' ') => return NavigatorKeyAction::ToggleWorkspace,
         KeyCode::Home => {
-            state.navigator.selected = 0;
-            state.ensure_navigator_selection_visible_from(terminal_runtimes);
+            state.selected = 0;
+            return NavigatorKeyAction::EnsureVisible;
         }
         KeyCode::End | KeyCode::Char('G') => {
-            state.navigator.selected = state
-                .navigator_rows_from(terminal_runtimes)
-                .len()
-                .saturating_sub(1);
-            state.ensure_navigator_selection_visible_from(terminal_runtimes);
+            state.selected = row_count.saturating_sub(1);
+            return NavigatorKeyAction::EnsureVisible;
         }
         _ => {}
     }
+
+    NavigatorKeyAction::None
 }
 
 pub(crate) fn insert_navigator_search_text(
@@ -600,97 +665,20 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
     }
 }
 
-fn clear_rename_input(state: &mut AppState) {
-    state.name_input.clear();
-    state.name_input_replace_on_type = false;
-}
-
 pub(crate) fn insert_rename_input_text(state: &mut AppState, text: &str) {
-    if state.name_input_replace_on_type {
-        clear_rename_input(state);
-    }
-    state.name_input.push_str(text);
-}
-
-fn delete_rename_input_char(state: &mut AppState) {
-    if state.name_input_replace_on_type {
-        clear_rename_input(state);
-    } else {
-        state.name_input.pop();
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RenameWordDeleteClass {
-    Word,
-    Separator,
-}
-
-fn rename_word_delete_class(ch: char) -> RenameWordDeleteClass {
-    if ch.is_alphanumeric() || ch == '_' {
-        RenameWordDeleteClass::Word
-    } else {
-        RenameWordDeleteClass::Separator
-    }
-}
-
-fn delete_rename_input_word(state: &mut AppState) {
-    if state.name_input_replace_on_type {
-        clear_rename_input(state);
-        return;
-    }
-
-    while state
-        .name_input
-        .chars()
-        .last()
-        .is_some_and(char::is_whitespace)
-    {
-        state.name_input.pop();
-    }
-
-    let Some(class) = state
-        .name_input
-        .chars()
-        .last()
-        .map(rename_word_delete_class)
-    else {
-        return;
-    };
-
-    while state
-        .name_input
-        .chars()
-        .last()
-        .is_some_and(|ch| !ch.is_whitespace() && rename_word_delete_class(ch) == class)
-    {
-        state.name_input.pop();
-    }
+    crate::input::rename::insert(
+        &mut state.name_input,
+        &mut state.name_input_replace_on_type,
+        text,
+    );
 }
 
 fn handle_rename_edit_key(state: &mut AppState, key: KeyEvent) {
-    match key.code {
-        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            clear_rename_input(state);
-        }
-        KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => {
-            clear_rename_input(state);
-        }
-        KeyCode::Backspace
-            if key.modifiers.contains(KeyModifiers::CONTROL)
-                || key.modifiers.contains(KeyModifiers::ALT) =>
-        {
-            delete_rename_input_word(state);
-        }
-        KeyCode::Char('h' | 'w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            delete_rename_input_word(state);
-        }
-        KeyCode::Backspace => delete_rename_input_char(state),
-        KeyCode::Char(c) if key.modifiers.difference(KeyModifiers::SHIFT).is_empty() => {
-            insert_rename_input_text(state, &c.to_string());
-        }
-        _ => {}
-    }
+    crate::input::rename::edit_key(
+        &mut state.name_input,
+        &mut state.name_input_replace_on_type,
+        key,
+    );
 }
 
 #[cfg(test)]
@@ -794,7 +782,7 @@ pub(crate) fn handle_confirm_danger_key(state: &mut AppState, key: KeyEvent) {
     }
 }
 
-fn workspace_section_for_menu_item(
+pub(crate) fn workspace_section_for_menu_item(
     item: Option<&str>,
 ) -> Option<crate::workspace::WorkspaceSection> {
     match item {
@@ -811,28 +799,49 @@ fn assign_workspace_section(
     ws_idx: usize,
     section: crate::workspace::WorkspaceSection,
 ) {
-    let Some(workspace) = state.workspaces.get_mut(ws_idx) else {
-        return;
-    };
-    workspace.section = section;
-    state.collapsed_workspace_sections.remove(&section);
-    state.workspace_scroll = 0;
-    state.agent_panel_scroll = 0;
-    state.mark_session_dirty();
+    if state.set_workspace_section_runtime(ws_idx, section) {
+        state.collapsed_workspace_sections.remove(&section);
+        state.workspace_scroll = 0;
+        state.agent_panel_scroll = 0;
+    }
 }
 
+#[cfg(test)]
 fn move_context_menu_selection(menu: &mut ContextMenuState, forward: bool) {
     let items = menu.items();
+    move_context_menu_list_selection(&mut menu.list, &items, forward);
+}
+
+pub(crate) struct ContextMenuInput<'a> {
+    pub list: &'a mut MenuListState,
+    pub items: &'a [&'a str],
+    pub closed: bool,
+}
+
+impl ContextMenuInput<'_> {
+    pub(crate) fn key(&mut self, key: KeyEvent) -> Option<usize> {
+        match key.code {
+            KeyCode::Esc => self.closed = true,
+            KeyCode::Up => move_context_menu_list_selection(self.list, self.items, false),
+            KeyCode::Down => move_context_menu_list_selection(self.list, self.items, true),
+            KeyCode::Enter => return Some(self.list.highlighted),
+            _ => {}
+        }
+        None
+    }
+}
+
+fn move_context_menu_list_selection(list: &mut MenuListState, items: &[&str], forward: bool) {
     if items.is_empty() {
         return;
     }
     for _ in 0..items.len() {
         if forward {
-            menu.list.move_next(items.len());
+            list.move_next(items.len());
         } else {
-            menu.list.move_prev();
+            list.move_prev();
         }
-        if items[menu.list.highlighted] != "--" {
+        if items[list.highlighted] != "--" {
             return;
         }
     }
@@ -1403,53 +1412,62 @@ impl App {
     }
 
     pub(crate) fn handle_context_menu_key_via_api(&mut self, key: KeyEvent) {
-        match key.code {
-            KeyCode::Esc => {
-                self.state.context_menu = None;
-                leave_modal(&mut self.state);
+        if key.code == KeyCode::Esc {
+            self.state.context_menu = None;
+            leave_modal(&mut self.state);
+            return;
+        }
+        let Some(menu) = self.state.context_menu.as_mut() else {
+            return;
+        };
+        let items = menu.items();
+        let mut input = ContextMenuInput {
+            list: &mut menu.list,
+            items: &items,
+            closed: false,
+        };
+        let selected = input.key(key);
+        let closed = input.closed;
+        if closed {
+            self.state.context_menu = None;
+            leave_modal(&mut self.state);
+        } else if let Some(index) = selected {
+            if let Some(menu) = self.state.context_menu.take() {
+                self.apply_context_menu_action_via_api(menu, index);
             }
-            KeyCode::Up => {
-                if let Some(menu) = &mut self.state.context_menu {
-                    move_context_menu_selection(menu, false);
-                }
-            }
-            KeyCode::Down => {
-                if let Some(menu) = &mut self.state.context_menu {
-                    move_context_menu_selection(menu, true);
-                }
-            }
-            KeyCode::Enter => {
-                if let Some(menu) = self.state.context_menu.take() {
-                    let idx = menu.list.highlighted;
-                    self.apply_context_menu_action_via_api(menu, idx);
-                }
-            }
-            _ => {}
         }
     }
 
     fn start_context_menu_agent(&mut self, ws_idx: usize, command: &str) {
-        if self.state.workspaces.get(ws_idx).is_none() {
-            return;
-        }
-        let workspace_id = self.public_workspace_id(ws_idx);
-        let tab_idx = self.state.workspaces.get(ws_idx).map(|ws| ws.active_tab);
-        let Some(tab_id) = tab_idx.and_then(|tab_idx| self.public_tab_id(ws_idx, tab_idx)) else {
-            return;
-        };
-        let cwd = self
+        let Some(pane_id) = self
             .state
             .workspaces
             .get(ws_idx)
-            .and_then(|ws| {
-                let pane_id = ws.focused_pane_id()?;
-                let terminal_id = ws.pane_state(pane_id)?.attached_terminal_id.clone();
-                self.state
-                    .terminals
-                    .get(&terminal_id)
-                    .map(|terminal| terminal.cwd.clone())
-            })
-            .map(|cwd| cwd.display().to_string());
+            .and_then(|ws| ws.focused_pane_id())
+        else {
+            return;
+        };
+        let Some(params) = self.context_menu_agent_params(ws_idx, pane_id, command, true) else {
+            return;
+        };
+        let _ = self.start_agent(params, Vec::new());
+    }
+
+    pub(crate) fn context_menu_agent_params(
+        &self,
+        ws_idx: usize,
+        pane_id: crate::layout::PaneId,
+        command: &str,
+        focus: bool,
+    ) -> Option<crate::api::schema::AgentStartParams> {
+        let workspace = self.state.workspaces.get(ws_idx)?;
+        let tab_idx = workspace.find_tab_index_for_pane(pane_id)?;
+        let workspace_id = self.public_workspace_id(ws_idx);
+        let tab_id = self.public_tab_id(ws_idx, tab_idx)?;
+        let cwd = workspace
+            .pane_state(pane_id)
+            .and_then(|pane| self.state.terminals.get(&pane.attached_terminal_id))
+            .map(|terminal| terminal.cwd.display().to_string());
         let mut name = command.to_string();
         let mut suffix = 2usize;
         let existing = self.collect_agent_infos();
@@ -1460,19 +1478,16 @@ impl App {
             name = format!("{command}-{suffix}");
             suffix += 1;
         }
-        let _ = self.start_agent(
-            crate::api::schema::AgentStartParams {
-                name,
-                cwd,
-                workspace_id: Some(workspace_id),
-                tab_id: Some(tab_id),
-                split: Some(crate::api::schema::SplitDirection::Right),
-                focus: true,
-                argv: context_menu_agent_argv(command, &self.state.agent_start_config),
-                env: Default::default(),
-            },
-            Vec::new(),
-        );
+        Some(crate::api::schema::AgentStartParams {
+            name,
+            cwd,
+            workspace_id: Some(workspace_id),
+            tab_id: Some(tab_id),
+            split: Some(crate::api::schema::SplitDirection::Right),
+            focus,
+            argv: context_menu_agent_argv(command, &self.state.agent_start_config),
+            env: Default::default(),
+        })
     }
 
     pub(crate) fn apply_context_menu_action_via_api(&mut self, menu: ContextMenuState, idx: usize) {
@@ -1859,6 +1874,48 @@ mod tests {
                 .as_nanos()
         );
         std::env::temp_dir().join(unique).join("config.toml")
+    }
+
+    #[test]
+    fn context_menu_agent_explicit_owner_keeps_launch_parameters_without_starting_ai() {
+        let mut app = app_with_test_workspaces(&["active", "target"]);
+        let pane = app.state.workspaces[1].focused_pane_id().unwrap();
+        let terminal = app.state.workspaces[1].terminal_id(pane).unwrap().clone();
+        app.state.terminals.get_mut(&terminal).unwrap().cwd =
+            std::path::PathBuf::from("/owned/target");
+        let before = app.state.current_pane_focus_target();
+        for command in ["claude", "codex", "agy", "grok", "letta", "qwen"] {
+            let expected = vec![command.to_string(), "--owned-config-argument".to_string()];
+            app.state
+                .agent_start_config
+                .commands
+                .insert(command.to_string(), expected.clone());
+            let params = app
+                .context_menu_agent_params(1, pane, command, false)
+                .unwrap();
+            assert_eq!(params.argv, expected);
+            assert_eq!(params.name, command);
+            assert_eq!(params.cwd.as_deref(), Some("/owned/target"));
+            assert_eq!(params.workspace_id, Some(app.public_workspace_id(1)));
+            assert_eq!(params.tab_id, app.public_tab_id(1, 0));
+            assert_eq!(
+                params.split,
+                Some(crate::api::schema::SplitDirection::Right)
+            );
+            assert!(!params.focus);
+            assert!(params.env.is_empty());
+            assert_eq!(app.state.current_pane_focus_target(), before);
+        }
+        app.state.terminals.get_mut(&terminal).unwrap().agent_name = Some("codex".into());
+        assert_eq!(
+            app.context_menu_agent_params(1, pane, "codex", false)
+                .unwrap()
+                .name,
+            "codex-2"
+        );
+        assert!(app
+            .context_menu_agent_params(0, pane, "codex", false)
+            .is_none());
     }
 
     #[test]
@@ -2671,6 +2728,19 @@ mod tests {
         assert_eq!(app.state.selected, 0);
         assert_eq!(app.state.mode, Mode::ConfirmClose);
         assert_eq!(app.state.workspaces.len(), 2);
+    }
+
+    #[test]
+    fn api_context_menu_escape_without_menu_restores_mode() {
+        let mut app = app_with_test_workspaces(&["main"]);
+        for (active, expected) in [(Some(0), Mode::Terminal), (None, Mode::Navigate)] {
+            app.state.active = active;
+            app.state.mode = Mode::ContextMenu;
+            app.state.context_menu = None;
+            app.handle_context_menu_key_via_api(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()));
+            assert_eq!(app.state.mode, expected);
+            assert!(app.state.context_menu.is_none());
+        }
     }
 
     #[test]

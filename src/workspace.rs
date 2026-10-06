@@ -50,6 +50,7 @@ pub struct WorktreeSpaceMembership {
     Hash,
     serde::Serialize,
     serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceSection {
@@ -732,6 +733,7 @@ impl Workspace {
             extra_env,
             focus_new_pane,
             None,
+            None,
         )
     }
 
@@ -763,6 +765,7 @@ impl Workspace {
             extra_env,
             focus_new_pane,
             None,
+            None,
         )
     }
 
@@ -793,6 +796,7 @@ impl Workspace {
             extra_env,
             focus_new_pane,
             Some(argv),
+            None,
         )
     }
 
@@ -824,6 +828,58 @@ impl Workspace {
             extra_env,
             focus_new_pane,
             Some(argv),
+            None,
+        )
+    }
+
+    // Explicit command targets share the same split/identity/restore path as other pane splits.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn split_pane_shell_command(
+        &mut self,
+        pane_id: PaneId,
+        direction: Direction,
+        rows: u16,
+        cols: u16,
+        cwd: Option<PathBuf>,
+        command: &str,
+        extra_env: Vec<(String, String)>,
+        scrollback_limit_bytes: usize,
+        host_terminal_theme: crate::terminal_theme::TerminalTheme,
+        focus_new_pane: bool,
+    ) -> Option<std::io::Result<(usize, crate::workspace::tab::NewPane)>> {
+        let tab_index = self.find_tab_index_for_pane(pane_id)?;
+        if focus_new_pane
+            && tab_index == self.active_tab_index()
+            && self.focused_pane_id() == Some(pane_id)
+        {
+            return Some(
+                self.split_focused_command(
+                    direction,
+                    rows,
+                    cols,
+                    cwd,
+                    command,
+                    extra_env,
+                    scrollback_limit_bytes,
+                    host_terminal_theme,
+                )
+                .map(|pane| (tab_index, pane)),
+            );
+        }
+        self.split_pane_with_runtime(
+            pane_id,
+            direction,
+            None,
+            rows,
+            cols,
+            cwd,
+            scrollback_limit_bytes,
+            host_terminal_theme,
+            crate::pane::PaneShellConfig::new("", crate::config::ShellModeConfig::NonLogin),
+            extra_env,
+            focus_new_pane,
+            None,
+            Some(command),
         )
     }
 
@@ -842,6 +898,7 @@ impl Workspace {
         extra_env: Vec<(String, String)>,
         focus_new_pane: bool,
         argv: Option<&[String]>,
+        shell_command: Option<&str>,
     ) -> Option<std::io::Result<(usize, crate::workspace::tab::NewPane)>> {
         let tab_idx = self.find_tab_index_for_pane(pane_id)?;
         let new_pane_id = PaneId::alloc();
@@ -850,7 +907,19 @@ impl Workspace {
         let tab = &mut self.tabs[tab_idx];
         let previous_focus = tab.layout.focused();
         tab.layout.focus_pane(pane_id);
-        let new_pane = match if let Some(argv) = argv {
+        let new_pane = match if let Some(command) = shell_command {
+            tab.split_focused_command(
+                new_pane_id,
+                direction,
+                rows,
+                cols,
+                cwd,
+                command,
+                &launch_env,
+                scrollback_limit_bytes,
+                host_terminal_theme,
+            )
+        } else if let Some(argv) = argv {
             match ratio {
                 Some(ratio) => tab.split_focused_argv_command_with_ratio(
                     new_pane_id,

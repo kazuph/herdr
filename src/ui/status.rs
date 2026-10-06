@@ -63,9 +63,16 @@ pub(crate) fn pane_action_bar_rects(area: Rect, copy_label_width: u16) -> PaneAc
 }
 
 fn copy_button_label(app: &AppState) -> &'static str {
-    if app.copy_mode_fullscreen_pane.is_some() {
+    pane_action_copy_label(
+        app.copy_mode_fullscreen_pane.is_some(),
+        app.mode == Mode::Copy,
+    )
+}
+
+pub(crate) fn pane_action_copy_label(fullscreen: bool, copy_mode: bool) -> &'static str {
+    if fullscreen {
         PANE_ACTION_EXIT_COPY_LABEL
-    } else if app.mode == Mode::Copy {
+    } else if copy_mode {
         PANE_ACTION_PHONE_COPY_LABEL
     } else {
         PANE_ACTION_COPY_LABEL
@@ -77,16 +84,24 @@ pub(crate) fn pane_action_copy_label_width(app: &AppState) -> u16 {
 }
 
 pub(super) fn render_pane_action_bar(frame: &mut Frame, area: Rect, app: &AppState) {
+    render_pane_action_bar_with_palette(frame, area, copy_button_label(app), &app.palette);
+}
+
+pub(crate) fn render_pane_action_bar_with_palette(
+    frame: &mut Frame,
+    area: Rect,
+    copy_label: &'static str,
+    p: &Palette,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let p = &app.palette;
     let bar_style = Style::default().fg(p.overlay0).bg(Color::Reset);
     frame.render_widget(Paragraph::new("").style(bar_style), area);
 
-    let rects = pane_action_bar_rects(area, pane_action_copy_label_width(app));
-    render_action_button(frame, rects.copy, copy_button_label(app), p);
+    let rects = pane_action_bar_rects(area, copy_label.len() as u16);
+    render_action_button(frame, rects.copy, copy_label, p);
     render_action_button(frame, rects.cycle_layout, PANE_ACTION_CYCLE_LAYOUT_LABEL, p);
     render_action_button(frame, rects.rotate, PANE_ACTION_ROTATE_LABEL, p);
     render_action_button(frame, rects.equalize, PANE_ACTION_EQUALIZE_LABEL, p);
@@ -182,7 +197,7 @@ pub(crate) fn toast_notification_rect(
     Rect::new(x, y, width, height)
 }
 
-pub(super) fn render_toast_notification(
+pub(crate) fn render_toast_notification(
     frame: &mut Frame,
     area: Rect,
     toast: &ToastNotification,
@@ -306,7 +321,7 @@ pub(super) fn state_dot(state: AgentState, seen: bool, p: &Palette) -> (&'static
     }
 }
 
-pub(super) fn state_summary_icon(
+pub(crate) fn state_summary_icon(
     state: AgentState,
     seen: bool,
     tick: u32,
@@ -333,7 +348,7 @@ pub(super) fn agent_icon(
     }
 }
 
-pub(super) fn state_label(state: AgentState, seen: bool) -> &'static str {
+pub(crate) fn state_label(state: AgentState, seen: bool) -> &'static str {
     match (state, seen) {
         (AgentState::Blocked, _) => "blocked",
         (AgentState::Working, _) => "working",
@@ -343,7 +358,7 @@ pub(super) fn state_label(state: AgentState, seen: bool) -> &'static str {
     }
 }
 
-pub(super) fn state_label_color(state: AgentState, seen: bool, p: &Palette) -> Color {
+pub(crate) fn state_label_color(state: AgentState, seen: bool, p: &Palette) -> Color {
     match (state, seen) {
         (AgentState::Blocked, _) => p.red,
         (AgentState::Working, _) => p.yellow,

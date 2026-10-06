@@ -2693,6 +2693,8 @@ mod tests {
                 capabilities: Some(crate::api::schema::ServerCapabilities {
                     live_handoff: true,
                     detached_server_daemon: true,
+                    endpoint_protocol_generation: None,
+                    endpoint_protocol_min_generation: None,
                 }),
             },
         };

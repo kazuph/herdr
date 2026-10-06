@@ -4,6 +4,7 @@ use bytes::Bytes;
 
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, PaneAgentState, PaneClearAgentAuthorityParams,
+    PaneCopyMotion, PaneCopyMotionParams, PaneCopySearchDirection, PaneCopySearchParams,
     PaneCurrentParams, PaneDirection, PaneEdgesParams, PaneEdgesResult, PaneFocusDirectionParams,
     PaneFocusDirectionReason, PaneFocusDirectionResult, PaneInfo, PaneLayoutPane, PaneLayoutParams,
     PaneLayoutRect, PaneLayoutSnapshot, PaneLayoutSplit, PaneListParams, PaneMoveDestination,
@@ -12,8 +13,8 @@ use crate::api::schema::{
     PaneReleaseAgentParams, PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
     PaneReportMetadataParams, PaneResizeParams, PaneResizeReason, PaneResizeResult,
     PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams,
-    PaneSwapReason, PaneSwapResult, PaneTarget, PaneZoomMode, PaneZoomParams, PaneZoomReason,
-    PaneZoomResult, ReadFormat, ReadSource, ResponseResult,
+    PaneSwapReason, PaneSwapResult, PaneTarget, PaneTextPoint, PaneTextRange, PaneZoomMode,
+    PaneZoomParams, PaneZoomReason, PaneZoomResult, ReadFormat, ReadSource, ResponseResult,
 };
 use crate::app::actions::{PaneZoomCommand, PaneZoomNoopReason};
 use crate::app::api::PANE_SEND_INPUT_KEY_DELAY;
@@ -29,7 +30,7 @@ use super::super::api_helpers::{
 };
 #[cfg(test)]
 use super::super::api_helpers::{METADATA_SOURCE_MAX_CHARS, METADATA_TTL_MAX_MS};
-use super::responses::{encode_error, encode_success};
+use super::responses::{encode_error, encode_error_body, encode_success};
 
 fn process_ancestor_pids(mut pid: u32) -> Vec<u32> {
     let mut ancestors = Vec::new();
@@ -47,6 +48,310 @@ fn process_ancestor_pids(mut pid: u32) -> Vec<u32> {
 }
 
 impl App {
+    pub(crate) fn handle_pane_agent_start(
+        &mut self,
+        id: String,
+        params: crate::api::schema::PaneAgentStartParams,
+        focus: bool,
+    ) -> String {
+        let Some((workspace_index, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        if !matches!(
+            params.agent.as_str(),
+            "claude" | "codex" | "agy" | "grok" | "letta" | "qwen"
+        ) {
+            return invalid_agent(id);
+        }
+        let Some(launch) =
+            self.context_menu_agent_params(workspace_index, pane_id, &params.agent, focus)
+        else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        match self.start_agent_at(launch, Vec::new(), Some(pane_id)) {
+            Ok((agent, argv)) => encode_success(id, ResponseResult::AgentStarted { agent, argv }),
+            Err(error) => encode_error_body(id, self.agent_start_error_body(error)),
+        }
+    }
+
+    pub(crate) fn handle_pane_command_execute(
+        &mut self,
+        id: String,
+        params: crate::api::schema::PaneCommandExecuteParams,
+        size: (u16, u16),
+        focus: bool,
+    ) -> String {
+        let Some((workspace_index, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(tab_index) =
+            self.state.workspaces[workspace_index].find_tab_index_for_pane(pane_id)
+        else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        use crate::config::{CommandKeybindType, CustomCommandAction};
+        let action = match params.action {
+            CommandKeybindType::Shell => CustomCommandAction::Shell,
+            CommandKeybindType::Pane => CustomCommandAction::Pane,
+            CommandKeybindType::Popup => CustomCommandAction::Popup,
+            CommandKeybindType::PluginAction => CustomCommandAction::PluginAction,
+        };
+        let binding = crate::config::CustomCommandKeybind {
+            bindings: Default::default(),
+            label: String::new(),
+            command: params.command,
+            action,
+            description: None,
+            width: params.width,
+            height: params.height,
+        };
+        let mut created = None;
+        let result = match action {
+            CustomCommandAction::Shell => self.spawn_custom_command_at(
+                &binding,
+                Some((workspace_index, tab_index, Some(pane_id))),
+            ),
+            CustomCommandAction::Pane => self
+                .spawn_pane_command_at(
+                    crate::app::input::OverlayCommandTarget {
+                        workspace_index,
+                        pane_id,
+                        size,
+                        focus,
+                    },
+                    &binding.command,
+                    Vec::new(),
+                )
+                .map(|pane| {
+                    created = Some(pane);
+                }),
+            CustomCommandAction::Popup => self.spawn_custom_popup_command_at(
+                &binding,
+                Some(crate::app::popup::PopupOwner {
+                    workspace_index,
+                    tab_index,
+                    pane_id,
+                    terminal_area: ratatui::layout::Rect::new(0, 0, size.1, size.0),
+                }),
+            ),
+            CustomCommandAction::PluginAction => self
+                .invoke_plugin_action_from_keybind_at(
+                    binding.command,
+                    Some((workspace_index, pane_id)),
+                )
+                .map_err(std::io::Error::other),
+        };
+        if let Err(error) = result {
+            return encode_error(id, "command_failed", error.to_string());
+        }
+        let pane = created.and_then(|pane| self.pane_info(workspace_index, pane));
+        if let Some(pane) = &pane {
+            self.emit_event(EventEnvelope {
+                event: EventKind::PaneCreated,
+                data: EventData::PaneCreated { pane: pane.clone() },
+            });
+            self.emit_layout_updated_event(workspace_index, tab_index);
+            self.schedule_session_save();
+        }
+        if focus && action == CustomCommandAction::Popup {
+            self.state.mode = crate::app::Mode::Terminal;
+        }
+        let popup_terminal_id = if action == CustomCommandAction::Popup {
+            self.state
+                .popup_pane_for_workspace(&self.state.workspaces[workspace_index].id)
+                .map(|popup| popup.terminal_id.to_string())
+        } else {
+            None
+        };
+        encode_success(
+            id,
+            ResponseResult::CommandExecuted {
+                pane,
+                popup_terminal_id,
+            },
+        )
+    }
+
+    pub(crate) fn handle_pane_scrollback_edit(
+        &mut self,
+        id: String,
+        params: PaneTarget,
+        size: (u16, u16),
+        focus: bool,
+    ) -> String {
+        let Some((workspace_index, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(tab_index) =
+            self.state.workspaces[workspace_index].find_tab_index_for_pane(pane_id)
+        else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let editor =
+            match self.open_scrollback_in_editor_at(crate::app::input::OverlayCommandTarget {
+                workspace_index,
+                pane_id,
+                size,
+                focus,
+            }) {
+                Ok(editor) => editor,
+                Err(error) => return encode_error(id, "edit_scrollback_failed", error.to_string()),
+            };
+        let Some(pane) = self.pane_info(workspace_index, editor) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        self.emit_event(EventEnvelope {
+            event: EventKind::PaneCreated,
+            data: EventData::PaneCreated { pane: pane.clone() },
+        });
+        self.emit_layout_updated_event(workspace_index, tab_index);
+        self.schedule_session_save();
+        encode_success(id, ResponseResult::PaneInfo { pane })
+    }
+
+    pub(crate) fn handle_popup_content(
+        &mut self,
+        id: String,
+        method: crate::api::schema::Method,
+    ) -> String {
+        use crate::api::schema::Method;
+        let terminal_id = match &method {
+            Method::PopupGet(target) => &target.terminal_id,
+            Method::PopupSelectionRead(params) => &params.terminal_id,
+            Method::PopupScroll(params) => &params.terminal_id,
+            _ => unreachable!(),
+        };
+        let Some(popup) = self
+            .state
+            .popup_panes
+            .iter()
+            .find(|popup| popup.terminal_id.to_string() == *terminal_id)
+        else {
+            return encode_error(id, "popup_not_open", "no popup is open");
+        };
+        let Some(runtime) = self.terminal_runtimes.get(&popup.terminal_id) else {
+            return encode_error(id, "popup_not_open", "no popup is open");
+        };
+        if let Method::PopupSelectionRead(params) = &method {
+            let before = runtime.content_seq();
+            if before != params.content_revision || !before.is_multiple_of(2) {
+                return encode_error(id, "stale_content", "pane content changed");
+            }
+            let selection = crate::selection::Selection::absolute_range(
+                popup.pane_id,
+                (params.anchor.row, params.anchor.col),
+                (params.cursor.row, params.cursor.col),
+            );
+            let Some(text) = runtime.extract_selection(&selection) else {
+                return encode_error(id, "selection_unavailable", "selection text is unavailable");
+            };
+            if runtime.content_seq() != before {
+                return encode_error(id, "stale_content", "pane content changed");
+            }
+            return encode_success(
+                id,
+                ResponseResult::PopupSelection {
+                    terminal_id: terminal_id.clone(),
+                    content_revision: before,
+                    text,
+                },
+            );
+        }
+        if let Method::PopupScroll(params) = &method {
+            runtime.set_scroll_offset_from_bottom(
+                usize::try_from(params.offset_from_bottom).unwrap_or(usize::MAX),
+            );
+        }
+        let content_revision = runtime.content_seq();
+        if !content_revision.is_multiple_of(2) {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        let scroll = runtime.scroll_metrics();
+        let Some(scroll) = scroll else {
+            return encode_error(id, "selection_unavailable", "selection text is unavailable");
+        };
+        if runtime.content_seq() != content_revision {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        encode_success(
+            id,
+            ResponseResult::PopupTerminal {
+                terminal_id: terminal_id.clone(),
+                content_revision,
+                surface_revision: None,
+                scroll: crate::api::schema::PaneScrollInfo {
+                    offset_from_bottom: scroll.offset_from_bottom as u64,
+                    max_offset_from_bottom: scroll.max_offset_from_bottom as u64,
+                    viewport_rows: scroll.viewport_rows as u64,
+                },
+            },
+        )
+    }
+
+    pub(super) fn handle_pane_scroll(
+        &mut self,
+        id: String,
+        params: crate::api::schema::PaneScrollParams,
+    ) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(runtime) =
+            self.state
+                .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
+        else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        runtime.set_scroll_offset_from_bottom(
+            usize::try_from(params.offset_from_bottom).unwrap_or(usize::MAX),
+        );
+        let Some(pane) = self.pane_info(ws_idx, pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        encode_success(id, ResponseResult::PaneInfo { pane })
+    }
+
+    pub(super) fn handle_pane_selection_read(
+        &mut self,
+        id: String,
+        params: crate::api::schema::PaneSelectionReadParams,
+    ) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(runtime) =
+            self.state
+                .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
+        else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let before = runtime.content_seq();
+        if params
+            .content_revision
+            .is_some_and(|revision| revision != before || !before.is_multiple_of(2))
+        {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        let selection = crate::selection::Selection::absolute_range(
+            pane_id,
+            (params.anchor.row, params.anchor.col),
+            (params.cursor.row, params.cursor.col),
+        );
+        let Some(text) = runtime.extract_selection(&selection) else {
+            return encode_error(id, "selection_unavailable", "selection text is unavailable");
+        };
+        if params.content_revision.is_some() && runtime.content_seq() != before {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        encode_success(
+            id,
+            ResponseResult::PaneSelection {
+                pane_id: params.pane_id,
+                text,
+            },
+        )
+    }
+
     pub(super) fn handle_pane_split(&mut self, id: String, params: PaneSplitParams) -> String {
         let target = if let Some(target_pane_id) = params.target_pane_id.as_deref() {
             self.parse_pane_id(target_pane_id)
@@ -271,6 +576,203 @@ impl App {
         encode_success(id, ResponseResult::PaneInfo { pane })
     }
 
+    pub(super) fn handle_pane_copy_motion(
+        &mut self,
+        id: String,
+        params: PaneCopyMotionParams,
+    ) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(runtime) =
+            self.state
+                .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
+        else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let before = runtime.content_seq();
+        if params
+            .content_revision
+            .is_some_and(|revision| revision != before || !before.is_multiple_of(2))
+        {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        let target = match params.motion {
+            PaneCopyMotion::LineEnd | PaneCopyMotion::FirstNonBlank => {
+                let width = runtime
+                    .terminal_dimensions()
+                    .map_or(1, |(cols, _)| cols.max(1));
+                let selection = crate::selection::Selection::absolute_range(
+                    pane_id,
+                    (params.cursor.row, 0),
+                    (params.cursor.row, width.saturating_sub(1)),
+                );
+                let Some(text) = runtime.extract_selection(&selection) else {
+                    return encode_error(
+                        id,
+                        "copy_motion_unavailable",
+                        "terminal row is unavailable",
+                    );
+                };
+                let col = match params.motion {
+                    PaneCopyMotion::LineEnd => {
+                        crate::copy_mode::last_character_col(&text).unwrap_or(0)
+                    }
+                    PaneCopyMotion::FirstNonBlank => {
+                        crate::copy_mode::first_non_blank_col(&text).unwrap_or(0)
+                    }
+                    _ => unreachable!(),
+                };
+                crate::pane::TerminalTextPoint {
+                    row: params.cursor.row,
+                    col: col.min(width.saturating_sub(1)),
+                }
+            }
+            PaneCopyMotion::NextWordStart
+            | PaneCopyMotion::PreviousWordStart
+            | PaneCopyMotion::NextWordEnd
+            | PaneCopyMotion::NextBigWordStart
+            | PaneCopyMotion::PreviousBigWordStart
+            | PaneCopyMotion::NextBigWordEnd => {
+                let motion = match params.motion {
+                    PaneCopyMotion::NextWordStart => crate::pane::TerminalWordMotion::NextStart,
+                    PaneCopyMotion::PreviousWordStart => {
+                        crate::pane::TerminalWordMotion::PreviousStart
+                    }
+                    PaneCopyMotion::NextWordEnd => crate::pane::TerminalWordMotion::NextEnd,
+                    PaneCopyMotion::NextBigWordStart => {
+                        crate::pane::TerminalWordMotion::NextBigStart
+                    }
+                    PaneCopyMotion::PreviousBigWordStart => {
+                        crate::pane::TerminalWordMotion::PreviousBigStart
+                    }
+                    PaneCopyMotion::NextBigWordEnd => crate::pane::TerminalWordMotion::NextBigEnd,
+                    _ => unreachable!(),
+                };
+                runtime
+                    .word_motion_target(params.cursor.row, params.cursor.col, motion)
+                    .unwrap_or(crate::pane::TerminalTextPoint {
+                        row: params.cursor.row,
+                        col: params.cursor.col,
+                    })
+            }
+            PaneCopyMotion::PreviousParagraph | PaneCopyMotion::NextParagraph => runtime
+                .paragraph_motion_target(
+                    params.cursor.row,
+                    if params.motion == PaneCopyMotion::PreviousParagraph {
+                        -1
+                    } else {
+                        1
+                    },
+                )
+                .map(|target| crate::pane::TerminalTextPoint {
+                    row: target.row,
+                    col: params.cursor.col,
+                })
+                .unwrap_or(crate::pane::TerminalTextPoint {
+                    row: params.cursor.row,
+                    col: params.cursor.col,
+                }),
+        };
+        let after = runtime.content_seq();
+        if params.content_revision.is_some() && after != before {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        encode_success(
+            id,
+            ResponseResult::PaneCopyMotion {
+                pane_id: params.pane_id,
+                cursor: crate::api::schema::PaneTextPoint {
+                    row: target.row,
+                    col: target.col,
+                },
+                content_revision: after,
+            },
+        )
+    }
+    pub(super) fn handle_pane_copy_search(
+        &mut self,
+        id: String,
+        params: PaneCopySearchParams,
+    ) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(runtime) =
+            self.state
+                .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
+        else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        const MAX_QUERY_BYTES: usize = 4096;
+        const MAX_RETURNED_MATCHES: usize = 1024;
+        if params.query.len() > MAX_QUERY_BYTES {
+            return encode_error(id, "query_too_large", "copy search query is too large");
+        }
+        let before = runtime.content_seq();
+        if before != params.content_revision || !before.is_multiple_of(2) {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        let cursor = crate::pane::TerminalTextPoint {
+            row: params.cursor.row,
+            col: params.cursor.col,
+        };
+        let previous = params.previous.map(|previous| {
+            (
+                crate::pane::TerminalTextPoint {
+                    row: previous.start.row,
+                    col: previous.start.col,
+                },
+                crate::pane::TerminalTextPoint {
+                    row: previous.end.row,
+                    col: previous.end.col,
+                },
+            )
+        });
+        let direction = match params.direction {
+            PaneCopySearchDirection::Forward => crate::pane::TerminalSearchDirection::Forward,
+            PaneCopySearchDirection::Backward => crate::pane::TerminalSearchDirection::Backward,
+        };
+        let result = runtime.search_text_window(
+            &params.query,
+            params.query.chars().any(char::is_uppercase),
+            direction,
+            cursor,
+            previous,
+            MAX_RETURNED_MATCHES,
+        );
+        let after = runtime.content_seq();
+        if after != before || !after.is_multiple_of(2) {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        let matches = result
+            .matches
+            .into_iter()
+            .map(|text_match| PaneTextRange {
+                start: PaneTextPoint {
+                    row: text_match.start.row,
+                    col: text_match.start.col,
+                },
+                end: PaneTextPoint {
+                    row: text_match.end.row,
+                    col: text_match.end.col,
+                },
+            })
+            .collect();
+        encode_success(
+            id,
+            ResponseResult::PaneCopySearch {
+                pane_id: params.pane_id,
+                content_revision: after,
+                matches,
+                total: u64::try_from(result.total).unwrap_or(u64::MAX),
+                current: result.current.and_then(|index| u32::try_from(index).ok()),
+                current_global: result
+                    .current_global
+                    .and_then(|index| u64::try_from(index).ok()),
+            },
+        )
+    }
     pub(super) fn handle_pane_focus(&mut self, id: String, target: PaneTarget) -> String {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
             return pane_not_found(id, &target.pane_id);
@@ -304,6 +806,60 @@ impl App {
         };
 
         encode_success(id, ResponseResult::PaneLayout { layout })
+    }
+
+    pub(super) fn handle_pane_arrange(
+        &mut self,
+        id: String,
+        params: crate::api::schema::PaneArrangeParams,
+    ) -> String {
+        self.handle_pane_arrange_in_area(id, params, self.state.view.terminal_area)
+    }
+
+    pub(crate) fn handle_pane_arrange_in_area(
+        &mut self,
+        id: String,
+        params: crate::api::schema::PaneArrangeParams,
+        area: ratatui::layout::Rect,
+    ) -> String {
+        use crate::api::schema::PaneArrangement as A;
+        use crate::layout::RootSplitSide as Side;
+        use ratatui::layout::Direction as D;
+        let Some((workspace, pane)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(tab_index) = self.state.workspaces[workspace].find_tab_index_for_pane(pane) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let tab = &mut self.state.workspaces[workspace].tabs[tab_index];
+        // Apply the existing algorithms to a copy so their target focus never changes
+        // the public pane focus or another viewer's location.
+        let mut layout = tab.layout.clone();
+        let public_focus = layout.focused();
+        layout.focus_pane(pane);
+        let changed = match params.arrangement {
+            A::Equalize => {
+                layout.equalize();
+                true
+            }
+            A::Cycle => layout.cycle_layout(),
+            A::RotateForward => layout.rotate_panes(false),
+            A::RotateBackward => layout.rotate_panes(true),
+            A::MoveLeft => layout.move_focused_to_root_split_side(D::Horizontal, Side::First),
+            A::MoveRight => layout.move_focused_to_root_split_side(D::Horizontal, Side::Second),
+            A::MoveUp => layout.move_focused_to_root_split_side(D::Vertical, Side::First),
+            A::MoveDown => layout.move_focused_to_root_split_side(D::Vertical, Side::Second),
+        };
+        layout.focus_pane(public_focus);
+        if changed {
+            tab.layout = layout;
+            self.schedule_session_save();
+            self.emit_layout_updated_event(workspace, tab_index);
+        }
+        match self.pane_layout_snapshot_in_area(workspace, tab_index, area) {
+            Some(layout) => encode_success(id, ResponseResult::PaneLayout { layout }),
+            None => encode_error(id, "pane_layout_unavailable", "pane layout unavailable"),
+        }
     }
 
     pub(super) fn handle_pane_process_info(
@@ -501,6 +1057,26 @@ impl App {
     }
 
     pub(super) fn handle_pane_resize(&mut self, id: String, params: PaneResizeParams) -> String {
+        self.handle_pane_resize_in_area(id, params, self.state.view.terminal_area)
+    }
+
+    pub(crate) fn handle_viewer_pane_resize(
+        &mut self,
+        id: String,
+        params: PaneResizeParams,
+        area: ratatui::layout::Rect,
+    ) -> String {
+        self.drain_all_internal_events();
+        self.sync_terminal_titles();
+        self.handle_pane_resize_in_area(id, params, area)
+    }
+
+    fn handle_pane_resize_in_area(
+        &mut self,
+        id: String,
+        params: PaneResizeParams,
+        area: ratatui::layout::Rect,
+    ) -> String {
         let Some((ws_idx, pane_id)) = self.resolve_optional_pane(params.pane_id.as_deref()) else {
             return encode_error(id, "pane_not_found", "pane not found");
         };
@@ -521,7 +1097,6 @@ impl App {
             .abs()
             .min(0.5);
         let direction: NavDirection = params.direction.into();
-        let area = self.state.view.terminal_area;
         let changed = self
             .state
             .workspaces
@@ -532,7 +1107,7 @@ impl App {
             self.schedule_session_save();
         }
 
-        let Some(layout) = self.pane_layout_snapshot(ws_idx, tab_idx) else {
+        let Some(layout) = self.pane_layout_snapshot_in_area(ws_idx, tab_idx, area) else {
             return encode_error(id, "pane_layout_unavailable", "pane layout unavailable");
         };
         let focused_pane_id = layout.focused_pane_id.clone();
@@ -555,6 +1130,21 @@ impl App {
     }
 
     pub(super) fn handle_pane_swap(&mut self, id: String, params: PaneSwapParams) -> String {
+        self.handle_pane_swap_with_focus(id, params, true)
+    }
+
+    pub(crate) fn handle_viewer_pane_swap(&mut self, id: String, params: PaneSwapParams) -> String {
+        self.drain_all_internal_events();
+        self.sync_terminal_titles();
+        self.handle_pane_swap_with_focus(id, params, false)
+    }
+
+    fn handle_pane_swap_with_focus(
+        &mut self,
+        id: String,
+        params: PaneSwapParams,
+        focus_global: bool,
+    ) -> String {
         let directional = params.direction.is_some();
         let explicit = params.source_pane_id.is_some() || params.target_pane_id.is_some();
         if directional == explicit {
@@ -666,9 +1256,14 @@ impl App {
                     changed = tab.layout.swap_panes(source_pane_id, target_pane_id);
                     tab.layout.focus_pane(source_pane_id);
                     if changed {
-                        self.state.switch_workspace_tab(ws_idx, tab_idx);
-                        self.state
-                            .record_pane_focus_change(previous_focus, ws_idx, source_pane_id);
+                        if focus_global {
+                            self.state.switch_workspace_tab(ws_idx, tab_idx);
+                            self.state.record_pane_focus_change(
+                                previous_focus,
+                                ws_idx,
+                                source_pane_id,
+                            );
+                        }
                         self.state.mark_session_dirty();
                         self.schedule_session_save();
                     }
@@ -1873,9 +2468,17 @@ impl App {
         ws_idx: usize,
         tab_idx: usize,
     ) -> Option<PaneLayoutSnapshot> {
+        self.pane_layout_snapshot_in_area(ws_idx, tab_idx, self.state.view.terminal_area)
+    }
+
+    fn pane_layout_snapshot_in_area(
+        &self,
+        ws_idx: usize,
+        tab_idx: usize,
+        area: ratatui::layout::Rect,
+    ) -> Option<PaneLayoutSnapshot> {
         let ws = self.state.workspaces.get(ws_idx)?;
         let tab = ws.tabs.get(tab_idx)?;
-        let area = self.state.view.terminal_area;
         let focused_pane_id = self.public_pane_id(ws_idx, tab.layout.focused())?;
         let panes = crate::ui::apply_pane_chrome(
             tab.layout.panes(area),
@@ -3715,6 +4318,41 @@ mod tests {
         assert!(edges.right);
         assert!(edges.up);
         assert!(edges.down);
+    }
+
+    #[test]
+    fn api_viewer_pane_resize_uses_explicit_geometry_without_local_view_or_focus_mutation() {
+        let mut app = app_with_linked_worktree();
+        let root = app.state.workspaces[0].tabs[0].root_pane;
+        let right = app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces[0].tabs[0].layout.focus_pane(root);
+        app.state.view.terminal_area = ratatui::layout::Rect::default();
+        let root_public = app.public_pane_id(0, root).unwrap();
+        let right_public = app.public_pane_id(0, right).unwrap();
+        let area = ratatui::layout::Rect::new(0, 0, 134, 38);
+        let response = app.handle_viewer_pane_resize(
+            "viewer".into(),
+            PaneResizeParams {
+                pane_id: Some(right_public.clone()),
+                direction: PaneDirection::Left,
+                amount: None,
+            },
+            area,
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::PaneResize { resize } = success.result else {
+            panic!("resize response")
+        };
+        assert!(resize.changed);
+        assert_eq!(resize.pane_id, right_public);
+        assert_eq!(resize.focused_pane_id, root_public);
+        assert_eq!(resize.layout.area, area.into());
+        assert!((resize.layout.splits[0].ratio - 0.45).abs() < f32::EPSILON);
+        assert_eq!(
+            app.state.view.terminal_area,
+            ratatui::layout::Rect::default()
+        );
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(root));
     }
 
     #[test]

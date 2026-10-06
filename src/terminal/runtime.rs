@@ -281,6 +281,31 @@ impl TerminalRuntime {
         self.0.text_matches_are_current(text_matches)
     }
 
+    pub(crate) fn search_text_window(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        direction: crate::pane::TerminalSearchDirection,
+        cursor: crate::pane::TerminalTextPoint,
+        previous: Option<(
+            crate::pane::TerminalTextPoint,
+            crate::pane::TerminalTextPoint,
+        )>,
+        limit: usize,
+    ) -> crate::pane::TerminalSearchWindow {
+        self.0
+            .search_text_window(query, case_sensitive, direction, cursor, previous, limit)
+    }
+    pub(crate) fn terminal_dimensions(&self) -> Option<(u16, u16)> {
+        self.0.terminal_dimensions()
+    }
+    pub(crate) fn paragraph_motion_target(
+        &self,
+        row: u32,
+        direction: i8,
+    ) -> Option<crate::pane::TerminalTextPoint> {
+        self.0.paragraph_motion_target(row, direction)
+    }
     pub(crate) fn word_motion_target(
         &self,
         row: u32,
@@ -304,6 +329,14 @@ impl TerminalRuntime {
 
     pub fn synchronized_output_active(&self) -> bool {
         self.0.synchronized_output_active()
+    }
+
+    pub(crate) fn content_seq(&self) -> u64 {
+        self.0.content_seq()
+    }
+
+    pub(crate) fn synchronized_output_state(&self) -> (bool, u64) {
+        self.0.synchronized_output_state()
     }
 
     pub fn visible_text(&self) -> String {
@@ -368,6 +401,10 @@ impl TerminalRuntime {
 
     pub fn visible_hyperlinks(&self, area: Rect) -> Vec<((u16, u16), String, String)> {
         self.0.visible_hyperlinks(area)
+    }
+
+    pub(crate) fn kitty_image_fingerprints(&self, image_ids: &[u32]) -> Vec<Option<u64>> {
+        self.0.kitty_image_fingerprints(image_ids)
     }
 
     pub fn kitty_image_placements_with_data_filter<F>(

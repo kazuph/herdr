@@ -29,7 +29,7 @@ pub(super) fn render_panel_shell(
     Some(inner)
 }
 
-pub(super) fn panel_contrast_fg(p: &Palette) -> Color {
+pub(crate) fn panel_contrast_fg(p: &Palette) -> Color {
     match p.panel_bg {
         Color::Reset => p.surface_dim,
         color => color,

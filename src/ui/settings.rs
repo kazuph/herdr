@@ -21,15 +21,52 @@ use crate::{
 pub(crate) const SETTINGS_POPUP_WIDTH: u16 = 76;
 pub(crate) const SETTINGS_POPUP_BASE_HEIGHT: u16 = 22;
 
-pub(crate) fn settings_popup_height(_app: &AppState) -> u16 {
+pub(crate) fn settings_popup_height() -> u16 {
     SETTINGS_POPUP_BASE_HEIGHT
 }
 
 pub(super) fn render_settings_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    render_settings_from(
+        &SettingsRenderFacts {
+            palette: &app.palette,
+            settings: &app.settings,
+            theme_name: &app.theme_name,
+            sound: app.sound_enabled(),
+            toast: app.toast_delivery(),
+            pane_labels: app.agent_border_labels_enabled(),
+            pane_history: app.pane_history_persistence_enabled(),
+            prefix_ascii: app.switch_ascii_input_source_in_prefix_enabled(),
+        },
+        frame,
+        area,
+    );
+}
+
+pub(crate) struct SettingsRenderFacts<'a> {
+    pub palette: &'a Palette,
+    pub settings: &'a crate::app::state::SettingsState,
+    pub theme_name: &'a str,
+    pub sound: bool,
+    pub toast: ToastDelivery,
+    pub pane_labels: bool,
+    pub pane_history: bool,
+    pub prefix_ascii: bool,
+}
+
+impl SettingsRenderFacts<'_> {
+    fn experiment_enabled(&self, setting: ExperimentSetting) -> bool {
+        match setting {
+            ExperimentSetting::PaneHistory => self.pane_history,
+            ExperimentSetting::SwitchAsciiInputSourceInPrefix => self.prefix_ascii,
+        }
+    }
+}
+
+pub(crate) fn render_settings_from(app: &SettingsRenderFacts<'_>, frame: &mut Frame, area: Rect) {
     use crate::app::state::SettingsSection;
 
     let p = &app.palette;
-    let Some(popup) = centered_popup_rect(area, SETTINGS_POPUP_WIDTH, settings_popup_height(app))
+    let Some(popup) = centered_popup_rect(area, SETTINGS_POPUP_WIDTH, SETTINGS_POPUP_BASE_HEIGHT)
     else {
         return;
     };
@@ -99,7 +136,7 @@ pub(super) fn render_settings_overlay(app: &AppState, frame: &mut Frame, area: R
                 p,
                 "sound alerts",
                 "play sounds when agents change state in background",
-                app.sound_enabled(),
+                app.sound,
                 app.settings.list.selected,
             );
         }
@@ -115,7 +152,7 @@ pub(super) fn render_settings_overlay(app: &AppState, frame: &mut Frame, area: R
                     ("via terminal", ToastDelivery::Terminal),
                     ("via system", ToastDelivery::System),
                 ],
-                app.toast_delivery(),
+                app.toast,
                 app.settings.list.selected,
                 p,
                 2,
@@ -128,7 +165,7 @@ pub(super) fn render_settings_overlay(app: &AppState, frame: &mut Frame, area: R
                 p,
                 "agent border labels",
                 "show detected agent names in split pane borders",
-                app.agent_border_labels_enabled(),
+                app.pane_labels,
                 app.settings.list.selected,
             );
         }
@@ -193,7 +230,7 @@ pub(crate) fn settings_button_rects(inner: Rect) -> (Rect, Rect) {
     (rects[0], rects[1])
 }
 
-fn render_settings_theme(app: &AppState, frame: &mut Frame, area: Rect) {
+fn render_settings_theme(app: &SettingsRenderFacts<'_>, frame: &mut Frame, area: Rect) {
     use crate::app::state::THEME_NAMES;
 
     let p = &app.palette;
@@ -246,7 +283,7 @@ fn render_settings_toggle(
     );
 }
 
-fn render_settings_experiments(app: &AppState, frame: &mut Frame, area: Rect) {
+fn render_settings_experiments(app: &SettingsRenderFacts<'_>, frame: &mut Frame, area: Rect) {
     let p = &app.palette;
     let [desc_area, _, list_area] = Layout::vertical([
         Constraint::Length(2),
@@ -263,7 +300,11 @@ fn render_settings_experiments(app: &AppState, frame: &mut Frame, area: Rect) {
     );
 
     for (idx, setting) in ExperimentSetting::ALL.iter().copied().enumerate() {
-        let marker = if setting.enabled(app) { "[✓]" } else { "[ ]" };
+        let marker = if app.experiment_enabled(setting) {
+            "[✓]"
+        } else {
+            "[ ]"
+        };
         let style = if app.settings.list.selected == idx {
             Style::default()
                 .bg(p.surface0)

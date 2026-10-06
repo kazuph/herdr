@@ -14,6 +14,10 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+#[path = "saved.rs"]
+mod saved;
+pub(crate) use saved::connect_saved_ssh;
+
 #[cfg(test)]
 use std::collections::BTreeMap;
 

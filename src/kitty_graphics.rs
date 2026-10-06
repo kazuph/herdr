@@ -17,6 +17,9 @@ use crate::ghostty::{
 use crate::layout::{PaneId, PaneInfo};
 use crate::terminal::TerminalRuntimeRegistry;
 
+pub(crate) mod endpoint_client;
+pub(crate) mod endpoint_scene;
+
 const KITTY_CHUNK_BYTES: usize = 3072;
 pub(crate) const HEADLESS_GRAPHICS_TRANSACTION_BUDGET: usize =
     crate::protocol::MAX_GRAPHICS_FRAME_SIZE - crate::protocol::MAX_FRAME_SIZE;
@@ -86,8 +89,18 @@ struct HostPlacement {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 enum HostSourceKey {
-    Terminal { pane_id: PaneId, image_id: u32 },
-    PaneLayer { pane_id: PaneId, layer_id: String },
+    Terminal {
+        pane_id: PaneId,
+        image_id: u32,
+    },
+    PaneLayer {
+        pane_id: PaneId,
+        layer_id: String,
+    },
+    ClientSurface {
+        scope: String,
+        source: crate::protocol::endpoint_wire::SurfaceGraphicsSource,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -619,10 +632,14 @@ fn image_transaction_fits(placement: &HostPlacement, budget: Option<usize>) -> b
     let Some(budget) = budget else {
         return true;
     };
-    let data = placement.placement.data_len;
-    let encoded = data.div_ceil(3).saturating_mul(4);
-    let command_overhead = data.div_ceil(KITTY_CHUNK_BYTES).saturating_mul(16) + 1024;
-    encoded.saturating_add(command_overhead) <= budget
+    image_transfer_estimated_size(placement.placement.data_len) <= budget
+}
+
+// Fixed 5da0a01 estimate; also used by stable scene delivery before queuing.
+pub(crate) fn image_transfer_estimated_size(data_len: usize) -> usize {
+    let encoded = data_len.div_ceil(3).saturating_mul(4);
+    let command_overhead = data_len.div_ceil(KITTY_CHUNK_BYTES).saturating_mul(16) + 1024;
+    encoded.saturating_add(command_overhead)
 }
 
 fn placement_identity(placement: &HostPlacement) -> (HostSourceKey, u32) {
@@ -634,6 +651,7 @@ fn placement_identity(placement: &HostPlacement) -> (HostSourceKey, u32) {
 
 fn source_order(source: &HostSourceKey) -> (u32, String) {
     match source {
+        HostSourceKey::ClientSurface { scope, source } => (0, format!("{scope}:{source:?}")),
         HostSourceKey::Terminal { pane_id, .. } => (pane_id.raw(), String::new()),
         HostSourceKey::PaneLayer { pane_id, layer_id } => (pane_id.raw(), layer_id.clone()),
     }
@@ -986,6 +1004,26 @@ fn collect_visible_placements(
         return Vec::new();
     }
 
+    collect_visible_placements_in_workspace(
+        app,
+        graphics,
+        terminal_runtimes,
+        ws_idx,
+        surface,
+        cell_size,
+        uploaded_images,
+    )
+}
+
+fn collect_visible_placements_in_workspace(
+    app: &AppState,
+    graphics: &crate::app::pane_graphics::Runtime,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    ws_idx: usize,
+    surface: crate::ui::TabSurfaceView<'_>,
+    cell_size: HostCellSize,
+    uploaded_images: &HashMap<u32, ImageSignature>,
+) -> Vec<HostPlacement> {
     tracing::debug!(
         ws_idx,
         terminal_runtimes_len = terminal_runtimes.len(),
@@ -1157,6 +1195,10 @@ fn host_image_id_for_signature(pane_id: PaneId, signature: ImageSignature) -> u3
 fn host_placement_id(source_key: &HostSourceKey, placement: &KittyImagePlacement) -> u32 {
     let mut hasher = DefaultHasher::new();
     match source_key {
+        HostSourceKey::ClientSurface { scope, source } => {
+            scope.hash(&mut hasher);
+            source.hash(&mut hasher);
+        }
         HostSourceKey::Terminal { pane_id, .. } => pane_id.raw().hash(&mut hasher),
         HostSourceKey::PaneLayer { pane_id, layer_id } => {
             "pane.graphics".hash(&mut hasher);

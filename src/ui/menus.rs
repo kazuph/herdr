@@ -61,20 +61,45 @@ pub(super) fn render_prefix_overlay(app: &AppState, frame: &mut Frame, area: Rec
 }
 
 pub(super) fn render_copy_mode_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
-    let key = Style::default()
-        .fg(app.palette.accent)
-        .add_modifier(Modifier::BOLD);
-    let dim = Style::default().fg(app.palette.overlay0);
-    let mode_style = Style::default()
-        .fg(panel_contrast_fg(&app.palette))
-        .bg(app.palette.accent)
-        .add_modifier(Modifier::BOLD);
-
     let Some(copy_mode) = app.copy_mode.as_ref() else {
         return;
     };
-    let line = if let Some(prompt) = copy_mode.search.prompt.as_ref() {
-        let marker = match prompt.direction {
+    render_copy_overlay(
+        frame,
+        area,
+        &app.palette,
+        copy_mode.selection.is_some(),
+        copy_mode
+            .search
+            .prompt
+            .as_ref()
+            .map(|prompt| (prompt.direction, prompt.query.as_str())),
+        &copy_mode.search.query,
+        (copy_mode.search.current, copy_mode.search.matches.len()),
+    );
+}
+
+pub(crate) fn render_copy_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    palette: &crate::app::state::Palette,
+    selecting: bool,
+    prompt: Option<(crate::app::state::CopyModeSearchDirection, &str)>,
+    query: &str,
+    matches: (Option<usize>, usize),
+) {
+    let (current, total) = matches;
+    let key = Style::default()
+        .fg(palette.accent)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(palette.overlay0);
+    let mode_style = Style::default()
+        .fg(panel_contrast_fg(palette))
+        .bg(palette.accent)
+        .add_modifier(Modifier::BOLD);
+
+    let line = if let Some(prompt) = prompt {
+        let marker = match prompt.0 {
             crate::app::state::CopyModeSearchDirection::Forward => "/",
             crate::app::state::CopyModeSearchDirection::Backward => "?",
         };
@@ -82,28 +107,21 @@ pub(super) fn render_copy_mode_overlay(app: &AppState, frame: &mut Frame, area: 
             Span::styled(" COPY ", mode_style),
             Span::raw(" "),
             Span::styled(marker, key),
-            Span::styled(prompt.query.clone(), Style::default().fg(app.palette.text)),
+            Span::styled(prompt.1.to_owned(), Style::default().fg(palette.text)),
             Span::styled("█", key),
             Span::styled("  enter search  esc cancel", dim),
         ])
     } else {
-        let select = if copy_mode.selection.is_some() {
-            "selecting"
-        } else {
-            "select"
-        };
-        let match_status = copy_mode
-            .search
-            .current
-            .map(|current| format!(" {}/{}", current + 1, copy_mode.search.matches.len()))
-            .or_else(|| (!copy_mode.search.query.is_empty()).then(|| " 0/0".to_string()))
+        let select = if selecting { "selecting" } else { "select" };
+        let match_status = current
+            .map(|current| format!(" {}/{}", current + 1, total))
+            .or_else(|| (!query.is_empty()).then(|| " 0/0".to_string()))
             .unwrap_or_default();
-        let (exit_keys, exit_label) =
-            if copy_mode.search.query.is_empty() && copy_mode.selection.is_none() {
-                ("q/esc", " exit")
-            } else {
-                ("esc", " clear  q exit")
-            };
+        let (exit_keys, exit_label) = if query.is_empty() && !selecting {
+            ("q/esc", " exit")
+        } else {
+            ("esc", " clear  q exit")
+        };
         Line::from(vec![
             Span::styled(" COPY ", mode_style),
             Span::raw(" "),
@@ -124,21 +142,36 @@ pub(super) fn render_copy_mode_overlay(app: &AppState, frame: &mut Frame, area: 
 
     let overlay_y = area.y + area.height.saturating_sub(1);
     let overlay_area = Rect::new(area.x, overlay_y, area.width, 1);
-    render_bottom_bar(frame, overlay_area, line, app.palette.panel_bg);
+    render_bottom_bar(frame, overlay_area, line, palette.panel_bg);
 }
 
 pub(super) fn render_navigate_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    render_navigate_overlay_from(
+        frame,
+        area,
+        &app.palette,
+        &app.keybinds,
+        app.update_available.is_some(),
+    );
+}
+
+pub(crate) fn render_navigate_overlay_from(
+    frame: &mut Frame,
+    area: Rect,
+    palette: &crate::app::state::Palette,
+    kb: &crate::config::Keybinds,
+    update_available: bool,
+) {
     let key = Style::default()
-        .fg(app.palette.accent)
+        .fg(palette.accent)
         .add_modifier(Modifier::BOLD);
-    let dim = Style::default().fg(app.palette.overlay0);
+    let dim = Style::default().fg(palette.overlay0);
 
     let mode_style = Style::default()
-        .fg(panel_contrast_fg(&app.palette))
-        .bg(app.palette.accent)
+        .fg(panel_contrast_fg(palette))
+        .bg(palette.accent)
         .add_modifier(Modifier::BOLD);
 
-    let kb = &app.keybinds;
     let new_tab = prefix_rhs_label(&kb.new_tab);
     let split_vertical = prefix_rhs_label(&kb.split_vertical);
     let split_horizontal = prefix_rhs_label(&kb.split_horizontal);
@@ -187,13 +220,13 @@ pub(super) fn render_navigate_overlay(app: &AppState, frame: &mut Frame, area: R
 
     let overlay_y = area.y + area.height.saturating_sub(1);
     let overlay_area = Rect::new(area.x, overlay_y, area.width, 1);
-    render_bottom_bar(frame, overlay_area, line, app.palette.panel_bg);
+    render_bottom_bar(frame, overlay_area, line, palette.panel_bg);
 
-    if app.update_available.is_some() {
+    if update_available {
         let status = Line::from(vec![Span::styled(
             " update ready",
             Style::default()
-                .fg(app.palette.accent)
+                .fg(palette.accent)
                 .add_modifier(Modifier::BOLD),
         )]);
         let width = 13u16.min(overlay_area.width);
@@ -212,13 +245,28 @@ pub(super) fn render_navigate_overlay(app: &AppState, frame: &mut Frame, area: R
 }
 
 pub(super) fn render_global_launcher_menu(app: &AppState, frame: &mut Frame) {
-    let rect = app.global_menu_rect();
-    let Some(inner) = render_panel_shell(frame, rect, app.palette.accent, app.palette.panel_bg)
-    else {
+    render_global_menu_from(
+        frame,
+        app.global_menu_rect(),
+        &app.palette,
+        &app.global_menu_labels(),
+        app.global_menu.highlighted,
+        |item| app.global_menu_item_has_badge(item),
+    );
+}
+
+pub(crate) fn render_global_menu_from(
+    frame: &mut Frame,
+    rect: Rect,
+    palette: &crate::app::state::Palette,
+    items: &[&str],
+    highlighted: usize,
+    item_has_badge: impl Fn(&str) -> bool,
+) {
+    let Some(inner) = render_panel_shell(frame, rect, palette.accent, palette.panel_bg) else {
         return;
     };
 
-    let items = app.global_menu_labels();
     for (idx, item) in items.iter().enumerate() {
         let y = inner.y + idx as u16;
         if y >= inner.y + inner.height {
@@ -229,33 +277,33 @@ pub(super) fn render_global_launcher_menu(app: &AppState, frame: &mut Frame) {
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
                     "─".repeat(inner.width as usize),
-                    Style::default().fg(app.palette.surface_dim),
+                    Style::default().fg(palette.surface_dim),
                 ))),
                 row_rect,
             );
             continue;
         }
-        let selected = idx == app.global_menu.highlighted;
+        let selected = idx == highlighted;
         let rect = Rect::new(inner.x, y, inner.width, 1);
 
         let selected_style = Style::default()
-            .fg(panel_contrast_fg(&app.palette))
-            .bg(app.palette.accent)
+            .fg(panel_contrast_fg(palette))
+            .bg(palette.accent)
             .add_modifier(Modifier::BOLD);
         let item_style = if selected {
             selected_style
         } else {
-            Style::default().fg(app.palette.text)
+            Style::default().fg(palette.text)
         };
         let badge_style = if selected {
             selected_style
         } else {
             Style::default()
-                .fg(app.palette.accent)
+                .fg(palette.accent)
                 .add_modifier(Modifier::BOLD)
         };
 
-        let line = if app.global_menu_item_has_badge(item) {
+        let line = if item_has_badge(item) {
             Line::from(vec![
                 Span::styled(" ●", badge_style),
                 Span::styled(format!(" {item} "), item_style),
@@ -268,14 +316,22 @@ pub(super) fn render_global_launcher_menu(app: &AppState, frame: &mut Frame) {
 }
 
 pub(super) fn render_resize_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    render_resize_overlay_facts(frame, area, &app.palette);
+}
+
+pub(crate) fn render_resize_overlay_facts(
+    frame: &mut Frame,
+    area: Rect,
+    palette: &crate::app::state::Palette,
+) {
     let key = Style::default()
-        .fg(app.palette.accent)
+        .fg(palette.accent)
         .add_modifier(Modifier::BOLD);
-    let dim = Style::default().fg(app.palette.overlay0);
+    let dim = Style::default().fg(palette.overlay0);
 
     let mode_style = Style::default()
-        .fg(panel_contrast_fg(&app.palette))
-        .bg(app.palette.mauve)
+        .fg(panel_contrast_fg(palette))
+        .bg(palette.mauve)
         .add_modifier(Modifier::BOLD);
 
     let line = Line::from(vec![
@@ -291,7 +347,7 @@ pub(super) fn render_resize_overlay(app: &AppState, frame: &mut Frame, area: Rec
 
     let overlay_y = area.y + area.height.saturating_sub(1);
     let overlay_area = Rect::new(area.x, overlay_y, area.width, 1);
-    render_bottom_bar(frame, overlay_area, line, app.palette.panel_bg);
+    render_bottom_bar(frame, overlay_area, line, palette.panel_bg);
 }
 
 pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
@@ -299,16 +355,31 @@ pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
         return;
     };
 
-    let p = &app.palette;
     let Some(menu_rect) = app.context_menu_rect() else {
         return;
     };
+    render_context_menu_from(
+        frame,
+        menu_rect,
+        &app.palette,
+        &menu.items(),
+        menu.list.highlighted,
+    );
+}
+
+pub(crate) fn render_context_menu_from(
+    frame: &mut Frame,
+    menu_rect: Rect,
+    palette: &crate::app::state::Palette,
+    items: &[&str],
+    highlighted: usize,
+) {
+    let p = palette;
     let Some(inner) = render_panel_shell(frame, menu_rect, p.accent, p.panel_bg) else {
         return;
     };
 
-    let items: Vec<ListItem> = menu
-        .items()
+    let items: Vec<ListItem> = items
         .iter()
         .map(|item| {
             if *item == "--" {
@@ -330,6 +401,6 @@ pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol(" ");
-    let mut state = ListState::default().with_selected(Some(menu.list.highlighted));
+    let mut state = ListState::default().with_selected(Some(highlighted));
     frame.render_stateful_widget(list, inner, &mut state);
 }

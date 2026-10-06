@@ -57,6 +57,10 @@ pub enum Method {
     ServerLiveHandoff(ServerLiveHandoffParams),
     #[serde(rename = "server.reload_config")]
     ServerReloadConfig(EmptyParams),
+    #[serde(rename = "server.pane_history.get")]
+    ServerPaneHistoryGet(EmptyParams),
+    #[serde(rename = "server.pane_history.set")]
+    ServerPaneHistorySet(ServerPaneHistorySetParams),
     #[serde(rename = "server.agent_manifests")]
     ServerAgentManifests(EmptyParams),
     #[serde(rename = "server.reload_agent_manifests")]
@@ -71,6 +75,8 @@ pub enum Method {
     SessionSnapshot(EmptyParams),
     #[serde(rename = "workspace.create")]
     WorkspaceCreate(WorkspaceCreateParams),
+    #[serde(rename = "workspace.duplicate")]
+    WorkspaceDuplicate(WorkspaceDuplicateParams),
     #[serde(rename = "workspace.list")]
     WorkspaceList(EmptyParams),
     #[serde(rename = "workspace.get")]
@@ -79,6 +85,8 @@ pub enum Method {
     WorkspaceFocus(WorkspaceTarget),
     #[serde(rename = "workspace.rename")]
     WorkspaceRename(WorkspaceRenameParams),
+    #[serde(rename = "workspace.set_section")]
+    WorkspaceSetSection(WorkspaceSetSectionParams),
     #[serde(rename = "workspace.move")]
     WorkspaceMove(WorkspaceMoveParams),
     #[serde(rename = "workspace.report_metadata")]
@@ -141,12 +149,22 @@ pub enum Method {
     MsgRooms(EmptyParams),
     #[serde(rename = "run.start")]
     RunStart(RunStartParams),
+    #[serde(rename = "run.log.open")]
+    RunLogOpen(RunLogOpenParams),
+    #[serde(rename = "pane.scrollback.edit")]
+    PaneScrollbackEdit(PaneTarget),
+    #[serde(rename = "pane.agent.start")]
+    PaneAgentStart(PaneAgentStartParams),
+    #[serde(rename = "pane.command.execute")]
+    PaneCommandExecute(PaneCommandExecuteParams),
     #[serde(rename = "pane.split")]
     PaneSplit(PaneSplitParams),
     #[serde(rename = "pane.swap")]
     PaneSwap(PaneSwapParams),
     #[serde(rename = "pane.move")]
     PaneMove(PaneMoveParams),
+    #[serde(rename = "pane.arrange")]
+    PaneArrange(PaneArrangeParams),
     #[serde(rename = "pane.zoom")]
     PaneZoom(PaneZoomParams),
     #[serde(rename = "pane.layout")]
@@ -174,7 +192,7 @@ pub enum Method {
     #[serde(rename = "pane.get")]
     PaneGet(PaneTarget),
     #[serde(rename = "pane.focus")]
-    PaneFocus(PaneTarget),
+    PaneFocus(PaneFocusParams),
     #[serde(rename = "pane.rename")]
     PaneRename(PaneRenameParams),
     #[serde(rename = "pane.send_text")]
@@ -185,6 +203,14 @@ pub enum Method {
     PaneSendInput(PaneSendInputParams),
     #[serde(rename = "pane.read")]
     PaneRead(PaneReadParams),
+    #[serde(rename = "pane.selection.read")]
+    PaneSelectionRead(PaneSelectionReadParams),
+    #[serde(rename = "pane.scroll")]
+    PaneScroll(PaneScrollParams),
+    #[serde(rename = "pane.copy_motion")]
+    PaneCopyMotion(PaneCopyMotionParams),
+    #[serde(rename = "pane.copy_search")]
+    PaneCopySearch(PaneCopySearchParams),
     #[serde(rename = "pane.graphics.set")]
     PaneGraphicsSet(PaneGraphicsSetParams),
     #[serde(rename = "pane.graphics.clear")]
@@ -220,6 +246,12 @@ pub enum Method {
     PaneClose(PaneTarget),
     #[serde(rename = "popup.close")]
     PopupClose(EmptyParams),
+    #[serde(rename = "popup.get")]
+    PopupGet(PopupTarget),
+    #[serde(rename = "popup.selection.read")]
+    PopupSelectionRead(PopupSelectionReadParams),
+    #[serde(rename = "popup.scroll")]
+    PopupScroll(PopupScrollParams),
     #[serde(rename = "events.subscribe")]
     EventsSubscribe(EventsSubscribeParams),
     #[serde(rename = "events.wait")]

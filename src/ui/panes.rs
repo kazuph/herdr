@@ -227,17 +227,46 @@ pub(super) fn compute_pane_infos(
     let Some(ws) = app.workspaces.get(ws_idx) else {
         return Vec::new();
     };
+    compute_tab_pane_infos(
+        app,
+        terminal_runtimes,
+        super::tab_surface::TabSurfaceTarget {
+            workspace_index: ws_idx,
+            tab_index: ws.active_tab_index(),
+            pane_focus: None,
+        },
+        area,
+        resize_panes,
+        cell_size,
+        app.copy_mode_fullscreen_pane,
+    )
+}
 
-    if let Some(fullscreen_pane) = app.copy_mode_fullscreen_pane {
-        if ws
-            .active_tab()
-            .is_some_and(|tab| tab.panes.contains_key(&fullscreen_pane))
-        {
-            if let Some(rt) =
-                app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, fullscreen_pane)
-            {
+pub(super) fn compute_tab_pane_infos(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    target: super::tab_surface::TabSurfaceTarget,
+    area: Rect,
+    resize_panes: bool,
+    cell_size: crate::kitty_graphics::HostCellSize,
+    fullscreen_copy_pane: Option<crate::layout::PaneId>,
+) -> Vec<PaneInfo> {
+    let Some(tab) = app
+        .workspaces
+        .get(target.workspace_index)
+        .and_then(|workspace| workspace.tabs.get(target.tab_index))
+    else {
+        return Vec::new();
+    };
+    if let Some(fullscreen_pane) = fullscreen_copy_pane {
+        if tab.panes.contains_key(&fullscreen_pane) {
+            if let Some(rt) = app.runtime_for_pane_in_workspace(
+                terminal_runtimes,
+                target.workspace_index,
+                fullscreen_pane,
+            ) {
                 if resize_panes
-                    && ws.terminal_id(fullscreen_pane).is_some_and(|terminal_id| {
+                    && tab.terminal_id(fullscreen_pane).is_some_and(|terminal_id| {
                         !app.direct_attach_resize_locks.contains(terminal_id)
                     })
                 {
@@ -260,8 +289,8 @@ pub(super) fn compute_pane_infos(
         }
     }
 
-    if ws.zoomed {
-        let focused_id = ws.layout.focused();
+    if tab.zoomed {
+        let focused_id = target.pane_focus.unwrap_or_else(|| tab.layout.focused());
         let borders = if app.pane_borders && pane_should_frame(area) {
             Borders::ALL
         } else {
@@ -270,10 +299,12 @@ pub(super) fn compute_pane_infos(
         let pane_inner = pane_inner_rect(area, borders);
         let mut inner_rect = pane_inner;
         let mut scrollbar_rect = None;
-        if let Some(rt) = app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, focused_id) {
+        if let Some(rt) =
+            app.runtime_for_pane_in_workspace(terminal_runtimes, target.workspace_index, focused_id)
+        {
             (inner_rect, scrollbar_rect) = stable_scrollbar_gutter(rt, pane_inner);
             if resize_panes
-                && ws.terminal_id(focused_id).is_some_and(|terminal_id| {
+                && tab.terminal_id(focused_id).is_some_and(|terminal_id| {
                     !app.direct_attach_resize_locks.contains(terminal_id)
                 })
             {
@@ -295,17 +326,22 @@ pub(super) fn compute_pane_infos(
         }];
     }
 
-    let mut pane_infos = apply_pane_chrome(ws.layout.panes(area), app.pane_borders, app.pane_gaps);
+    let mut pane_infos = apply_pane_chrome(tab.layout.panes(area), app.pane_borders, app.pane_gaps);
 
     for info in &mut pane_infos {
+        if let Some(focused) = target.pane_focus {
+            info.is_focused = info.id == focused;
+        }
         let pane_inner = pane_inner_rect(info.rect, info.borders);
 
         let mut inner_rect = pane_inner;
         let mut scrollbar_rect = None;
-        if let Some(rt) = app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id) {
+        if let Some(rt) =
+            app.runtime_for_pane_in_workspace(terminal_runtimes, target.workspace_index, info.id)
+        {
             (inner_rect, scrollbar_rect) = stable_scrollbar_gutter(rt, pane_inner);
             if resize_panes
-                && ws.terminal_id(info.id).is_some_and(|terminal_id| {
+                && tab.terminal_id(info.id).is_some_and(|terminal_id| {
                     !app.direct_attach_resize_locks.contains(terminal_id)
                 })
             {
@@ -340,16 +376,53 @@ pub(super) fn render_panes(
         return;
     };
 
-    let multi_pane = ws.layout.pane_count() > 1;
-    let terminal_active = app.mode == Mode::Terminal;
-    let fullscreen_copy_pane = app.copy_mode_fullscreen_pane;
+    let Some(tab) = ws.active_tab() else {
+        render_empty(app, frame, area);
+        return;
+    };
+    render_tab_panes(
+        app,
+        terminal_runtimes,
+        frame,
+        TabPaneRender {
+            workspace_index: ws_idx,
+            tab,
+            pane_infos: &app.view.pane_infos,
+            split_borders: &app.view.split_borders,
+            local_overlays: true,
+        },
+    );
+}
 
-    for info in &app.view.pane_infos {
-        if let Some(rt) = app.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, info.id) {
+pub(super) struct TabPaneRender<'a> {
+    pub(super) workspace_index: usize,
+    pub(super) tab: &'a crate::workspace::Tab,
+    pub(super) pane_infos: &'a [PaneInfo],
+    pub(super) split_borders: &'a [crate::layout::SplitBorder],
+    pub(super) local_overlays: bool,
+}
+
+pub(super) fn render_tab_panes(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    frame: &mut Frame,
+    view: TabPaneRender<'_>,
+) {
+    let multi_pane = view.tab.layout.pane_count() > 1;
+    let terminal_active = !view.local_overlays || app.mode == Mode::Terminal;
+    let fullscreen_copy_pane = view
+        .local_overlays
+        .then_some(app.copy_mode_fullscreen_pane)
+        .flatten();
+
+    for info in view.pane_infos {
+        if let Some(rt) =
+            app.runtime_for_pane_in_workspace(terminal_runtimes, view.workspace_index, info.id)
+        {
             let show_cursor = info.is_focused
                 && terminal_active
                 && !pane_is_scrolled_back(rt)
-                && app.pane_exposes_host_cursor(ws_idx, info.id);
+                && app.pane_exposes_host_cursor(view.workspace_index, info.id);
             rt.render(frame, info.inner_rect, show_cursor);
             if fullscreen_copy_pane != Some(info.id) {
                 render_pane_scrollbar(app, frame, info, rt);
@@ -365,6 +438,10 @@ pub(super) fn render_panes(
                         cell.set_style(cell.style().add_modifier(Modifier::DIM));
                     }
                 }
+            }
+
+            if !view.local_overlays {
+                continue;
             }
 
             let (copy_search_top, copy_search_bottom, copy_search_matches) =
@@ -400,7 +477,7 @@ pub(super) fn render_panes(
         }
     }
 
-    render_pane_borders(app, ws, frame);
+    render_tab_borders(app, view.tab, view.pane_infos, view.split_borders, frame);
 }
 
 pub(crate) fn popup_pane_rects(app: &AppState, area: Rect) -> Option<(Rect, Rect)> {
@@ -484,22 +561,35 @@ struct LineCell {
     right: bool,
 }
 
+#[cfg(test)]
 fn render_pane_borders(app: &AppState, ws: &crate::workspace::Workspace, frame: &mut Frame) {
-    if !app.pane_borders
-        || app
-            .view
-            .pane_infos
-            .iter()
-            .all(|info| info.borders.is_empty())
-    {
+    if let Some(tab) = ws.active_tab() {
+        render_tab_borders(
+            app,
+            tab,
+            &app.view.pane_infos,
+            &app.view.split_borders,
+            frame,
+        );
+    }
+}
+
+fn render_tab_borders(
+    app: &AppState,
+    tab: &crate::workspace::Tab,
+    pane_infos: &[PaneInfo],
+    split_borders: &[crate::layout::SplitBorder],
+    frame: &mut Frame,
+) {
+    if !app.pane_borders || pane_infos.iter().all(|info| info.borders.is_empty()) {
         return;
     }
 
     let mut cells = std::collections::HashMap::<(u16, u16), LineCell>::new();
-    for info in &app.view.pane_infos {
+    for info in pane_infos {
         add_pane_border_cells(&mut cells, info);
     }
-    add_split_border_cells(app, &mut cells);
+    add_split_border_cells(app, split_borders, &mut cells);
 
     let buf = frame.buffer_mut();
     let area = buf.area;
@@ -511,9 +601,7 @@ fn render_pane_borders(app: &AppState, ws: &crate::workspace::Workspace, frame: 
         {
             continue;
         }
-        let focused = app
-            .view
-            .pane_infos
+        let focused = pane_infos
             .iter()
             .any(|info| info.is_focused && line_touches_pane(x, y, info, app.pane_gaps));
         let symbol = line_cell_symbol(line);
@@ -530,18 +618,19 @@ fn render_pane_borders(app: &AppState, ws: &crate::workspace::Workspace, frame: 
         cell.set_style(Style::default().fg(color));
     }
 
-    render_pane_border_titles(app, ws, frame);
+    render_pane_border_titles(app, tab, pane_infos, frame);
 }
 
 fn add_split_border_cells(
     app: &AppState,
+    split_borders: &[crate::layout::SplitBorder],
     cells: &mut std::collections::HashMap<(u16, u16), LineCell>,
 ) {
     if app.pane_gaps {
         return;
     }
 
-    for split in &app.view.split_borders {
+    for split in split_borders {
         match split.direction {
             ratatui::layout::Direction::Horizontal => {
                 let x = split.pos;
@@ -654,16 +743,22 @@ fn line_touches_pane(x: u16, y: u16, info: &PaneInfo, pane_gaps: bool) -> bool {
         || (x == shared_right && y == shared_bottom)
 }
 
-fn render_pane_border_titles(app: &AppState, ws: &crate::workspace::Workspace, frame: &mut Frame) {
+fn render_pane_border_titles(
+    app: &AppState,
+    tab: &crate::workspace::Tab,
+    pane_infos: &[PaneInfo],
+    frame: &mut Frame,
+) {
     let buf = frame.buffer_mut();
     let area = buf.area;
-    for info in &app.view.pane_infos {
+    for info in pane_infos {
         if !info.borders.contains(Borders::TOP) || info.rect.width <= 4 {
             continue;
         }
-        let is_zoomed_title = ws.zoomed && info.is_focused;
-        let terminal = ws
-            .pane_state(info.id)
+        let is_zoomed_title = tab.zoomed && info.is_focused;
+        let terminal = tab
+            .panes
+            .get(&info.id)
             .and_then(|pane| app.terminals.get(&pane.attached_terminal_id));
         let Some(title) = terminal
             .map(|terminal| pane_border_label(terminal, app.show_agent_labels_on_pane_borders))
@@ -905,7 +1000,7 @@ fn render_selection_highlight(
 
 type Rgb = (u8, u8, u8);
 
-fn automatic_selection_style(
+pub(crate) fn automatic_selection_style(
     p: &Palette,
     host_theme: crate::terminal_theme::TerminalTheme,
 ) -> Style {

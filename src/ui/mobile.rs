@@ -53,6 +53,10 @@ pub(crate) fn is_mobile_width(area: Rect, threshold: u16) -> bool {
 }
 
 pub(crate) fn compute_mobile_header_hit_areas(_app: &AppState, area: Rect) -> MobileHeaderHitAreas {
+    mobile_header_hit_areas(area)
+}
+
+pub(crate) fn mobile_header_hit_areas(area: Rect) -> MobileHeaderHitAreas {
     if area.width == 0 || area.height == 0 {
         return MobileHeaderHitAreas::default();
     }
@@ -69,7 +73,10 @@ pub(crate) fn compute_mobile_header_hit_areas(_app: &AppState, area: Rect) -> Mo
 }
 
 pub(crate) fn mobile_switcher_areas(app: &AppState) -> MobileSwitcherAreas {
-    let screen = mobile_screen_rect(app);
+    mobile_switcher_areas_for_screen(mobile_screen_rect(app))
+}
+
+pub(crate) fn mobile_switcher_areas_for_screen(screen: Rect) -> MobileSwitcherAreas {
     if screen.width == 0 || screen.height <= 2 {
         return MobileSwitcherAreas::default();
     }
@@ -230,19 +237,62 @@ pub(crate) fn render_mobile_header(
     frame: &mut Frame,
     area: Rect,
 ) {
+    let workspace = app
+        .active
+        .and_then(|idx| app.workspaces.get(idx))
+        .map(|ws| {
+            let (state, seen) = ws.aggregate_state(&app.terminals);
+            let (dot, dot_style) = state_summary_icon(state, seen, app.spinner_tick, &app.palette);
+            MobileHeaderWorkspace {
+                name: ws.display_name_from(&app.terminals, terminal_runtimes),
+                tab: mobile_tab_status(ws),
+                dot: dot.to_string(),
+                dot_style,
+            }
+        });
+    render_mobile_header_from(
+        frame,
+        area,
+        app.view.mobile_menu_hit_area,
+        &app.palette,
+        &MobileHeaderFacts {
+            workspace,
+            counts: global_agent_counts(app),
+        },
+    );
+}
+
+pub(crate) struct MobileHeaderWorkspace {
+    pub(crate) name: String,
+    pub(crate) tab: String,
+    pub(crate) dot: String,
+    pub(crate) dot_style: Style,
+}
+
+#[derive(Default)]
+pub(crate) struct MobileHeaderFacts {
+    pub(crate) workspace: Option<MobileHeaderWorkspace>,
+    pub(crate) counts: GlobalAgentCounts,
+}
+
+pub(crate) fn render_mobile_header_from(
+    frame: &mut Frame,
+    area: Rect,
+    switch: Rect,
+    p: &Palette,
+    facts: &MobileHeaderFacts,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let p = &app.palette;
     fill_rect(frame, area, Style::default().bg(p.panel_bg));
 
-    let switch = app.view.mobile_menu_hit_area;
     let status_w = switch.x.saturating_sub(area.x).saturating_sub(1);
     let status = Rect::new(area.x, area.y, status_w, area.height);
 
-    render_header_status(app, terminal_runtimes, frame, status);
-    render_switch_button(app, frame, switch);
+    render_header_status(facts, p, frame, status);
+    render_switch_button(p, facts.counts, frame, switch);
 }
 
 pub(crate) fn mobile_toast_banner_rect(area: Rect, offset_for_warning: bool) -> Rect {
@@ -306,12 +356,24 @@ pub(crate) fn render_mobile_panel(
     if area.width == 0 || area.height == 0 {
         return;
     }
+    let areas = mobile_switcher_areas(app);
+    render_mobile_panel_frame(&app.palette, frame, area, areas);
+    render_mobile_switcher_content(app, terminal_runtimes, frame, areas.viewport);
+}
 
-    let p = &app.palette;
+pub(crate) fn render_mobile_panel_frame(
+    p: &Palette,
+    frame: &mut Frame,
+    area: Rect,
+    areas: MobileSwitcherAreas,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
     frame.render_widget(Clear, area);
     fill_rect(frame, area, Style::default().bg(p.panel_bg));
 
-    let areas = mobile_switcher_areas(app);
     frame.render_widget(
         Paragraph::new(" switch").style(
             Style::default()
@@ -321,7 +383,7 @@ pub(crate) fn render_mobile_panel(
         ),
         Rect::new(area.x, area.y, areas.close.x.saturating_sub(area.x), 1),
     );
-    render_close_button(app, frame, areas.close);
+    render_close_button(p, frame, areas.close);
 
     if area.height > areas.close.height {
         draw_horizontal_rule(
@@ -330,30 +392,22 @@ pub(crate) fn render_mobile_panel(
             p,
         );
     }
-
-    render_mobile_switcher_content(app, terminal_runtimes, frame, areas.viewport);
 }
 
-fn render_header_status(
-    app: &AppState,
-    terminal_runtimes: &TerminalRuntimeRegistry,
-    frame: &mut Frame,
-    area: Rect,
-) {
+fn render_header_status(facts: &MobileHeaderFacts, p: &Palette, frame: &mut Frame, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let p = &app.palette;
-    let Some(ws) = app.active.and_then(|idx| app.workspaces.get(idx)) else {
+    let Some(workspace) = &facts.workspace else {
         frame.render_widget(Paragraph::new(" no workspace"), area);
         return;
     };
 
-    let (state, seen) = ws.aggregate_state(&app.terminals);
-    let (dot, dot_style) = state_summary_icon(state, seen, app.spinner_tick, p);
-    let tab_label = mobile_tab_status(ws);
+    let dot = workspace.dot.as_str();
+    let dot_style = workspace.dot_style;
+    let tab_label = workspace.tab.as_str();
     let row1 = Rect::new(area.x, area.y, area.width, 1);
-    let tab_w = display_width_u16(&tab_label)
+    let tab_w = display_width_u16(tab_label)
         .saturating_add(1)
         .min(area.width);
     let name_w = area.width.saturating_sub(tab_w);
@@ -364,10 +418,7 @@ fn render_header_status(
             Span::styled(dot, dot_style.bg(p.panel_bg)),
             Span::raw(" "),
             Span::styled(
-                truncate_end(
-                    &ws.display_name_from(&app.terminals, terminal_runtimes),
-                    name_w.saturating_sub(4) as usize,
-                ),
+                truncate_end(&workspace.name, name_w.saturating_sub(4) as usize),
                 Style::default()
                     .fg(p.text)
                     .bg(p.panel_bg)
@@ -385,7 +436,7 @@ fn render_header_status(
 
     if area.height > 1 {
         frame.render_widget(
-            Paragraph::new(agent_summary_line(app, p, area.width)),
+            Paragraph::new(agent_summary_line(facts.counts, p, area.width)),
             Rect::new(area.x, area.y + 1, area.width, 1),
         );
     }
@@ -402,11 +453,10 @@ fn mobile_tab_status(ws: &crate::workspace::Workspace) -> String {
     }
 }
 
-fn render_switch_button(app: &AppState, frame: &mut Frame, area: Rect) {
+fn render_switch_button(p: &Palette, counts: GlobalAgentCounts, frame: &mut Frame, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let p = &app.palette;
     fill_rect(frame, area, Style::default().bg(p.surface0));
     for y in area.y..area.y + area.height {
         frame.buffer_mut()[(area.x, y)]
@@ -428,7 +478,7 @@ fn render_switch_button(app: &AppState, frame: &mut Frame, area: Rect) {
 
     // Attention badge: a blocked agent anywhere makes the button itself read as
     // "tap me" without the user reading the summary row.
-    if global_agent_counts(app).blocked > 0 {
+    if counts.blocked > 0 {
         let bx = area.x + area.width.saturating_sub(1);
         frame.buffer_mut()[(bx, area.y)]
             .set_symbol("●")
@@ -436,11 +486,10 @@ fn render_switch_button(app: &AppState, frame: &mut Frame, area: Rect) {
     }
 }
 
-fn render_close_button(app: &AppState, frame: &mut Frame, area: Rect) {
+fn render_close_button(p: &Palette, frame: &mut Frame, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let p = &app.palette;
     fill_rect(frame, area, Style::default().bg(p.surface0));
     for y in area.y..area.y + area.height {
         frame.buffer_mut()[(area.x, y)]
@@ -810,7 +859,7 @@ fn mobile_agent_detail(entry: &AgentPanelEntry) -> String {
     format!("  {}", parts.join(" · "))
 }
 
-fn render_section_title_at(
+pub(crate) fn render_section_title_at(
     frame: &mut Frame,
     viewport: Rect,
     content: Rect,
@@ -830,7 +879,7 @@ fn render_section_title_at(
     );
 }
 
-fn render_action_row_at(
+pub(crate) fn render_action_row_at(
     frame: &mut Frame,
     viewport: Rect,
     content: Rect,
@@ -845,7 +894,7 @@ fn render_action_row_at(
     render_action_row(frame, Rect::new(content.x, y, content.width, 1), label, p);
 }
 
-fn render_one_line_item(
+pub(crate) fn render_one_line_item(
     frame: &mut Frame,
     viewport: Rect,
     content: Rect,
@@ -871,7 +920,7 @@ fn render_one_line_item(
     }
 }
 
-fn render_two_line_item(
+pub(crate) fn render_two_line_item(
     frame: &mut Frame,
     viewport: Rect,
     content: Rect,
@@ -926,7 +975,7 @@ fn fill_visible_doc_rect(
     }
 }
 
-fn mobile_item_bg(selected: bool, active: bool, p: &Palette) -> ratatui::style::Color {
+pub(crate) fn mobile_item_bg(selected: bool, active: bool, p: &Palette) -> ratatui::style::Color {
     if selected {
         p.surface0
     } else if active {
@@ -936,14 +985,14 @@ fn mobile_item_bg(selected: bool, active: bool, p: &Palette) -> ratatui::style::
     }
 }
 
-fn inset_for_left_scrollbar(area: Rect) -> Rect {
+pub(crate) fn inset_for_left_scrollbar(area: Rect) -> Rect {
     if area.width <= 1 {
         return Rect::default();
     }
     Rect::new(area.x + 1, area.y, area.width - 1, area.height)
 }
 
-fn render_left_scrollbar(
+pub(crate) fn render_left_scrollbar(
     frame: &mut Frame,
     area: Rect,
     total_rows: usize,
@@ -1025,11 +1074,11 @@ fn mobile_screen_rect(app: &AppState) -> Rect {
 /// purpose: while you stare at one terminal, a blocked agent anywhere should
 /// still surface.
 #[derive(Debug, Default, Clone, Copy)]
-struct GlobalAgentCounts {
-    blocked: usize,
-    done: usize,
-    working: usize,
-    idle: usize,
+pub(crate) struct GlobalAgentCounts {
+    pub(crate) blocked: usize,
+    pub(crate) done: usize,
+    pub(crate) working: usize,
+    pub(crate) idle: usize,
 }
 
 impl GlobalAgentCounts {
@@ -1116,8 +1165,8 @@ fn fit_summary_segments(
     (shown, truncated)
 }
 
-fn agent_summary_line(app: &AppState, p: &Palette, max_width: u16) -> Line<'static> {
-    let segments = agent_summary_segments(global_agent_counts(app));
+fn agent_summary_line(counts: GlobalAgentCounts, p: &Palette, max_width: u16) -> Line<'static> {
+    let segments = agent_summary_segments(counts);
     let (shown, truncated) = fit_summary_segments(segments, max_width as usize);
 
     let mut spans = vec![Span::styled(" ", Style::default().bg(p.panel_bg))];

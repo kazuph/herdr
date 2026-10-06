@@ -5,13 +5,14 @@ use crate::config::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ResolvedToken {
+pub(crate) struct ResolvedToken {
     pub kind: ResolvedTokenKind,
     pub style: SidebarTokenStyle,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ResolvedTokenKind {
+pub(crate) enum ResolvedTokenKind {
+    JobIndicators(Vec<(String, Option<i32>)>),
     StateIcon,
     WorkspaceNumber(usize),
     StateText(String),
@@ -42,8 +43,42 @@ pub(super) fn agent_rows(
     entry: &AgentPanelEntry,
     state_text: &str,
 ) -> Vec<Vec<ResolvedToken>> {
+    agent_rows_from_context(
+        config,
+        AgentTokenContext {
+            agent: entry.agent,
+            workspace: &entry.primary_label,
+            tab: entry.primary_tab_label.as_deref(),
+            pane: entry.pane_label.as_deref(),
+            agent_label: entry.agent_label.as_deref(),
+            terminal_title: entry.terminal_title.as_deref(),
+            terminal_title_stripped: entry.terminal_title_stripped.as_deref(),
+            tokens: &entry.tokens,
+            state_text,
+        },
+    )
+}
+
+/// Token facts have no runtime resource identity. Both client projections and
+/// local server views use the same configured rows without inventing PaneIds.
+pub(crate) struct AgentTokenContext<'a> {
+    pub agent: Option<crate::detect::Agent>,
+    pub workspace: &'a str,
+    pub tab: Option<&'a str>,
+    pub pane: Option<&'a str>,
+    pub agent_label: Option<&'a str>,
+    pub terminal_title: Option<&'a str>,
+    pub terminal_title_stripped: Option<&'a str>,
+    pub tokens: &'a std::collections::HashMap<String, String>,
+    pub state_text: &'a str,
+}
+
+pub(crate) fn agent_rows_from_context(
+    config: &AgentsSidebarConfig,
+    context: AgentTokenContext<'_>,
+) -> Vec<Vec<ResolvedToken>> {
     config
-        .rows_for_agent(entry.agent)
+        .rows_for_agent(context.agent)
         .iter()
         .filter_map(|row| {
             let resolved = row
@@ -53,29 +88,27 @@ pub(super) fn agent_rows(
                     let kind = match token {
                         AgentSidebarToken::StateIcon => Some(ResolvedTokenKind::StateIcon),
                         AgentSidebarToken::StateText => {
-                            Some(ResolvedTokenKind::StateText(state_text.to_string()))
+                            Some(ResolvedTokenKind::StateText(context.state_text.to_string()))
                         }
                         AgentSidebarToken::Workspace => {
-                            Some(ResolvedTokenKind::Workspace(entry.primary_label.clone()))
+                            Some(ResolvedTokenKind::Workspace(context.workspace.to_string()))
                         }
-                        AgentSidebarToken::Tab => {
-                            entry.primary_tab_label.clone().map(ResolvedTokenKind::Tab)
-                        }
-                        AgentSidebarToken::Pane => {
-                            entry.pane_label.clone().map(ResolvedTokenKind::Pane)
-                        }
-                        AgentSidebarToken::Agent => {
-                            entry.agent_label.clone().map(ResolvedTokenKind::Agent)
-                        }
-                        AgentSidebarToken::TerminalTitle => entry
+                        AgentSidebarToken::Tab => context
+                            .tab
+                            .map(|value| ResolvedTokenKind::Tab(value.to_string())),
+                        AgentSidebarToken::Pane => context
+                            .pane
+                            .map(|value| ResolvedTokenKind::Pane(value.to_string())),
+                        AgentSidebarToken::Agent => context
+                            .agent_label
+                            .map(|value| ResolvedTokenKind::Agent(value.to_string())),
+                        AgentSidebarToken::TerminalTitle => context
                             .terminal_title
-                            .clone()
-                            .map(ResolvedTokenKind::TerminalTitle),
-                        AgentSidebarToken::TerminalTitleStripped => entry
+                            .map(|value| ResolvedTokenKind::TerminalTitle(value.to_string())),
+                        AgentSidebarToken::TerminalTitleStripped => context
                             .terminal_title_stripped
-                            .clone()
-                            .map(ResolvedTokenKind::TerminalTitle),
-                        AgentSidebarToken::Custom(name) => entry
+                            .map(|value| ResolvedTokenKind::TerminalTitle(value.to_string())),
+                        AgentSidebarToken::Custom(name) => context
                             .tokens
                             .get(name)
                             .cloned()
@@ -90,7 +123,7 @@ pub(super) fn agent_rows(
         .collect()
 }
 
-pub(super) struct SpaceTokenContext<'a> {
+pub(crate) struct SpaceTokenContext<'a> {
     pub workspace_number: usize,
     pub workspace: &'a str,
     pub branch: Option<&'a str>,
@@ -101,7 +134,7 @@ pub(super) struct SpaceTokenContext<'a> {
     pub suppress_git_details: bool,
 }
 
-pub(super) fn space_rows(
+pub(crate) fn space_rows(
     config: &SpacesSidebarConfig,
     context: SpaceTokenContext<'_>,
 ) -> Vec<Vec<ResolvedToken>> {
@@ -175,6 +208,56 @@ pub(super) fn space_rows(
         );
     }
 
+    rows
+}
+
+pub(crate) fn with_job_indicators(
+    mut rows: Vec<Vec<ResolvedToken>>,
+    jobs: Vec<(String, Option<i32>)>,
+    display_height: usize,
+) -> Vec<Vec<ResolvedToken>> {
+    if jobs.is_empty() || display_height == 0 {
+        return rows;
+    }
+    let visible = rows.len().min(display_height);
+    let position = rows[..visible]
+        .iter()
+        .enumerate()
+        .find_map(|(row, tokens)| {
+            tokens
+                .iter()
+                .position(|token| {
+                    matches!(
+                        token.kind,
+                        ResolvedTokenKind::Branch(_)
+                            | ResolvedTokenKind::GitStatus { .. }
+                            | ResolvedTokenKind::GitDiff { .. }
+                    )
+                })
+                .map(|column| (row, column))
+        })
+        .or_else(|| {
+            rows[..visible]
+                .iter()
+                .enumerate()
+                .find_map(|(row, tokens)| {
+                    tokens
+                        .iter()
+                        .position(|token| matches!(token.kind, ResolvedTokenKind::Workspace(_)))
+                        .map(|column| (row, column))
+                })
+        })
+        .unwrap_or((0, 0));
+    if rows.is_empty() {
+        rows.push(Vec::new());
+    }
+    rows[position.0].insert(
+        position.1,
+        ResolvedToken::new(
+            ResolvedTokenKind::JobIndicators(jobs),
+            SidebarTokenStyle::default(),
+        ),
+    );
     rows
 }
 

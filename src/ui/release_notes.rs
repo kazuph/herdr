@@ -24,6 +24,24 @@ pub(super) fn render_release_notes_overlay(app: &AppState, frame: &mut Frame, ar
         return;
     };
 
+    render_release_notes_from(
+        frame,
+        area,
+        &app.palette,
+        notes,
+        &app.update_install_command,
+        app.release_notes_max_scroll(),
+    );
+}
+
+pub(crate) fn render_release_notes_from(
+    frame: &mut Frame,
+    area: Rect,
+    palette: &Palette,
+    notes: &ReleaseNotesState,
+    install_command: &str,
+    max_scroll: u16,
+) {
     super::dim_background(frame, area);
 
     let Some(inner) = render_modal_shell(
@@ -31,7 +49,7 @@ pub(super) fn render_release_notes_overlay(app: &AppState, frame: &mut Frame, ar
         area,
         RELEASE_NOTES_MODAL_SIZE.0,
         RELEASE_NOTES_MODAL_SIZE.1,
-        &app.palette,
+        palette,
     ) else {
         return;
     };
@@ -60,7 +78,7 @@ pub(super) fn render_release_notes_overlay(app: &AppState, frame: &mut Frame, ar
         frame,
         header_title_area,
         &format!("v{}", notes.version),
-        &app.palette,
+        palette,
     );
     let subtitle = if notes.preview {
         "update ready"
@@ -68,7 +86,7 @@ pub(super) fn render_release_notes_overlay(app: &AppState, frame: &mut Frame, ar
         "what's new in this release"
     };
     frame.render_widget(
-        Paragraph::new(subtitle).style(Style::default().fg(app.palette.overlay1)),
+        Paragraph::new(subtitle).style(Style::default().fg(palette.overlay1)),
         header_subtitle_area,
     );
     render_action_button(
@@ -77,17 +95,16 @@ pub(super) fn render_release_notes_overlay(app: &AppState, frame: &mut Frame, ar
         Some("esc"),
         "close",
         Style::default()
-            .fg(panel_contrast_fg(&app.palette))
-            .bg(app.palette.accent)
+            .fg(panel_contrast_fg(palette))
+            .bg(palette.accent)
             .add_modifier(Modifier::BOLD),
     );
 
     let notes_body = stack.content;
-    let display_lines =
-        release_notes_display_lines(notes, &app.update_install_command, &app.palette);
+    let display_lines = release_notes_display_lines(notes, install_command, palette);
     let metrics = crate::pane::ScrollMetrics {
-        offset_from_bottom: app.release_notes_max_scroll().saturating_sub(notes.scroll) as usize,
-        max_offset_from_bottom: app.release_notes_max_scroll() as usize,
+        offset_from_bottom: max_scroll.saturating_sub(notes.scroll) as usize,
+        max_offset_from_bottom: max_scroll as usize,
         viewport_rows: notes_body.height.max(1) as usize,
     };
     let track = release_notes_scrollbar_rect(notes_body, metrics);
@@ -116,19 +133,19 @@ pub(super) fn render_release_notes_overlay(app: &AppState, frame: &mut Frame, ar
             frame,
             metrics,
             track,
-            app.palette.overlay0,
-            app.palette.overlay1,
+            palette.overlay0,
+            palette.overlay1,
             "▐",
         );
     }
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(" scroll ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("wheel ↑↓", Style::default().fg(app.palette.text)),
-            Span::styled("  ·  ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("close", Style::default().fg(app.palette.overlay0)),
-            Span::styled(" esc / enter ", Style::default().fg(app.palette.text)),
+            Span::styled(" scroll ", Style::default().fg(palette.overlay0)),
+            Span::styled("wheel ↑↓", Style::default().fg(palette.text)),
+            Span::styled("  ·  ", Style::default().fg(palette.overlay0)),
+            Span::styled("close", Style::default().fg(palette.overlay0)),
+            Span::styled(" esc / enter ", Style::default().fg(palette.text)),
         ])),
         stack.footer.unwrap_or_default(),
     );

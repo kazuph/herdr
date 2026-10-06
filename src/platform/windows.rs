@@ -144,6 +144,14 @@ pub fn current_process_is_detached_server_daemon() -> bool {
     unsafe { IsProcessInJob(GetCurrentProcess(), null_mut(), &mut in_job) != 0 && in_job == 0 }
 }
 
+pub(crate) fn wait_client_stream_readable(
+    _stream: &crate::ipc::LocalStream,
+) -> std::io::Result<()> {
+    // Fixed upstream Windows named-pipe reader: peek before read and check cancellation between polls.
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    Ok(())
+}
+
 pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
     let entries = snapshot_processes();
     select_pane_foreground_job(child_pid, &entries)

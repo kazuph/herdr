@@ -1085,6 +1085,7 @@ fn direct_gate_server_with_file(
     slot.stream_owner = Some("owner".into());
     slot.stream_active = Some(active_gate());
     slot.direct_gate = Some(crate::app::pane_graphics::DirectGate {
+        endpoint_image_id: None,
         transfer_id: lease.fingerprint(),
         client_id: 7,
         deadline: std::time::Instant::now() + Duration::from_secs(1),

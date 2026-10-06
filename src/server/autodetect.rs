@@ -147,7 +147,7 @@ fn client_protocol_accepts_hello(socket_path: &Path) -> io::Result<bool> {
     }
 }
 
-fn validate_running_server_compatibility() -> io::Result<()> {
+pub(crate) fn validate_running_server_compatibility() -> io::Result<()> {
     let Some(status) = read_server_status()? else {
         return Err(io::Error::other(format!(
             "a herdr server is listening, but its status API is unavailable.\n\n{}\nIf that fails, stop the old server process manually.",
@@ -155,19 +155,26 @@ fn validate_running_server_compatibility() -> io::Result<()> {
         )));
     };
 
-    if status.protocol == Some(crate::protocol::PROTOCOL_VERSION) {
+    if status.protocol == Some(crate::protocol::PROTOCOL_VERSION)
+        && status
+            .capabilities
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.endpoint_protocol_compatible())
+    {
         return Ok(());
     }
 
     Err(io::Error::other(format!(
-        "Herdr was updated, but this session is still running the old server.\n\nserver: v{} protocol {}\nclient: v{} protocol {}\n\n{}",
+        "Herdr was updated, but this session is still running the old server.\n\nserver: v{} protocol {} endpoint generation {}\nclient: v{} protocol {} endpoint generation {}\n\n{}",
         status.version.as_deref().unwrap_or("unknown"),
         status
             .protocol
             .map(|value| value.to_string())
             .unwrap_or_else(|| "unknown".to_string()),
+        status.capabilities.as_ref().and_then(|value| value.endpoint_protocol_generation).map(|value| value.to_string()).unwrap_or_else(|| "unavailable".to_string()),
         crate::build_info::version(),
         crate::protocol::PROTOCOL_VERSION,
+        crate::protocol::endpoint::ENDPOINT_PROTOCOL_GENERATION,
         crate::session::active_restart_after_update_guidance()
     )))
 }
@@ -302,8 +309,8 @@ pub fn auto_detect_launch() -> io::Result<()> {
         info!("server ready, attaching as client");
     }
 
-    // Now attach as a thin client.
-    crate::client::run_client()
+    // Normal startup uses the integrated client; explicit client mode retains its socket contract.
+    crate::client::endpoint::frontend::run()
 }
 
 // ---------------------------------------------------------------------------

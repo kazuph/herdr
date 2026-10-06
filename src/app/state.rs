@@ -840,8 +840,8 @@ pub(crate) enum NavigatorTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct NavigatorRow {
-    pub target: NavigatorTarget,
+pub(crate) struct NavigatorRow<T = NavigatorTarget> {
+    pub target: T,
     pub depth: u8,
     pub label: String,
     pub meta: String,
@@ -1181,6 +1181,58 @@ pub struct ContextMenuState {
 
 impl ContextMenuState {
     pub fn items(&self) -> Vec<&'static str> {
+        ContextMenuFacts::from(&self.kind).items()
+    }
+}
+
+/// Presentation flags shared by local and endpoint menus, without runtime resource IDs.
+#[derive(Clone, Copy)]
+pub(crate) enum ContextMenuFacts {
+    Workspace {},
+    GitWorkspace {
+        is_linked_worktree: bool,
+        has_worktree_children: bool,
+        collapsed: bool,
+    },
+    Tab {},
+    Pane {
+        has_manual_label: bool,
+        has_layout_actions: bool,
+        is_zoomed: bool,
+    },
+}
+
+impl From<&ContextMenuKind> for ContextMenuFacts {
+    fn from(kind: &ContextMenuKind) -> Self {
+        match kind {
+            ContextMenuKind::Workspace { .. } => Self::Workspace {},
+            ContextMenuKind::GitWorkspace {
+                is_linked_worktree,
+                has_worktree_children,
+                collapsed,
+                ..
+            } => Self::GitWorkspace {
+                is_linked_worktree: *is_linked_worktree,
+                has_worktree_children: *has_worktree_children,
+                collapsed: *collapsed,
+            },
+            ContextMenuKind::Tab { .. } => Self::Tab {},
+            ContextMenuKind::Pane {
+                has_manual_label,
+                has_layout_actions,
+                is_zoomed,
+                ..
+            } => Self::Pane {
+                has_manual_label: *has_manual_label,
+                has_layout_actions: *has_layout_actions,
+                is_zoomed: *is_zoomed,
+            },
+        }
+    }
+}
+
+impl ContextMenuFacts {
+    pub fn items(&self) -> Vec<&'static str> {
         let mut items = self.base_items().to_vec();
         let agent_items = [
             "New Claude Code agent",
@@ -1190,18 +1242,18 @@ impl ContextMenuState {
             "New letta agent",
             "New qwen agent",
         ];
-        match self.kind {
-            ContextMenuKind::Workspace { .. } | ContextMenuKind::GitWorkspace { .. } => {
+        match *self {
+            ContextMenuFacts::Workspace { .. } | ContextMenuFacts::GitWorkspace { .. } => {
                 items.splice(0..0, agent_items.into_iter().chain(["--"]));
             }
-            ContextMenuKind::Pane { .. } | ContextMenuKind::Tab { .. } => {}
+            ContextMenuFacts::Pane { .. } | ContextMenuFacts::Tab { .. } => {}
         }
         items
     }
 
     fn base_items(&self) -> &'static [&'static str] {
-        match self.kind {
-            ContextMenuKind::Workspace { .. } => &[
+        match *self {
+            ContextMenuFacts::Workspace { .. } => &[
                 "Duplicate",
                 "--",
                 "Rename",
@@ -1212,7 +1264,7 @@ impl ContextMenuState {
                 "🏠 personal",
                 "No section",
             ],
-            ContextMenuKind::GitWorkspace {
+            ContextMenuFacts::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: false,
                 ..
@@ -1229,7 +1281,7 @@ impl ContextMenuState {
                 "🏠 personal",
                 "No section",
             ],
-            ContextMenuKind::GitWorkspace {
+            ContextMenuFacts::GitWorkspace {
                 is_linked_worktree: true,
                 ..
             } => &[
@@ -1244,7 +1296,7 @@ impl ContextMenuState {
                 "🏠 personal",
                 "No section",
             ],
-            ContextMenuKind::GitWorkspace {
+            ContextMenuFacts::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: true,
                 collapsed: true,
@@ -1263,7 +1315,7 @@ impl ContextMenuState {
                 "🏠 personal",
                 "No section",
             ],
-            ContextMenuKind::GitWorkspace {
+            ContextMenuFacts::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: true,
                 collapsed: false,
@@ -1282,8 +1334,8 @@ impl ContextMenuState {
                 "🏠 personal",
                 "No section",
             ],
-            ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
-            ContextMenuKind::Pane {
+            ContextMenuFacts::Tab { .. } => &["New tab", "Rename", "Close"],
+            ContextMenuFacts::Pane {
                 has_manual_label: true,
                 has_layout_actions: true,
                 is_zoomed: false,
@@ -1314,7 +1366,7 @@ impl ContextMenuState {
                 "Zoom",
                 "Close pane",
             ],
-            ContextMenuKind::Pane {
+            ContextMenuFacts::Pane {
                 has_manual_label: true,
                 has_layout_actions: true,
                 is_zoomed: true,
@@ -1345,7 +1397,7 @@ impl ContextMenuState {
                 "Unzoom",
                 "Close pane",
             ],
-            ContextMenuKind::Pane {
+            ContextMenuFacts::Pane {
                 has_manual_label: true,
                 has_layout_actions: false,
                 ..
@@ -1365,7 +1417,7 @@ impl ContextMenuState {
                 "--",
                 "Close pane",
             ],
-            ContextMenuKind::Pane {
+            ContextMenuFacts::Pane {
                 has_manual_label: false,
                 has_layout_actions: true,
                 is_zoomed: false,
@@ -1395,7 +1447,7 @@ impl ContextMenuState {
                 "Zoom",
                 "Close pane",
             ],
-            ContextMenuKind::Pane {
+            ContextMenuFacts::Pane {
                 has_manual_label: false,
                 has_layout_actions: true,
                 is_zoomed: true,
@@ -1425,7 +1477,7 @@ impl ContextMenuState {
                 "Unzoom",
                 "Close pane",
             ],
-            ContextMenuKind::Pane {
+            ContextMenuFacts::Pane {
                 has_manual_label: false,
                 has_layout_actions: false,
                 ..

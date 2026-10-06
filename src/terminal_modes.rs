@@ -15,6 +15,34 @@ pub(crate) fn clear_host_mouse_reporting<W: Write>(_writer: &mut W) -> io::Resul
     Ok(())
 }
 
+// Fixed upstream client shell host-keyboard demand; private terminal setup remains unchanged.
+#[cfg(not(windows))]
+pub(crate) fn set_host_kitty_keyboard_report_all<W: Write>(
+    writer: &mut W,
+    report_all_keys: bool,
+) -> io::Result<()> {
+    let mut flags = crate::input::ime_compatible_keyboard_enhancement_flags();
+    if report_all_keys {
+        flags |= crossterm::event::KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES;
+        flags = crossterm::event::KeyboardEnhancementFlags::from_bits_retain(
+            flags.bits() | 0b0001_0000,
+        );
+    }
+    crossterm::execute!(
+        writer,
+        crossterm::event::PopKeyboardEnhancementFlags,
+        crossterm::event::PushKeyboardEnhancementFlags(flags)
+    )
+}
+
+#[cfg(windows)]
+pub(crate) fn set_host_kitty_keyboard_report_all<W: Write>(
+    _writer: &mut W,
+    _report_all_keys: bool,
+) -> io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

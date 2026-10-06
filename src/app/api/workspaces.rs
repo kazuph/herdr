@@ -10,6 +10,59 @@ use super::super::api_helpers::{normalize_metadata_source, normalize_metadata_tt
 use super::responses::{encode_error, encode_success};
 
 impl App {
+    pub(super) fn handle_workspace_set_section(
+        &mut self,
+        id: String,
+        params: crate::api::schema::WorkspaceSetSectionParams,
+    ) -> String {
+        let Some(index) = self.parse_workspace_id(&params.workspace_id) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        if !self
+            .state
+            .set_workspace_section_runtime(index, params.section)
+        {
+            return workspace_not_found(id, &params.workspace_id);
+        }
+        encode_success(id, ResponseResult::Ok {})
+    }
+    pub(super) fn handle_workspace_duplicate(
+        &mut self,
+        id: String,
+        params: crate::api::schema::WorkspaceDuplicateParams,
+    ) -> String {
+        self.handle_workspace_duplicate_at(id, params, None, &[])
+    }
+
+    pub(crate) fn handle_workspace_duplicate_at(
+        &mut self,
+        id: String,
+        params: crate::api::schema::WorkspaceDuplicateParams,
+        active_tab: Option<usize>,
+        focused_panes: &[(usize, crate::layout::PaneId)],
+    ) -> String {
+        let Some(source) = self.parse_workspace_id(&params.workspace_id) else {
+            return workspace_not_found(id, &params.workspace_id);
+        };
+        match self.create_workspace_duplicate_at(source, active_tab, focused_panes) {
+            Ok(index) => {
+                if params.focus {
+                    self.state.switch_workspace(index);
+                }
+                self.emit_workspace_open_events(index);
+                match self.workspace_created_result(index) {
+                    Some(result) => encode_success(id, result),
+                    None => encode_error(
+                        id,
+                        "workspace_create_failed",
+                        "workspace could not be restored",
+                    ),
+                }
+            }
+            Err(error) => encode_error(id, "workspace_create_failed", error.to_string()),
+        }
+    }
+
     pub(super) fn handle_workspace_list(&mut self, id: String) -> String {
         encode_success(
             id,
@@ -53,6 +106,9 @@ impl App {
         };
         match self.create_workspace_with_launch_env(cwd, params.focus, extra_env) {
             Ok(index) => {
+                if let Some(section) = params.section {
+                    self.state.set_workspace_section_runtime(index, section);
+                }
                 if let Some(label) = params.label {
                     if let Some(workspace) = self.state.workspaces.get_mut(index) {
                         workspace.set_custom_name(label);
@@ -339,6 +395,7 @@ mod tests {
         let response = app.handle_workspace_create(
             "req".into(),
             WorkspaceCreateParams {
+                section: None,
                 cwd: None,
                 focus: false,
                 label: None,

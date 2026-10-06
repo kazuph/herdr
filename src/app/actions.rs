@@ -392,6 +392,18 @@ pub struct PaneStateUpdate {
 // ---------------------------------------------------------------------------
 
 impl AppState {
+    pub(crate) fn set_workspace_section_runtime(
+        &mut self,
+        index: usize,
+        section: crate::workspace::WorkspaceSection,
+    ) -> bool {
+        let Some(workspace) = self.workspaces.get_mut(index) else {
+            return false;
+        };
+        workspace.section = section;
+        self.mark_session_dirty();
+        true
+    }
     pub(crate) fn current_pane_focus_target(&self) -> Option<PaneFocusTarget> {
         let ws_idx = self.active?;
         let ws = self.workspaces.get(ws_idx)?;
@@ -987,7 +999,7 @@ fn navigator_matches(query: &str, text: &str) -> bool {
     text_matches_query(query, text)
 }
 
-fn launch_label(argv: Option<&Vec<String>>) -> Option<String> {
+pub(crate) fn launch_label(argv: Option<&Vec<String>>) -> Option<String> {
     let argv = argv?;
     let command = argv.first()?;
     std::path::Path::new(command)
@@ -997,7 +1009,7 @@ fn launch_label(argv: Option<&Vec<String>>) -> Option<String> {
         .or_else(|| Some(command.clone()))
 }
 
-fn state_label_text(state: AgentState, seen: bool) -> &'static str {
+pub(crate) fn state_label_text(state: AgentState, seen: bool) -> &'static str {
     match (state, seen) {
         (AgentState::Blocked, _) => "blocked",
         (AgentState::Working, _) => "working",
@@ -3387,6 +3399,44 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn workspace_section_runtime_keeps_presentation_and_focus_owned_by_client() {
+        let mut state = app_with_workspaces(&["one", "two"]);
+        state.workspace_scroll = 7;
+        state.agent_panel_scroll = 9;
+        state
+            .collapsed_workspace_sections
+            .insert(crate::workspace::WorkspaceSection::Work);
+        state.session_dirty = false;
+        assert!(state.set_workspace_section_runtime(1, crate::workspace::WorkspaceSection::Work));
+        assert_eq!(
+            state.workspaces[1].section,
+            crate::workspace::WorkspaceSection::Work
+        );
+        assert_eq!(
+            state.workspaces[0].section,
+            crate::workspace::WorkspaceSection::None
+        );
+        assert_eq!(
+            (
+                state.active,
+                state.selected,
+                state.workspace_scroll,
+                state.agent_panel_scroll
+            ),
+            (Some(0), 0, 7, 9)
+        );
+        assert!(state
+            .collapsed_workspace_sections
+            .contains(&crate::workspace::WorkspaceSection::Work));
+        assert!(state.session_dirty);
+        state.session_dirty = false;
+        assert!(
+            !state.set_workspace_section_runtime(2, crate::workspace::WorkspaceSection::Personal)
+        );
+        assert!(!state.session_dirty);
+        state.assert_invariants_for_test();
+    }
     use super::*;
     use crate::detect::{Agent, AgentState};
     use crate::workspace::Workspace;

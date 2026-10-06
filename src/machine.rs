@@ -17,7 +17,7 @@ use tracing::warn;
 
 /// SSH probe binary and timing. BatchMode never prompts; a bounded
 /// ConnectTimeout keeps stalls fail-closed instead of hanging the CLI.
-const SSH_CONNECT_TIMEOUT_SECS: u64 = 15;
+pub(crate) const SSH_CONNECT_TIMEOUT_SECS: u64 = 15;
 
 /// Environment override for the remote herdr executable used by `--machine`
 /// routing (P2). Defaults to `herdr` on the remote `PATH`.
@@ -185,7 +185,7 @@ impl MachineCatalog {
     }
 }
 
-fn default_path() -> PathBuf {
+pub(crate) fn default_path() -> PathBuf {
     crate::session::data_dir().join("machines.json")
 }
 
@@ -234,6 +234,18 @@ pub(crate) fn load_from_path(path: &Path) -> MachineCatalog {
             MachineCatalog::default()
         }
     }
+}
+
+/// Live clients must distinguish a missing catalog from a read/parse failure.
+/// The legacy CLI loader above deliberately retains its corrupt-file-as-empty contract.
+pub(crate) fn load_profiles_result(path: &Path) -> std::io::Result<Vec<MachineProfile>> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    serde_json::from_str(&content)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
 /// Persist the catalog to the default path. Write failures are returned, never

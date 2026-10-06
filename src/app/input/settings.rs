@@ -12,7 +12,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 // The shared `Save` verb is semantic: these actions persist settings.
 #[allow(clippy::enum_variant_names)]
-pub(super) enum SettingsAction {
+pub(crate) enum SettingsAction {
     SaveTheme(String),
     SaveSound(bool),
     SaveToastDelivery(ToastDelivery),
@@ -22,16 +22,14 @@ pub(super) enum SettingsAction {
 }
 
 /// Map an Experiments row index to the toggle action that flips it.
-fn experiment_toggle_action(state: &AppState, idx: usize) -> Option<SettingsAction> {
+fn experiment_toggle_action(state: &SettingsInput<'_>, idx: usize) -> Option<SettingsAction> {
     match ExperimentSetting::ALL.get(idx).copied()? {
-        ExperimentSetting::PaneHistory => Some(SettingsAction::SavePaneHistory(
-            !ExperimentSetting::PaneHistory.enabled(state),
-        )),
-        ExperimentSetting::SwitchAsciiInputSourceInPrefix => {
-            Some(SettingsAction::SaveSwitchAsciiInputSourceInPrefix(
-                !ExperimentSetting::SwitchAsciiInputSourceInPrefix.enabled(state),
-            ))
+        ExperimentSetting::PaneHistory => {
+            Some(SettingsAction::SavePaneHistory(!state.pane_history))
         }
+        ExperimentSetting::SwitchAsciiInputSourceInPrefix => Some(
+            SettingsAction::SaveSwitchAsciiInputSourceInPrefix(!state.prefix_ascii),
+        ),
     }
 }
 
@@ -46,7 +44,7 @@ impl App {
                     self.save_agent_border_labels(enabled)
                 }
                 SettingsAction::SavePaneHistory(enabled) => {
-                    self.save_pane_history_persistence(enabled)
+                    self.save_pane_history_persistence(enabled);
                 }
                 SettingsAction::SaveSwitchAsciiInputSourceInPrefix(enabled) => {
                     self.save_switch_ascii_input_source_in_prefix(enabled)
@@ -86,7 +84,83 @@ fn toast_delivery_for_index(idx: usize) -> ToastDelivery {
     }
 }
 
-fn preview_selected_theme(state: &mut AppState) {
+pub(crate) struct SettingsInput<'a> {
+    pub settings: &'a mut crate::app::state::SettingsState,
+    pub palette: &'a mut crate::app::state::Palette,
+    pub theme_name: &'a mut String,
+    pub theme_runtime: &'a crate::app::state::ThemeRuntimeConfig,
+    pub sound: bool,
+    pub toast: ToastDelivery,
+    pub pane_labels: bool,
+    pub pane_history: bool,
+    pub prefix_ascii: bool,
+    pub area: Rect,
+    pub closed: bool,
+}
+
+impl SettingsInput<'_> {
+    pub(crate) fn open(&mut self, section: SettingsSection) {
+        open_settings_input(self, section);
+    }
+    pub(crate) fn key(&mut self, key: KeyEvent) -> Option<SettingsAction> {
+        update_settings_input(self, key)
+    }
+    pub(crate) fn mouse(&mut self, mouse: MouseEvent) -> Option<SettingsAction> {
+        self.handle_settings_mouse(mouse)
+    }
+    fn sound_enabled(&self) -> bool {
+        self.sound
+    }
+    fn toast_delivery(&self) -> ToastDelivery {
+        self.toast
+    }
+    fn agent_border_labels_enabled(&self) -> bool {
+        self.pane_labels
+    }
+}
+
+fn settings_input(state: &mut AppState) -> SettingsInput<'_> {
+    let area = state.screen_rect();
+    let sound = state.sound_enabled();
+    let toast = state.toast_delivery();
+    let pane_labels = state.agent_border_labels_enabled();
+    let pane_history = ExperimentSetting::PaneHistory.enabled(state);
+    let prefix_ascii = ExperimentSetting::SwitchAsciiInputSourceInPrefix.enabled(state);
+    SettingsInput {
+        settings: &mut state.settings,
+        palette: &mut state.palette,
+        theme_name: &mut state.theme_name,
+        theme_runtime: &state.theme_runtime,
+        sound,
+        toast,
+        pane_labels,
+        pane_history,
+        prefix_ascii,
+        area,
+        closed: false,
+    }
+}
+
+pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Option<SettingsAction> {
+    let mut input = settings_input(state);
+    let action = input.key(key);
+    let closed = input.closed;
+    if closed {
+        super::modal::leave_modal(state);
+    }
+    action
+}
+
+pub(crate) fn open_settings(state: &mut AppState) {
+    open_settings_at(state, SettingsSection::Theme);
+}
+
+pub(crate) fn open_settings_at(state: &mut AppState, section: SettingsSection) {
+    settings_input(state).open(section);
+    state.mode = Mode::Settings;
+}
+
+fn preview_selected_theme(state: &mut SettingsInput<'_>) {
     use crate::app::state::Palette;
 
     let name = THEME_NAMES[state.settings.list.selected];
@@ -97,38 +171,38 @@ fn preview_selected_theme(state: &mut AppState) {
         if let Some(accent) = &state.theme_runtime.legacy_accent {
             palette.accent = crate::config::parse_color(accent);
         }
-        state.palette = palette;
-        state.theme_name = name.to_string();
+        *state.palette = palette;
+        *state.theme_name = name.to_string();
     }
 }
 
-fn cancel_settings(state: &mut AppState) {
+fn cancel_settings(state: &mut SettingsInput<'_>) {
     if let Some(palette) = state.settings.original_palette.take() {
-        state.palette = palette;
+        *state.palette = palette;
     }
     if let Some(theme_name) = state.settings.original_theme.take() {
-        state.theme_name = theme_name;
+        *state.theme_name = theme_name;
     }
-    super::modal::leave_modal(state);
+    state.closed = true;
 }
 
-fn apply_settings(state: &mut AppState) -> Option<SettingsAction> {
+fn apply_settings(state: &mut SettingsInput<'_>) -> Option<SettingsAction> {
     match state.settings.section {
         SettingsSection::Theme => {
-            let theme_name = state.theme_name.clone();
+            let theme_name = (*state.theme_name).clone();
             state.settings.original_palette = None;
             state.settings.original_theme = None;
-            super::modal::leave_modal(state);
+            state.closed = true;
             Some(SettingsAction::SaveTheme(theme_name))
         }
         _ => {
-            super::modal::leave_modal(state);
+            state.closed = true;
             None
         }
     }
 }
 
-pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Option<SettingsAction> {
+fn update_settings_input(state: &mut SettingsInput<'_>, key: KeyEvent) -> Option<SettingsAction> {
     match state.settings.section {
         SettingsSection::Theme => match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -173,7 +247,7 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
                 state.settings.section = SettingsSection::Theme;
-                state.settings.list.selected = current_theme_index(&state.theme_name);
+                state.settings.list.selected = current_theme_index(state.theme_name);
             }
             _ => {
                 if let Some(super::modal::ModalAction::Close) =
@@ -196,7 +270,7 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
                 state.settings.section = SettingsSection::Theme;
-                state.settings.list.selected = current_theme_index(&state.theme_name);
+                state.settings.list.selected = current_theme_index(state.theme_name);
             }
             _ => {
                 if let Some(super::modal::ModalAction::Close) =
@@ -220,7 +294,7 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
                 state.settings.section = SettingsSection::Theme;
-                state.settings.list.selected = current_theme_index(&state.theme_name);
+                state.settings.list.selected = current_theme_index(state.theme_name);
             }
             _ => {
                 if let Some(super::modal::ModalAction::Close) =
@@ -244,7 +318,7 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
                 state.settings.section = SettingsSection::Theme;
-                state.settings.list.selected = current_theme_index(&state.theme_name);
+                state.settings.list.selected = current_theme_index(state.theme_name);
             }
             _ => {
                 if let Some(super::modal::ModalAction::Close) =
@@ -259,30 +333,25 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
     None
 }
 
-pub(crate) fn open_settings(state: &mut AppState) {
-    open_settings_at(state, SettingsSection::Theme);
-}
-
-pub(crate) fn open_settings_at(state: &mut AppState, section: SettingsSection) {
-    state.settings.original_palette = Some(state.palette.clone());
-    state.settings.original_theme = Some(state.theme_name.clone());
+fn open_settings_input(state: &mut SettingsInput<'_>, section: SettingsSection) {
+    state.settings.original_palette = Some((*state.palette).clone());
+    state.settings.original_theme = Some((*state.theme_name).clone());
     state.settings.section = section;
     state.settings.list.selected = match section {
-        SettingsSection::Theme => current_theme_index(&state.theme_name),
+        SettingsSection::Theme => current_theme_index(state.theme_name),
         SettingsSection::Sound => usize::from(!state.sound_enabled()),
         SettingsSection::Toast => toast_delivery_index(state.toast_delivery()),
         SettingsSection::PaneLabels => usize::from(!state.agent_border_labels_enabled()),
         SettingsSection::Experiments => 0,
     };
-    state.mode = Mode::Settings;
 }
 
-impl AppState {
+impl SettingsInput<'_> {
     fn settings_popup_rect(&self) -> Rect {
         crate::ui::centered_popup_rect(
-            self.screen_rect(),
+            self.area,
             crate::ui::SETTINGS_POPUP_WIDTH,
-            crate::ui::settings_popup_height(self),
+            crate::ui::settings_popup_height(),
         )
         .unwrap_or_default()
     }
@@ -372,13 +441,13 @@ impl AppState {
         }
     }
 
-    pub(super) fn handle_settings_mouse(&mut self, mouse: MouseEvent) -> Option<SettingsAction> {
+    fn handle_settings_mouse(&mut self, mouse: MouseEvent) -> Option<SettingsAction> {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(section) = self.settings_tab_at(mouse.column, mouse.row) {
                     self.settings.section = section;
                     self.settings.list.select(match section {
-                        SettingsSection::Theme => current_theme_index(&self.theme_name),
+                        SettingsSection::Theme => current_theme_index(self.theme_name),
                         SettingsSection::Sound => usize::from(!self.sound_enabled()),
                         SettingsSection::Toast => toast_delivery_index(self.toast_delivery()),
                         SettingsSection::PaneLabels => {
@@ -431,6 +500,30 @@ impl AppState {
             }
             _ => None,
         }
+    }
+}
+
+impl AppState {
+    #[cfg(test)]
+    fn settings_inner_rect(&mut self) -> Rect {
+        settings_input(self).settings_inner_rect()
+    }
+    #[cfg(test)]
+    fn settings_tab_at(&mut self, col: u16, row: u16) -> Option<SettingsSection> {
+        settings_input(self).settings_tab_at(col, row)
+    }
+    #[cfg(test)]
+    pub(crate) fn settings_content_rect(&mut self) -> Rect {
+        settings_input(self).settings_content_rect()
+    }
+    pub(super) fn handle_settings_mouse(&mut self, mouse: MouseEvent) -> Option<SettingsAction> {
+        let mut input = settings_input(self);
+        let action = input.mouse(mouse);
+        let closed = input.closed;
+        if closed {
+            super::modal::leave_modal(self);
+        }
+        action
     }
 }
 

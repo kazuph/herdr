@@ -16,6 +16,12 @@ pub(crate) enum LocalStreamRead {
     Closed,
 }
 
+pub(crate) enum LocalStreamReadCount {
+    Data(usize),
+    Pending,
+    Closed,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SocketFileIdentity {
     #[cfg(unix)]
@@ -129,12 +135,26 @@ pub(crate) fn poll_local_stream_read(
     stream: &mut LocalStream,
     buf: &mut [u8],
 ) -> io::Result<LocalStreamRead> {
+    poll_local_stream_read_count(stream, buf).map(|read| match read {
+        LocalStreamReadCount::Data(_) => LocalStreamRead::Data,
+        LocalStreamReadCount::Pending => LocalStreamRead::Pending,
+        LocalStreamReadCount::Closed => LocalStreamRead::Closed,
+    })
+}
+
+/// Retain fragment lengths when a framed reader shares a nonblocking socket with its writer.
+pub(crate) fn poll_local_stream_read_count(
+    stream: &mut LocalStream,
+    buf: &mut [u8],
+) -> io::Result<LocalStreamReadCount> {
     #[cfg(unix)]
     {
         match stream.read(buf) {
-            Ok(0) => Ok(LocalStreamRead::Closed),
-            Ok(_) => Ok(LocalStreamRead::Data),
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => Ok(LocalStreamRead::Pending),
+            Ok(0) => Ok(LocalStreamReadCount::Closed),
+            Ok(count) => Ok(LocalStreamReadCount::Data(count)),
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                Ok(LocalStreamReadCount::Pending)
+            }
             Err(err) => Err(err),
         }
     }
@@ -142,12 +162,12 @@ pub(crate) fn poll_local_stream_read(
     #[cfg(windows)]
     {
         match windows_named_pipe_available(stream)? {
-            None => Ok(LocalStreamRead::Closed),
-            Some(0) => Ok(LocalStreamRead::Pending),
+            None => Ok(LocalStreamReadCount::Closed),
+            Some(0) => Ok(LocalStreamReadCount::Pending),
             Some(_) => match stream.read(buf) {
-                Ok(0) => Ok(LocalStreamRead::Closed),
-                Ok(_) => Ok(LocalStreamRead::Data),
-                Err(err) if is_connection_closed_error(&err) => Ok(LocalStreamRead::Closed),
+                Ok(0) => Ok(LocalStreamReadCount::Closed),
+                Ok(count) => Ok(LocalStreamReadCount::Data(count)),
+                Err(err) if is_connection_closed_error(&err) => Ok(LocalStreamReadCount::Closed),
                 Err(err) => Err(err),
             },
         }

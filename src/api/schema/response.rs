@@ -7,7 +7,7 @@ use super::messages::MsgMessage;
 use super::panes::{
     LayoutDescription, PaneEdgesResult, PaneFocusDirectionResult, PaneInfo, PaneLayoutSnapshot,
     PaneMoveResult, PaneNeighborResult, PaneProcessInfo, PaneReadResult, PaneResizeResult,
-    PaneSwapResult, PaneZoomResult,
+    PaneScrollInfo, PaneSwapResult, PaneTextPoint, PaneTextRange, PaneZoomResult,
 };
 use super::plugins::{
     InstalledPluginInfo, PluginActionInfo, PluginCommandLogInfo, PluginInvocationContext,
@@ -118,6 +118,10 @@ pub enum ResponseResult {
     MsgRooms {
         rooms: Vec<String>,
     },
+    RunLogOpened {
+        caller_pane: Option<String>,
+        popup_opened: bool,
+    },
     RunStarted {
         job: String,
         label: String,
@@ -181,6 +185,22 @@ pub enum ResponseResult {
     PaneRead {
         read: PaneReadResult,
     },
+    PaneSelection {
+        pane_id: String,
+        text: String,
+    },
+    PopupTerminal {
+        terminal_id: String,
+        content_revision: u64,
+        scroll: PaneScrollInfo,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        surface_revision: Option<u64>,
+    },
+    PopupSelection {
+        terminal_id: String,
+        content_revision: u64,
+        text: String,
+    },
     PaneGraphicsFrameAck {
         sequence: u64,
         revision: u64,
@@ -207,6 +227,21 @@ pub enum ResponseResult {
         pixel_mouse: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         file_frame_transport: Option<String>,
+    },
+    PaneCopyMotion {
+        pane_id: String,
+        cursor: PaneTextPoint,
+        content_revision: u64,
+    },
+    PaneCopySearch {
+        pane_id: String,
+        content_revision: u64,
+        matches: Vec<PaneTextRange>,
+        total: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        current: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        current_global: Option<u64>,
     },
     AgentExplain {
         explain: serde_json::Value,
@@ -275,9 +310,16 @@ pub enum ResponseResult {
     PluginPaneClosed {
         pane_id: String,
     },
+    PaneHistory {
+        enabled: bool,
+    },
     ConfigReload {
         status: crate::config::ConfigReloadStatus,
         diagnostics: Vec<String>,
+    },
+    CommandExecuted {
+        pane: Option<PaneInfo>,
+        popup_terminal_id: Option<String>,
     },
     Ok {},
 }

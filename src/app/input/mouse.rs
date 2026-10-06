@@ -92,6 +92,40 @@ enum MobileMouseResult {
     Action(MouseAction),
 }
 
+pub(crate) fn context_menu_item_at_from(
+    menu_rect: Rect,
+    col: u16,
+    row: u16,
+    item_count: u16,
+) -> Option<usize> {
+    let inner_x = menu_rect.x + 1;
+    let inner_y = menu_rect.y + 1;
+    let inner_w = menu_rect.width.saturating_sub(2);
+    let inner_h = menu_rect.height.saturating_sub(2);
+    if col >= inner_x
+        && col < inner_x + inner_w
+        && row >= inner_y
+        && row < inner_y + inner_h.min(item_count)
+    {
+        Some((row - inner_y) as usize)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn context_menu_rect_from(screen: Rect, x: u16, y: u16, items: &[&str]) -> Rect {
+    let max_item_w = items
+        .iter()
+        .map(|item| item.len() as u16)
+        .max()
+        .unwrap_or(0);
+    let menu_w = (max_item_w + 4).max(14).min(screen.width.max(1));
+    let menu_h = (items.len() as u16 + 2).min(screen.height.max(1));
+    let x = x.min(screen.x + screen.width.saturating_sub(menu_w));
+    let y = y.min(screen.y + screen.height.saturating_sub(menu_h));
+    Rect::new(x, y, menu_w, menu_h)
+}
+
 impl AppState {
     pub(super) fn open_pane_context_menu(
         &mut self,
@@ -1372,18 +1406,12 @@ impl AppState {
 
     pub(crate) fn context_menu_rect(&self) -> Option<Rect> {
         let menu = self.context_menu.as_ref()?;
-        let screen = self.screen_rect();
-        let max_item_w = menu
-            .items()
-            .iter()
-            .map(|item| item.len() as u16)
-            .max()
-            .unwrap_or(0);
-        let menu_w = (max_item_w + 4).max(14).min(screen.width.max(1));
-        let menu_h = (menu.items().len() as u16 + 2).min(screen.height.max(1));
-        let x = menu.x.min(screen.x + screen.width.saturating_sub(menu_w));
-        let y = menu.y.min(screen.y + screen.height.saturating_sub(menu_h));
-        Some(Rect::new(x, y, menu_w, menu_h))
+        Some(context_menu_rect_from(
+            self.screen_rect(),
+            menu.x,
+            menu.y,
+            &menu.items(),
+        ))
     }
 
     pub(crate) fn confirm_close_rect(&self) -> Rect {
@@ -1392,24 +1420,12 @@ impl AppState {
 
     fn context_menu_item_at(&self, col: u16, row: u16) -> Option<usize> {
         let menu_rect = self.context_menu_rect()?;
-        let inner_x = menu_rect.x + 1;
-        let inner_y = menu_rect.y + 1;
-        let inner_w = menu_rect.width.saturating_sub(2);
-        let inner_h = menu_rect.height.saturating_sub(2);
         let item_count = self
             .context_menu
             .as_ref()
             .map(|menu| menu.items().len() as u16)
             .unwrap_or(0);
-        if col >= inner_x
-            && col < inner_x + inner_w
-            && row >= inner_y
-            && row < inner_y + inner_h.min(item_count)
-        {
-            Some((row - inner_y) as usize)
-        } else {
-            None
-        }
+        context_menu_item_at_from(menu_rect, col, row, item_count)
     }
 
     fn pane_action_bar_action_at(&self, col: u16, row: u16) -> Option<PaneActionBarAction> {

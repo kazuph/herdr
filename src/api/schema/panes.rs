@@ -13,6 +13,47 @@ pub(crate) const PANE_GRAPHICS_PRIMARY_LAYER_ID: &str = "primary";
 use super::agents::AgentSessionInfo;
 use super::common::{AgentStatus, PaneAgentState, ReadFormat, ReadSource, SplitDirection};
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneFocusParams {
+    pub pane_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewer: Option<PaneFocusViewer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneFocusViewer {
+    pub client_id: u64,
+    pub boot_id: String,
+    pub endpoint_id: String,
+    pub generation: u64,
+}
+
+impl From<super::PaneTarget> for PaneFocusParams {
+    fn from(target: super::PaneTarget) -> Self {
+        Self {
+            pane_id: target.pane_id,
+            viewer: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneAgentStartParams {
+    pub pane_id: String,
+    pub agent: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneCommandExecuteParams {
+    pub pane_id: String,
+    pub command: String,
+    pub action: crate::config::CommandKeybindType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<crate::popup_size::PopupSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<crate::popup_size::PopupSize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneSplitParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -191,6 +232,25 @@ pub struct PaneNeighborParams {
     pub direction: PaneDirection,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneArrangement {
+    Equalize,
+    Cycle,
+    RotateForward,
+    RotateBackward,
+    MoveLeft,
+    MoveRight,
+    MoveUp,
+    MoveDown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneArrangeParams {
+    pub pane_id: String,
+    pub arrangement: PaneArrangement,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
 pub struct PaneEdgesParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -232,6 +292,47 @@ pub struct PaneRenameParams {
     pub pane_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+}
+
+/// Absolute retained-buffer coordinates used by the gen1 client copy contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneTextPoint {
+    pub row: u32,
+    pub col: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneSelectionReadParams {
+    pub pane_id: String,
+    pub anchor: PaneTextPoint,
+    pub cursor: PaneTextPoint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_revision: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneScrollParams {
+    pub pane_id: String,
+    pub offset_from_bottom: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PopupTarget {
+    pub terminal_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PopupSelectionReadParams {
+    pub terminal_id: String,
+    pub anchor: PaneTextPoint,
+    pub cursor: PaneTextPoint,
+    pub content_revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PopupScrollParams {
+    pub terminal_id: String,
+    pub offset_from_bottom: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -670,4 +771,52 @@ pub struct PaneReadResult {
     pub text: String,
     pub revision: u64,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneCopyMotion {
+    LineEnd,
+    FirstNonBlank,
+    NextWordStart,
+    PreviousWordStart,
+    NextWordEnd,
+    NextBigWordStart,
+    PreviousBigWordStart,
+    NextBigWordEnd,
+    PreviousParagraph,
+    NextParagraph,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneCopyMotionParams {
+    pub pane_id: String,
+    pub cursor: PaneTextPoint,
+    pub motion: PaneCopyMotion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_revision: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneCopySearchDirection {
+    Forward,
+    Backward,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneTextRange {
+    pub start: PaneTextPoint,
+    pub end: PaneTextPoint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneCopySearchParams {
+    pub pane_id: String,
+    pub query: String,
+    pub direction: PaneCopySearchDirection,
+    pub cursor: PaneTextPoint,
+    pub content_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<PaneTextRange>,
 }

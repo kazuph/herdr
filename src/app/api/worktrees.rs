@@ -520,6 +520,14 @@ impl App {
             repo_name: source.repo_name.clone(),
             repo_root: source.source_repo_root.display().to_string(),
             source_checkout_path: source.source_checkout_path.display().to_string(),
+            checkout_path_prefix: Some(format!(
+                "{}{}",
+                self.state
+                    .worktree_directory
+                    .join(&source.repo_name)
+                    .display(),
+                std::path::MAIN_SEPARATOR
+            )),
             source_workspace_id: source
                 .workspace_idx
                 .map(|idx| self.public_workspace_id(idx)),
@@ -1096,6 +1104,38 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(worktree_root);
         let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn worktree_source_checkout_prefix_matches_owner_config_and_original_default_path() {
+        let mut app = test_app();
+        app.state.worktree_directory = unique_temp_path("owner-config-worktree-prefix");
+        let source = super::WorktreeSource {
+            workspace_idx: None,
+            source_checkout_path: std::path::PathBuf::from("/owner/repo"),
+            source_repo_root: std::path::PathBuf::from("/owner/repo"),
+            repo_key: "opaque".into(),
+            repo_name: "owner-repo".into(),
+        };
+        let info = app.worktree_source_info(&source);
+        for branch in ["worktree/one", "feature two", "///"] {
+            let appended = format!(
+                "{}{}",
+                info.checkout_path_prefix.as_ref().unwrap(),
+                crate::worktree::branch_to_path_slug(branch)
+            );
+            assert_eq!(
+                std::path::PathBuf::from(appended),
+                crate::worktree::default_checkout_path(
+                    &app.state.worktree_directory,
+                    &source.repo_name,
+                    branch
+                )
+            );
+        }
+        assert_eq!(info.repo_key, source.repo_key);
+        assert_eq!(info.source_workspace_id, None);
+        assert!(app.state.workspaces.is_empty());
     }
 
     #[test]

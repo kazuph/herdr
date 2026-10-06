@@ -622,14 +622,12 @@ impl App {
         });
     }
 
-    /// Reads the background job rows while the sidebar is showing them.
+    /// Refreshes the shared snapshot used by Jobs and space indicators.
     ///
     /// The dispatch store is SQLite on disk, so this stays on a worker thread
     /// and off the render path.
     pub(crate) fn start_jobs_refresh_if_due(&mut self, now: Instant) {
-        if self.state.sidebar_detail_view != crate::app::state::SidebarDetailView::Jobs
-            || self.jobs_refresh_in_flight
-        {
+        if self.jobs_refresh_in_flight {
             return;
         }
         if now < self.last_jobs_refresh + super::JOBS_REFRESH_INTERVAL {
@@ -660,6 +658,11 @@ impl App {
     pub(crate) fn git_refresh_deadline(&self) -> Option<Instant> {
         (!self.git_refresh_in_flight && !self.state.workspaces.is_empty())
             .then_some(self.last_git_remote_status_refresh + GIT_REMOTE_STATUS_REFRESH_INTERVAL)
+    }
+
+    pub(crate) fn jobs_refresh_deadline(&self) -> Option<Instant> {
+        (!self.jobs_refresh_in_flight)
+            .then_some(self.last_jobs_refresh + super::JOBS_REFRESH_INTERVAL)
     }
 
     pub(crate) fn next_loop_deadline(&self, now: Instant, needs_render: bool) -> Option<Instant> {
@@ -705,6 +708,7 @@ impl App {
             include_git_refresh
                 .then(|| self.git_refresh_deadline())
                 .flatten(),
+            self.jobs_refresh_deadline(),
             self.next_auto_update_check,
             self.next_agent_manifest_update_check,
             self.agent_metadata_deadline,
@@ -937,6 +941,70 @@ mod tests {
     }
 
     #[test]
+    fn shared_job_snapshot_uses_the_existing_bounded_sqlite_window() {
+        let dir =
+            std::env::temp_dir().join(format!("herdr-job-window-{}", crate::job::new_job_id()));
+        let store = crate::job::JobStore::open_at(dir.join("jobs.db")).unwrap();
+        for index in 0..=super::super::SIDEBAR_JOBS_LIMIT {
+            store
+                .insert(&crate::job::JobRecord {
+                    id: format!("job-{index}"),
+                    label: String::new(),
+                    command: "true".into(),
+                    cwd: "/repo".into(),
+                    caller_pane: "p1".into(),
+                    caller_agent: "test".into(),
+                    completion: "none".into(),
+                    status: "queued".into(),
+                    runner_pid: None,
+                    exit_code: None,
+                    started_unix_ms: None,
+                    finished_unix_ms: None,
+                    log_path: String::new(),
+                })
+                .unwrap();
+        }
+        store.mark_running("job-0", 1, 0).unwrap();
+        let jobs = store.list_recent(super::super::SIDEBAR_JOBS_LIMIT).unwrap();
+        assert_eq!(jobs.len(), super::super::SIDEBAR_JOBS_LIMIT);
+        for (offset, job) in jobs.iter().enumerate() {
+            assert_eq!(
+                job.id,
+                format!("job-{}", super::super::SIDEBAR_JOBS_LIMIT - offset)
+            );
+        }
+        assert_eq!(
+            store.list().unwrap().len(),
+            super::super::SIDEBAR_JOBS_LIMIT + 1
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn idle_headless_deadline_refreshes_jobs_without_selecting_jobs_and_excludes_in_flight() {
+        let mut app = super::super::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            tokio::sync::mpsc::unbounded_channel().1,
+            crate::api::EventHub::default(),
+        );
+        app.state.sidebar_detail_view = crate::app::state::SidebarDetailView::Agents;
+        let due = app.last_jobs_refresh + super::super::JOBS_REFRESH_INTERVAL;
+        assert_eq!(
+            app.next_headless_loop_deadline_with_git_refresh(due, false, false),
+            Some(due)
+        );
+        app.jobs_refresh_in_flight = true;
+        assert_eq!(app.jobs_refresh_deadline(), None);
+        assert_eq!(
+            app.next_headless_loop_deadline_with_git_refresh(due, false, false),
+            None
+        );
+    }
+
+    #[test]
     fn headless_deadline_can_suppress_git_refresh_timer() {
         let mut app = super::super::App::new(
             &crate::config::Config::default(),
@@ -948,6 +1016,7 @@ mod tests {
         app.state.workspaces.push(Workspace::test_new("test"));
         let now = Instant::now();
         app.last_git_remote_status_refresh = now - super::super::GIT_REMOTE_STATUS_REFRESH_INTERVAL;
+        app.jobs_refresh_in_flight = true;
 
         assert_eq!(
             app.next_headless_loop_deadline_with_git_refresh(now, false, false),
