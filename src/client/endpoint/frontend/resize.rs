@@ -4,6 +4,44 @@ use crate::api::schema as api;
 use crate::raw_input::RawInputEvent;
 use crossterm::event::{KeyCode, KeyEventKind};
 
+pub(super) fn sidebar_mouse(
+    frontend: &mut ClientFrontend,
+    sidebar: ratatui::layout::Rect,
+    mouse: crossterm::event::MouseEvent,
+) -> bool {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    if frontend.sidebar_drag {
+        match mouse.kind {
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let settings = &mut frontend.chrome.settings;
+                settings.sidebar_width = mouse
+                    .column
+                    .saturating_sub(sidebar.x)
+                    .saturating_add(1)
+                    .clamp(settings.sidebar_min_width, settings.sidebar_max_width);
+                settings.sidebar_width_source = crate::app::state::SidebarWidthSource::Manual;
+                frontend.persist_chrome_preferences();
+                frontend.force_redraw = true;
+            }
+            MouseEventKind::Up(MouseButton::Left) => frontend.sidebar_drag = false,
+            _ => {}
+        }
+        return true;
+    }
+    let position = (mouse.column, mouse.row).into();
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && !frontend.chrome.settings.sidebar_collapsed
+        && sidebar.width > 0
+        && sidebar.contains(position)
+        && mouse.column == sidebar.right().saturating_sub(1)
+        && !crate::ui::expanded_sidebar_toggle_rect(sidebar).contains(position)
+    {
+        frontend.sidebar_drag = true;
+        return true;
+    }
+    false
+}
+
 pub(super) struct SplitDrag {
     owner: copy::Owner,
     split: wire::PaneSurfaceSplit,

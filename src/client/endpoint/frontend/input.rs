@@ -106,6 +106,7 @@ fn dispatch_inner(
     match event {
         RawInputEvent::Key(key) => {
             frontend.split_drag = None;
+            frontend.sidebar_drag = false;
             selection::clear(frontend);
             popup_selection::clear(frontend);
             if popup_target(frontend).is_none() && !frontend.prefix && copy::key(frontend, key)? {
@@ -238,6 +239,9 @@ fn mouse_input(
     pixels: Option<crate::input::mouse::HostPixels>,
 ) -> io::Result<()> {
     if notification::mouse(frontend, mouse)? {
+        return Ok(());
+    }
+    if resize::sidebar_mouse(frontend, view.layout.sidebar, mouse) {
         return Ok(());
     }
     if popup::mouse(frontend, view.layout.pane_surface, mouse, pixels)? {

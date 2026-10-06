@@ -4225,3 +4225,142 @@ async fn endpoint_frontend_title_click_zooms_each_position_actual_socket() {
         server.stop();
     }
 }
+
+#[tokio::test]
+async fn endpoint_frontend_sidebar_drag_resizes_actual_socket_and_persists() {
+    for id in [
+        ClientEndpointId::Local,
+        ClientEndpointId::Ssh("zoom-owner".into()),
+    ] {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join(".local")
+            .join(format!(
+                "sidebar-drag-{}-{}",
+                std::process::id(),
+                id.is_local()
+            ));
+        let mut server = OwnedServer::start(root, "SIDEBAR-DRAG");
+        let config = crate::config::Config::default();
+        let settings =
+            ChromeSettings::from_config(&config, crate::app::state::Palette::catppuccin(), None);
+        let mut shell = ClientShellState::new();
+        shell.set_endpoint_catalog(&[crate::machine::MachineProfile {
+            id: "zoom-owner".into(),
+            label: "Zoom owner".into(),
+            target: "unused".into(),
+            session: "owned".into(),
+            enabled: true,
+        }]);
+        let view = ClientChrome::new(ChromeSettings::from_config(
+            &config,
+            crate::app::state::Palette::catppuccin(),
+            None,
+        ))
+        .compute_view(&shell, SIZE.0, SIZE.1);
+        let options = EndpointConnectOptions {
+            surface_size: wire::ClientSurfaceSize {
+                cols: view.layout.pane_surface.width,
+                rows: view.layout.pane_surface.height,
+            },
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_geometry_exact: false,
+            endpoint_keybindings: false,
+            mouse_capture: true,
+            surface_active: false,
+        };
+        let runtime = EndpointRuntime::new(
+            shell,
+            EndpointRegistry::empty(),
+            EndpointSupervisors::new(&[], Instant::now()),
+            options,
+        );
+        let mut frontend = ClientFrontend::from_runtime(runtime, &config, settings, SIZE, options);
+        install(&mut frontend, &id, 1, &server);
+        pump(&mut frontend, |f| {
+            f.runtime
+                .shell
+                .endpoint(&id)
+                .is_some_and(|endpoint| endpoint.cache.live_snapshot(1).is_some())
+        })
+        .await;
+        let update = frontend.runtime.activate(id.clone(), None, Instant::now());
+        frontend.update(update).unwrap();
+
+        pump(&mut frontend, |f| {
+            f.runtime.input_lease_current()
+                && f.runtime
+                    .shell
+                    .pane_surface
+                    .as_ref()
+                    .is_some_and(|s| s.panes.len() == 1)
+        })
+        .await;
+        let preferences_path = server.root.join("client-preferences.json");
+        frontend.chrome_preferences_path = Some(preferences_path.clone());
+        let public_before = api(&server.socket, "session.snapshot", json!({}));
+        let initial_width = frontend.chrome.settings.sidebar_width;
+        for column in [initial_width + 4, 0, SIZE.0 - 1, initial_width - 1] {
+            let sidebar = frontend
+                .chrome
+                .compute_view(&frontend.runtime.shell, SIZE.0, SIZE.1)
+                .layout
+                .sidebar;
+            for (kind, col) in [
+                (
+                    crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                    sidebar.right() - 1,
+                ),
+                (
+                    crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+                    column,
+                ),
+                (
+                    crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+                    column,
+                ),
+            ] {
+                frontend
+                    .dispatch_input(RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                        kind,
+                        column: col,
+                        row: sidebar.bottom() - 1,
+                        modifiers: crossterm::event::KeyModifiers::NONE,
+                    }))
+                    .unwrap();
+            }
+            assert!(!frontend.sidebar_drag);
+            let expected = (column + 1).clamp(
+                frontend.chrome.settings.sidebar_min_width,
+                frontend.chrome.settings.sidebar_max_width,
+            );
+            assert_eq!(frontend.chrome.settings.sidebar_width, expected);
+            assert_eq!(
+                preferences::load(&preferences_path).unwrap().sidebar_width,
+                Some(expected)
+            );
+            frontend.draw().unwrap();
+            pump(&mut frontend, |f| {
+                f.runtime.input_lease_current()
+                    && f.runtime
+                        .shell
+                        .pane_surface
+                        .as_ref()
+                        .is_some_and(|s| s.frame.width == SIZE.0 - expected)
+            })
+            .await;
+        }
+        let public_after = api(&server.socket, "session.snapshot", json!({}));
+        for key in ["focused_workspace_id", "focused_tab_id", "focused_pane_id"] {
+            assert!(public_before["snapshot"][key]
+                .as_str()
+                .is_some_and(|v| !v.is_empty()));
+            assert_eq!(
+                public_before["snapshot"][key],
+                public_after["snapshot"][key]
+            );
+        }
+        server.stop();
+    }
+}
