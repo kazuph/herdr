@@ -243,15 +243,9 @@ pub(crate) fn validate_native_source(path: &Path, expected_len: usize) -> io::Re
     validate_source_under(path, expected_len, native_base())
 }
 
+#[cfg(unix)]
 fn native_base() -> PathBuf {
-    #[cfg(unix)]
-    {
-        PathBuf::from(format!("/var/tmp/herdr-native-sources-{}", effective_uid()))
-    }
-    #[cfg(not(unix))]
-    {
-        PathBuf::from("native-sources-unavailable")
-    }
+    PathBuf::from(format!("/var/tmp/herdr-native-sources-{}", effective_uid()))
 }
 
 fn create_generation(base: &Path) -> io::Result<Generation> {
