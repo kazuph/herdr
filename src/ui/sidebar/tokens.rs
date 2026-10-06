@@ -211,6 +211,29 @@ pub(crate) fn space_rows(
     rows
 }
 
+/// How long a finished job keeps its space-card indicator, in unix ms.
+pub(crate) const JOB_INDICATOR_FINISHED_RETENTION_MS: u128 = 60_000;
+
+/// Space-card dots only mark jobs that still mean something: a queued job, a
+/// `running`/`cancelling` job whose runner process was verified alive off the
+/// render path, or a finished job inside its retention window. `runner_alive`
+/// is `None` when nothing verified the runner (no pid, or a server that does
+/// not report liveness).
+pub(crate) fn job_indicator_visible(
+    status: &str,
+    runner_alive: Option<bool>,
+    finished_unix_ms: Option<u128>,
+    now_unix_ms: u128,
+) -> bool {
+    match status {
+        "running" | "cancelling" => runner_alive == Some(true),
+        "queued" => true,
+        _ => finished_unix_ms.is_some_and(|finished| {
+            now_unix_ms.saturating_sub(finished) < JOB_INDICATOR_FINISHED_RETENTION_MS
+        }),
+    }
+}
+
 pub(crate) fn with_job_indicators(
     mut rows: Vec<Vec<ResolvedToken>>,
     jobs: Vec<(String, Option<i32>)>,

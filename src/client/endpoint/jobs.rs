@@ -49,6 +49,26 @@ impl EndpointJobsCache {
             .as_ref()
             .filter(|jobs| jobs.boot_id == snapshot.boot_id && jobs.revision == snapshot.revision)
     }
+
+    /// True while a finished job is still inside the sidebar indicator
+    /// retention window, so the frontend keeps repainting until it expires.
+    pub(crate) fn has_finished_indicator_pending_expiry(
+        &self,
+        snapshot: &ClientShellSnapshot,
+        now_unix_ms: u128,
+    ) -> bool {
+        self.for_snapshot(snapshot).is_some_and(|projection| {
+            projection.jobs.iter().any(|job| {
+                !matches!(job.status.as_str(), "running" | "cancelling" | "queued")
+                    && crate::ui::sidebar::tokens::job_indicator_visible(
+                        &job.status,
+                        job.runner_alive,
+                        job.finished_unix_ms,
+                        now_unix_ms,
+                    )
+            })
+        })
+    }
 }
 
 #[cfg(test)]
@@ -102,5 +122,56 @@ mod tests {
         assert!(jobs.for_snapshot(&current).is_none());
         assert!(jobs.replace(2, &cache, projection(&current)));
         assert!(!jobs.begin_connection(1));
+    }
+
+    fn endpoint_job(
+        status: &str,
+        finished_unix_ms: Option<u128>,
+    ) -> crate::protocol::endpoint_jobs::EndpointJob {
+        crate::protocol::endpoint_jobs::EndpointJob {
+            id: status.into(),
+            label: status.into(),
+            command: "true".into(),
+            cwd: "/remote".into(),
+            caller_pane: "opaque:caller".into(),
+            caller_agent: "agent".into(),
+            completion: "none".into(),
+            status: status.into(),
+            runner_pid: None,
+            exit_code: None,
+            started_unix_ms: None,
+            finished_unix_ms,
+            log_path: String::new(),
+            workspace_id: None,
+            runner_alive: None,
+        }
+    }
+
+    #[test]
+    fn finished_indicator_pending_expiry_follows_the_retention_window() {
+        let retention = crate::ui::sidebar::tokens::JOB_INDICATOR_FINISHED_RETENTION_MS;
+        let now = 1_000_000u128;
+        let mut cache = EndpointCache::default();
+        let mut jobs = EndpointJobsCache::default();
+        cache.begin_connection(1);
+        jobs.begin_connection(1);
+        let current = snapshot(7);
+        cache.replace_snapshot(1, current.clone());
+        let mut projected = projection(&current);
+        projected.jobs = vec![
+            endpoint_job("exited", Some(now - retention + 1)),
+            endpoint_job("exited", Some(now - retention - 1)),
+            endpoint_job("exited", None),
+            endpoint_job("queued", None),
+            endpoint_job("running", None),
+        ];
+        assert!(jobs.replace(1, &cache, projected));
+        assert!(jobs.has_finished_indicator_pending_expiry(&current, now));
+        let mut jobs = EndpointJobsCache::default();
+        jobs.begin_connection(1);
+        let mut projected = projection(&current);
+        projected.jobs = vec![endpoint_job("exited", Some(now - retention - 1))];
+        assert!(jobs.replace(1, &cache, projected));
+        assert!(!jobs.has_finished_indicator_pending_expiry(&current, now));
     }
 }

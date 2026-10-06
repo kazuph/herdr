@@ -703,6 +703,7 @@ impl App {
             agent_view_override: None,
             sidebar_detail_view: crate::app::state::SidebarDetailView::default(),
             jobs: Vec::new(),
+            dead_runner_pids: std::collections::HashSet::new(),
             jobs_scroll: 0,
             sidebar_agents: config.ui.sidebar.agents.clone(),
             sidebar_spaces: config.ui.sidebar.spaces.clone(),

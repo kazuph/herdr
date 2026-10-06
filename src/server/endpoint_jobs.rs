@@ -12,7 +12,13 @@ pub(crate) fn projection(state: &AppState, boot_id: &str, revision: u64) -> Endp
                 let workspace = state
                     .parse_pane_id(&job.caller_pane)
                     .map(|(index, _)| state.workspaces[index].id.clone());
-                EndpointJob::from_record(job, workspace)
+                let runner_alive = matches!(job.status.as_str(), "running" | "cancelling")
+                    .then(|| {
+                        job.runner_pid
+                            .map(|pid| !state.dead_runner_pids.contains(&pid))
+                    })
+                    .flatten();
+                EndpointJob::from_record(job, workspace, runner_alive)
             })
             .collect(),
     }
