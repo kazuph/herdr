@@ -334,6 +334,24 @@ pub(super) fn observe(frontend: &mut ClientFrontend) -> io::Result<()> {
     Ok(())
 }
 
+pub(super) fn zoom_pane(
+    frontend: &mut ClientFrontend,
+    target: super::super::ResourceKey,
+) -> io::Result<()> {
+    open_pane(frontend, target.clone(), 0, 0);
+    let Some(context) = frontend.context.as_mut() else {
+        return Ok(());
+    };
+    context.pending = action(context, "Zoom");
+    let update = frontend.runtime.activate(
+        target.endpoint,
+        Some(super::super::FocusTarget::Pane(target.id)),
+        Instant::now(),
+    );
+    frontend.update(update)?;
+    Ok(())
+}
+
 pub(super) fn new_workspace_in_section(
     frontend: &mut ClientFrontend,
     endpoint_id: ClientEndpointId,

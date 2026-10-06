@@ -4039,3 +4039,142 @@ async fn endpoint_frontend_custom_actual_keys_shell_pane_popup_preserve_owner() 
     }
     std::fs::write(root.join("evidence.json"),serde_json::to_vec_pretty(&json!({"scope":"actual independent servers / product frontend custom prefix keys Shell Pane Popup only, not normal ANSI or PluginAction", "frames":frames,"env":envs,"public_before":public_before["snapshot"],"public_after":public_after["snapshot"],"owned_pids":pids})).unwrap()).unwrap();
 }
+
+#[tokio::test]
+async fn endpoint_frontend_title_click_zooms_each_position_actual_socket() {
+    for id in [
+        ClientEndpointId::Local,
+        ClientEndpointId::Ssh("zoom-owner".into()),
+    ] {
+        let root = std::env::current_dir()
+            .unwrap()
+            .join(".local")
+            .join(format!(
+                "title-zoom-{}-{}",
+                std::process::id(),
+                id.is_local()
+            ));
+        let mut server = OwnedServer::start(root, "TITLE-ZOOM");
+        for direction in ["right", "down"] {
+            api(
+                &server.socket,
+                "pane.split",
+                json!({"workspace_id":server.workspace,"target_pane_id":server.pane,"direction":direction,"focus":false}),
+            );
+        }
+        let config = crate::config::Config::default();
+        let settings =
+            ChromeSettings::from_config(&config, crate::app::state::Palette::catppuccin(), None);
+        let mut shell = ClientShellState::new();
+        shell.set_endpoint_catalog(&[crate::machine::MachineProfile {
+            id: "zoom-owner".into(),
+            label: "Zoom owner".into(),
+            target: "unused".into(),
+            session: "owned".into(),
+            enabled: true,
+        }]);
+        let view = ClientChrome::new(ChromeSettings::from_config(
+            &config,
+            crate::app::state::Palette::catppuccin(),
+            None,
+        ))
+        .compute_view(&shell, SIZE.0, SIZE.1);
+        let options = EndpointConnectOptions {
+            surface_size: wire::ClientSurfaceSize {
+                cols: view.layout.pane_surface.width,
+                rows: view.layout.pane_surface.height,
+            },
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_geometry_exact: false,
+            endpoint_keybindings: false,
+            mouse_capture: true,
+            surface_active: false,
+        };
+        let runtime = EndpointRuntime::new(
+            shell,
+            EndpointRegistry::empty(),
+            EndpointSupervisors::new(&[], Instant::now()),
+            options,
+        );
+        let mut frontend = ClientFrontend::from_runtime(runtime, &config, settings, SIZE, options);
+        install(&mut frontend, &id, 1, &server);
+        pump(&mut frontend, |f| {
+            f.runtime
+                .shell
+                .endpoint(&id)
+                .is_some_and(|endpoint| endpoint.cache.live_snapshot(1).is_some())
+        })
+        .await;
+        let update = frontend.runtime.activate(id.clone(), None, Instant::now());
+        frontend.update(update).unwrap();
+
+        pump(&mut frontend, |f| {
+            f.runtime.input_lease_current()
+                && f.runtime
+                    .shell
+                    .pane_surface
+                    .as_ref()
+                    .is_some_and(|s| s.panes.len() == 3)
+        })
+        .await;
+        let panes = frontend
+            .runtime
+            .shell
+            .pane_surface
+            .as_ref()
+            .unwrap()
+            .panes
+            .iter()
+            .map(|p| p.pane_id.clone())
+            .collect::<Vec<_>>();
+        for target in panes {
+            for zoomed in [true, false] {
+                let view = frontend.chrome.compute_view(
+                    &frontend.runtime.shell,
+                    frontend.cols,
+                    frontend.rows,
+                );
+                let pane = frontend
+                    .runtime
+                    .shell
+                    .pane_surface
+                    .as_ref()
+                    .unwrap()
+                    .panes
+                    .iter()
+                    .find(|p| p.pane_id == target)
+                    .unwrap();
+                let mouse = crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::Down(
+                        crossterm::event::MouseButton::Left,
+                    ),
+                    column: view.layout.pane_surface.x + pane.rect.x + 2,
+                    row: view.layout.pane_surface.y + pane.rect.y,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                };
+                frontend
+                    .dispatch_input(RawInputEvent::Mouse(mouse))
+                    .unwrap();
+                assert!(
+                    frontend.context.is_some(),
+                    "title action was not queued: {id:?} {target} zoomed={zoomed}"
+                );
+                pump(&mut frontend, |f| {
+                    f.context.is_none()
+                        && f.runtime.input_lease_current()
+                        && f.runtime.shell.pane_surface.as_ref().is_some_and(|s| {
+                            if zoomed {
+                                s.panes.len() == 1 && s.panes[0].pane_id == target
+                            } else {
+                                s.panes.len() == 3
+                            }
+                        })
+                })
+                .await;
+            }
+        }
+        drop(frontend);
+        server.stop();
+    }
+}

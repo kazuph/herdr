@@ -246,6 +246,37 @@ fn mouse_input(
     if right_click::mouse(frontend, view.layout.pane_surface, mouse, pixels)? {
         return Ok(());
     }
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && frontend.split_drag.is_none()
+        && !copy::active(frontend)
+    {
+        let origin = view.layout.pane_surface;
+        let target = frontend
+            .runtime
+            .shell
+            .pane_surface
+            .as_ref()
+            .and_then(|surface| {
+                surface
+                    .panes
+                    .iter()
+                    .find(|pane| {
+                        pane.rect.width > 4
+                            && pane.rect.height > 2
+                            && pane.inner_rect.y > pane.rect.y
+                            && mouse.row == origin.y + pane.rect.y
+                            && mouse.column >= origin.x + pane.rect.x
+                            && mouse.column < origin.x + pane.rect.x + pane.rect.width
+                    })
+                    .map(|pane| ResourceKey {
+                        endpoint: frontend.runtime.shell.active_endpoint_id.clone(),
+                        id: pane.pane_id.clone(),
+                    })
+            });
+        if let Some(target) = target {
+            return context::zoom_pane(frontend, target);
+        }
+    }
     if resize::mouse(frontend, view.layout.pane_surface, mouse)? {
         return Ok(());
     }
