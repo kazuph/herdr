@@ -3934,10 +3934,11 @@ while True:
             let notified = server.app.render_notify.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
+            server.app.render_dirty.store(false, Ordering::Release);
             if std::fs::read(&popup_input).unwrap() == expected {
                 break;
             }
-            notified.await;
+            let _ = tokio::time::timeout(Duration::from_millis(10), notified).await;
         }
     })
     .await
@@ -4606,10 +4607,11 @@ async fn endpoint_clipboard_image_actual_socket_stages_only_published_pane_and_c
             let notified = server.app.render_notify.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
+            server.app.render_dirty.store(false, Ordering::Release);
             if std::fs::read(&input).unwrap() == expected {
                 break;
             }
-            notified.await;
+            let _ = tokio::time::timeout(Duration::from_millis(10), notified).await;
         }
     })
     .await
