@@ -168,6 +168,14 @@ impl EndpointRuntime {
                     // Connection progress is shown with the machine, not as a global notice.
                     tracing::info!(endpoint = ?endpoint_id, ?status, %message, "endpoint connection status");
                     self.shell.set_endpoint_status(&endpoint_id, status);
+                    if status == ClientEndpointStatus::Attention {
+                        // Only a state that needs the user's action is also announced.
+                        let label = self.shell.endpoint(&endpoint_id).map_or_else(
+                            || "machine".to_owned(),
+                            |endpoint| endpoint.label.clone(),
+                        );
+                        update.error = Some(format!("{label}: {message}"));
+                    }
                     self.shell.set_endpoint_diagnostic(&endpoint_id, message);
                     update.repaint = true;
                 }
