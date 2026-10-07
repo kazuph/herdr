@@ -319,7 +319,16 @@ async fn endpoint_runtime_actual_two_servers_routes_input_updates_inactive_and_r
         .iter()
         .all(|effect| effect.endpoint_id == local)));
     assert_eq!(runtime.shell.active_endpoint_id, local);
-    assert_eq!(runtime.shell.pane_surface, selected_before);
+    // The local shell may still print its prompt after the fenced output, so
+    // the displayed surface can advance; it must still be the local server's
+    // projection and never the inactive endpoint's.
+    let before = selected_before.as_ref().unwrap();
+    let after = runtime.shell.pane_surface.as_ref().unwrap();
+    assert_eq!(
+        (&after.boot_id, after.projection_revision),
+        (&before.boot_id, before.projection_revision)
+    );
+    assert!(after.surface_revision >= before.surface_revision);
     assert!(runtime
         .shell
         .aggregate_workspaces()
