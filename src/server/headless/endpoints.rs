@@ -422,11 +422,38 @@ impl HeadlessServer {
             .any(|client| client.active && client.graphics_delivery.has_pending())
     }
 
+    /// A tab shown by a presenting endpoint viewer whose terminal is not known to be unfocused
+    /// has been seen. Endpoint viewers navigate with their own location instead of the server's
+    /// active workspace, so finished agents there would otherwise stay "done, unseen" forever.
+    fn mark_endpoint_viewed_tabs_seen(&mut self) {
+        let viewed = self
+            .endpoint_clients
+            .values()
+            .filter(|client| client.active && client.outer_focus != Some(false))
+            .filter_map(|client| client.location.focused_tab_id())
+            .filter_map(|tab| self.app.parse_tab_id(tab))
+            .collect::<Vec<_>>();
+        for (ws_idx, tab_idx) in viewed {
+            if let Some(tab) = self
+                .app
+                .state
+                .workspaces
+                .get_mut(ws_idx)
+                .and_then(|workspace| workspace.tabs.get_mut(tab_idx))
+            {
+                for pane in tab.panes.values_mut() {
+                    pane.seen = true;
+                }
+            }
+        }
+    }
+
     pub(super) fn stream_endpoint_views(&mut self) {
         let topology = self.endpoint_topology();
         for client in self.endpoint_clients.values_mut() {
             client.location.reconcile(&topology);
         }
+        self.mark_endpoint_viewed_tabs_seen();
         self.endpoint_tab_geometry.retain(|tab, owner| {
             topology.tab_workspace_ids.contains_key(tab)
                 && self.endpoint_clients.get(owner).is_some_and(|client| {

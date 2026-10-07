@@ -4826,3 +4826,60 @@ while True:
         reader.join().unwrap();
     }
 }
+
+#[tokio::test]
+async fn endpoint_viewer_marks_only_its_focused_tab_seen_while_focused() {
+    let mut server = test_headless_server();
+    server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("endpoint-seen")];
+    server.app.state.active = Some(0);
+    server.app.state.ensure_test_terminals();
+    let (viewer, mut stream) = connect(&mut server).await;
+    server.stream_endpoint_views();
+    let tab = server.endpoint_clients[&viewer]
+        .location
+        .focused_tab_id()
+        .expect("viewer focuses the default tab")
+        .to_owned();
+    let (ws_idx, tab_idx) = server.app.parse_tab_id(&tab).unwrap();
+    let set_unseen = |server: &mut HeadlessServer| {
+        for pane in server.app.state.workspaces[ws_idx].tabs[tab_idx]
+            .panes
+            .values_mut()
+        {
+            pane.seen = false;
+        }
+    };
+    let all_seen = |server: &HeadlessServer| {
+        server.app.state.workspaces[ws_idx].tabs[tab_idx]
+            .panes
+            .values()
+            .all(|pane| pane.seen)
+    };
+
+    // A finished agent in the tab the viewer is looking at does not stay "done, unseen",
+    // even though the server's own active workspace is not driven by endpoint viewers.
+    set_unseen(&mut server);
+    server.stream_endpoint_views();
+    assert!(all_seen(&server));
+
+    // A terminal that reported losing focus is not looking at the tab.
+    protocol::write_message(
+        &mut stream,
+        &ClientMessage::ClientShellFocus { focused: false },
+    )
+    .unwrap();
+    dispatch_input(&mut server).await;
+    set_unseen(&mut server);
+    server.stream_endpoint_views();
+    assert!(!all_seen(&server));
+
+    // Regaining focus marks it seen again.
+    protocol::write_message(
+        &mut stream,
+        &ClientMessage::ClientShellFocus { focused: true },
+    )
+    .unwrap();
+    dispatch_input(&mut server).await;
+    server.stream_endpoint_views();
+    assert!(all_seen(&server));
+}

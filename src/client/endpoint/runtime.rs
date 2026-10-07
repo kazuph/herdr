@@ -52,7 +52,13 @@ pub(crate) struct EndpointRuntime {
     deferred_catalog: Option<Vec<crate::machine::MachineProfile>>,
     deferred_local: Option<Option<FocusTarget>>,
     restore_selected: Option<(ClientEndpointId, u64)>,
+    /// After the window regains focus the server redraws its viewer surface and ignores input
+    /// until it has one. Keys stay queued (not dropped) until that surface arrives.
+    refocus_hold: Option<Instant>,
 }
+
+/// Upper bound for holding keys after a focus return, so input can never stall.
+const REFOCUS_HOLD_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl EndpointRuntime {
     pub(crate) fn new(
@@ -84,6 +90,7 @@ impl EndpointRuntime {
             deferred_catalog: None,
             deferred_local: None,
             restore_selected,
+            refocus_hold: None,
         }
     }
 
@@ -622,6 +629,9 @@ impl EndpointRuntime {
                         }
                     } else if active && presenting && !self.presentation_frozen {
                         self.publish_surface(&id, generation);
+                        // Only a full surface proves the server redrew after a focus return;
+                        // an older in-flight patch does not.
+                        self.refocus_hold = None;
                         update.repaint = true;
                     }
                 }
@@ -785,6 +795,12 @@ impl EndpointRuntime {
     }
 
     pub(crate) fn awaiting_surface_pair(&self) -> bool {
+        if self
+            .refocus_hold
+            .is_some_and(|since| since.elapsed() < REFOCUS_HOLD_LIMIT)
+        {
+            return true;
+        }
         if !self.pending_allows_source_input() || self.presentation_frozen {
             return false;
         }
@@ -1037,7 +1053,7 @@ impl EndpointRuntime {
     }
 
     pub(crate) fn host_focus(&mut self, focused: bool) -> RuntimeUpdate {
-        let previous = self.shell.outer_focused;
+        let regained = focused && self.shell.outer_focused != Some(true);
         self.shell.outer_focused = Some(focused);
         let mut update = RuntimeUpdate::default();
         if let Some(pending) = self.pending.as_mut() {
@@ -1054,10 +1070,11 @@ impl EndpointRuntime {
             .connection(self.endpoints.active_id())
             .is_some_and(|connection| connection.surface_active)
         {
-            if focused && previous != Some(true) {
-                // Focus regain invalidates the server's viewer surface. Reuse the
-                // activation fence instead of accepting input against the old cache.
-                return self.activate(self.endpoints.active_id().clone(), None, Instant::now());
+            // Focus regain makes the server resend its viewer surface. That is a plain
+            // presentation update on the same endpoint, not a handoff: keystrokes typed
+            // right after returning to the window must keep reaching the focused pane.
+            if regained {
+                self.refocus_hold = Some(Instant::now());
             }
             self.endpoints
                 .send(&ClientMessage::ClientShellFocus { focused });
@@ -1067,6 +1084,13 @@ impl EndpointRuntime {
 
     pub(crate) fn tick(&mut self, now: Instant) -> RuntimeUpdate {
         let mut update = RuntimeUpdate::default();
+        if self
+            .refocus_hold
+            .is_some_and(|since| now.duration_since(since) >= REFOCUS_HOLD_LIMIT)
+        {
+            self.refocus_hold = None;
+            update.repaint = true;
+        }
         self.endpoints.tick_health(now);
         for failure in self.endpoints.take_failures() {
             self.disconnect(

@@ -20,6 +20,8 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- Opening a space or tab in the client now marks its finished agents as seen. Navigation in the client moves only that viewer, not the server's active workspace, so "done, unseen" dots used to stay forever and also hid the working spinner of other agents in the same space.
+- Returning focus to the terminal window no longer replays the whole presentation handoff. Keys typed right after switching back reach the focused pane immediately, including panes on a saved machine over SSH, instead of being dropped until the machine answered.
 - A saved machine that stops responding no longer freezes or blanks the whole window. Switching to another machine keeps the current screen and keyboard live until that machine is ready; if it does not answer within five seconds the switch is cancelled and the current screen is never interrupted. A selected machine that disconnects shows its status and reason in its pane area instead of a black screen, and reconnects in place.
 - Error notices now appear in the free space of the pane action bar (or the sidebar's last row) and clear after ten seconds, instead of covering the bottom row and turning the COPY / CYCLE LAYOUT / ROTATE PANES / EQUALIZE buttons red. Machine connection progress is shown with the machine rather than as a notice.
 - Resizing the window or dragging the sidebar divider no longer blanks the main area: the previous frame stays visible, clipped, until the frame for the new size arrives, and the resize no longer goes through a full machine handoff. The sidebar width is saved once when the drag ends.
