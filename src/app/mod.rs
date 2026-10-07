@@ -20,8 +20,7 @@ pub(crate) use input::{
     custom_command_for_bindings, global_menu_action_label, global_menu_actions_for,
     global_menu_rect_from, navigation_action_for_bindings, navigator_key_action,
     popup_child_claims_escape, workspace_section_for_menu_item, BindingDispatch, ContextMenuInput,
-    GlobalMenuAction, GlobalMenuInput, NavigateAction, NavigatorKeyAction, SettingsAction,
-    SettingsInput,
+    GlobalMenuAction, NavigateAction, NavigatorKeyAction, SettingsAction, SettingsInput,
 };
 mod msg;
 pub(crate) mod pane_graphics;

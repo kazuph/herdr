@@ -61,6 +61,27 @@ pub(crate) fn render_rename_dialog(
     input: &str,
     palette: &crate::app::state::Palette,
 ) {
+    render_input_dialog(frame, area, title, input, palette, false);
+}
+
+pub(crate) fn render_pending_input_dialog(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    input: &str,
+    palette: &crate::app::state::Palette,
+) {
+    render_input_dialog(frame, area, title, input, palette, true);
+}
+
+fn render_input_dialog(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    input: &str,
+    palette: &crate::app::state::Palette,
+    pending: bool,
+) {
     super::dim_background(frame, area);
 
     let Some(inner) = render_modal_shell(frame, area, 56, 7, palette) else {
@@ -91,26 +112,28 @@ pub(crate) fn render_rename_dialog(
 
     let (save_rect, clear_rect, cancel_rect) = rename_button_rects(inner);
 
-    render_action_button(
-        frame,
-        save_rect,
-        Some("↵"),
-        "save",
-        Style::default()
-            .fg(panel_contrast_fg(palette))
-            .bg(palette.accent)
-            .add_modifier(Modifier::BOLD),
-    );
-    render_action_button(
-        frame,
-        clear_rect,
-        Some("^c"),
-        "clear",
-        Style::default()
-            .fg(palette.text)
-            .bg(palette.surface0)
-            .add_modifier(Modifier::BOLD),
-    );
+    if !pending {
+        render_action_button(
+            frame,
+            save_rect,
+            Some("↵"),
+            "save",
+            Style::default()
+                .fg(panel_contrast_fg(palette))
+                .bg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+        render_action_button(
+            frame,
+            clear_rect,
+            Some("^c"),
+            "clear",
+            Style::default()
+                .fg(palette.text)
+                .bg(palette.surface0)
+                .add_modifier(Modifier::BOLD),
+        );
+    }
     render_action_button(
         frame,
         cancel_rect,

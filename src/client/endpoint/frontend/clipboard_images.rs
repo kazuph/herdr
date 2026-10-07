@@ -7,6 +7,7 @@ pub(super) fn input(frontend: &mut ClientFrontend, bytes: &[u8]) -> bool {
         || frontend.ascii_realm
         || frontend.context.is_some()
         || frontend.menu.is_some()
+        || frontend.machines.is_some()
         || frontend.notes.is_some()
         || frontend.settings.is_some()
         || frontend.help.is_some()

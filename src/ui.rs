@@ -106,7 +106,8 @@ pub(crate) use self::{
         open_existing_worktree_inner_rect, open_existing_worktree_max_visible_rows,
         open_existing_worktree_visible_start, remove_worktree_button_rects,
         remove_worktree_popup_rect, rename_button_rects, render_confirm_close_dialog,
-        render_rename_dialog, render_worktree_create, render_worktree_open, render_worktree_remove,
+        render_pending_input_dialog, render_rename_dialog, render_worktree_create,
+        render_worktree_open, render_worktree_remove,
     },
     settings::{
         render_settings_from, settings_button_rects, settings_popup_height, SettingsRenderFacts,

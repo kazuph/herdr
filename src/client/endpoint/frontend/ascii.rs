@@ -4,6 +4,9 @@ use crate::app::Mode;
 use crate::platform::PrefixInputSource;
 
 fn mode(frontend: &ClientFrontend) -> Mode {
+    if frontend.machines.is_some() {
+        return Mode::RenameTab;
+    }
     if let Some(modal) = &frontend.modal {
         return match modal {
             modal::Modal::Confirm(_) => Mode::ConfirmClose,

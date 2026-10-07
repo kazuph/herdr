@@ -30,6 +30,7 @@ mod history;
 mod host;
 mod input;
 mod jobs;
+mod machines;
 mod menu;
 mod mobile;
 mod modal;
@@ -77,6 +78,7 @@ pub(crate) struct ClientFrontend {
     worktrees: Option<worktrees::Worktrees>,
     help: Option<help::Help>,
     menu: Option<menu::Menu>,
+    machines: Option<machines::Machines>,
     context: Option<context::Context>,
     notes: Option<notes::Notes>,
     settings: Option<settings::Settings>,
@@ -190,6 +192,7 @@ impl ClientFrontend {
             worktrees: None,
             help: None,
             menu: None,
+            machines: None,
             context: None,
             notes: None,
             settings: None,
@@ -359,6 +362,7 @@ impl ClientFrontend {
         custom::observe(self);
         notification::observe(self);
         menu::observe(self);
+        let machines_changed = machines::observe(self);
         context::observe(self)?;
         notes::observe(self);
         settings::observe(self);
@@ -372,7 +376,7 @@ impl ClientFrontend {
         right_click::observe(self)?;
         worktrees::observe(self);
         ascii::sync(self);
-        Ok(repaint)
+        Ok(repaint || machines_changed)
     }
 
     fn draw(&mut self) -> io::Result<()> {
@@ -410,6 +414,7 @@ impl ClientFrontend {
                 notification::render(self, frame);
                 menu::render(self, frame, view.menu_launcher);
                 context::render(self, frame);
+                machines::render(self, frame);
                 notes::render(self, frame);
                 help::render(self, frame);
                 settings::render(self, frame);
@@ -442,6 +447,7 @@ impl ClientFrontend {
                 && self.mobile.is_none()
                 && self.navigator.is_none()
                 && self.menu.is_none()
+                && self.machines.is_none()
                 && self.context.is_none()
                 && self.notes.is_none()
                 && self.help.is_none()

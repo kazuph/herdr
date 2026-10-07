@@ -87,7 +87,8 @@ fn dispatch_inner(
     event: RawInputEvent,
     pixels: Option<crate::input::mouse::HostPixels>,
 ) -> io::Result<()> {
-    if context::input(frontend, &event)?
+    if machines::input(frontend, &event)?
+        || context::input(frontend, &event)?
         || menu::input(frontend, &event)?
         || notes::input(frontend, &event)
         || settings::input(frontend, &event)?
@@ -344,6 +345,10 @@ fn mouse_input(
     if let Some(target) = frontend.chrome.hit(view, mouse.column, mouse.row) {
         if mouse.kind == MouseEventKind::Down(MouseButton::Right) {
             match target {
+                ChromeTarget::Machine(endpoint) => {
+                    machines::context(frontend, endpoint, mouse.column, mouse.row);
+                    return Ok(());
+                }
                 ChromeTarget::Tab(key) => {
                     context::open_tab(frontend, key.clone(), mouse.column, mouse.row);
                     return Ok(());

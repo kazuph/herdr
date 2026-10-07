@@ -49,8 +49,7 @@ pub(crate) use terminal::popup_child_claims_escape;
 
 pub(crate) use modal::{
     global_menu_action_label, global_menu_actions_for, navigator_key_action,
-    workspace_section_for_menu_item, ContextMenuInput, GlobalMenuAction, GlobalMenuInput,
-    NavigatorKeyAction,
+    workspace_section_for_menu_item, ContextMenuInput, GlobalMenuAction, NavigatorKeyAction,
 };
 pub(crate) use mouse::{context_menu_item_at_from, context_menu_rect_from};
 pub(crate) use settings::{SettingsAction, SettingsInput};

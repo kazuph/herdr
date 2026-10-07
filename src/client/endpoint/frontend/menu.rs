@@ -2,11 +2,9 @@
 use super::*;
 use crate::api::schema as api;
 use crate::app::state::{DangerousAction, MenuListState, SidebarWidthSource};
-use crate::app::{
-    global_menu_action_label, global_menu_actions_for, GlobalMenuAction, GlobalMenuInput,
-};
+use crate::app::{global_menu_action_label, global_menu_actions_for, GlobalMenuAction};
 use crate::raw_input::RawInputEvent;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 
 struct Owner {
@@ -57,13 +55,23 @@ enum Page {
 }
 
 pub(super) struct Menu {
-    owner: Owner,
+    owner: Option<Owner>,
     state: MenuListState,
     actions: Vec<GlobalMenuAction>,
     page: Page,
 }
 
 impl Menu {
+    fn labels(&self) -> Vec<&'static str> {
+        let mut labels = self
+            .actions
+            .iter()
+            .copied()
+            .map(global_menu_action_label)
+            .collect::<Vec<_>>();
+        labels.extend(["--", "add machine...", "remove machine..."]);
+        labels
+    }
     pub(super) fn mode(&self) -> crate::app::Mode {
         match self.page {
             Page::Danger(_, _) => crate::app::Mode::ConfirmDanger,
@@ -73,9 +81,7 @@ impl Menu {
 }
 
 pub(super) fn open(frontend: &mut ClientFrontend) {
-    let Some(owner) = Owner::capture(frontend) else {
-        return;
-    };
+    let owner = Owner::capture(frontend);
     selection::clear(frontend);
     frontend.prefix = false;
     frontend.menu = Some(Menu {
@@ -88,12 +94,7 @@ pub(super) fn open(frontend: &mut ClientFrontend) {
 }
 
 fn rect(frontend: &ClientFrontend, launcher: Rect, menu: &Menu) -> Rect {
-    let labels = menu
-        .actions
-        .iter()
-        .copied()
-        .map(global_menu_action_label)
-        .collect::<Vec<_>>();
+    let labels = menu.labels();
     crate::app::global_menu_rect_from(
         Rect::new(0, 0, frontend.cols, frontend.rows),
         launcher,
@@ -115,12 +116,7 @@ pub(super) fn render(frontend: &ClientFrontend, frame: &mut ratatui::Frame, laun
             warnings,
         ),
         _ => {
-            let labels = menu
-                .actions
-                .iter()
-                .copied()
-                .map(global_menu_action_label)
-                .collect::<Vec<_>>();
+            let labels = menu.labels();
             crate::ui::render_global_menu_from(
                 frame,
                 rect(frontend, launcher, menu),
@@ -134,11 +130,11 @@ pub(super) fn render(frontend: &ClientFrontend, frame: &mut ratatui::Frame, laun
 }
 
 pub(super) fn observe(frontend: &mut ClientFrontend) {
-    if frontend
-        .menu
-        .as_ref()
-        .is_some_and(|menu| !menu.owner.current(frontend))
-    {
+    if frontend.menu.as_ref().is_some_and(|menu| {
+        menu.owner
+            .as_ref()
+            .is_some_and(|owner| !owner.current(frontend))
+    }) {
         frontend.menu = None;
     }
 }
@@ -153,11 +149,17 @@ pub(super) fn completed(
     let Page::WarningQuery(request) = &menu.page else {
         return;
     };
+    let Some(owner) = &menu.owner else {
+        return;
+    };
     if *request != result.request_id
-        || menu.owner.endpoint != result.endpoint_id
-        || menu.owner.generation != result.generation
-        || menu.owner.boot != result.boot_id
-        || !menu.owner.current(frontend)
+        || owner.endpoint != result.endpoint_id
+        || owner.generation != result.generation
+        || owner.boot != result.boot_id
+        || menu
+            .owner
+            .as_ref()
+            .is_some_and(|owner| !owner.current(frontend))
     {
         return;
     }
@@ -288,7 +290,11 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
     let Some(mut menu) = frontend.menu.take() else {
         return Ok(false);
     };
-    if !menu.owner.current(frontend) {
+    if menu
+        .owner
+        .as_ref()
+        .is_some_and(|owner| !owner.current(frontend))
+    {
         return Ok(true);
     }
     let view = frontend
@@ -300,13 +306,28 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
     match &menu.page {
         Page::List => match event {
             RawInputEvent::Key(key) if key.kind != KeyEventKind::Release => {
-                let mut input = GlobalMenuInput {
-                    state: &mut menu.state,
-                    actions: &menu.actions,
-                    closed: false,
-                };
-                selected = input.key(KeyEvent::new_with_kind(key.code, key.modifiers, key.kind));
-                close = input.closed;
+                let labels = menu.labels();
+                match key.code {
+                    KeyCode::Esc => close = true,
+                    KeyCode::Enter => selected = Some(menu.state.highlighted),
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+                        let forward = matches!(key.code, KeyCode::Down | KeyCode::Char('j'));
+                        for _ in 0..labels.len() {
+                            menu.state.highlighted = if forward {
+                                (menu.state.highlighted + 1) % labels.len()
+                            } else {
+                                menu.state
+                                    .highlighted
+                                    .checked_sub(1)
+                                    .unwrap_or(labels.len() - 1)
+                            };
+                            if labels[menu.state.highlighted] != "--" {
+                                break;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
             RawInputEvent::Mouse(mouse) => {
                 let popup = rect(frontend, view.menu_launcher, &menu);
@@ -315,15 +336,10 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                     .inner(popup);
                 if inner.contains((mouse.column, mouse.row).into()) {
                     let index = usize::from(mouse.row - inner.y);
-                    if let Some(action) = menu
-                        .actions
-                        .get(index)
-                        .copied()
-                        .filter(|action| *action != GlobalMenuAction::Separator)
-                    {
+                    if menu.labels().get(index).is_some_and(|label| *label != "--") {
                         menu.state.highlighted = index;
                         if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                            selected = Some(action);
+                            selected = Some(index);
                         }
                     }
                 } else if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
@@ -363,9 +379,15 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
         frontend.force_redraw = true;
         return Ok(true);
     }
-    if let Some(action) = selected {
-        if frontend.runtime.input_lease_current() {
-            apply(frontend, menu, action)?;
+    if let Some(index) = selected {
+        if index == menu.actions.len() + 1 {
+            machines::add(frontend);
+        } else if index == menu.actions.len() + 2 {
+            machines::remove(frontend);
+        } else if menu.owner.is_some() && frontend.runtime.input_lease_current() {
+            if let Some(action) = menu.actions.get(index).copied() {
+                apply(frontend, menu, action)?;
+            }
         } else {
             frontend.menu = Some(menu);
         }

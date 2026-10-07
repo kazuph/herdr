@@ -55,6 +55,7 @@ pub(super) fn encode(
         navigator::graphics_rect(frontend),
         menu::graphics_rect(frontend, view.menu_launcher),
         context::graphics_rect(frontend),
+        machines::graphics_rect(frontend),
         notes::graphics_rect(frontend),
         help::graphics_rect(frontend),
         settings::graphics_rect(frontend),

@@ -265,7 +265,7 @@ pub(crate) fn probe_ssh_reachable(target: &str) -> std::io::Result<()> {
 }
 
 fn probe_ssh_reachable_with_timeout(target: &str, timeout_secs: u64) -> std::io::Result<()> {
-    let status = Command::new("ssh")
+    let output = Command::new("ssh")
         .arg("-o")
         .arg("BatchMode=yes")
         .arg("-o")
@@ -273,12 +273,14 @@ fn probe_ssh_reachable_with_timeout(target: &str, timeout_secs: u64) -> std::io:
         .arg("--")
         .arg(target)
         .arg("true")
-        .status()?;
-    if status.success() {
+        .output()?;
+    if output.status.success() {
         Ok(())
     } else {
         Err(std::io::Error::other(format!(
-            "ssh probe to {target:?} failed with status {status}"
+            "ssh probe to {target:?} failed with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
         )))
     }
 }
