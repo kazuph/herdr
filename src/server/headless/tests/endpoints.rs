@@ -514,11 +514,12 @@ async fn endpoint_runtime_actual_two_servers_routes_input_updates_inactive_and_r
         )
         .error
         .is_none());
+    // A resize is not a handoff; wait until the frame for the new geometry is presented.
     pump_endpoint_runtime(
         &mut runtime,
         &mut local_server,
         &mut other_server,
-        |runtime| runtime.endpoints.active_surface_available(),
+        |runtime| runtime.input_lease_current(),
     )
     .await;
     let view = chrome.compute_view(&runtime.shell, 80, 40);
@@ -1027,11 +1028,18 @@ async fn endpoint_activation_two_real_servers_fences_input_and_preserves_local_n
         Instant::now(),
     )
     .unwrap();
-    assert!(!registry.active_surface_available());
+    // Target-first: the source keeps its surface and input until the target commits.
+    assert!(activation.retains_source());
+    assert!(registry.connection(&local).unwrap().surface_active);
     let mut stages = Vec::new();
     tokio::time::timeout(TIMEOUT, async {
         loop {
-            assert!(!registry.active_surface_available(), "input remains frozen through the presentation fence");
+            if stages.is_empty() {
+                assert_eq!(registry.active_id(), &local, "the source owns input until the target commits");
+                assert!(registry.connection(&local).unwrap().surface_active, "the source keeps its surface while the target prepares");
+            } else {
+                assert!(!registry.active_surface_available(), "input remains frozen through the presentation fence");
+            }
             let progress = tokio::select! {
                 event = local_server.endpoint_event_rx.recv() => {
                     local_server.handle_endpoint_event(event.unwrap());
@@ -1041,8 +1049,8 @@ async fn endpoint_activation_two_real_servers_fences_input_and_preserves_local_n
                 event = other_server.endpoint_event_rx.recv() => {
                     other_server.handle_endpoint_event(event.unwrap());
                     other_server.stream_endpoint_views();
-                    if other_server.endpoint_clients[&other_view].surface.is_some() {
-                        assert!(local_server.endpoint_clients[&local_view].surface.is_none(), "source-off ACK precedes target surface publication");
+                    if other_server.endpoint_clients[&other_view].surface.is_some() && stages.is_empty() {
+                        assert!(local_server.endpoint_clients[&local_view].surface.is_some(), "the source is not released before the target commits");
                     }
                     None
                 }

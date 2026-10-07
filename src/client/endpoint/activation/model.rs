@@ -124,6 +124,9 @@ pub(crate) enum ActivationRollback {
     /// Neither endpoint can be made safe to present. Keep pane input frozen while presenting
     /// client chrome and this error.
     Unavailable(String),
+    /// The target failed before the switch committed. The source never left the screen, so the
+    /// transaction ends at once and the source keeps its surface and input.
+    Retained(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,6 +168,9 @@ pub(crate) enum ActivationBeginError {
 pub(crate) struct PendingEndpointActivation {
     pub(super) source: EndpointLease,
     pub(super) source_available: bool,
+    /// Target-first switch to another machine: the source keeps presenting and receiving input
+    /// until the target is proven ready, so a slow or unreachable machine never blanks it.
+    pub(super) source_retained: bool,
     pub(super) target: EndpointLease,
     pub(super) focus: Option<crate::client::endpoint::FocusTarget>,
     pub(super) host_focused: bool,

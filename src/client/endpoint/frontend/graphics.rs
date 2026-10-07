@@ -25,17 +25,20 @@ pub(super) fn encode(
     let mut occlusion = Occlusion::default();
     let mut popup_origin = None;
     if let Some(surface) = view.surface.as_ref().filter(|surface| {
-        frontend
-            .runtime
-            .shell
-            .endpoint(endpoint)
-            .and_then(|entry| entry.generation)
-            .is_some_and(|generation| {
-                frontend
-                    .runtime
-                    .shell
-                    .endpoint_surface_matches(endpoint, generation, surface)
-            })
+        // A frame kept on screen across a resize has no valid image placement geometry.
+        surface.frame.width == view.layout.pane_surface.width
+            && surface.frame.height == view.layout.pane_surface.height
+            && frontend
+                .runtime
+                .shell
+                .endpoint(endpoint)
+                .and_then(|entry| entry.generation)
+                .is_some_and(|generation| {
+                    frontend
+                        .runtime
+                        .shell
+                        .endpoint_surface_matches(endpoint, generation, surface)
+                })
     }) {
         next.set_scene(surface.graphics.clone());
         visibility = Visibility::Main;
@@ -84,13 +87,10 @@ pub(super) fn encode(
             1,
         ));
     }
-    if frontend.notice.is_some() && frontend.rows > 0 {
-        occlusion.cover(ratatui::layout::Rect::new(
-            0,
-            frontend.rows - 1,
-            frontend.cols,
-            1,
-        ));
+    if frontend.notice.is_some() {
+        if let Some(area) = super::notice::area(view) {
+            occlusion.cover(area);
+        }
     }
     let bytes = next.encode(
         visibility,

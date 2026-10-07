@@ -2454,7 +2454,11 @@ async fn endpoint_frontend_independent_processes_same_ids_input_and_reconnect() 
     for event in crate::raw_input::parse_raw_input_bytes_sync(b"\r") {
         frontend.dispatch_input(event).unwrap();
     }
-    pump(&mut frontend, |f| f.runtime.input_lease_current()).await;
+    // The source keeps the input lease until the target commits; wait for the switch itself.
+    pump(&mut frontend, |f| {
+        f.runtime.input_lease_current() && f.runtime.shell.active_endpoint_id == other_id
+    })
+    .await;
     assert!(frontend.navigator.is_none());
     assert_eq!(frontend.runtime.shell.active_endpoint_id, other_id);
     frontend
