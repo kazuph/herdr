@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 422,
+    "active_contract_count": 427,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -7125,7 +7125,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1553"
+        "SPEC.md:1570"
       ],
       "test_status": [
         "unverified"
@@ -7150,7 +7150,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1554"
+        "SPEC.md:1571"
       ],
       "test_status": [
         "unverified"
@@ -7176,7 +7176,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1555"
+        "SPEC.md:1572"
       ],
       "test_status": [
         "unverified"
@@ -7202,7 +7202,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1556"
+        "SPEC.md:1573"
       ],
       "test_status": [
         "unverified"
@@ -7227,7 +7227,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1557"
+        "SPEC.md:1574"
       ],
       "test_status": [
         "unverified"
@@ -7253,7 +7253,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1558"
+        "SPEC.md:1575"
       ],
       "test_status": [
         "unverified"
@@ -7281,7 +7281,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1559"
+        "SPEC.md:1576"
       ],
       "test_status": [
         "unverified"
@@ -7307,7 +7307,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1576"
+        "SPEC.md:1593"
       ],
       "test_status": [
         "unverified"
@@ -7334,7 +7334,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1577"
+        "SPEC.md:1594"
       ],
       "test_status": [
         "unverified"
@@ -7360,7 +7360,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1578"
+        "SPEC.md:1595"
       ],
       "test_status": [
         "unverified"
@@ -7387,7 +7387,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1579"
+        "SPEC.md:1596"
       ],
       "test_status": [
         "unverified"
@@ -7413,7 +7413,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1580"
+        "SPEC.md:1597"
       ],
       "test_status": [
         "unverified"
@@ -7440,7 +7440,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1581"
+        "SPEC.md:1598"
       ],
       "test_status": [
         "unverified"
@@ -7465,7 +7465,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1582"
+        "SPEC.md:1599"
       ],
       "test_status": [
         "unverified"
@@ -7489,7 +7489,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1602"
+        "SPEC.md:1619"
       ],
       "test_status": [
         "unverified"
@@ -7513,7 +7513,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1603"
+        "SPEC.md:1620"
       ],
       "test_status": [
         "unverified"
@@ -7537,7 +7537,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1604"
+        "SPEC.md:1621"
       ],
       "test_status": [
         "unverified"
@@ -7561,7 +7561,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1605"
+        "SPEC.md:1622"
       ],
       "test_status": [
         "unverified"
@@ -7586,7 +7586,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1606",
+        "SPEC.md:1623",
         "tests/cli_wrapper.rs:3547"
       ],
       "test_status": [
@@ -7611,7 +7611,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1618"
+        "SPEC.md:1636"
       ],
       "test_status": [
         "unverified"
@@ -7635,7 +7635,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1619"
+        "SPEC.md:1637"
       ],
       "test_status": [
         "unverified"
@@ -7659,7 +7659,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1620"
+        "SPEC.md:1638"
       ],
       "test_status": [
         "unverified"
@@ -7683,7 +7683,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1631"
+        "SPEC.md:1649"
       ],
       "test_status": [
         "unverified"
@@ -7707,7 +7707,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1632"
+        "SPEC.md:1650"
       ],
       "test_status": [
         "unverified"
@@ -7731,7 +7731,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1633"
+        "SPEC.md:1651"
       ],
       "test_status": [
         "unverified"
@@ -7755,7 +7755,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1642"
+        "SPEC.md:1660"
       ],
       "test_status": [
         "unverified"
@@ -7779,7 +7779,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1643"
+        "SPEC.md:1661"
       ],
       "test_status": [
         "unverified"
@@ -7803,7 +7803,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1652"
+        "SPEC.md:1670"
       ],
       "test_status": [
         "unverified"
@@ -7827,7 +7827,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1653"
+        "SPEC.md:1671"
       ],
       "test_status": [
         "unverified"
@@ -7851,7 +7851,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1662"
+        "SPEC.md:1680"
       ],
       "test_status": [
         "unverified"
@@ -7875,7 +7875,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1663"
+        "SPEC.md:1681"
       ],
       "test_status": [
         "unverified"
@@ -7899,7 +7899,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1664"
+        "SPEC.md:1682"
       ],
       "test_status": [
         "unverified"
@@ -7923,7 +7923,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1673"
+        "SPEC.md:1691"
       ],
       "test_status": [
         "unverified"
@@ -7947,7 +7947,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1674"
+        "SPEC.md:1692"
       ],
       "test_status": [
         "unverified"
@@ -7971,7 +7971,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1675"
+        "SPEC.md:1693"
       ],
       "test_status": [
         "unverified"
@@ -7995,7 +7995,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1684"
+        "SPEC.md:1702"
       ],
       "test_status": [
         "unverified"
@@ -8019,7 +8019,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1685"
+        "SPEC.md:1703"
       ],
       "test_status": [
         "unverified"
@@ -8043,7 +8043,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1686"
+        "SPEC.md:1704"
       ],
       "test_status": [
         "unverified"
@@ -8067,7 +8067,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1687"
+        "SPEC.md:1705"
       ],
       "test_status": [
         "unverified"
@@ -8091,7 +8091,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1688"
+        "SPEC.md:1706"
       ],
       "test_status": [
         "unverified"
@@ -8115,7 +8115,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1698"
+        "SPEC.md:1716"
       ],
       "test_status": [
         "unverified"
@@ -8139,7 +8139,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1699"
+        "SPEC.md:1717"
       ],
       "test_status": [
         "unverified"
@@ -8163,7 +8163,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1700"
+        "SPEC.md:1718"
       ],
       "test_status": [
         "unverified"
@@ -8187,7 +8187,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1701"
+        "SPEC.md:1719"
       ],
       "test_status": [
         "unverified"
@@ -8211,7 +8211,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1702"
+        "SPEC.md:1720"
       ],
       "test_status": [
         "unverified"
@@ -8235,7 +8235,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1711"
+        "SPEC.md:1729"
       ],
       "test_status": [
         "unverified"
@@ -8259,7 +8259,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1712"
+        "SPEC.md:1730"
       ],
       "test_status": [
         "unverified"
@@ -8283,7 +8283,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1713"
+        "SPEC.md:1731"
       ],
       "test_status": [
         "unverified"
@@ -8307,7 +8307,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1714"
+        "SPEC.md:1732"
       ],
       "test_status": [
         "unverified"
@@ -8331,7 +8331,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1724"
+        "SPEC.md:1742"
       ],
       "test_status": [
         "unverified"
@@ -8355,7 +8355,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1725"
+        "SPEC.md:1743"
       ],
       "test_status": [
         "unverified"
@@ -8379,7 +8379,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1726"
+        "SPEC.md:1744"
       ],
       "test_status": [
         "unverified"
@@ -8403,7 +8403,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1809"
+        "SPEC.md:1827"
       ],
       "test_status": [
         "unverified"
@@ -8427,7 +8427,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1810"
+        "SPEC.md:1828"
       ],
       "test_status": [
         "unverified"
@@ -8451,7 +8451,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1811"
+        "SPEC.md:1829"
       ],
       "test_status": [
         "unverified"
@@ -8476,7 +8476,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1860"
+        "SPEC.md:1878"
       ],
       "test_status": [
         "unverified"
@@ -8501,7 +8501,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1861"
+        "SPEC.md:1879"
       ],
       "test_status": [
         "unverified"
@@ -8526,7 +8526,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1862"
+        "SPEC.md:1880"
       ],
       "test_status": [
         "unverified"
@@ -8551,7 +8551,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1863"
+        "SPEC.md:1881"
       ],
       "test_status": [
         "unverified"
@@ -8576,7 +8576,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1864"
+        "SPEC.md:1882"
       ],
       "test_status": [
         "unverified"
@@ -8601,7 +8601,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1865"
+        "SPEC.md:1883"
       ],
       "test_status": [
         "unverified"
@@ -8626,7 +8626,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1866"
+        "SPEC.md:1884"
       ],
       "test_status": [
         "unverified"
@@ -8651,7 +8651,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1867"
+        "SPEC.md:1885"
       ],
       "test_status": [
         "unverified"
@@ -8676,7 +8676,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1868"
+        "SPEC.md:1886"
       ],
       "test_status": [
         "unverified"
@@ -8701,7 +8701,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1869"
+        "SPEC.md:1887"
       ],
       "test_status": [
         "unverified"
@@ -8725,7 +8725,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1940",
+        "SPEC.md:1958",
         "src/detect/mod.rs:159"
       ],
       "test_status": [
@@ -8751,7 +8751,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1941",
+        "SPEC.md:1959",
         "src/detect/manifests/muse.toml:35"
       ],
       "test_status": [
@@ -8776,7 +8776,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1942",
+        "SPEC.md:1960",
         "src/detect/manifests/qwen.toml:39"
       ],
       "test_status": [
@@ -8806,7 +8806,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1943",
+        "SPEC.md:1961",
         "src/agent_resume.rs:190"
       ],
       "test_status": [
@@ -8831,7 +8831,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1944",
+        "SPEC.md:1962",
         "src/cli/integration.rs:3"
       ],
       "test_status": [
@@ -8856,7 +8856,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1945",
+        "SPEC.md:1963",
         "src/agent_resume.rs:196"
       ],
       "test_status": [
@@ -8882,7 +8882,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1973",
+        "SPEC.md:1991",
         "src/cli/machine.rs:162",
         "src/machine.rs:251"
       ],
@@ -8908,7 +8908,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1974",
+        "SPEC.md:1992",
         "src/machine.rs:88"
       ],
       "test_status": [
@@ -8933,7 +8933,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1975",
+        "SPEC.md:1993",
         "src/cli/machine.rs:40"
       ],
       "test_status": [
@@ -8960,7 +8960,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1976",
+        "SPEC.md:1994",
         "src/cli/machine.rs:212",
         "src/cli/machine.rs:273",
         "src/machine.rs:155"
@@ -8987,7 +8987,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1977",
+        "SPEC.md:1995",
         "src/machine.rs:219"
       ],
       "test_status": [
@@ -9015,7 +9015,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1995",
+        "SPEC.md:2013",
         "src/machine.rs:367"
       ],
       "test_status": [
@@ -9041,7 +9041,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1996",
+        "SPEC.md:2014",
         "src/main.rs:544",
         "src/machine.rs:419"
       ],
@@ -9068,7 +9068,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1997",
+        "SPEC.md:2015",
         "src/machine.rs:155"
       ],
       "test_status": [
@@ -9094,7 +9094,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1998",
+        "SPEC.md:2016",
         "src/main.rs:544",
         "src/machine.rs:295"
       ],
@@ -9493,7 +9493,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1737",
+        "SPEC.md:1755",
         "src/cli/comms.rs:1230"
       ],
       "test_status": [
@@ -9521,7 +9521,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1738",
+        "SPEC.md:1756",
         "src/cli/comms.rs:1230"
       ],
       "test_status": [
@@ -9549,7 +9549,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1739",
+        "SPEC.md:1757",
         "src/cli/comms.rs:1230"
       ],
       "test_status": [
@@ -9577,7 +9577,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1740",
+        "SPEC.md:1758",
         "src/cli/comms.rs:1230"
       ],
       "test_status": [
@@ -9607,7 +9607,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1755",
+        "SPEC.md:1773",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ],
@@ -9638,7 +9638,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1756",
+        "SPEC.md:1774",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ],
@@ -9669,7 +9669,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1757",
+        "SPEC.md:1775",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ],
@@ -9700,7 +9700,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1758",
+        "SPEC.md:1776",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ],
@@ -9731,7 +9731,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1772",
+        "SPEC.md:1790",
         "src/app/api/agents.rs:957"
       ],
       "test_status": [
@@ -9761,7 +9761,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1773",
+        "SPEC.md:1791",
         "src/app/api/agents.rs:957"
       ],
       "test_status": [
@@ -9791,7 +9791,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1774",
+        "SPEC.md:1792",
         "src/app/api/agents.rs:957"
       ],
       "test_status": [
@@ -9819,7 +9819,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1787",
+        "SPEC.md:1805",
         "src/detect/manifest.rs:147"
       ],
       "test_status": [
@@ -9847,7 +9847,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1788",
+        "SPEC.md:1806",
         "src/detect/manifest.rs:147"
       ],
       "test_status": [
@@ -9875,7 +9875,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1789",
+        "SPEC.md:1807",
         "src/detect/manifest.rs:147"
       ],
       "test_status": [
@@ -9899,7 +9899,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1799",
+        "SPEC.md:1817",
         "src/pane/terminal.rs:24"
       ],
       "test_status": [
@@ -9928,7 +9928,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1907",
+        "SPEC.md:1925",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -9958,7 +9958,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1908",
+        "SPEC.md:1926",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -9988,7 +9988,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1909",
+        "SPEC.md:1927",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10018,7 +10018,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1910",
+        "SPEC.md:1928",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10048,7 +10048,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1911",
+        "SPEC.md:1929",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10078,7 +10078,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1912",
+        "SPEC.md:1930",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10108,7 +10108,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1913",
+        "SPEC.md:1931",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10135,7 +10135,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2014",
+        "SPEC.md:2032",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ],
       "test_status": [
@@ -10161,7 +10161,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2015",
+        "SPEC.md:2033",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ],
       "test_status": [
@@ -10191,7 +10191,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2030",
+        "SPEC.md:2048",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10222,7 +10222,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2031",
+        "SPEC.md:2049",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10253,7 +10253,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2032",
+        "SPEC.md:2050",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10284,7 +10284,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2033",
+        "SPEC.md:2051",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10311,7 +10311,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2046",
+        "SPEC.md:2064",
         "src/client/endpoint/frontend/machines.rs:129"
       ],
       "test_status": [
@@ -10337,7 +10337,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2047",
+        "SPEC.md:2065",
         "src/client/endpoint/frontend/machines.rs:129"
       ],
       "test_status": [
@@ -10369,7 +10369,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2063",
+        "SPEC.md:2081",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10402,7 +10402,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2064",
+        "SPEC.md:2082",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10435,7 +10435,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2065",
+        "SPEC.md:2083",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10468,7 +10468,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2066",
+        "SPEC.md:2084",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10501,7 +10501,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2067",
+        "SPEC.md:2085",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10513,6 +10513,130 @@
       ],
       "unrepresented_dimensions": [
         "Actual-socket tests cover single-process paths; two real terminals typing into a remote Codex pane were verified manually on 2026-10-07"
+      ]
+    },
+    {
+      "contract_id": "G8-00c03088a7",
+      "dimensions": [
+        "ci spec gate",
+        "opt-out with reason"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:scripts/spec_update_gate.py",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1549",
+        "scripts/spec_update_gate.py:42",
+        ".github/workflows/ci.yml:43"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Gate logic is covered by scripts/test_spec_update_gate.py (Python unittest); enforcement on real pull requests is observed in GitHub CI"
+      ]
+    },
+    {
+      "contract_id": "G8-af8d7b104b",
+      "dimensions": [
+        "ci spec gate",
+        "opt-out with reason"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:scripts/spec_update_gate.py",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1550",
+        "scripts/spec_update_gate.py:42",
+        ".github/workflows/ci.yml:43"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Gate logic is covered by scripts/test_spec_update_gate.py (Python unittest); enforcement on real pull requests is observed in GitHub CI"
+      ]
+    },
+    {
+      "contract_id": "G8-dc2cf2f348",
+      "dimensions": [
+        "ci spec gate",
+        "opt-out with reason"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:scripts/spec_update_gate.py",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1551",
+        "scripts/spec_update_gate.py:42",
+        ".github/workflows/ci.yml:43"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Gate logic is covered by scripts/test_spec_update_gate.py (Python unittest); enforcement on real pull requests is observed in GitHub CI"
+      ]
+    },
+    {
+      "contract_id": "G8-029fd723fc",
+      "dimensions": [
+        "ci spec gate",
+        "opt-out with reason"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:scripts/spec_update_gate.py",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1552",
+        "scripts/spec_update_gate.py:42",
+        ".github/workflows/ci.yml:43"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Gate logic is covered by scripts/test_spec_update_gate.py (Python unittest); enforcement on real pull requests is observed in GitHub CI"
+      ]
+    },
+    {
+      "contract_id": "G9-0775a592f8",
+      "dimensions": [
+        "job log lossy read"
+      ],
+      "verification_methods": [
+        "rust_test_target:job_log_text_keeps_reading_past_invalid_utf8",
+        "drift_source_anchor:src/cli/comms.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1624",
+        "src/cli/comms.rs:1640"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Lossy decoding is unit-covered; the 2026-10-07 Mac mini CI log with invalid bytes is manual evidence"
       ]
     }
   ]

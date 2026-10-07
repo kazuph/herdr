@@ -146,6 +146,12 @@ When updating libghostty-vt, check every active patch in `vendor/libghostty-vt.p
 
 `just check` runs maintenance tests that verify local libghostty-vt patch files are listed in the index and reverse-apply cleanly against the vendored tree. Do not leave a patch file untracked or an indexed patch unapplied.
 
+## SPEC Updates (fork rule)
+
+`SPEC.md` is the fork's behaviour contract. Every `feat` or `fix` commit that changes runtime code (`src/`, `tests/`) must be accompanied, in the same PR, by the matching `SPEC.md` contract update and its row in `formal/spec-evidence-manifest.json`. Shipping a feature or behaviour fix without the SPEC update is a rule violation, not a follow-up task.
+
+CI enforces this on every pull request with `scripts/spec_update_gate.py` and `scripts/spec_formal_drift_check.py`; run `just spec-gate` locally before opening a PR. Only a change with no observable behaviour may opt out, with a commit body line `Spec: none - <reason>`; the reason is required and reviewed.
+
 ## Docs
 
 Stable public docs live in `website/src/content/docs/`. They are the currently released herdr.dev docs. Do not document unreleased behavior there during normal feature or fix work.

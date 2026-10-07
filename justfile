@@ -3,7 +3,7 @@
 # Run tests
 test:
     cargo nextest run --locked --status-level fail --final-status-level fail --failure-output final --success-output never
-    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_formal_mailbox_pilot scripts.test_fork_distribution scripts.test_preview scripts.test_spec_contract_inventory scripts.test_terminal_browser_monorepo scripts.test_upstream_v080_parity_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
+    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_formal_mailbox_pilot scripts.test_fork_distribution scripts.test_preview scripts.test_spec_contract_inventory scripts.test_spec_formal_drift_check scripts.test_spec_update_gate scripts.test_terminal_browser_monorepo scripts.test_upstream_v080_parity_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
     python3 scripts/upstream_v080_parity_inventory.py
     python3 scripts/fork_distribution_docs_check.py
     just integration-assets-test
@@ -125,10 +125,15 @@ windows-lint:
 
 # Check formatting + run unit tests + Windows target lint + maintenance script tests
 check: ci windows-lint
-    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_formal_mailbox_pilot scripts.test_fork_distribution scripts.test_preview scripts.test_spec_contract_inventory scripts.test_terminal_browser_monorepo scripts.test_upstream_v080_parity_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
+    python3 -m unittest scripts.test_agent_detection_manifest_check scripts.test_changelog scripts.test_config_reference_check scripts.test_docs_translation_parity scripts.test_formal_mailbox_pilot scripts.test_fork_distribution scripts.test_preview scripts.test_spec_contract_inventory scripts.test_spec_formal_drift_check scripts.test_spec_update_gate scripts.test_terminal_browser_monorepo scripts.test_upstream_v080_parity_inventory scripts.test_vendor_libghostty_vt scripts.test_vendor_portable_pty
     python3 scripts/upstream_v080_parity_inventory.py
     python3 scripts/fork_distribution_docs_check.py
     @echo "docs reminder: if this changes user-facing behavior, make sure the relevant release docs are updated or called out before release."
+
+# Fail when feature/fix commits since base change runtime code without a SPEC.md update
+spec-gate base='origin/main':
+    python3 scripts/spec_update_gate.py --range "{{base}}..HEAD"
+    python3 scripts/spec_formal_drift_check.py
 
 # Install repo-local git hooks
 install-hooks:

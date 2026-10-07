@@ -1535,6 +1535,23 @@
 - **実装方針**: 本家には `pane current` や current pane lookup が部分的に存在するが、focused fallback が残る場合は fork spec と衝突する。API は本家の pane lookup / process session resolution に乗せ、fallback policy を fail-closed にする。
 - **デグレ判定**: `HERDR_PANE_ID` 不在時に focused pane、active tab、pane list の先頭、最近使った pane を返す。docs が `HERDR_PANE_ID` だけに限定して process session 解決を説明しない、または focus fallback 可能に読める。
 
+### 機能追加とSPEC更新の連動
+- **該当コミット**: 2026-10-07の規則追加（`scripts/spec_update_gate.py`）
+- **分類**: POLICY
+- **status: fork独自・保持 (C)** — forkの振る舞いの正本をSPECに保つための運用規則。
+- **目的**: 機能追加や振る舞いの修正がSPECに載らないまま積み上がることを防ぐ（2026-09-17以降の24件が未記載だった）。
+- **挙動**:
+  - pull requestのCIは、範囲内の`feat`/`fix` commit（scope `nix`・`ci`・`test`を除く）が`src/`か`tests/`を変えたのに、同じ範囲で`SPEC.md`が変わっていなければ失敗する。
+  - 振る舞いの変わらない変更だけが、commit本文の`Spec: none - <理由>`で対象外にできる。理由の無い宣言は認めない。
+  - CIはSPECと証拠台帳（`formal/spec-evidence-manifest.json`）のドリフト検査も毎回実行する。手元では`just spec-gate`で同じ検査を行う。
+  - AGENTS.md（CLAUDE.md）は、SPEC更新を同じPRで行わないことを規則違反と定める。
+- **受け入れ条件**:
+  - SPEC.mdを変えずに`src/`を変える`feat`/`fix` commitを含む範囲で検査が失敗し、該当commitを列挙する。
+  - 同じ範囲のどこかで`SPEC.md`が変わっていれば検査が通る。
+  - 理由付きの`Spec: none - <理由>`は対象外になり、理由の無い宣言は対象外にならない。
+  - `docs`・`test`・`release`・`fix(nix)`のcommitと、runtime codeを変えない`feat`/`fix`は検査対象にならない。
+- **デグレ判定**: SPEC未記載のまま機能や修正がmainへ入る、またはCIからこの検査が外れる。
+
 ## G9. Agent間通信・長時間job・runtime信頼性
 
 ### herdr msg durable mailbox
@@ -1588,7 +1605,7 @@
   - API request後の全agent走査へ戻る、通常mailへ`herdr msg inbox` commandを注入する、または`herdr-jobs`のWorking direct injectionを通常mailの契約として扱う。
 
 ### pane-less background jobs
-- **該当コミット**: 92f6bd6, 287c32d, 9255326, 03fc5eb, 8b3ae29, 65729f0
+- **該当コミット**: 92f6bd6, 287c32d, 9255326, 03fc5eb, 8b3ae29, 65729f0（job logの不正byte読み取りは2026-10-07の修正）
 - **分類**: CORE-UI
 - **status: fork独自・保持 (C)** — paneを作らないdurable job lifecycleとexact caller配送を保持する。
 - **目的**: build/test/download等をpaneなしで開始し、呼び出し元を塞がず、終了結果とlogを再起動越しに取得できるようにする。
@@ -1604,6 +1621,7 @@
   - caller identityがexactに解決できない時はjobを開始せずfail closedする。
   - completionが一般mailboxの未読clutterにならず、server再起動後もjob status/logが残る。
   - SIGTERMを無視する子processを持つjobでも、cancel完了時にはprocess group全体が消滅し、statusが`cancelled`になる。process groupの所有または消滅を証明できない時に`cancelled`を記録しない。
+  - job logにUTF-8として不正なbyteが混じっても、`herdr log <job_id>`と`--completion full`の通知は不正部分をU+FFFDに置き換えて全体を読める。
 
 ### unified communication dispatcher
 - **該当コミット**: 70041ec
