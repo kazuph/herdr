@@ -27,6 +27,9 @@ pub(super) struct EndpointClient {
     outer_focus: Option<bool>,
     last_activity: u64,
     presentation_committed: bool,
+    /// The viewer has received a surface since its surface interest was last turned on. Input
+    /// is never accepted before that first frame, but stays accepted across later redraws.
+    presented_since_activation: bool,
     sent_presentation: Option<(bool, bool, bool)>,
     held_inputs: crate::server::endpoint_input::HeldInputs,
     projection_revision: u64,
@@ -265,6 +268,7 @@ impl HeadlessServer {
                         outer_focus: None,
                         last_activity,
                         presentation_committed: false,
+                        presented_since_activation: false,
                         sent_presentation: None,
                         held_inputs: Default::default(),
                         projection_revision: 0,
@@ -703,6 +707,7 @@ impl HeadlessServer {
                     client.graphics_delivery = graphics_delivery;
                     client.surface_revision = surface.surface_revision;
                     client.surface = Some(surface);
+                    client.presented_since_activation = true;
                     client.popup_read_facts = popup_before;
                     client.published_projection_revision = Some(snapshot.revision);
                     client.write_pending = false;
@@ -1579,11 +1584,16 @@ impl HeadlessServer {
         let Some(client) = self.endpoint_clients.get(&client_id) else {
             return false;
         };
+        // A viewer's surface is dropped and redrawn whenever its snapshot, geometry or focus
+        // changes, including when another viewer claims the tab. Keys typed against the frame
+        // the viewer still shows must not be lost in that window, so a missing or older surface
+        // falls back to the viewer's current target checks below instead of rejecting input.
         if !client.active
-            || !client.surface.as_ref().is_some_and(|surface| {
+            || !client.presented_since_activation
+            || client.surface.as_ref().is_some_and(|surface| {
                 surface.projection_revision == client.projection_revision
-                    && surface.popup.is_none()
-                    && surface.panes.iter().any(|pane| pane.pane_id == public_id)
+                    && (surface.popup.is_some()
+                        || !surface.panes.iter().any(|pane| pane.pane_id == public_id))
             })
         {
             return false;

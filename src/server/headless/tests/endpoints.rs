@@ -4,6 +4,10 @@ use crate::server::endpoint_transport::EndpointTransportEvent;
 use interprocess::local_socket::traits::Stream as _;
 
 const TIMEOUT: Duration = crate::server::client_transport::HANDSHAKE_TIMEOUT;
+/// Real PTY shells can take several seconds to print on loaded CI runners
+/// (macOS runners running the whole suite in parallel); waiting longer only
+/// matters when the output is late, so passing runs stay fast.
+const PTY_OUTPUT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[tokio::test]
 async fn endpoint_notifications_actual_two_viewers_route_sound_and_toast_to_latest_owner() {
@@ -319,7 +323,16 @@ async fn endpoint_runtime_actual_two_servers_routes_input_updates_inactive_and_r
         .iter()
         .all(|effect| effect.endpoint_id == local)));
     assert_eq!(runtime.shell.active_endpoint_id, local);
-    assert_eq!(runtime.shell.pane_surface, selected_before);
+    // The local shell may still print its prompt after the fenced output, so
+    // the displayed surface can advance; it must still be the local server's
+    // projection and never the inactive endpoint's.
+    let before = selected_before.as_ref().unwrap();
+    let after = runtime.shell.pane_surface.as_ref().unwrap();
+    assert_eq!(
+        (&after.boot_id, after.projection_revision),
+        (&before.boot_id, before.projection_revision)
+    );
+    assert!(after.surface_revision >= before.surface_revision);
     assert!(runtime
         .shell
         .aggregate_workspaces()
@@ -1344,7 +1357,7 @@ async fn wait_output(
     terminal: &crate::terminal::TerminalId,
     marker: &str,
 ) {
-    tokio::time::timeout(TIMEOUT, async {
+    tokio::time::timeout(PTY_OUTPUT_TIMEOUT, async {
         loop {
             let notified = server.app.render_notify.notified();
             tokio::pin!(notified);
@@ -3423,7 +3436,7 @@ async fn wait_hex_output(
     terminal: &crate::terminal::TerminalId,
     hex: &str,
 ) {
-    tokio::time::timeout(TIMEOUT, async {
+    tokio::time::timeout(PTY_OUTPUT_TIMEOUT, async {
         loop {
             let notified = server.app.render_notify.notified();
             tokio::pin!(notified);

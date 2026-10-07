@@ -157,6 +157,7 @@ impl HeadlessServer {
             client.held_inputs.drain()
         };
         client.active = active;
+        client.presented_since_activation = false;
         if let Some(stamp) = stamp {
             client.last_activity = stamp;
         }

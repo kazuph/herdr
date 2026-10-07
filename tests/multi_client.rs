@@ -796,9 +796,28 @@ fn multi_client_effective_size_shrinks_when_smaller_client_joins() {
 
     let (_workspace_id, pane_id) = create_workspace_and_root_pane(&api_socket, "size-shrink");
 
+    let initial_size = read_pane_tty_size(&api_socket, &pane_id, Duration::from_secs(5));
     let mut large = connect_raw_client(&client_socket, 120, 40);
     assert!(wait_for_frame(&mut large, Duration::from_secs(2)));
-    let large_only_size = read_pane_tty_size(&api_socket, &pane_id, Duration::from_secs(5));
+    // The first frame can arrive before the pane PTY is resized for the large
+    // client, so wait until the pane actually grows past its pre-client size.
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut large_only_size = initial_size;
+    while Instant::now() < deadline {
+        if let Some(size) =
+            try_read_pane_tty_size(&api_socket, &pane_id, Duration::from_millis(400))
+        {
+            large_only_size = size;
+            if size.0 > initial_size.0 && size.1 > initial_size.1 {
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(60));
+    }
+    assert!(
+        large_only_size.0 > initial_size.0 && large_only_size.1 > initial_size.1,
+        "pane should grow for the large client: initial={initial_size:?}, large={large_only_size:?}"
+    );
 
     let mut small = connect_raw_client(&client_socket, 80, 24);
     assert!(wait_for_frame(&mut small, Duration::from_secs(2)));
