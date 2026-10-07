@@ -913,7 +913,7 @@ fn job_log(args: &[String]) -> std::io::Result<i32> {
         .flatten()
         .map(|job| std::path::PathBuf::from(job.log_path))
         .unwrap_or(job_log_path(job_id)?);
-    let text = std::fs::read_to_string(&log_path).map_err(|err| {
+    let text = read_job_log_text(&log_path).map_err(|err| {
         std::io::Error::new(
             err.kind(),
             format!("failed to read {}: {err}", log_path.display()),
@@ -1203,7 +1203,7 @@ fn enqueue_job_completion(
         job.id
     );
     let body = if job.completion == "full" {
-        format!("{summary}\n\n{}", std::fs::read_to_string(log_path)?)
+        format!("{summary}\n\n{}", read_job_log_text(log_path)?)
     } else {
         summary
     };
@@ -1634,6 +1634,13 @@ fn remote_sync_plan(
     })
 }
 
+/// Job logs hold raw command output, which need not be UTF-8 (binary output,
+/// truncated multi-byte sequences, other encodings). Invalid bytes become
+/// U+FFFD instead of making the whole log unreadable.
+fn read_job_log_text(path: &std::path::Path) -> std::io::Result<String> {
+    Ok(String::from_utf8_lossy(&std::fs::read(path)?).into_owned())
+}
+
 fn default_run_label(command_args: &[String]) -> String {
     command_args
         .first()
@@ -1836,6 +1843,20 @@ mod tests {
     fn pane_job_log_tail_accepts_legacy_tail_equals_arg() {
         let args = vec!["tail=200".to_string()];
         assert_eq!(parse_job_log_tail(&args).unwrap(), Some(200));
+    }
+
+    #[test]
+    fn job_log_text_keeps_reading_past_invalid_utf8() {
+        let path = std::env::temp_dir().join(format!(
+            "herdr-job-log-lossy-{}-{}.log",
+            std::process::id(),
+            unix_millis(SystemTime::now())
+        ));
+        std::fs::write(&path, b"[stdout] before \xff\xfe binary\n[stdout] after\n").unwrap();
+        let text = read_job_log_text(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(text.contains("[stdout] before \u{FFFD}\u{FFFD} binary"));
+        assert!(text.ends_with("[stdout] after\n"));
     }
 
     #[test]

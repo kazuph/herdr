@@ -21,6 +21,7 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- `herdr log <job>` and `--completion full` notices no longer fail with "stream did not contain valid UTF-8" when a job printed non-UTF-8 bytes; invalid bytes are shown as U+FFFD and the rest of the log stays readable.
 - Agent restore no longer reopens a conversation that is already running somewhere else (another terminal, another Herdr session or machine view). Before typing `claude --resume`, `codex resume` or `devin --resume`, Herdr checks Claude Code's live session registry, Codex's held thread writer lock, Devin's session lock owner, and running command lines, and skips the pane with "session already running elsewhere" when the conversation is live.
 - Keys sent to a pane no longer get dropped while the server redraws a viewer's surface, which happens when another window viewing the same tab gains or loses focus, or when the tab's status changes. Input is still refused until a viewer has received its first frame after it starts presenting.
 - Opening a space or tab in the client now marks its finished agents as seen. Navigation in the client moves only that viewer, not the server's active workspace, so "done, unseen" dots used to stay forever and also hid the working spinner of other agents in the same space.
