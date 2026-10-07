@@ -313,6 +313,11 @@ pub(crate) fn extract_machine_args(
     if let Some(program) = args.first() {
         cleaned.push(program.clone());
     }
+    // `herdr run --machine` keeps the job local and only runs the command
+    // remotely, so `run` parses its own `--machine`.
+    if args.get(1).map(String::as_str) == Some("run") {
+        return Ok((args.to_vec(), None));
+    }
     let mut route = None;
     let mut index = 1;
     while index < args.len() {
@@ -397,6 +402,152 @@ pub(crate) fn build_routed_argv(
         "--".to_string(),
         profile.target.clone(),
         posix_shell_join(&remote_argv),
+    ]
+}
+
+/// Where a `herdr run --machine` command runs on the saved machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RemoteDir {
+    /// A path relative to the remote user's home directory (empty = home).
+    Home(String),
+    /// An absolute remote path.
+    Absolute(String),
+}
+
+impl RemoteDir {
+    /// Map a local directory onto the saved machine: paths under the local
+    /// home keep their home-relative position, other paths stay absolute.
+    pub(crate) fn from_local(dir: &Path, home: Option<&Path>) -> Self {
+        if let Some(rest) = home.and_then(|home| dir.strip_prefix(home).ok()) {
+            return Self::Home(rest.to_string_lossy().into_owned());
+        }
+        Self::Absolute(dir.to_string_lossy().into_owned())
+    }
+
+    /// Parse an explicit `--cwd` for a remote job: `~` / `~/x` are home
+    /// relative, absolute paths stay absolute, anything else is relative to
+    /// the remote home.
+    pub(crate) fn from_remote_arg(value: &str) -> Self {
+        if value == "~" {
+            Self::Home(String::new())
+        } else if let Some(rest) = value.strip_prefix("~/") {
+            Self::Home(rest.trim_end_matches('/').to_string())
+        } else if value.starts_with('/') {
+            Self::Absolute(value.to_string())
+        } else {
+            Self::Home(value.trim_end_matches('/').to_string())
+        }
+    }
+
+    /// Shell expression that expands to the directory on the remote host.
+    fn shell_expr(&self) -> String {
+        match self {
+            Self::Home(rest) if rest.is_empty() => "\"$HOME\"".to_string(),
+            Self::Home(rest) => format!("\"$HOME\"/{}", posix_shell_quote(rest)),
+            Self::Absolute(path) => posix_shell_quote(path),
+        }
+    }
+
+    /// rsync destination path (rsync resolves relative paths from home).
+    fn rsync_path(&self) -> String {
+        match self {
+            Self::Home(rest) if rest.is_empty() => ".".to_string(),
+            Self::Home(rest) => rest.clone(),
+            Self::Absolute(path) => path.clone(),
+        }
+    }
+}
+
+/// Local work tree copied to the saved machine before a remote job runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RemoteSync {
+    pub(crate) local_dir: PathBuf,
+    /// Remote copy of `local_dir`; usually contains the job's directory.
+    pub(crate) remote_dir: RemoteDir,
+    /// rsync exclude patterns. Excluded paths are never sent and never
+    /// deleted on the remote side, so remote build caches survive.
+    pub(crate) excludes: Vec<String>,
+    /// Delete remote files that no longer exist locally. Only enabled when
+    /// the excludes come from git, so ignored remote files stay protected.
+    pub(crate) delete: bool,
+}
+
+fn ssh_options() -> Vec<String> {
+    vec![
+        "-o".to_string(),
+        "BatchMode=yes".to_string(),
+        "-o".to_string(),
+        format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"),
+    ]
+}
+
+/// Build the local argv for `herdr run --machine`: the job (log, status,
+/// completion notice) stays local while the command runs on the saved
+/// machine through ssh, inside the remote user's interactive login shell so
+/// it sees the same PATH as a terminal there. `interactive` allocates a tty
+/// for `--pane` runs; background runs get no stdin.
+pub(crate) fn build_remote_job_argv(
+    profile: &MachineProfile,
+    dir: &RemoteDir,
+    command: &[String],
+    sync: Option<&RemoteSync>,
+    interactive: bool,
+) -> Vec<String> {
+    let inner = format!(
+        "cd {} && exec {}",
+        dir.shell_expr(),
+        posix_shell_join(command)
+    );
+    let remote = format!(
+        "exec \"${{SHELL:-/bin/sh}}\" -lic {}",
+        posix_shell_quote(&inner)
+    );
+    let mut ssh = vec!["ssh".to_string()];
+    ssh.extend(ssh_options());
+    ssh.push(if interactive { "-t" } else { "-n" }.to_string());
+    ssh.extend(["--".to_string(), profile.target.clone(), remote]);
+    let Some(sync) = sync else {
+        return ssh;
+    };
+
+    let mut mkdir = vec!["ssh".to_string()];
+    mkdir.extend(ssh_options());
+    mkdir.extend([
+        "-n".to_string(),
+        "--".to_string(),
+        profile.target.clone(),
+        format!("mkdir -p {}", sync.remote_dir.shell_expr()),
+    ]);
+    let mut rsync = vec![
+        "rsync".to_string(),
+        "-a".to_string(),
+        "-e".to_string(),
+        format!("ssh {}", ssh_options().join(" ")),
+    ];
+    if sync.delete {
+        rsync.push("--delete".to_string());
+    }
+    rsync.push("--exclude=/.git".to_string());
+    rsync.extend(
+        sync.excludes
+            .iter()
+            .map(|pattern| format!("--exclude={pattern}")),
+    );
+    rsync.push(format!("{}/", sync.local_dir.to_string_lossy()));
+    rsync.push(format!(
+        "{}:{}/",
+        profile.target,
+        sync.remote_dir.rsync_path()
+    ));
+    vec![
+        "sh".to_string(),
+        "-c".to_string(),
+        format!(
+            "{} && {} && exec {}",
+            posix_shell_join(&mkdir),
+            posix_shell_join(&rsync),
+            posix_shell_join(&ssh)
+        ),
     ]
 }
 
@@ -577,6 +728,147 @@ mod tests {
     #[test]
     fn remote_binary_defaults_to_herdr() {
         assert_eq!(remote_binary(), "herdr");
+    }
+
+    fn office() -> MachineProfile {
+        MachineProfile {
+            id: "m000000000001".to_string(),
+            label: "office".to_string(),
+            target: "office-host".to_string(),
+            session: "default".to_string(),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn remote_dir_maps_home_relative_and_absolute_paths() {
+        let home = Path::new("/Users/me");
+        assert_eq!(
+            RemoteDir::from_local(Path::new("/Users/me/src/app"), Some(home)),
+            RemoteDir::Home("src/app".to_string())
+        );
+        assert_eq!(
+            RemoteDir::from_local(Path::new("/Users/me"), Some(home)),
+            RemoteDir::Home(String::new())
+        );
+        assert_eq!(
+            RemoteDir::from_local(Path::new("/opt/work"), Some(home)),
+            RemoteDir::Absolute("/opt/work".to_string())
+        );
+        assert_eq!(
+            RemoteDir::from_remote_arg("~"),
+            RemoteDir::Home(String::new())
+        );
+        assert_eq!(
+            RemoteDir::from_remote_arg("~/src/app/"),
+            RemoteDir::Home("src/app".to_string())
+        );
+        assert_eq!(
+            RemoteDir::from_remote_arg("/srv/app"),
+            RemoteDir::Absolute("/srv/app".to_string())
+        );
+        assert_eq!(
+            RemoteDir::from_remote_arg("src/app"),
+            RemoteDir::Home("src/app".to_string())
+        );
+    }
+
+    #[test]
+    fn remote_job_argv_runs_quoted_command_in_remote_login_shell() {
+        let command = vec!["echo".to_string(), "it's $HOME".to_string()];
+        let argv = build_remote_job_argv(
+            &office(),
+            &RemoteDir::Home("src/app".to_string()),
+            &command,
+            None,
+            false,
+        );
+        assert_eq!(
+            &argv[..6],
+            &[
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=15",
+                "-n"
+            ]
+        );
+        assert_eq!(&argv[6..8], &["--", "office-host"]);
+        let remote = &argv[8];
+        // The remote shell expands $HOME for the directory but receives the
+        // command arguments literally through two quoting layers.
+        let inner = r#"cd "$HOME"/'src/app' && exec 'echo' 'it'\''s $HOME'"#;
+        assert_eq!(
+            remote,
+            &format!(
+                "exec \"${{SHELL:-/bin/sh}}\" -lic {}",
+                posix_shell_quote(inner)
+            )
+        );
+
+        let pane = build_remote_job_argv(
+            &office(),
+            &RemoteDir::Absolute("/srv/app".to_string()),
+            &command,
+            None,
+            true,
+        );
+        assert_eq!(pane[5], "-t");
+        assert!(pane[8].contains("cd '\\''/srv/app'\\''"));
+    }
+
+    #[test]
+    fn remote_job_argv_syncs_before_running_and_protects_ignored_paths() {
+        let sync = RemoteSync {
+            local_dir: PathBuf::from("/Users/me/src/app"),
+            remote_dir: RemoteDir::Home("src/app".to_string()),
+            excludes: vec!["/target/".to_string(), "node_modules".to_string()],
+            delete: true,
+        };
+        let argv = build_remote_job_argv(
+            &office(),
+            &RemoteDir::Home("src/app/sub".to_string()),
+            &["just".to_string(), "ci".to_string()],
+            Some(&sync),
+            false,
+        );
+        assert_eq!(&argv[..2], &["sh", "-c"]);
+        let script = &argv[2];
+        let mkdir = script.find("'mkdir -p").unwrap();
+        let rsync = script.find("'rsync' '-a'").unwrap();
+        let run = script.find("exec 'ssh'").unwrap();
+        assert!(mkdir < rsync && rsync < run);
+        assert!(script.contains(
+            "'--delete' '--exclude=/.git' '--exclude=/target/' '--exclude=node_modules'"
+        ));
+        assert!(script.contains("'/Users/me/src/app/' 'office-host:src/app/'"));
+        assert!(script.contains("src/app/sub"));
+
+        let copy_only = RemoteSync {
+            delete: false,
+            excludes: Vec::new(),
+            ..sync
+        };
+        let argv = build_remote_job_argv(
+            &office(),
+            &RemoteDir::Home("src/app".to_string()),
+            &["ls".to_string()],
+            Some(&copy_only),
+            false,
+        );
+        assert!(!argv[2].contains("--delete"));
+    }
+
+    #[test]
+    fn run_keeps_its_own_machine_flag() {
+        let argv: Vec<String> = ["herdr", "run", "--machine", "office", "--", "ls"]
+            .iter()
+            .map(|arg| arg.to_string())
+            .collect();
+        let (cleaned, route) = extract_machine_args(&argv).unwrap();
+        assert_eq!(route, None);
+        assert_eq!(cleaned, argv);
     }
 
     #[test]

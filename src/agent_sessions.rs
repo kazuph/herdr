@@ -64,6 +64,103 @@ pub fn render_restore_command(template: &str, session_id: Option<&str>) -> Optio
     Some(template.replace("{session_id}", session_id))
 }
 
+/// Whether `session_id` is already open in a live agent process somewhere
+/// else (another terminal, another Herdr session, an IDE). Restoring it again
+/// would run the same conversation twice.
+pub fn session_running_elsewhere(agent: &str, session_id: &str) -> bool {
+    let live_in_registry = match agent {
+        "claude" => claude_registry_dir().is_some_and(|dir| {
+            claude_registry_has_live_session(&dir, session_id, crate::platform::process_exists)
+        }),
+        "codex" => home_dir().is_some_and(|home| {
+            crate::platform::file_lock_is_held(
+                &home
+                    .join(".codex")
+                    .join("thread-writer-locks")
+                    .join(format!("{session_id}.lock")),
+            )
+        }),
+        "devin" => home_dir().is_some_and(|home| {
+            devin_lock_has_live_owner(
+                &home
+                    .join(".local")
+                    .join("share")
+                    .join("devin")
+                    .join("cli")
+                    .join("session_locks")
+                    .join(format!("{session_id}.lock")),
+                crate::platform::process_exists,
+            )
+        }),
+        _ => false,
+    };
+    live_in_registry
+        || command_lines_mention_session(&crate::platform::process_command_lines(), session_id)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// `devin acp` writes its own pid into the session lock while it runs.
+fn devin_lock_has_live_owner(path: &Path, pid_alive: impl Fn(u32) -> bool) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| content.trim().parse::<u32>().ok())
+        .is_some_and(pid_alive)
+}
+
+/// Claude Code writes `<config>/sessions/<pid>.json` with the `sessionId` for
+/// every running interactive session.
+fn claude_registry_dir() -> Option<PathBuf> {
+    let config = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".claude")))?;
+    Some(config.join("sessions"))
+}
+
+fn claude_registry_has_live_session(
+    dir: &Path,
+    session_id: &str,
+    pid_alive: impl Fn(u32) -> bool,
+) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            return false;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return false;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+            return false;
+        };
+        value.get("sessionId").and_then(|id| id.as_str()) == Some(session_id)
+            && value
+                .get("pid")
+                .and_then(|pid| pid.as_u64())
+                .and_then(|pid| u32::try_from(pid).ok())
+                .is_some_and(&pid_alive)
+    })
+}
+
+/// A resumed agent carries its session id on the command line
+/// (`claude --resume <id>`, `codex resume <id>`, `--resume=<id>`).
+fn command_lines_mention_session(command_lines: &[Vec<String>], session_id: &str) -> bool {
+    command_lines.iter().any(|argv| {
+        argv.iter().any(|arg| {
+            arg == session_id
+                || arg
+                    .split_once('=')
+                    .is_some_and(|(_, value)| value == session_id)
+        })
+    })
+}
+
 pub fn session_id_from_cmdline(agent: &str, cmdline: &str) -> Option<String> {
     let tokens: Vec<&str> = cmdline.split_whitespace().collect();
     session_id_from_tokens(agent, &tokens)
@@ -540,7 +637,73 @@ fn session_id_from_claude_file(path: &Path, cwd: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+
+    #[test]
+    fn claude_registry_reports_only_live_matching_sessions() {
+        let root = test_temp_dir("claude-live-session-registry");
+        std::fs::create_dir_all(&root).unwrap();
+        let live = "11111111-2222-3333-4444-555555555555";
+        std::fs::write(
+            root.join("100.json"),
+            format!(r#"{{"pid":100,"sessionId":"{live}","cwd":"/tmp"}}"#),
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("200.json"),
+            r#"{"pid":200,"sessionId":"dead-session"}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("300.json"), "not json").unwrap();
+        let alive = |pid: u32| pid == 100;
+
+        assert!(claude_registry_has_live_session(&root, live, alive));
+        assert!(!claude_registry_has_live_session(
+            &root,
+            "dead-session",
+            alive
+        ));
+        assert!(!claude_registry_has_live_session(&root, "other", alive));
+        assert!(!claude_registry_has_live_session(
+            &root.join("missing"),
+            live,
+            alive
+        ));
+    }
+
+    #[test]
+    fn devin_lock_counts_only_a_live_owner() {
+        let root = test_temp_dir("devin-live-session-lock");
+        std::fs::create_dir_all(&root).unwrap();
+        let lock = root.join("abalone-jersey.lock");
+        std::fs::write(&lock, "4242\n").unwrap();
+        assert!(devin_lock_has_live_owner(&lock, |pid| pid == 4242));
+        assert!(!devin_lock_has_live_owner(&lock, |_| false));
+        assert!(!devin_lock_has_live_owner(
+            &root.join("missing.lock"),
+            |_| true
+        ));
+    }
+
+    #[test]
+    fn command_lines_match_whole_session_id_arguments() {
+        let id = "019e8d78-4a5e-78d2-968c-02240ac6e9e9";
+        let argv = |args: &[&str]| args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        assert!(command_lines_mention_session(
+            &[argv(&["codex", "resume", id])],
+            id
+        ));
+        assert!(command_lines_mention_session(
+            &[argv(&["claude", &format!("--resume={id}")])],
+            id
+        ));
+        assert!(!command_lines_mention_session(
+            &[argv(&["codex", "resume", &format!("{id}0")])],
+            id
+        ));
+        assert!(!command_lines_mention_session(&[argv(&["zsh", "-l"])], id));
+    }
 
     #[test]
     fn restore_template_overlays_user_commands_on_builtins() {

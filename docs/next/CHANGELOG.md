@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `herdr run --machine <saved machine> [--sync] -- <command>` runs the command on a saved SSH machine while the job, its log and the completion notice stay on this machine. The command runs in the remote user's interactive login shell, in the directory that mirrors the current one (home-relative under `$HOME`, or `--cwd` as a remote path). `--sync` first copies the current git work tree with rsync; git-ignored paths such as build output are neither sent nor deleted on the remote side. Works with `--pane` (a tty is allocated) and every other `herdr run` option.
 - Saved SSH machines can be added or removed from the bottom menu and by right-clicking a machine header. Adding asks for the SSH target, display name, and remote session and checks SSH connectivity without blocking input. Removing disconnects the local profile and leaves remote sessions running.
 - Space cards now show one colored `●` per meaningful background job before git information, sharing the Jobs snapshot and status colors even while the Agents tab is selected: queued jobs and running jobs whose runner process is still alive (checked when the jobs snapshot is refreshed, never mid-render) stay visible, while finished jobs keep their dot for one minute after `finished_unix_ms`. Stale `running`/`cancelling` rows whose runner is gone and undated finishes render nothing, and the `[jobs]` panel keeps the full history unchanged.
 - Devin CLI panes now record their session id without integration hooks (from the lock file held by the pane's `devin acp` child), so restore reopens the same conversation with `devin --resume <id>`; ambiguous or stale locks are never adopted.
@@ -20,6 +21,7 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- Agent restore no longer reopens a conversation that is already running somewhere else (another terminal, another Herdr session or machine view). Before typing `claude --resume`, `codex resume` or `devin --resume`, Herdr checks Claude Code's live session registry, Codex's held thread writer lock, Devin's session lock owner, and running command lines, and skips the pane with "session already running elsewhere" when the conversation is live.
 - Keys sent to a pane no longer get dropped while the server redraws a viewer's surface, which happens when another window viewing the same tab gains or loses focus, or when the tab's status changes. Input is still refused until a viewer has received its first frame after it starts presenting.
 - Opening a space or tab in the client now marks its finished agents as seen. Navigation in the client moves only that viewer, not the server's active workspace, so "done, unseen" dots used to stay forever and also hid the working spinner of other agents in the same space.
 - Returning focus to the terminal window no longer replays the whole presentation handoff. Keys typed right after switching back reach the focused pane immediately, including panes on a saved machine over SSH, instead of being dropped until the machine answered.
