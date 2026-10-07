@@ -3494,11 +3494,21 @@ fn herdr_run_spawns_same_tab_and_injects_exit_notification() {
     let log_tail_text = String::from_utf8(log_tail.stdout).unwrap();
     assert!(log_tail_text.contains("exit_code: 0"), "{log_tail_text}");
 
-    let fetched = run_cli(&socket_path, &["pane", "get", pane]);
-    assert!(
-        !fetched.status.success(),
-        "{pane} was not closed after successful run"
-    );
+    // The pane closes after the runner reports its exit; on a loaded runner
+    // that can land after the log already shows exit_code.
+    let close_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut closed = false;
+    while std::time::Instant::now() < close_deadline {
+        if !run_cli(&socket_path, &["pane", "get", pane])
+            .status
+            .success()
+        {
+            closed = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(closed, "{pane} was not closed after successful run");
 
     let error_run = run_cli(
         &socket_path,
