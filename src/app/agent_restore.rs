@@ -62,9 +62,18 @@ fn restore_toast_context(actions: &[AgentRestoreActionInfo], running_agents: usi
 /// Decide what to do for every pane that had an agent before the restart.
 ///
 /// Skips panes with live agent evidence (`detected_agent`), so a relaunch is
-/// never typed into a pane where the user already brought the agent back.
+/// never typed into a pane where the user already brought the agent back, and
+/// sessions that are already open in a live agent process elsewhere, so one
+/// conversation is never run twice.
 pub(crate) fn agent_restore_plan(
     state: &crate::app::state::AppState,
+) -> Vec<AgentRestorePlanEntry> {
+    agent_restore_plan_with(state, crate::agent_sessions::session_running_elsewhere)
+}
+
+fn agent_restore_plan_with(
+    state: &crate::app::state::AppState,
+    session_running_elsewhere: impl Fn(&str, &str) -> bool,
 ) -> Vec<AgentRestorePlanEntry> {
     let mut entries = Vec::new();
     for (ws_idx, workspace) in state.workspaces.iter().enumerate() {
@@ -91,6 +100,13 @@ pub(crate) fn agent_restore_plan(
                         template,
                         session_id.as_deref(),
                     ) {
+                        Some(_)
+                            if session_id
+                                .as_deref()
+                                .is_some_and(|id| session_running_elsewhere(&agent, id)) =>
+                        {
+                            AgentRestoreOutcome::Skip("session already running elsewhere")
+                        }
                         Some(command) => AgentRestoreOutcome::Launch(command),
                         None => AgentRestoreOutcome::Skip("no resumable session found"),
                     }
@@ -312,7 +328,7 @@ mod tests {
             .commands
             .insert("pi".into(), "pi".into());
 
-        let entries = agent_restore_plan(&state);
+        let entries = agent_restore_plan_with(&state, |_, _| false);
         assert_eq!(entries.len(), 4);
 
         match &entries[0].outcome {
@@ -337,6 +353,37 @@ mod tests {
     }
 
     #[test]
+    fn plan_skips_sessions_already_running_elsewhere() {
+        let mut state = crate::app::state::AppState::test_new();
+        state.workspaces = vec![
+            crate::workspace::Workspace::test_new("live-ws"),
+            crate::workspace::Workspace::test_new("idle-ws"),
+        ];
+        state.ensure_test_terminals();
+        let live_id = "11111111-2222-3333-4444-555555555555";
+        let idle_id = "66666666-7777-8888-9999-000000000000";
+        for (index, session_id) in [live_id, idle_id].into_iter().enumerate() {
+            let tid = terminal_id_for(&state, index);
+            state.terminals.get_mut(&tid).unwrap().pending_restore = Some(PendingAgentRestore {
+                agent: "claude".into(),
+                session_id: Some(session_id.into()),
+            });
+        }
+
+        let entries = agent_restore_plan_with(&state, |agent, id| agent == "claude" && id == live_id);
+        assert!(matches!(
+            entries[0].outcome,
+            AgentRestoreOutcome::Skip("session already running elsewhere")
+        ));
+        match &entries[1].outcome {
+            AgentRestoreOutcome::Launch(command) => {
+                assert_eq!(command, &format!("claude --resume {idle_id}"))
+            }
+            AgentRestoreOutcome::Skip(reason) => panic!("idle session skipped: {reason}"),
+        }
+    }
+
+    #[test]
     fn plan_rejects_unsafe_persisted_session_ids() {
         let mut state = crate::app::state::AppState::test_new();
         state.workspaces = vec![crate::workspace::Workspace::test_new("ws")];
@@ -348,7 +395,7 @@ mod tests {
             session_id: Some("evil; rm -rf /".into()),
         });
 
-        let entries = agent_restore_plan(&state);
+        let entries = agent_restore_plan_with(&state, |_, _| false);
         assert_eq!(entries.len(), 1);
         assert!(matches!(
             entries[0].outcome,
@@ -381,7 +428,7 @@ mod tests {
             });
         }
 
-        let entries = agent_restore_plan(&state);
+        let entries = agent_restore_plan_with(&state, |_, _| false);
         assert_eq!(entries.len(), 3);
         assert!(
             entries.iter().all(|entry| matches!(
@@ -436,7 +483,7 @@ mod tests {
             session_id: restore.session_id,
         });
 
-        let entries = agent_restore_plan(&state);
+        let entries = agent_restore_plan_with(&state, |_, _| false);
         assert_eq!(entries.len(), 1);
         match &entries[0].outcome {
             AgentRestoreOutcome::Launch(command) => {

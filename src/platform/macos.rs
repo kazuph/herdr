@@ -1017,6 +1017,26 @@ pub fn session_processes(child_pid: u32) -> Vec<u32> {
         .collect()
 }
 
+/// Whether another process holds an advisory `flock` on `path`. The probe
+/// takes a shared lock without blocking and releases it immediately.
+pub fn file_lock_is_held(path: &std::path::Path) -> bool {
+    use std::os::fd::AsRawFd;
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let fd = file.as_raw_fd();
+    if unsafe { libc::flock(fd, libc::LOCK_SH | libc::LOCK_NB) } == 0 {
+        unsafe { libc::flock(fd, libc::LOCK_UN) };
+        return false;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EWOULDBLOCK)
+}
+
+/// Command lines of every process the current user can inspect.
+pub fn process_command_lines() -> Vec<Vec<String>> {
+    all_pids().into_iter().filter_map(process_argv).collect()
+}
+
 fn all_pids() -> Vec<u32> {
     let initial_count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
     let mut capacity = if initial_count > 0 {

@@ -271,6 +271,32 @@ fn process_argv(pid: u32) -> Option<Vec<String>> {
     (!parts.is_empty()).then_some(parts)
 }
 
+/// Whether another process holds an advisory `flock` on `path`. The probe
+/// takes a shared lock without blocking and releases it immediately.
+pub fn file_lock_is_held(path: &std::path::Path) -> bool {
+    use std::os::fd::AsRawFd;
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let fd = file.as_raw_fd();
+    if unsafe { libc::flock(fd, libc::LOCK_SH | libc::LOCK_NB) } == 0 {
+        unsafe { libc::flock(fd, libc::LOCK_UN) };
+        return false;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EWOULDBLOCK)
+}
+
+/// Command lines of every process the current user can inspect.
+pub fn process_command_lines() -> Vec<Vec<String>> {
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter_map(process_argv)
+        .collect()
+}
+
 /// Get the current working directory of a process.
 /// Uses /proc/<pid>/cwd symlink.
 pub fn process_cwd(pid: u32) -> Option<PathBuf> {

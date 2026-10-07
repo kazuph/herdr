@@ -86,6 +86,16 @@ pub fn force_refresh_ad_hoc_code_signature(path: &std::path::Path) -> std::io::R
 pub fn signal_processes(_pids: &[u32], _signal: Signal) {}
 
 /// Unsupported platform stub.
+pub fn file_lock_is_held(_path: &std::path::Path) -> bool {
+    false
+}
+
+/// Unsupported platform stub.
+pub fn process_command_lines() -> Vec<Vec<String>> {
+    Vec::new()
+}
+
+/// Unsupported platform stub.
 pub fn process_exists(_pid: u32) -> bool {
     false
 }

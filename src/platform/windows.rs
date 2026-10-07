@@ -501,6 +501,17 @@ pub fn signal_processes(pids: &[u32], signal: Signal) {
     }
 }
 
+/// Advisory `flock` locks do not exist on Windows.
+pub fn file_lock_is_held(_path: &std::path::Path) -> bool {
+    false
+}
+
+/// Process command lines are not enumerated on Windows; callers fall back to
+/// agent-specific session registries.
+pub fn process_command_lines() -> Vec<Vec<String>> {
+    Vec::new()
+}
+
 pub fn process_exists(pid: u32) -> bool {
     let Some(process) = ProcessHandle::open(pid, PROCESS_QUERY_LIMITED_INFORMATION) else {
         return false;
