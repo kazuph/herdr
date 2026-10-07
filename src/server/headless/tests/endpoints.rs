@@ -4,6 +4,10 @@ use crate::server::endpoint_transport::EndpointTransportEvent;
 use interprocess::local_socket::traits::Stream as _;
 
 const TIMEOUT: Duration = crate::server::client_transport::HANDSHAKE_TIMEOUT;
+/// Real PTY shells can take several seconds to print on loaded CI runners
+/// (macOS runners running the whole suite in parallel); waiting longer only
+/// matters when the output is late, so passing runs stay fast.
+const PTY_OUTPUT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[tokio::test]
 async fn endpoint_notifications_actual_two_viewers_route_sound_and_toast_to_latest_owner() {
@@ -1353,7 +1357,7 @@ async fn wait_output(
     terminal: &crate::terminal::TerminalId,
     marker: &str,
 ) {
-    tokio::time::timeout(TIMEOUT, async {
+    tokio::time::timeout(PTY_OUTPUT_TIMEOUT, async {
         loop {
             let notified = server.app.render_notify.notified();
             tokio::pin!(notified);
@@ -3432,7 +3436,7 @@ async fn wait_hex_output(
     terminal: &crate::terminal::TerminalId,
     hex: &str,
 ) {
-    tokio::time::timeout(TIMEOUT, async {
+    tokio::time::timeout(PTY_OUTPUT_TIMEOUT, async {
         loop {
             let notified = server.app.render_notify.notified();
             tokio::pin!(notified);
