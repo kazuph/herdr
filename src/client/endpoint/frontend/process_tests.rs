@@ -1896,10 +1896,17 @@ async fn endpoint_frontend_independent_processes_same_ids_input_and_reconnect() 
         .unwrap();
     assert_eq!(frontend.runtime.shell.outer_focused, Some(true));
     assert!(frontend.help.is_some());
-    assert!(!frontend.runtime.input_lease_current());
+    // Returning to the window is not a handoff: the input lease stays, and keys typed before
+    // the server's redrawn surface arrives are queued instead of being dropped.
+    assert!(frontend.runtime.input_lease_current());
+    assert!(frontend.runtime.awaiting_surface_pair());
     assert_eq!(frontend.runtime.endpoints.active_id(), &other_id);
+    // The event loop leaves input queued until the redrawn surface arrives; this test
+    // dispatches directly, so it waits for the same release.
     pump(&mut frontend, |f| {
-        f.runtime.input_lease_current() && surface_has(f, "READY:RIGHT")
+        f.runtime.input_lease_current()
+            && !f.runtime.awaiting_surface_pair()
+            && surface_has(f, "READY:RIGHT")
     })
     .await;
     assert!(frontend.help.is_some());
