@@ -866,6 +866,26 @@ pub(super) fn compute(chrome: &mut ClientChrome, shell: &ClientShellState, view:
                 }
             }
         }
+        // The fork sidebar keeps a width button in the detail panel's last row
+        // (agent_panel_body_rect leaves that row free).
+        let toggle = crate::ui::sidebar::sidebar_width_toggle_rects(agents).button;
+        if toggle != Rect::default() {
+            view.lines.push((
+                toggle,
+                Line::from(Span::styled(
+                    chrome.settings.sidebar_width_preset().button_label(),
+                    Style::default()
+                        .fg(chrome.settings.palette.accent)
+                        .add_modifier(
+                            ratatui::style::Modifier::BOLD | ratatui::style::Modifier::UNDERLINED,
+                        ),
+                )),
+            ));
+            view.hits.push(ChromeHit {
+                rect: toggle,
+                target: ChromeTarget::SidebarWidthToggle,
+            });
+        }
         (
             Rect::new(
                 spaces.x,

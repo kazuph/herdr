@@ -297,3 +297,54 @@ fn endpoint_selected_workspace_retains_original_accent_band() {
         ));
     }
 }
+
+#[test]
+fn endpoint_sidebar_width_button_renders_in_the_detail_footer_and_cycles_presets() {
+    let config = crate::config::Config::default();
+    let mut chrome = ClientChrome::new(ChromeSettings::from_config(
+        &config,
+        Palette::catppuccin(),
+        None,
+    ));
+    let shell = ClientShellState::new();
+    let label_at = |chrome: &mut ClientChrome| {
+        let view = chrome.compute_view(&shell, 160, 50);
+        let frame = chrome.render(&view);
+        let hit = view
+            .hits
+            .iter()
+            .find(|hit| matches!(hit.target, ChromeTarget::SidebarWidthToggle))
+            .expect("sidebar width button hit target");
+        assert_eq!(hit.rect.y, view.layout.sidebar.bottom() - 1);
+        (hit.rect.x..hit.rect.right())
+            .map(|x| {
+                frame.cells[usize::from(hit.rect.y) * usize::from(frame.width) + usize::from(x)]
+                    .symbol
+                    .clone()
+            })
+            .collect::<String>()
+    };
+
+    chrome
+        .settings
+        .set_sidebar_width_preset(crate::app::state::SidebarWidthPreset::Normal);
+    assert_eq!(label_at(&mut chrome).trim_end(), " NORMAL");
+    chrome.settings.cycle_sidebar_width_preset();
+    assert_eq!(
+        chrome.settings.sidebar_width,
+        chrome.settings.sidebar_max_width
+    );
+    assert_eq!(label_at(&mut chrome).trim_end(), " WIDE");
+    chrome.settings.cycle_sidebar_width_preset();
+    assert_eq!(
+        chrome.settings.sidebar_width,
+        chrome.settings.sidebar_min_width
+    );
+    assert_eq!(label_at(&mut chrome).trim_end(), " NARROW");
+    chrome.settings.cycle_sidebar_width_preset();
+    assert_eq!(
+        chrome.settings.sidebar_width_source,
+        crate::app::state::SidebarWidthSource::ConfigDefault
+    );
+    assert_eq!(label_at(&mut chrome).trim_end(), " NORMAL");
+}
