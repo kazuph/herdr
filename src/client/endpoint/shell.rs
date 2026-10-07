@@ -12,6 +12,8 @@ pub(crate) struct ClientShellEndpoint {
     pub(crate) label: String,
     pub(crate) status: ClientEndpointStatus,
     pub(crate) generation: Option<u64>,
+    /// Latest connection diagnostic, shown with the endpoint instead of as a global notice.
+    pub(crate) diagnostic: Option<String>,
     pub(crate) cache: EndpointCache,
     pub(crate) jobs: EndpointJobsCache,
 }
@@ -27,6 +29,7 @@ impl ClientShellEndpoint {
                 ClientEndpointStatus::Disabled
             },
             generation: None,
+            diagnostic: None,
             cache: EndpointCache::default(),
             jobs: EndpointJobsCache::default(),
         }
@@ -162,6 +165,7 @@ impl ClientShellState {
             return false;
         }
         endpoint.status = ClientEndpointStatus::Online;
+        endpoint.diagnostic = None;
         true
     }
 
@@ -210,7 +214,7 @@ impl ClientShellState {
         };
         self.endpoint(id)
             .and_then(|endpoint| endpoint.cache.coherent_surface(generation, size))
-            == Some(surface)
+            .is_some_and(|current| super::cache::same_surface(current, surface))
     }
 
     pub(crate) fn endpoint_projection_available(&self, id: &ClientEndpointId) -> bool {
@@ -240,6 +244,12 @@ impl ClientShellState {
     ) {
         if let Some(endpoint) = self.endpoint_mut(id) {
             endpoint.status = status;
+        }
+    }
+
+    pub(crate) fn set_endpoint_diagnostic(&mut self, id: &ClientEndpointId, message: String) {
+        if let Some(endpoint) = self.endpoint_mut(id) {
+            endpoint.diagnostic = (!message.is_empty()).then_some(message);
         }
     }
 

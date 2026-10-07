@@ -36,6 +36,7 @@ mod mobile;
 mod modal;
 mod navigator;
 mod notes;
+mod notice;
 mod notification;
 mod popup;
 mod popup_selection;
@@ -62,6 +63,7 @@ pub(crate) struct ClientFrontend {
     options: EndpointConnectOptions,
     host: host::HostPresentation,
     pub(crate) notice: Option<String>,
+    notice_clock: notice::NoticeClock,
     blit: crate::protocol::render_ansi::BlitEncoder,
     graphics: crate::kitty_graphics::endpoint_client::ClientState,
     #[cfg(unix)]
@@ -168,6 +170,7 @@ impl ClientFrontend {
             options,
             host: host::HostPresentation::new(config.ui.mouse_capture),
             notice: None,
+            notice_clock: notice::NoticeClock::default(),
             blit: crate::protocol::render_ansi::BlitEncoder::new(),
             graphics: crate::kitty_graphics::endpoint_client::ClientState::default(),
             #[cfg(unix)]
@@ -382,7 +385,7 @@ impl ClientFrontend {
     fn draw(&mut self) -> io::Result<()> {
         mobile::sync_selection(self);
         navigator::observe(self);
-        let mut view = self
+        let view = self
             .chrome
             .compute_view(&self.runtime.shell, self.cols, self.rows);
         let size = wire::ClientSurfaceSize {
@@ -393,7 +396,6 @@ impl ClientFrontend {
             self.options.surface_size = size;
             let update = self.runtime.resize(self.options, Instant::now());
             self.update(update)?;
-            view.surface = None;
         }
         let mobile_presentation = mobile::presentation(self);
         let navigator_presentation = navigator::presentation(self);
@@ -427,21 +429,7 @@ impl ClientFrontend {
                         &self.chrome.settings.palette,
                     );
                 }
-                // The existing bottom-row diagnostic must cover the pane action bar.
-                if let Some(notice) = &self.notice {
-                    if self.rows > 0 {
-                        frame.render_widget(
-                            ratatui::widgets::Paragraph::new(notice.as_str()).style(
-                                ratatui::style::Style::default().fg(self
-                                    .chrome
-                                    .settings
-                                    .palette
-                                    .red),
-                            ),
-                            ratatui::layout::Rect::new(0, self.rows - 1, self.cols, 1),
-                        );
-                    }
-                }
+                notice::render(self, frame, &view);
             }),
             (self.runtime.input_lease_current() || self.runtime.awaiting_surface_pair())
                 && self.mobile.is_none()
@@ -574,7 +562,7 @@ impl ClientFrontend {
                 _ = maintenance.tick() => {
                     let now = Instant::now();
                     let update = self.runtime.tick(now);
-                    let repaint = self.update(update)?;
+                    let repaint = self.update(update)? | notice::tick(self, now);
                     let indicator_pending = self.job_indicator_expiry_pending();
                     let indicator_just_expired =
                         std::mem::replace(&mut self.job_indicator_pending, indicator_pending)

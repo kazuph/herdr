@@ -165,9 +165,11 @@ impl EndpointRuntime {
                     .supervisors
                     .record_status(&endpoint_id, generation, status, now)
                 {
+                    // Connection progress is shown with the machine, not as a global notice.
+                    tracing::info!(endpoint = ?endpoint_id, ?status, %message, "endpoint connection status");
                     self.shell.set_endpoint_status(&endpoint_id, status);
+                    self.shell.set_endpoint_diagnostic(&endpoint_id, message);
                     update.repaint = true;
-                    update.error = Some(message);
                 }
             }
             EndpointSupervisorEvent::Connected {
@@ -245,6 +247,20 @@ impl EndpointRuntime {
                 }
                 return update;
             }
+            if pending.retains_source() && pending.source() == &id {
+                // Returning to the endpoint that never left the screen cancels the slow switch
+                // and continues with the requested navigation there.
+                let outcome =
+                    pending.rollback(&mut self.endpoints, "switch cancelled".into(), false);
+                self.pending = None;
+                self.release_retained(outcome, &mut update);
+                if target.is_none() {
+                    update.repaint = true;
+                    return update;
+                }
+            }
+        }
+        if let Some(pending) = self.pending.as_mut() {
             // Local navigation must never wait for a remote release acknowledgement.
             if id.is_local() {
                 pending.abandon(&mut self.endpoints);
@@ -289,7 +305,8 @@ impl EndpointRuntime {
                                 }),
                         );
                 }
-                self.presentation_frozen = true;
+                // A target-first switch keeps presenting the source until the target commits.
+                self.presentation_frozen = !prepared.retains_source();
                 match prepared.start(&mut self.endpoints) {
                     Ok(pending) => self.pending = Some(pending),
                     Err(ActivationBeginError::Partial { activation, error }) => {
@@ -305,7 +322,40 @@ impl EndpointRuntime {
         update
     }
 
+    /// Ends a target-first switch whose target failed. The source never stopped presenting.
+    fn release_retained(&mut self, outcome: ActivationRollback, update: &mut RuntimeUpdate) {
+        if let ActivationRollback::Retained(_) = outcome {
+            self.presentation_frozen = false;
+            self.endpoints.unfreeze_input();
+            update.repaint = true;
+        }
+    }
+
     fn rollback_outcome(&mut self, outcome: ActivationRollback, update: &mut RuntimeUpdate) {
+        if let ActivationRollback::Retained(error) = outcome {
+            let pending = self.pending.take();
+            let target = pending.as_ref().map(|pending| pending.target().clone());
+            let successor = pending
+                .as_ref()
+                .and_then(|pending| pending.successor().cloned());
+            self.release_retained(ActivationRollback::Retained(String::new()), update);
+            if let Some(target) = target {
+                let label = self
+                    .shell
+                    .endpoint(&target)
+                    .map_or_else(|| "machine".to_owned(), |endpoint| endpoint.label.clone());
+                self.shell.set_endpoint_diagnostic(&target, error.clone());
+                update.error = Some(format!("{label} did not respond: {error}"));
+            }
+            if let Some(next) = successor {
+                let next_update = self.activate(next.endpoint_id, next.target, Instant::now());
+                update.repaint |= next_update.repaint;
+                update.cancelled.extend(next_update.cancelled);
+                update.clear_host_effects |= next_update.clear_host_effects;
+                update.error = next_update.error.or(update.error.take());
+            }
+            return;
+        }
         self.presentation_frozen = true;
         if let ActivationRollback::Unavailable(error) = outcome {
             if let Some(pending) = self.pending.take() {
@@ -343,7 +393,17 @@ impl EndpointRuntime {
                     return;
                 };
                 match pending.complete(&mut self.shell, &mut self.endpoints) {
-                    Ok(ActivationCompletion::AwaitingPresentationSync { .. }) => {
+                    Ok(ActivationCompletion::AwaitingPresentationSync { previous, endpoint }) => {
+                        if previous != endpoint {
+                            update.cancelled.extend(
+                                self.commands.retire_lane(&previous).into_iter().map(
+                                    |request_id| ResourceKey {
+                                        endpoint: previous.clone(),
+                                        id: request_id,
+                                    },
+                                ),
+                            );
+                        }
                         self.presentation_frozen = false;
                         update.clear_host_effects = true;
                         update.repaint = true;
@@ -418,7 +478,10 @@ impl EndpointRuntime {
             update.clear_host_effects = true;
         }
         update.repaint = true;
-        update.error = Some(error.to_string());
+        tracing::warn!(endpoint = ?id, %error, "endpoint connection lost");
+        // The machine row and the main-area placeholder carry the reason; other endpoints'
+        // presentation is unaffected, so this is not a global notice.
+        self.shell.set_endpoint_diagnostic(id, error.to_string());
     }
 
     pub(crate) fn receive(&mut self, event: EndpointReaderEvent, now: Instant) -> RuntimeUpdate {
@@ -449,10 +512,15 @@ impl EndpointRuntime {
                 .endpoints
                 .connection(&id)
                 .is_some_and(|connection| connection.surface_active);
-        let pending_owner = self
+        // While a target-first switch is pending, the retained source keeps presenting.
+        let presenting = self
             .pending
             .as_ref()
-            .is_some_and(|pending| pending.accepts_endpoint(&id, generation));
+            .is_none_or(|pending| pending.retains_source() && pending.source() == &id);
+        let pending_owner = self.pending.as_ref().is_some_and(|pending| {
+            pending.accepts_endpoint(&id, generation)
+                && !(pending.retains_source() && pending.source() == &id)
+        });
         let mut progress = SurfaceActivationProgress::Pending;
         let mut accepted_snapshot = false;
         match message {
@@ -476,7 +544,7 @@ impl EndpointRuntime {
                                 }
                             }
                             update.repaint = true;
-                            if active && self.pending.is_none() && !self.presentation_frozen {
+                            if active && presenting && !self.presentation_frozen {
                                 self.publish_surface(&id, generation);
                             }
                         }
@@ -534,7 +602,7 @@ impl EndpointRuntime {
             ServerMessage::EndpointControl { .. } => {}
             ServerMessage::PaneSurface(surface) if active || pending_owner => {
                 if self.shell.receive_surface(&id, generation, surface.clone()) {
-                    if let Some(pending) = self.pending.as_mut() {
+                    if let Some(pending) = self.pending.as_mut().filter(|_| pending_owner) {
                         // Activation must compare the accepted receive-time scene,
                         // including pixels retained from earlier bounded asset batches.
                         if let Some(received) = self
@@ -544,7 +612,7 @@ impl EndpointRuntime {
                         {
                             progress = pending.receive_surface(&id, generation, received.clone());
                         }
-                    } else if active && !self.presentation_frozen {
+                    } else if active && presenting && !self.presentation_frozen {
                         self.publish_surface(&id, generation);
                         update.repaint = true;
                     }
@@ -554,11 +622,12 @@ impl EndpointRuntime {
                 let surface = self
                     .shell
                     .endpoint_mut(&id)
-                    .and_then(|endpoint| endpoint.cache.apply_patch(generation, patch));
+                    .and_then(|endpoint| endpoint.cache.apply_patch(generation, patch))
+                    .map(|surface| pending_owner.then(|| surface.clone()));
                 if let Some(surface) = surface {
-                    if let Some(pending) = self.pending.as_mut() {
+                    if let (Some(pending), Some(surface)) = (self.pending.as_mut(), surface) {
                         progress = pending.receive_surface(&id, generation, surface);
-                    } else if active && !self.presentation_frozen {
+                    } else if active && presenting && !self.presentation_frozen {
                         self.publish_surface(&id, generation);
                         update.repaint = true;
                     }
@@ -668,7 +737,7 @@ impl EndpointRuntime {
             update.cancelled.extend(next.cancelled);
             update.error = next.error.or(update.error);
         }
-        if self.pending.is_none() && self.endpoints.active_surface_available() {
+        if self.pending_allows_source_input() && self.endpoints.active_surface_available() {
             let active = self.endpoints.active_id().clone();
             update.cancelled.extend(
                 self.commands
@@ -700,8 +769,15 @@ impl EndpointRuntime {
         }
     }
 
+    /// No switch is pending, or the pending switch still leaves the source in charge.
+    fn pending_allows_source_input(&self) -> bool {
+        self.pending
+            .as_ref()
+            .is_none_or(PendingEndpointActivation::retains_source)
+    }
+
     pub(crate) fn awaiting_surface_pair(&self) -> bool {
-        if self.pending.is_some() || self.presentation_frozen {
+        if !self.pending_allows_source_input() || self.presentation_frozen {
             return false;
         }
         let Some(displayed) = self.shell.pane_surface.as_ref() else {
@@ -728,7 +804,7 @@ impl EndpointRuntime {
 
     pub(crate) fn input_lease_current(&self) -> bool {
         if !self.endpoints.active_surface_available()
-            || self.pending.is_some()
+            || !self.pending_allows_source_input()
             || self.presentation_frozen
         {
             return false;
@@ -742,7 +818,12 @@ impl EndpointRuntime {
                         .cache
                         .coherent_surface(connection.generation, self.options.surface_size)
                 })
-                .is_some_and(|surface| self.shell.pane_surface.as_ref() == Some(surface))
+                .is_some_and(|surface| {
+                    self.shell
+                        .pane_surface
+                        .as_ref()
+                        .is_some_and(|shown| super::cache::same_surface(shown, surface))
+                })
         })
     }
 
@@ -904,18 +985,33 @@ impl EndpointRuntime {
     pub(crate) fn resize(
         &mut self,
         options: EndpointConnectOptions,
-        now: Instant,
+        _now: Instant,
     ) -> RuntimeUpdate {
         self.options = options;
         let mut update = RuntimeUpdate::default();
         let resize = self.resize_message();
         if let Some(pending) = self.pending.as_mut() {
-            self.presentation_frozen = true;
-            if let Err(error) = pending.update_resize(resize, &mut self.endpoints) {
+            let retained = pending.retains_source().then(|| pending.source().clone());
+            if retained.is_none() {
+                self.presentation_frozen = true;
+            }
+            if let Err(error) = pending.update_resize(resize.clone(), &mut self.endpoints) {
                 self.rollback(error, false, &mut update);
             }
-        } else {
-            update = self.activate(self.shell.active_endpoint_id.clone(), None, now);
+            if let Some(source) = retained {
+                self.endpoints.send_to(&source, &resize);
+            }
+            return update;
+        }
+        // A geometry change is not a handoff. The presenting endpoint redraws at the new size
+        // and the previous frame stays on screen until that surface arrives.
+        let active = self.endpoints.active_id().clone();
+        if self
+            .endpoints
+            .connection(&active)
+            .is_some_and(|connection| connection.surface_active)
+        {
+            self.endpoints.send_to(&active, &resize);
         }
         update
     }
@@ -937,8 +1033,13 @@ impl EndpointRuntime {
         self.shell.outer_focused = Some(focused);
         let mut update = RuntimeUpdate::default();
         if let Some(pending) = self.pending.as_mut() {
+            let retained = pending.retains_source().then(|| pending.source().clone());
             if let Err(error) = pending.update_host_focus(focused, &mut self.endpoints) {
                 self.rollback(error, false, &mut update);
+            }
+            if let Some(source) = retained {
+                self.endpoints
+                    .send_to(&source, &ClientMessage::ClientShellFocus { focused });
             }
         } else if self
             .endpoints
@@ -1081,5 +1182,186 @@ mod display_regression_tests {
         assert!(!runtime.shell.receive_surface(&id, 1, surface));
         runtime.publish_surface(&id, 2);
         assert!(runtime.shell.pane_surface.is_none());
+    }
+
+    struct Recording(std::sync::Arc<std::sync::Mutex<Vec<ClientMessage>>>);
+
+    impl super::super::EndpointTransport for Recording {
+        fn send(&mut self, message: &ClientMessage) -> io::Result<()> {
+            self.0.lock().unwrap().push(message.clone());
+            Ok(())
+        }
+    }
+
+    fn negotiation() -> super::super::EndpointNegotiation {
+        super::super::EndpointNegotiation::new(
+            vec!["client_shell.surface.set".into()],
+            vec![
+                crate::protocol::endpoint::SURFACE_INTEREST_CAPABILITY.into(),
+                crate::protocol::endpoint::PRESENTATION_EFFECTS_FENCE_CAPABILITY.into(),
+            ],
+        )
+    }
+
+    fn surface_for(snapshot: &ClientShellSnapshot, size: ClientSurfaceSize) -> PaneSurfaceFrame {
+        let buffer =
+            ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, size.cols, size.rows));
+        PaneSurfaceFrame {
+            boot_id: snapshot.boot_id.clone(),
+            projection_revision: snapshot.revision,
+            surface_revision: 1,
+            frame: FrameData::from_ratatui_buffer(&buffer, None),
+            panes: vec![],
+            splits: vec![],
+            popup: None,
+            graphics: SurfaceGraphicsScene::default(),
+        }
+    }
+
+    #[test]
+    fn switching_to_an_unresponsive_machine_keeps_the_source_presenting_and_typing() {
+        let snapshot: ClientShellSnapshot = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/upstream-gen1-endpoint-snapshot-v1.json"
+        )))
+        .unwrap();
+        let size = ClientSurfaceSize { cols: 80, rows: 24 };
+        let options = EndpointConnectOptions {
+            surface_size: size,
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_geometry_exact: false,
+            endpoint_keybindings: false,
+            mouse_capture: true,
+            surface_active: true,
+        };
+        let now = Instant::now();
+        let mut runtime = EndpointRuntime::new(
+            ClientShellState::new(),
+            EndpointRegistry::empty(),
+            EndpointSupervisors::new(&[], now),
+            options,
+        );
+        let local = ClientEndpointId::Local;
+        let remote = ClientEndpointId::Ssh("mini".into());
+        runtime
+            .shell
+            .set_endpoint_catalog(&[crate::machine::MachineProfile {
+                id: "mini".into(),
+                label: "Mac mini".into(),
+                target: "no-ssh".into(),
+                session: "remote".into(),
+                enabled: true,
+            }]);
+        let local_sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let remote_sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        for (id, sent, active) in [(&local, &local_sent, true), (&remote, &remote_sent, false)] {
+            assert!(runtime.shell.begin_connection(id, 1));
+            assert!(runtime.shell.receive_snapshot(id, 1, snapshot.clone()));
+            assert!(runtime
+                .shell
+                .receive_surface(id, 1, surface_for(&snapshot, size)));
+            runtime.endpoints.insert(
+                id.clone(),
+                Recording(sent.clone()),
+                1,
+                negotiation(),
+                active,
+            );
+        }
+        assert!(runtime.endpoints.set_active(&local));
+        runtime.endpoints.unfreeze_input();
+        runtime.presentation_frozen = false;
+        runtime.publish_surface(&local, 1);
+        assert!(runtime.input_lease_current());
+
+        let update = runtime.activate(remote.clone(), None, now);
+        assert!(update.error.is_none());
+        let pending = runtime.pending.as_ref().expect("switch is pending");
+        assert!(pending.retains_source());
+        // Local still owns the screen and the keyboard while the machine has not answered.
+        assert!(runtime.input_lease_current());
+        assert!(!local_sent.lock().unwrap().iter().any(|message| matches!(
+            message,
+            ClientMessage::ClientShellFocus { focused: false }
+                | ClientMessage::ClientShellEndpointRequest { .. }
+        )));
+        assert!(remote_sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|message| matches!(message, ClientMessage::ClientShellEndpointRequest { .. })));
+
+        // The machine never answers: the switch is abandoned and Local was never interrupted.
+        let update = runtime.tick(now + std::time::Duration::from_secs(6));
+        assert!(runtime.pending.is_none());
+        assert!(runtime.input_lease_current());
+        assert_eq!(runtime.shell.active_endpoint_id, local);
+        assert!(update
+            .error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("Mac mini did not respond")));
+        assert!(runtime
+            .shell
+            .endpoint(&remote)
+            .and_then(|endpoint| endpoint.diagnostic.as_deref())
+            .is_some());
+    }
+
+    #[test]
+    fn a_resize_is_sent_to_the_presenting_endpoint_without_a_handoff() {
+        let snapshot: ClientShellSnapshot = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/upstream-gen1-endpoint-snapshot-v1.json"
+        )))
+        .unwrap();
+        let size = ClientSurfaceSize { cols: 80, rows: 24 };
+        let mut options = EndpointConnectOptions {
+            surface_size: size,
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_geometry_exact: false,
+            endpoint_keybindings: false,
+            mouse_capture: true,
+            surface_active: true,
+        };
+        let now = Instant::now();
+        let mut runtime = EndpointRuntime::new(
+            ClientShellState::new(),
+            EndpointRegistry::empty(),
+            EndpointSupervisors::new(&[], now),
+            options,
+        );
+        let local = ClientEndpointId::Local;
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        assert!(runtime.shell.begin_connection(&local, 1));
+        assert!(runtime.shell.receive_snapshot(&local, 1, snapshot.clone()));
+        assert!(runtime
+            .shell
+            .receive_surface(&local, 1, surface_for(&snapshot, size)));
+        runtime.endpoints.insert(
+            local.clone(),
+            Recording(sent.clone()),
+            1,
+            negotiation(),
+            true,
+        );
+        assert!(runtime.endpoints.set_active(&local));
+        runtime.endpoints.unfreeze_input();
+        runtime.presentation_frozen = false;
+        runtime.publish_surface(&local, 1);
+
+        options.surface_size = ClientSurfaceSize { cols: 70, rows: 24 };
+        runtime.resize(options, now);
+        assert!(runtime.pending.is_none());
+        assert!(!runtime.presentation_frozen);
+        // The previous frame stays presented until the endpoint answers at the new size.
+        assert!(runtime.shell.pane_surface.is_some());
+        let sent = sent.lock().unwrap();
+        assert!(matches!(
+            sent.as_slice(),
+            [ClientMessage::ClientShellResize { surface_size, .. }]
+                if *surface_size == options.surface_size
+        ));
     }
 }

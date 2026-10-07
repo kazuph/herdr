@@ -20,10 +20,12 @@ pub(super) fn sidebar_mouse(
                     .saturating_add(1)
                     .clamp(settings.sidebar_min_width, settings.sidebar_max_width);
                 settings.sidebar_width_source = crate::app::state::SidebarWidthSource::Manual;
-                frontend.persist_chrome_preferences();
-                frontend.force_redraw = true;
             }
-            MouseEventKind::Up(MouseButton::Left) => frontend.sidebar_drag = false,
+            MouseEventKind::Up(MouseButton::Left) => {
+                frontend.sidebar_drag = false;
+                // Persist once per drag, not on every intermediate column.
+                frontend.persist_chrome_preferences();
+            }
             _ => {}
         }
         return true;

@@ -5,6 +5,18 @@ use crate::protocol::endpoint_wire::{ClientSurfaceSize, PaneSurfaceFrame};
 
 /// Cached metadata may stay visible offline. Its presence never grants input
 /// authority; only a live generation with an exact replacement pair does.
+/// Two surfaces of one connection are the same frame when their identity and revisions match.
+/// Revisions only grow within a connection and the presented copy is dropped on reconnect, so this
+/// replaces comparing every cell.
+pub(crate) fn same_surface(left: &PaneSurfaceFrame, right: &PaneSurfaceFrame) -> bool {
+    left.boot_id == right.boot_id
+        && left.projection_revision == right.projection_revision
+        && left.surface_revision == right.surface_revision
+        && left.frame.width == right.frame.width
+        && left.frame.height == right.frame.height
+        && left.frame.cells.len() == right.frame.cells.len()
+}
+
 #[derive(Default)]
 pub(crate) struct EndpointCache {
     generation: Option<u64>,
@@ -205,7 +217,7 @@ impl EndpointCache {
         &mut self,
         generation: u64,
         patch: crate::protocol::endpoint_wire::PaneSurfacePatch,
-    ) -> Option<PaneSurfaceFrame> {
+    ) -> Option<&PaneSurfaceFrame> {
         if !self.accepts(generation) {
             return None;
         }
@@ -273,21 +285,24 @@ impl EndpointCache {
                 return None;
             }
         }
-        let mut next = current.clone();
+        // Everything above validated the patch, so it is applied to the retained surface in
+        // place instead of copying the whole frame for every incremental update.
+        let next = self.surface.as_mut()?;
         for row in patch.rows {
             let start = usize::from(row.y) * usize::from(next.frame.width) + usize::from(row.x);
             next.frame.cells[start..start + row.cells.len()].clone_from_slice(&row.cells);
         }
         for updated in patch.panes {
-            let existing = next
+            if let Some(existing) = next
                 .panes
                 .iter_mut()
-                .find(|pane| pane.pane_id == updated.pane_id)?;
-            *existing = updated;
+                .find(|pane| pane.pane_id == updated.pane_id)
+            {
+                *existing = updated;
+            }
         }
         next.frame.cursor = patch.cursor;
         next.surface_revision = patch.surface_revision;
-        self.surface = Some(next.clone());
         Some(next)
     }
 }

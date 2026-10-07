@@ -103,9 +103,12 @@ impl PendingEndpointActivation {
             .map_err(|error| ActivationBeginError::Preflight(error.to_string()))?;
         }
 
+        let source_retained =
+            source_available && !source_is_target && !target_lease.endpoint_id.is_local();
         Ok(Self {
             source,
             source_available,
+            source_retained,
             target: target_lease,
             focus,
             host_focused: shell.host_focus_baseline(),
@@ -125,7 +128,9 @@ impl PendingEndpointActivation {
         mut self,
         endpoints: &mut EndpointRegistry,
     ) -> Result<Self, ActivationBeginError> {
-        endpoints.freeze_input();
+        if !self.source_retained {
+            endpoints.freeze_input();
+        }
         match self.start_prepared(endpoints) {
             Ok(()) => Ok(self),
             Err(error) => Err(ActivationBeginError::Partial {
@@ -137,6 +142,10 @@ impl PendingEndpointActivation {
 
     fn start_prepared(&mut self, endpoints: &mut EndpointRegistry) -> Result<(), String> {
         let source_is_target = self.source.endpoint_id == self.target.endpoint_id;
+        if self.source_retained {
+            // The source is released only when the target commits.
+            return self.start_target(endpoints, self.resize.clone());
+        }
         // Local must not depend on a remote acknowledgement to become usable.
         if source_is_target || !self.source_available || self.target.endpoint_id.is_local() {
             if self.source_available && !source_is_target {
@@ -200,6 +209,19 @@ impl PendingEndpointActivation {
         &self.target.endpoint_id
     }
 
+    pub(crate) fn source(&self) -> &ClientEndpointId {
+        &self.source.endpoint_id
+    }
+
+    /// True while the source still owns the screen and pane input during a target-first switch.
+    pub(crate) fn retains_source(&self) -> bool {
+        self.source_retained
+    }
+
+    pub(crate) fn successor(&self) -> Option<&EndpointActivationIntent> {
+        self.successor.as_ref()
+    }
+
     fn geometry(&self) -> crate::protocol::endpoint_wire::ClientSurfaceSize {
         resize_geometry(&self.resize).expect("activation resize was validated before construction")
     }
@@ -215,7 +237,10 @@ impl PendingEndpointActivation {
     /// The complete source command lane cannot safely cross source-off into a later presentation
     /// epoch. Other endpoint lanes are not part of this retirement.
     pub(crate) fn source_command_lane(&self) -> Option<&ClientEndpointId> {
-        (self.source_available && self.source.endpoint_id != self.target.endpoint_id)
+        // A retained source keeps its lane until the target commits.
+        (self.source_available
+            && !self.source_retained
+            && self.source.endpoint_id != self.target.endpoint_id)
             .then_some(&self.source.endpoint_id)
     }
 
@@ -746,6 +771,15 @@ impl PendingEndpointActivation {
         error: String,
     ) -> ActivationRollback {
         self.rollback_error = Some(error.clone());
+        if self.source_retained {
+            if self.target.endpoint_id == *endpoint_id {
+                return ActivationRollback::Retained(error);
+            }
+            // The retained source died; the healthy target continues as the next owner.
+            self.source_retained = false;
+            self.source_available = false;
+            return ActivationRollback::Pending;
+        }
         if self.target.endpoint_id == *endpoint_id && self.source.endpoint_id != *endpoint_id {
             return match self.phase {
                 ActivationPhase::RestoringSource { .. } => ActivationRollback::Pending,
@@ -814,6 +848,15 @@ impl PendingEndpointActivation {
         source_release_rejected: bool,
     ) -> ActivationRollback {
         self.rollback_error = Some(error.clone());
+        if self.source_retained {
+            // Nothing committed on the source. Withdraw the target without waiting for it.
+            release_surface_best_effort(
+                &self.target,
+                endpoints,
+                format!("client-shell-surface:{}:abandon", self.epoch),
+            );
+            return ActivationRollback::Retained(error);
+        }
         if matches!(self.phase, ActivationPhase::ReleasingSource { .. }) && source_release_rejected
         {
             // Rejection proves source-off did not commit, but cached source metadata may have
@@ -961,6 +1004,16 @@ impl PendingEndpointActivation {
             acknowledgement_revision,
             self.geometry(),
         )?;
+        if self.source_retained {
+            // Commit point of a target-first switch: the source leaves the screen now.
+            self.source_retained = false;
+            release_surface_best_effort(
+                &self.source,
+                endpoints,
+                format!("client-shell-surface:{}:off", self.epoch),
+            );
+            endpoints.freeze_input();
+        }
         endpoints.set_surface_active(&lease.endpoint_id, true);
         shell.set_endpoint_status(&lease.endpoint_id, ClientEndpointStatus::Online);
         if !shell.endpoint_projection_available(&lease.endpoint_id)

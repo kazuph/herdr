@@ -20,6 +20,10 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- A saved machine that stops responding no longer freezes or blanks the whole window. Switching to another machine keeps the current screen and keyboard live until that machine is ready; if it does not answer within five seconds the switch is cancelled and the current screen is never interrupted. A selected machine that disconnects shows its status and reason in its pane area instead of a black screen, and reconnects in place.
+- Error notices now appear in the free space of the pane action bar (or the sidebar's last row) and clear after ten seconds, instead of covering the bottom row and turning the COPY / CYCLE LAYOUT / ROTATE PANES / EQUALIZE buttons red. Machine connection progress is shown with the machine rather than as a notice.
+- Resizing the window or dragging the sidebar divider no longer blanks the main area: the previous frame stays visible, clipped, until the frame for the new size arrives, and the resize no longer goes through a full machine handoff. The sidebar width is saved once when the drag ends.
+- The client draws each frame in a single pass into a reused buffer and applies incremental surface updates in place, cutting client CPU by more than half while panes stream output.
 - Names given by the fork's argv-based `agent start` now stay until the named process exits instead of being dropped when the 30-second startup wait ends or detection changes, so `agent send` and mailbox delivery keep resolving them.
 - On Windows, an `agent prompt` waiting for its Enter keystroke to be written no longer holds the input lock, so a full PTY cannot stall other keystrokes or pane shutdown.
 - Message sends now reject the `*` recipient instead of broadcasting to every agent; callers must name one agent or pane target.

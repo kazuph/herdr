@@ -134,6 +134,29 @@ pub(crate) struct ChromeView {
     pub(crate) pane_actions: crate::ui::PaneActionBarRects,
 }
 
+#[cfg(test)]
+impl ChromeView {
+    pub(crate) fn empty_for_test() -> Self {
+        Self {
+            mobile_header_facts: None,
+            menu_launcher: Rect::default(),
+            layout: ChromeLayout::default(),
+            hits: Vec::new(),
+            workspace_max_scroll: 0,
+            agent_max_scroll: 0,
+            workspace_body: Rect::default(),
+            detail_body: Rect::default(),
+            lines: Vec::new(),
+            backgrounds: Vec::new(),
+            surface: None,
+            workspace_selection_band: None,
+            machine_headers: Vec::new(),
+            section_headers: Vec::new(),
+            pane_actions: crate::ui::PaneActionBarRects::default(),
+        }
+    }
+}
+
 pub(crate) struct ClientChrome {
     pub(crate) settings: ChromeSettings,
     pub(crate) collapsed_machines: HashSet<ClientEndpointId>,
@@ -148,6 +171,8 @@ pub(crate) struct ClientChrome {
     pub(crate) spinner_tick: u32,
     pub(crate) detail_view: crate::app::state::SidebarDetailView,
     pub(crate) jobs_scroll: usize,
+    /// Reused render target; reallocated only when the terminal size changes.
+    scratch: std::cell::RefCell<Option<ratatui::Terminal<ratatui::backend::TestBackend>>>,
 }
 
 impl ClientChrome {
@@ -191,6 +216,7 @@ impl ClientChrome {
             spinner_tick: 0,
             detail_view: crate::app::state::SidebarDetailView::default(),
             jobs_scroll: 0,
+            scratch: std::cell::RefCell::new(None),
         }
     }
 
@@ -241,6 +267,9 @@ impl ClientChrome {
             ),
         };
         sidebar::compute(self, shell, &mut view);
+        if view.surface.is_none() {
+            self.offline_placeholder(shell, &mut view);
+        }
         let mut x = layout.tab_bar.x;
         for tab in tabs.into_iter().skip(self.tab_scroll) {
             if x >= layout.tab_bar.right() || layout.tab_bar.is_empty() {
@@ -347,6 +376,42 @@ impl ClientChrome {
         view
     }
 
+    /// A machine that is not presenting gets an explanation in its own pane area instead of a
+    /// blank screen. The sidebar and every other machine stay usable.
+    fn offline_placeholder(&self, shell: &ClientShellState, view: &mut ChromeView) {
+        let area = view.layout.pane_surface;
+        let Some(endpoint) = shell.endpoint(&shell.active_endpoint_id) else {
+            return;
+        };
+        if area.width < 8 || area.height < 3 || endpoint.status == ClientEndpointStatus::Online {
+            return;
+        }
+        let p = &self.settings.palette;
+        let mut lines = vec![Line::from(Span::styled(
+            format!("{}: {}", endpoint.label, status_text(endpoint.status)),
+            Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+        ))];
+        if let Some(diagnostic) = &endpoint.diagnostic {
+            lines.push(Line::from(Span::styled(
+                diagnostic.clone(),
+                Style::default().fg(p.overlay0),
+            )));
+        }
+        if !endpoint.endpoint_id.is_local() {
+            lines.push(Line::from(Span::styled(
+                "Local spaces in the sidebar keep working.",
+                Style::default().fg(p.overlay0),
+            )));
+        }
+        let top = area.y + area.height.saturating_sub(lines.len() as u16) / 2;
+        for (index, line) in lines.into_iter().enumerate() {
+            let width = (line.width() as u16).min(area.width);
+            let x = area.x + (area.width - width) / 2;
+            view.lines
+                .push((Rect::new(x, top + index as u16, width, 1), line));
+        }
+    }
+
     pub(crate) fn render(&self, view: &ChromeView) -> crate::protocol::FrameData {
         self.render_with_overlay(view, |_| {})
     }
@@ -356,110 +421,115 @@ impl ClientChrome {
         view: &ChromeView,
         overlay: impl FnOnce(&mut ratatui::Frame),
     ) -> crate::protocol::FrameData {
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(
-            view.layout.area.width,
-            view.layout.area.height,
-        ))
-        .expect("in-memory terminal creation is infallible");
-        terminal
-            .draw(|frame| {
-                frame.buffer_mut().set_style(
-                    view.layout.area,
-                    Style::default()
-                        .fg(self.settings.palette.text)
-                        .bg(self.settings.palette.panel_bg),
-                );
-                for (rect, style) in &view.backgrounds {
-                    frame.buffer_mut().set_style(*rect, *style);
-                }
-                for (rect, line) in &view.lines {
-                    frame.render_widget(Paragraph::new(line.clone()), *rect);
-                }
-                if let Some(rect) = view.workspace_selection_band {
-                    crate::ui::sidebar::render_workspace_selection_band(
-                        frame,
-                        rect,
-                        &self.settings.palette,
-                        view.workspace_body.bottom(),
-                    );
-                }
-                if let Some(facts) = &view.mobile_header_facts {
-                    crate::ui::render_mobile_header_from(
-                        frame,
-                        view.layout.mobile_header,
-                        view.menu_launcher,
-                        &self.settings.palette,
-                        facts,
-                    );
-                }
-                for (rect, label, expanded) in &view.machine_headers {
-                    crate::ui::sidebar::render_workspace_group_header(
-                        frame,
-                        *rect,
-                        label,
-                        *expanded,
-                        &self.settings.palette,
-                        view.workspace_body.bottom(),
-                    );
-                }
-                for (header, expanded) in &view.section_headers {
-                    crate::ui::sidebar::render_workspace_section_header(
-                        frame,
-                        header,
-                        *expanded,
-                        &self.settings.palette,
-                        view.workspace_body.bottom(),
-                    );
-                }
-                crate::ui::render_pane_action_bar_with_palette(
-                    frame,
-                    view.layout.pane_actions,
-                    crate::ui::pane_action_copy_label(false, false),
-                    &self.settings.palette,
-                );
-            })
-            .expect("in-memory drawing is infallible");
-        let mut frame = crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(
-            terminal.backend().buffer(),
-            None,
-            &[],
-        );
-        if let Some(surface) = &view.surface {
-            surface::compose(&mut frame, view.layout.pane_surface, &surface.frame);
-            if let Some(popup) = surface.popup.as_deref() {
-                surface::compose_popup(
-                    &mut frame,
-                    view.layout.pane_surface,
-                    popup,
-                    &self.settings.palette,
-                );
-            }
+        // One reused in-memory buffer, drawn in a single pass: chrome, the endpoint surface,
+        // its popup, then client overlays. Only the final buffer is converted to wire cells.
+        let area = view.layout.area;
+        let mut slot = self.scratch.borrow_mut();
+        if slot
+            .as_ref()
+            .is_none_or(|terminal| terminal.backend().buffer().area != area)
+        {
+            *slot = Some(
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(area.width, area.height))
+                    .expect("in-memory terminal creation is infallible"),
+            );
         }
-        let buffer = frame
-            .to_ratatui_buffer()
-            .expect("composed frame has exact geometry");
-        terminal
-            .draw(|target| {
-                *target.buffer_mut() = buffer;
-                overlay(target);
-            })
-            .expect("in-memory drawing is infallible");
+        let terminal = slot.as_mut().expect("scratch terminal was just ensured");
+        terminal.current_buffer_mut().reset();
+        let mut links = surface::Links::default();
+        let mut cursor = None;
+        let mut graphics = None;
+        {
+            let mut frame = terminal.get_frame();
+            let frame = &mut frame;
+            frame.buffer_mut().set_style(
+                view.layout.area,
+                Style::default()
+                    .fg(self.settings.palette.text)
+                    .bg(self.settings.palette.panel_bg),
+            );
+            for (rect, style) in &view.backgrounds {
+                frame.buffer_mut().set_style(*rect, *style);
+            }
+            for (rect, line) in &view.lines {
+                frame.render_widget(Paragraph::new(line.clone()), *rect);
+            }
+            if let Some(rect) = view.workspace_selection_band {
+                crate::ui::sidebar::render_workspace_selection_band(
+                    frame,
+                    rect,
+                    &self.settings.palette,
+                    view.workspace_body.bottom(),
+                );
+            }
+            if let Some(facts) = &view.mobile_header_facts {
+                crate::ui::render_mobile_header_from(
+                    frame,
+                    view.layout.mobile_header,
+                    view.menu_launcher,
+                    &self.settings.palette,
+                    facts,
+                );
+            }
+            for (rect, label, expanded) in &view.machine_headers {
+                crate::ui::sidebar::render_workspace_group_header(
+                    frame,
+                    *rect,
+                    label,
+                    *expanded,
+                    &self.settings.palette,
+                    view.workspace_body.bottom(),
+                );
+            }
+            for (header, expanded) in &view.section_headers {
+                crate::ui::sidebar::render_workspace_section_header(
+                    frame,
+                    header,
+                    *expanded,
+                    &self.settings.palette,
+                    view.workspace_body.bottom(),
+                );
+            }
+            crate::ui::render_pane_action_bar_with_palette(
+                frame,
+                view.layout.pane_actions,
+                crate::ui::pane_action_copy_label(false, false),
+                &self.settings.palette,
+            );
+            if let Some(surface) = &view.surface {
+                let exact = surface::compose_into(
+                    frame.buffer_mut(),
+                    view.layout.pane_surface,
+                    &surface.frame,
+                    &mut links,
+                    &mut cursor,
+                );
+                if exact {
+                    graphics = Some(surface.frame.graphics.clone());
+                }
+                if let Some(popup) = surface.popup.as_deref() {
+                    if surface::compose_popup_into(
+                        frame.buffer_mut(),
+                        view.layout.pane_surface,
+                        popup,
+                        &self.settings.palette,
+                        &mut links,
+                        &mut cursor,
+                    ) {
+                        graphics = Some(popup.frame.graphics.clone());
+                    }
+                }
+            }
+            overlay(frame);
+        }
         let mut rendered = crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(
-            terminal.backend().buffer(),
-            frame.cursor.clone(),
+            terminal.current_buffer_mut(),
+            cursor,
             &[],
         );
-        rendered.hyperlinks = frame.hyperlinks;
-        rendered.graphics = frame.graphics;
-        for (cell, original) in rendered.cells.iter_mut().zip(frame.cells) {
-            if *cell
-                == (crate::protocol::CellData {
-                    hyperlink: None,
-                    ..original.clone()
-                })
-            {
-                cell.hyperlink = original.hyperlink;
-            }
+        links.apply(&mut rendered);
+        if let Some(graphics) = graphics {
+            rendered.graphics = graphics;
         }
         rendered
     }

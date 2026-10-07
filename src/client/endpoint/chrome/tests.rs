@@ -159,13 +159,27 @@ fn endpoint_chrome_composition_keeps_exact_cells_hyperlinks_cursor_and_unicode_w
     );
     assert_eq!(target.hyperlinks, source.hyperlinks);
     assert_eq!(target.cells[12].hyperlink, Some(0));
-    let before = target.clone();
+    // A frame for another geometry is kept visible, clipped and unscaled, without granting a
+    // cursor or image placements for the new area.
+    let mut resized = target.clone();
+    resized.cursor = None;
+    resized.graphics = Vec::new();
     assert!(!surface::compose(
-        &mut target,
+        &mut resized,
         Rect::new(2, 1, 5, 2),
         &source
     ));
-    assert_eq!(target, before);
+    assert_eq!(resized.cursor, None);
+    assert!(resized.graphics.is_empty());
+    for y in 0..2u16 {
+        for x in 0..5u16 {
+            let shown = &resized.cells
+                [usize::from(1 + y) * usize::from(resized.width) + usize::from(2 + x)];
+            let original =
+                &source.cells[usize::from(y) * usize::from(source.width) + usize::from(x)];
+            assert_eq!(shown.symbol, original.symbol);
+        }
+    }
 }
 
 #[test]
