@@ -613,6 +613,22 @@
   - workspace配列indexやfocused paneでpopup ownerを再計算し、並び替え・削除後にpopupが別workspaceへ移る。
   - owner削除時にselection、resize lock、terminal map、runtime shutdownのいずれかが残る、またはbackground workspace削除でpopupを誤って閉じる。
 
+### Space cardのjob dot
+- **該当コミット**: 3b893cfa, 54660e2a
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — 本家にjob概念がないため、space cardのjob表示はforkが所有する。
+- **目的**: どのspaceで意味のあるbackground jobが動いているかを、Agentsタブを開いたままでも一目で分かるようにする。古いjobで表示を埋めない。
+- **挙動**:
+  - space cardはgit情報の前に、意味のあるbackground jobごとに色付きの`●`を1つ出す。色と元データは`[jobs]`パネルと同じjobs snapshotを使う。
+  - 表示するのは、queued job、runner processの生存をjobs snapshot更新時に確かめたrunning/cancelling job、`finished_unix_ms`から1分以内のfinished jobだけ。描画中にprocess生存を調べない。
+  - runnerが居ないrunning/cancelling行と、終了時刻の無いfinished行は何も出さない。表示期限が来るまでendpoint frontendは再描画を続ける。
+  - `[jobs]`パネルは全履歴を変えずに出す。
+- **受け入れ条件**:
+  - 終了から1分を過ぎたjobと、runnerが居ないrunning行がspace cardにdotを残さない。
+  - queued jobと生存runnerのrunning jobはAgentsタブ表示中でもdotが出る。
+  - `[jobs]`パネルの行数がdotの間引きで減らない。
+- **デグレ判定**: 終わったjobのdotが溜まり続ける、または描画のたびにprocess走査が走る。
+
 ## G3. Agent復元（exact session restore・fail-closed）
 
 ### paneごとのexact agent session復元
@@ -778,6 +794,37 @@
   - 同一Codex/Claudeのvisible idleが15秒続いても非full-lifecycleのstale `working` / `blocked` authorityが残る、または解除時に公式sessionが失われるなら劣化。
   - visible idleなし、別agent、full-lifecycle authorityのいずれかを15秒だけで解除するなら劣化。
   - 完了summary行だけでworking表示になるなら劣化。
+
+### Devin sessionのhookなし観測
+- **該当コミット**: 8d29b399
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — forkはintegration hookを持たないため、Devinのsession IDを画面外の根拠から観測する。
+- **目的**: Devin paneを再起動後に同じ会話へ戻せるようにする。推測では復元しない。
+- **挙動**:
+  - pane内`devin`の直接の子`devin acp`が保持する`~/.local/share/devin/cli/session_locks/<id>.lock`（中身はその子のpid）からsession IDを得る。
+  - lockのpidがpaneの`devin`の生存中の直接の子と一致し、かつlockの更新時刻がその子の起動時刻の窓内にある時だけ採用する。
+  - pid不一致、複数一致、読めないlock、古いlockは採用しない（fail-closed）。復元は既存の`devin --resume <id>`経路を使う。
+- **受け入れ条件**:
+  - 一致する1つのlockのstem（session ID）だけが採用される。
+  - pid不一致・複数一致・lock欠落・lockディレクトリ欠落では採用しない。
+  - pid再利用による古いlockと、読めないlockは採用しない。
+- **デグレ判定**: cwdや最新lockからsession IDを推測する、またはhook前提の経路を復活させる。
+
+### 別の場所で稼働中の会話を復元しない
+- **該当コミット**: 8fb02dc8, 7668a02d
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — exact restoreの安全条件として、同じ会話の二重起動を防ぐ。
+- **目的**: 別の端末・別のHerdr session・別マシンの画面で開いたままの会話を、restoreがもう一度起動して二重に動かすことを防ぐ。
+- **挙動**:
+  - 起動時restore（`session.resume_agents_on_restore`）と`[agent_restore]`の打ち込み経路の両方で、保存済みsession IDが他所で稼働中ならそのpaneの再開を飛ばす。
+  - 稼働中の根拠は次のいずれか。Claude Codeの`<CLAUDE_CONFIG_DIR or ~/.claude>/sessions/<pid>.json`にそのsessionIdがあり、そのpidが生きている。Codexの`~/.codex/thread-writer-locks/<id>.lock`を他processがflockで保持している。Devinの`session_locks/<id>.lock`のpidが生きている。動いているprocessのcommand line引数（`<id>`または`--resume=<id>`）にそのIDがある。
+  - 起動時restoreで飛ばしたpaneは、保存済み画面履歴を出したshellとして戻り、そのsessionを手放す（次の再起動でも取らない）。打ち込み経路では`session already running elsewhere`としてskipを報告する。live handoffで引き継いだpaneは対象外。
+- **受け入れ条件**:
+  - 稼働中sessionのpaneは再開されず、`skipping agent resume: session already running elsewhere`がserver logに残る。
+  - 稼働していないsession IDのpaneは従来どおり再開される。
+  - Claude registryは生存pidかつsessionId一致の時だけ稼働中と判定し、壊れたfileやpid不一致は稼働中としない。
+  - command line判定は引数全体または`=`の右辺の完全一致だけを稼働中とする。
+- **デグレ判定**: 同じ会話が二つのpaneで同時に動く、または稼働していない会話の復元まで止まる。
 
 ## G4. 通知
 
@@ -1298,6 +1345,20 @@
   - overlay操作で背後のfocus/selection/layoutが変わる、thumbがgrab位置から跳ぶ、release後もdragが続く。
   - copy modeまたはfocus historyがhelpから消える、back/forwardが逆になる、別groupへ移る。
 
+### SGR 1016 paneへのcell中心pixel配送
+- **該当コミット**: 70d7230f
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — fork独自のpixel mouse（terminal-browser）経路を守る。
+- **目的**: hostがcell座標しか報告しない時（2つ目のclientがdirect graphicsを止めた時など）でも、pixel mouseを要求するpaneのclickが左上へずれないようにする。
+- **挙動**:
+  - DEC SGR 1016を要求するpaneへのbutton・motion・wheelは、hostのpixel座標があればそれを、無ければcellの中心pixel（pane pixel size、無ければhost cell size）を送る。
+  - terminal-attachのwheel経路も同じ変換を通す。cell modeのpaneへはcell座標のまま送る。
+- **受け入れ条件**:
+  - host pixelが無い時、pixel mode paneにはcell中心のpixel座標が届く。
+  - host pixelがある時はその値をそのまま届ける。
+  - cell mode paneへはcell座標が届く。
+- **デグレ判定**: cell番号をpixelとして送る、またはcell mode paneへpixelを送る。
+
 ## G7. worktree操作
 
 - **status: 本家採用へ移行 (A)** — fork独自実装 (`92edda7`, `e7338e4`) は本家 `0148c13`, `9817820`, `89ca3ba`, `745ce42`, `5d7e567`, `fbc3f08` のgit worktree workspace管理、CLI/socket API、既存branch、Windows、bare repo、安全な削除へ移行する。fork差分は持たない。
@@ -1664,6 +1725,80 @@
   - process-global stateを変更するtestが共有lockと明示的resetを使う。
   - 同じtest suiteをparallel反復してもglobal state由来の失敗が出ない。
 
+### herdr runの完了通知案内
+- **該当コミット**: d01b4bc7
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — job完了の待ち方をCLI出力で示す。
+- **目的**: 呼び出したagentが`sleep`や`herdr job status`のpollで待ち、完了通知が入力欄に滞留する事故を防ぐ。
+- **挙動**:
+  - `herdr run`のJSON出力に`next`を追加する（既存keyは変えない）。backgroundは「終了時に呼び出し元paneへ`[herdr run] exit=<code> label=<label> job=<id>`が届く。turnを終えて待ち、届いたら`herdr log <job_id>`を読む」、`--completion none`は通知が無いこと、`--pane`はpane付きの通知形を示す。
+  - `herdr run --help`も同じ待ち方を説明する。
+- **受け入れ条件**:
+  - background実行の`next`が完了通知と`herdr log`を指す。
+  - `--completion none`の`next`は通知を約束しない。
+  - `--pane`実行の`next`はpane付きの完了通知を説明する。
+  - JSONで`next`は既存keyの後に出る。
+- **デグレ判定**: pollを促す案内に戻る、または既存keyの名前・順序を変える。
+
+### herdr run --machine
+- **該当コミット**: acf02a66
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — 本家の`--machine`はAPI命令の転送だけで、jobの遠隔実行は持たない。
+- **目的**: 接続済みの保存マシンを計算機として使い、job管理・log・完了通知は手元に残したままcommandだけを遠隔で動かす。
+- **挙動**:
+  - `herdr run --machine <label-or-id> [--sync] [他のrun option] -- <command...>`はmachine catalogから有効なprofileを解決し、`ssh -o BatchMode=yes -o ConnectTimeout=15`でremote userの対話login shell（`"${SHELL:-/bin/sh}" -lic`）の中でcommandを動かす。引数は2段のPOSIX quoteで文字どおり届く。
+  - remote directoryは現在のdirectoryを写す（`$HOME`配下はhome相対、それ以外は絶対path）。`--cwd`はremote pathとして解釈する（`~`・`~/x`・相対はhome相対）。
+  - backgroundは`ssh -n`、`--pane`は`ssh -t`でttyを割り当てる。labelを省いた時は元のcommand名を使う。
+  - `--sync`はcommand前にremote directoryを作り、rsyncでgit work tree全体を送る。`.git`と、git ignoreされたpath（手元のignored一覧とroot `.gitignore`のpattern）は送らず、remote側でも消さない。git管理外のdirectoryは削除なしでcopyする。
+  - globalの`--machine`転送（G11 P2）は`run`には適用しない。`--sync`は`--machine`無しでは拒否する。cancelはlocalのssh接続を閉じ、remote commandは次の出力時に止まる。
+- **受け入れ条件**:
+  - remoteの引数が特殊文字を含めて文字どおり届き、job・log・完了通知はlocalに残る。
+  - remote directoryの写像（home相対・絶対・`--cwd`）が規定どおりになる。
+  - `--sync`はmkdir、rsync、commandの順で動き、ignoredなremote fileを消さない。
+  - `herdr run --machine`はglobalの`--machine`転送に奪われない。
+- **デグレ判定**: 失敗時にlocal実行へ落ちる、ignoredなremote build出力を消す、または通常の`herdr run`の挙動が変わる。
+
+### agent prompt（本家0.9.1準拠）
+- **該当コミット**: 607194f4
+- **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家0.9.1の`agent.prompt`を`semantic_port`し、forkの`agent send`・durable mailbox・pane ID表記は保持する。
+- **目的**: agentへ1回分のpromptを確実に送り、必要なら作業開始から完了までを待てるようにする。
+- **挙動**:
+  - `herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]`と`agent.prompt` APIを提供する。
+  - 空文字、blocked、unknown、starting、foregroundでないtargetは入力前に拒否する。bracketed pasteで本文と末尾改行を保ち、本文、送信遅延、Enterを書き終えた後だけ成功を返す。
+  - `--wait`はworking/blockedの観測を必要とし、止まったpromptを報告する。Copilotのfocus処理とterminal closeの失敗は本家に揃える。
+  - forkのargvベース`agent start`（shell・環境・言語runtimeのwrapper込み）で起動したagentも本家のpending/blocked/readyの段階（3秒の落ち着き待ち、30秒の起動期限）を追う。
+- **受け入れ条件**:
+  - 拒否対象のtargetには入力を書かずにerrorを返す。
+  - 成功応答はEnterの書き込み後にだけ返る。
+  - `agent send`、`send --room`、`p_N`/`pN`/`%N` targetは従来どおり動く。
+- **デグレ判定**: forkの`agent send`やmailbox配送を置き換える、または入力前の拒否を緩める。
+
+### agent検出manifestの共有cache反映とfork所有manifest
+- **該当コミット**: 86df79b1, 6462edd4
+- **分類**: PARTIAL
+- **status: 本家基盤＋fork差分保持 (B)** — 本家の共有manifest cache更新（#3204）を取り込み、fork所有のmanifestは本家の更新で置き換えない。
+- **目的**: 新しい検出ルールを再起動なしで効かせつつ、fork独自のDevin作業状態ルールが本家配信で黙って消えないようにする。
+- **挙動**:
+  - 稼働中serverは、別processが既にdownloadしたremote manifestも有効化する。
+  - bundled Claude manifestは本家2026.09.11.1に揃える（turn後のbackground shellだけではworkingにしない、MCP elicitationはblocked）。Devinは`(esc twice to interrupt)`や待ち行列barがある間はworking、待ち行列だけのidle promptはidle。
+  - bundled manifestは`fork_owned = true`を宣言でき、その agentはherdr.devのより新しいmanifestがあってもbundledを使う。Devinはfork所有。flagの無いagent（Claudeなど）は本家更新を受ける。explainは理由を示す。
+- **受け入れ条件**:
+  - 他processがdownload済みのmanifestが再起動なしで有効になる。
+  - fork所有のbundled manifestはより新しいremote manifestで置き換わらない。
+  - fork所有でないagentはremote manifestの更新を受ける。
+- **デグレ判定**: Devinのfork独自ルールが本家配信で消える、またはClaudeが本家更新を受けなくなる。
+
+### live handoffでのmouse報告状態の引継ぎ
+- **該当コミット**: bfbcd13a
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — fork独自のlive handoffの保持範囲を広げる。
+- **目的**: live handoff後もpane内アプリが要求したmouse報告がそのまま届くようにする。
+- **挙動**: handoffで渡すterminal状態にmouse encoderの状態（報告mode・座標形式）を含め、新serverで復元する。
+- **受け入れ条件**:
+  - handoff前に有効だったmouse報告が、handoff後も同じ形式で届く。
+- **デグレ判定**: handoff後にmouseがpaneへ届かなくなる、または形式が変わる。
+
 ### SPEC・運用規則・review evidenceの来歴
 - **該当コミット**: 56b1c24, 3d2dcd9, fc557be, 45da399, 9536cf1, 9c688d4
 - **分類**: POLICY
@@ -1687,6 +1822,7 @@
 - `f0b80e3`, `0f61acb`, `5f69fc9`, `3200098`, `88118ae`のnormal mail delivery/in-flight/PTY write ack差分はG9「normal mailのPTY全byte書込み確認」へ統合した。
 - `aac2a88`, `0ebabac`のvisible/persisted identity、global `pN`、Space `sN`/legacy alias差分はG5「短いpane targetとAI向けhelp」へ、`65729f0`の`run.start` server IPC差分はG9「pane-less background jobs」へ、`2e21703`のfork install docs差分はG8「forkからのbuild/installを正とする配布」へ統合した。
 - `b39432c`はAGENTS.mdの運用文言だけを変更する非製品仕様commitのため、実装契約としてはSPECへ追加しない。
+- 2026-09-17以降の`4b4db8d3`（Windows buildでunix専用のpane graphics helperを無効化する）はG9「macOS Ghostty buildとparallel testの安定化」と同じbuild衛生の扱いとし、独立契約にしない。`release: kazuph v*`、`fix(nix): refresh the cargo vendor hash ...`、`test: ...`のcommitは配布・検証の更新であり、機能契約には数えない。
 
 ## G10. 本家最新リリース v0.8.0 と現状fork版の差分・段階取込契約
 
@@ -1750,7 +1886,8 @@
   - 本家のfallback、cwd-latest restore、hosted update、global popup inputを取り込むことで、G3/G5/G8/G9のfail-closed・exact delivery・workspace ownershipが失われる。
   - 本家v0.8.0の機能を同名CLI・Rust symbolの存在だけで移植済みと報告し、Windows/live/package/human acceptanceの未検証を隠す。
 
-### 取込packet UP-MULTICLIENT（本家v0.9.0由来・計画中）
+### 取込packet UP-MULTICLIENT（本家v0.9.0由来・実装済み）
+- **実装結果**: fork 3b893cfa でclient側shell描画（endpoint client）として実装した。下の未決定事項は(b)の完全実装を選んだ。観測可能な契約はG11の「sidebar machine groupと横断表示（P3）」「再接続・backoff・切断時の画面分離（P4）」「endpoint clientでのfork操作と入力の保持」とG2「Space cardのjob dot」に固定する。
 - **元本家commit**: `6c0bb273` feat: support independent multi-client tab views (#3526)、`207be3c7` refactor: render the shell in the client (#3487)、`cc88b3b8` feat: add stable client endpoint compatibility (#3509)。一次確認済み（`git show <sha> --stat` で変更file一覧を確定）。
 - **fork pre-packet baseline**: `5016f40`（origin/main）。層branch `feat/upstream-multiclient`。
 - **目的**: 複数clientが同一serverの異なるworkspace/tabを独立表示し、旧clientと新serverの組み合わせで接続を維持する。
@@ -1820,7 +1957,7 @@
 ### 比較基準と取込範囲
 - **対象本家commit**: `9e9bc8a1`（複数SSHマシン管理 #3670）、`043b804c`（CLI保存マシン転送 #3918）、`b9ce9686`（マシン横断workspace移動・強調 #3755）。いずれもチェリーピックせず、観測可能な挙動だけをfork構造へ再実装する。
 - **fork前提**: machine概念はゼロから追加する。下層multiclient層（viewer別表示・endpoint-generation契約）は別packetで整備中のため、machineはUI非依存の保存・CLI転送（P1/P2）から着手し、sidebar横断・再接続（P3/P4）は将来packetとする。
-- **対象外**: Windows remote host導入（`59167658`他）はforkに検証基盤がないため本G11の範囲外とし、将来packetとする。session削除の正確名要求（`ab15da28`）は別packetとする。machine宛`herdr run`/`inbox`は経路未定義のため対象外とする。
+- **対象外**: Windows remote host導入（`59167658`他）はforkに検証基盤がないため本G11の範囲外とし、将来packetとする。session削除の正確名要求（`ab15da28`）は別packetとする。machine宛`herdr run`はG9「herdr run --machine」で扱い、machine宛`inbox`は経路未定義のため対象外とする。
 
 ### machine保存CRUD（P1）
 - **元commit**: fork新規（観測面は本家`9e9bc8a1`の`herdr machine` CLIに準拠）。
@@ -1865,17 +2002,70 @@
   - `--machine`なし実行の経路・exit codeが変わる。
   - 未知flag・未知commandの拒否（G5）が緩む。
 
-### 将来：sidebar machine group＋横断ナビ（P3・未着手）
-- **元commit**: 本家`b9ce9686`、`68c7b78e`、`be03b7a1`。
+### sidebar machine groupと横断表示（P3）
+- **元commit**: fork 3b893cfa, 66784a23（観測面は本家`b9ce9686`、`68c7b78e`、`be03b7a1`に準拠）。
 - **分類**: PARTIAL
-- **status: fork独自・保持 (C)** — 現時点では着手しない。本家実装はclient-shell描画基盤（`src/client/shell/*`、`src/client/endpoint/*`）に依存し、forkのserver側描画とは土台が異なるため、下層multiclient層の整備後に別packetで設計する。fork独自sidebar（slim密度・sorted・section）との表示競合は着手時にactive contractを固定して解消する。
-- **デグレ判定**: P3着手前に本項の将来扱いを変える実装を混ぜる。
+- **status: 本家基盤＋fork差分保持 (B)** — client側shell描画（endpoint client）の上に、保存マシンをsidebarのgroupとして並べる。fork独自のsidebar（slim密度・sorted・section・job dot）は維持する。
+- **目的**: 1つのHerdr画面から手元と保存マシンのworkspaceを並べて見て、どれでも開けるようにする。
+- **挙動**:
+  - sidebarはLocalのworkspace群の下に、有効な保存マシンごとのgroup（見出し＋`[new]`）を出し、そのマシンのworkspaceを並べる。Agentsタブは`Local: online`のようにendpointごとの接続状態を出す。
+  - workspaceの選択・描画はendpointごとに同じsidebar描画を共有し、選択中workspaceの強調帯を保つ。snapshotとsurfaceの間でもpixel表示を保持する。
+- **受け入れ条件**:
+  - 保存マシンのworkspaceがそのマシンのgroupに並び、clickでそのマシンのpaneを表示できる。
+  - 選択中workspaceの強調帯がendpointをまたいでも元の色で残る。
+- **デグレ判定**: fork独自のsidebar表示（slim・sorted・section・job dot）が消える、またはマシンのworkspaceがLocalに混ざる。
 
-### 将来：再接続・backoff・増分更新（P4・未着手）
-- **元commit**: 本家`d1a53b2c`、`68ae6ade`、`18061191`、`62431dbd`、`c77af189`。
+### 再接続・backoff・切断時の画面分離（P4）
+- **元commit**: fork 3b893cfa, 6d5144fc, 665961db（観測面は本家`d1a53b2c`、`68ae6ade`、`18061191`、`62431dbd`、`c77af189`に準拠）。
 - **分類**: PARTIAL
-- **status: fork独自・保持 (C)** — 現時点では着手しない。stall時cancel・自動再接続・idle掃除・増分更新は、接続状態のserver側所有設計と性能測定条件を別packetで定めてから実装する。
-- **デグレ判定**: P4着手前に再接続・retry方針を変える実装を混ぜる。
+- **status: 本家基盤＋fork差分保持 (B)** — 接続の監督はclientが持ち、マシンの不調が画面全体へ波及しないことをfork差分として固定する。
+- **目的**: 保存マシンが止まっても、黒い画面や操作不能にならず、手元の作業を続けられるようにする。
+- **挙動**:
+  - 接続失敗はremoteで0.5秒から倍々、最大120秒の間隔で再試行する（Localは最大30秒）。60秒以上安定した接続だけが試行回数を戻す。認証・host key・protocolなど利用者の対応が要る失敗は要対応状態にし、30秒後に再試行し、その時だけ通知を出す。保存済み接続はremote serverを起動しない。
+  - 別マシンへの切替は切替先の準備ができるまで今の画面と入力を生かし、5秒以内に応答が無ければ切替を取り消して元の画面に触れない。
+  - 選択中マシンが切れた時はpane領域に接続状態と理由（例: `Mini test: reconnecting`）と「手元のspaceは使える」旨を出す。
+  - 通知はpane action barのCOPYとCYCLE LAYOUTの間の空き（無ければsidebar最下行）に文字色だけで出し、10秒で消す。接続の進み具合はマシン欄に出し、全体通知にしない。
+  - resizeは切替手続きを通さず表示中endpointへ送り、新しい大きさの画面が届くまで前の画面を切り詰めて見せる。
+- **受け入れ条件**:
+  - 応答しないマシンへの切替中も元の画面へ入力でき、5秒後に切替が取り消される。
+  - 切断中の選択マシンはpane領域に状態と理由を出し、手元のspaceは操作できる。
+  - 通知が他の表示に重ならず、10秒で消える。
+  - 要対応でない失敗は全体通知を出さず、要対応の失敗だけが通知される。
+- **デグレ判定**: マシンの不調で画面全体が黒くなる、手元の入力が止まる、またはエラーが他の表示に重なる。
+
+### machine管理メニュー（P5）
+- **元commit**: fork ccb002ce。
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — 本家の`machine add`の準備パイプラインは採らず、forkのBatchMode probeを保存条件とする（P1と同じ）。
+- **目的**: CLIを使わずに画面から保存マシンを追加・削除する。
+- **挙動**:
+  - 下部の`[menu]`とマシン見出しの右クリックに`add machine...`と`remove machine...`を出す。
+  - addはSSH target、表示名、remote sessionを順に聞き、入力を止めずにSSH到達性を確かめてから保存する。
+  - removeは確認（`remove machine?`）の後、手元のprofileだけを消して接続を切る。remote sessionは止めない。他のprofileは保ち、古い一覧からの削除は拒否する。
+- **受け入れ条件**:
+  - offlineのマシンでもadd formとcancelが動き、endpointのleaseを必要としない。
+  - 保存・削除で他のprofileが変わらず、古い一覧からの削除は拒否される。
+- **デグレ判定**: probe失敗のマシンを保存する、またはremoveがremote sessionを止める。
+
+### endpoint clientでのfork操作と入力の保持
+- **元commit**: fork 3b893cfa, fcace862, f1848ca7, 9ecfe4aa, a28f8c27, 1ae3c754, ea14cc92, 1191e8b1。
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — client側shell描画へ移っても、G1〜G9の操作と表示を保つ。
+- **目的**: endpoint clientになっても、forkの操作感（title zoom、sidebar drag、pane action、job表示、既読、入力）が落ちないようにする。
+- **挙動**:
+  - pane titleのclickは全paneでzoomする。sidebar dividerのdragで幅を変え、mouse up時に保存する。pane action barの操作はendpoint client上でも動く。
+  - sidebarのjob行はsnapshotとjobs messageの間でも消えない。endpointの再描画中もagent restoreは進む。
+  - viewerへ戻った時（電話からPCへ、workspaceへの復帰）はそのviewerの端末寸法をPTYへ取り戻す。
+  - serverは表示中かつfocus中のviewerが見ているtabをsnapshot前に既読にする。viewerのnavigationはserverのactive workspaceを動かさない。
+  - window focusが戻った時は切替手続きをやり直さず、描き直した画面が届くまで（最長1秒）キーを預かってから送る。
+  - 一度画面を受け取ったviewerからの入力は、描き直し中でもserverが受け付ける（他viewerのfocus・寸法・snapshot変化で表示が捨てられた間も入力を落とさない）。
+- **受け入れ条件**:
+  - endpoint client上でtitle click zoom、sidebar drag（保存込み）、pane action barが動く。
+  - 2つの画面が同じremote tabを見ていても入力が欠けずに届く。
+  - window focusが戻った直後の入力が欠けない。
+  - 表示中viewerのfocus tabだけが既読になり、他tabは未読のまま残る。
+  - viewerへ戻るとPTY寸法がそのviewerの寸法に戻る。
+- **デグレ判定**: 「done, unseen」が消えない、focus復帰直後や複数画面で入力が欠ける、またはfork独自操作がendpoint clientで使えない。
 
 ### 親判断事項（記録）
 - ID名前空間（複合ID vs machine修飾子）は未決定。P1/P2はlabel-or-id完全一致＋曖昧拒否で進め、pane解決・mailbox・`herdr run`への波及はP3着手時に親が決定する。
