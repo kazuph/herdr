@@ -20,6 +20,7 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- Keys sent to a pane no longer get dropped while the server redraws a viewer's surface, which happens when another window viewing the same tab gains or loses focus, or when the tab's status changes. Input is still refused until a viewer has received its first frame after it starts presenting.
 - Opening a space or tab in the client now marks its finished agents as seen. Navigation in the client moves only that viewer, not the server's active workspace, so "done, unseen" dots used to stay forever and also hid the working spinner of other agents in the same space.
 - Returning focus to the terminal window no longer replays the whole presentation handoff. Keys typed right after switching back reach the focused pane immediately, including panes on a saved machine over SSH, instead of being dropped until the machine answered.
 - A saved machine that stops responding no longer freezes or blanks the whole window. Switching to another machine keeps the current screen and keyboard live until that machine is ready; if it does not answer within five seconds the switch is cancelled and the current screen is never interrupted. A selected machine that disconnects shows its status and reason in its pane area instead of a black screen, and reconnects in place.
