@@ -984,7 +984,22 @@ fn multi_client_smallest_leaving_resizes_up_for_remaining_clients() {
     assert!(wait_for_frame(&mut large, Duration::from_secs(2)));
     assert!(wait_for_frame(&mut small, Duration::from_secs(2)));
 
-    let size_with_small_client = read_pane_tty_size(&api_socket, &pane_id, Duration::from_secs(5));
+    // Both resizes reach the pane PTY asynchronously after the first frames,
+    // so wait for the size to settle before taking the baseline.
+    let mut size_with_small_client =
+        read_pane_tty_size(&api_socket, &pane_id, Duration::from_secs(5));
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(300));
+        let Some(size) = try_read_pane_tty_size(&api_socket, &pane_id, Duration::from_millis(400))
+        else {
+            continue;
+        };
+        if size == size_with_small_client {
+            break;
+        }
+        size_with_small_client = size;
+    }
 
     drain_server_messages(&mut large, Duration::from_millis(250));
 
@@ -997,7 +1012,19 @@ fn multi_client_smallest_leaving_resizes_up_for_remaining_clients() {
         "remaining client should receive resized-up frame"
     );
 
-    let size_after_small_leaves = read_pane_tty_size(&api_socket, &pane_id, Duration::from_secs(5));
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut size_after_small_leaves = size_with_small_client;
+    while Instant::now() < deadline {
+        if let Some(size) =
+            try_read_pane_tty_size(&api_socket, &pane_id, Duration::from_millis(400))
+        {
+            size_after_small_leaves = size;
+            if size.0 > size_with_small_client.0 && size.1 > size_with_small_client.1 {
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(60));
+    }
 
     assert!(
         size_after_small_leaves.0 > size_with_small_client.0

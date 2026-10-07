@@ -48,7 +48,7 @@ rustPlatform.buildRustPackage {
     );
   };
 
-  cargoHash = "sha256-storo1JZGmMrIGGa7lSUqTmsCCt+k/FnUsLoQimcpXs=";
+  cargoHash = "sha256-sl40OxaTEYiuvfWfeZMB1e7X1qVxwqRdyYC6b/BUgLs=";
 
   nativeBuildInputs = [
     git

@@ -38,6 +38,13 @@ jobs:
         if: github.event_name == 'pull_request'
         run: python3 scripts/conventional_commits.py "${{ github.event.pull_request.title }}"
 
+      - name: Require SPEC.md updates for feature and fix commits
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/spec_update_gate.py --range "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+
+      - name: Check SPEC evidence manifest drift
+        run: python3 scripts/spec_formal_drift_check.py
+
   check:
     name: check (${{ matrix.os }})
     strategy:
