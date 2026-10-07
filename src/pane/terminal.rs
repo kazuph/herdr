@@ -1572,13 +1572,15 @@ impl GhosttyPaneTerminal {
             input_state.mouse_alternate_scroll,
         );
 
+        // VT dispatch restores the encoder flags as well as the public mode bits.
+        // mode_set alone leaves mouse_event/mouse_format at their defaults.
         for mode in [
             MODE_MOUSE_X10,
             MODE_MOUSE_PRESS_RELEASE,
             MODE_MOUSE_BUTTON_MOTION,
             MODE_MOUSE_ANY_MOTION,
         ] {
-            let _ = core.terminal.mode_set(mode, false);
+            core.terminal.write(format!("\x1b[?{mode}l").as_bytes());
         }
         let mouse_mode = match input_state.mouse_protocol_mode {
             crate::input::MouseProtocolMode::None => None,
@@ -1588,33 +1590,26 @@ impl GhosttyPaneTerminal {
             crate::input::MouseProtocolMode::AnyMotion => Some(MODE_MOUSE_ANY_MOTION),
         };
         if let Some(mode) = mouse_mode {
-            let _ = core.terminal.mode_set(mode, true);
+            core.terminal.write(format!("\x1b[?{mode}h").as_bytes());
         }
 
-        let _ = core
-            .terminal
-            .mode_set(crate::ghostty::MODE_MOUSE_UTF8, false);
-        let _ = core
-            .terminal
-            .mode_set(crate::ghostty::MODE_MOUSE_SGR, false);
-        let _ = core
-            .terminal
-            .mode_set(crate::ghostty::MODE_MOUSE_SGR_PIXELS, false);
-        match input_state.mouse_protocol_encoding {
-            crate::input::MouseProtocolEncoding::Default => {}
-            crate::input::MouseProtocolEncoding::Utf8 => {
-                let _ = core
-                    .terminal
-                    .mode_set(crate::ghostty::MODE_MOUSE_UTF8, true);
-            }
-            crate::input::MouseProtocolEncoding::Sgr => {
-                let _ = core.terminal.mode_set(crate::ghostty::MODE_MOUSE_SGR, true);
-            }
+        for mode in [
+            crate::ghostty::MODE_MOUSE_UTF8,
+            crate::ghostty::MODE_MOUSE_SGR,
+            crate::ghostty::MODE_MOUSE_SGR_PIXELS,
+        ] {
+            core.terminal.write(format!("\x1b[?{mode}l").as_bytes());
+        }
+        let encoding = match input_state.mouse_protocol_encoding {
+            crate::input::MouseProtocolEncoding::Default => None,
+            crate::input::MouseProtocolEncoding::Utf8 => Some(crate::ghostty::MODE_MOUSE_UTF8),
+            crate::input::MouseProtocolEncoding::Sgr => Some(crate::ghostty::MODE_MOUSE_SGR),
             crate::input::MouseProtocolEncoding::SgrPixels => {
-                let _ = core
-                    .terminal
-                    .mode_set(crate::ghostty::MODE_MOUSE_SGR_PIXELS, true);
+                Some(crate::ghostty::MODE_MOUSE_SGR_PIXELS)
             }
+        };
+        if let Some(mode) = encoding {
+            core.terminal.write(format!("\x1b[?{mode}h").as_bytes());
         }
 
         if input_state.modify_other_keys {
@@ -4019,6 +4014,37 @@ mod tests {
         let key = crate::input::parse_terminal_key_sequence("\x1b[13;2u").unwrap();
         let encoded = pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy);
         assert_eq!(encoded, b"\x1b[27;2;13~");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ghostty_handoff_preserves_actual_mouse_reports() {
+        use crate::input::mouse::Position;
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+        for encoding in ["", "\x1b[?1005h", "\x1b[?1006h", "\x1b[?1016h"] {
+            let (tx, _rx) = mpsc::channel(4);
+            let mut terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+            terminal.write(format!("\x1b[?1049h\x1b[?1002h{encoding}").as_bytes());
+            let original = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+            let restored =
+                GhosttyPaneTerminal::new(crate::ghostty::Terminal::new(80, 24, 0).unwrap(), tx)
+                    .unwrap();
+            restored.seed_handoff_input_state(original.input_state().unwrap());
+            let position = Position::Cell { column: 11, row: 9 };
+            for kind in [MouseEventKind::ScrollUp, MouseEventKind::ScrollDown] {
+                let expected = original.encode_mouse_wheel(kind, position, KeyModifiers::empty());
+                assert!(expected.is_some(), "encoding {encoding:?}");
+                assert_eq!(
+                    restored.encode_mouse_wheel(kind, position, KeyModifiers::empty()),
+                    expected
+                );
+            }
+            let kind = MouseEventKind::Up(MouseButton::Left);
+            assert_eq!(
+                restored.encode_mouse_button(kind, position, KeyModifiers::empty()),
+                original.encode_mouse_button(kind, position, KeyModifiers::empty())
+            );
+        }
     }
 
     #[test]
