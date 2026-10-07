@@ -44,6 +44,55 @@ pub(crate) struct ChromeSettings {
 }
 
 impl ChromeSettings {
+    pub(crate) fn sidebar_preset_width(
+        &self,
+        preset: crate::app::state::SidebarWidthPreset,
+    ) -> u16 {
+        use crate::app::state::SidebarWidthPreset;
+        match preset {
+            SidebarWidthPreset::Narrow => self.sidebar_min_width,
+            SidebarWidthPreset::Normal => self
+                .default_sidebar_width
+                .clamp(self.sidebar_min_width, self.sidebar_max_width),
+            SidebarWidthPreset::Wide => self.sidebar_max_width,
+        }
+    }
+
+    /// Same classification as the sidebar width button in the fork UI.
+    pub(crate) fn sidebar_width_preset(&self) -> crate::app::state::SidebarWidthPreset {
+        use crate::app::state::SidebarWidthPreset;
+        if self.sidebar_width <= self.sidebar_preset_width(SidebarWidthPreset::Narrow) {
+            SidebarWidthPreset::Narrow
+        } else if self.sidebar_width <= self.sidebar_preset_width(SidebarWidthPreset::Normal) {
+            SidebarWidthPreset::Normal
+        } else {
+            SidebarWidthPreset::Wide
+        }
+    }
+
+    pub(crate) fn set_sidebar_width_preset(
+        &mut self,
+        preset: crate::app::state::SidebarWidthPreset,
+    ) {
+        self.sidebar_width = self.sidebar_preset_width(preset);
+        self.sidebar_width_source = if preset == crate::app::state::SidebarWidthPreset::Normal {
+            crate::app::state::SidebarWidthSource::ConfigDefault
+        } else {
+            crate::app::state::SidebarWidthSource::Manual
+        };
+    }
+
+    /// The sidebar width button cycles narrow -> normal -> wide -> narrow.
+    pub(crate) fn cycle_sidebar_width_preset(&mut self) {
+        use crate::app::state::SidebarWidthPreset;
+        let next = match self.sidebar_width_preset() {
+            SidebarWidthPreset::Narrow => SidebarWidthPreset::Normal,
+            SidebarWidthPreset::Normal => SidebarWidthPreset::Wide,
+            SidebarWidthPreset::Wide => SidebarWidthPreset::Narrow,
+        };
+        self.set_sidebar_width_preset(next);
+    }
+
     pub(crate) fn from_config(
         config: &crate::config::Config,
         palette: Palette,
@@ -108,6 +157,7 @@ pub(crate) enum ChromeTarget {
     Agent(ResourceKey),
     Tab(ResourceKey),
     DetailTab(crate::app::state::SidebarDetailView),
+    SidebarWidthToggle,
     Job(ResourceKey),
 }
 

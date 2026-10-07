@@ -1,7 +1,7 @@
 //! Fork menu presentation captures the current endpoint; runtime actions never use host state.
 use super::*;
 use crate::api::schema as api;
-use crate::app::state::{DangerousAction, MenuListState, SidebarWidthSource};
+use crate::app::state::{DangerousAction, MenuListState, SidebarWidthPreset};
 use crate::app::{global_menu_action_label, global_menu_actions_for, GlobalMenuAction};
 use crate::raw_input::RawInputEvent;
 use crossterm::event::{KeyCode, KeyEventKind, MouseButton, MouseEventKind};
@@ -229,19 +229,14 @@ fn apply(
         Keybinds => frontend.help = Some(help::Help::default()),
         ReloadConfig => settings::reload(frontend)?,
         SidebarNarrow | SidebarNormal | SidebarWide => {
-            let settings = &mut frontend.chrome.settings;
-            settings.sidebar_width = match action {
-                SidebarNarrow => settings.sidebar_min_width,
-                SidebarWide => settings.sidebar_max_width,
-                _ => settings
-                    .default_sidebar_width
-                    .clamp(settings.sidebar_min_width, settings.sidebar_max_width),
-            };
-            settings.sidebar_width_source = if action == SidebarNormal {
-                SidebarWidthSource::ConfigDefault
-            } else {
-                SidebarWidthSource::Manual
-            };
+            frontend
+                .chrome
+                .settings
+                .set_sidebar_width_preset(match action {
+                    SidebarNarrow => SidebarWidthPreset::Narrow,
+                    SidebarWide => SidebarWidthPreset::Wide,
+                    _ => SidebarWidthPreset::Normal,
+                });
             frontend.persist_chrome_preferences();
         }
         WhatsNew => notes::open(frontend),

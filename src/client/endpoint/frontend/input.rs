@@ -435,6 +435,14 @@ fn mouse_input(
                         ..RuntimeUpdate::default()
                     }
                 }
+                ChromeTarget::SidebarWidthToggle => {
+                    frontend.chrome.settings.cycle_sidebar_width_preset();
+                    frontend.persist_chrome_preferences();
+                    RuntimeUpdate {
+                        repaint: true,
+                        ..RuntimeUpdate::default()
+                    }
+                }
                 ChromeTarget::Machine(id) => {
                     if !frontend.chrome.collapsed_machines.remove(id) {
                         frontend.chrome.collapsed_machines.insert(id.clone());

@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 427,
+    "active_contract_count": 428,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -10369,7 +10369,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2081",
+        "SPEC.md:2082",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10402,7 +10402,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2082",
+        "SPEC.md:2084",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10435,7 +10435,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2083",
+        "SPEC.md:2085",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10468,7 +10468,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2084",
+        "SPEC.md:2086",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10501,7 +10501,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2085",
+        "SPEC.md:2087",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10637,6 +10637,40 @@
       ],
       "unrepresented_dimensions": [
         "Lossy decoding is unit-covered; the 2026-10-07 Mac mini CI log with invalid bytes is manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G11-b273bb320c",
+      "dimensions": [
+        "endpoint fork interactions",
+        "input during redraw",
+        "viewer seen state",
+        "geometry reclaim"
+      ],
+      "verification_methods": [
+        "rust_test_target:endpoint_frontend_title_click_zooms_each_position_actual_socket",
+        "rust_test_target:endpoint_sidebar_width_button_renders_in_the_detail_footer_and_cycles_presets",
+        "rust_test_target:endpoint_frontend_sidebar_drag_resizes_actual_socket_and_persists",
+        "rust_test_target:endpoint_runtime_actual_two_servers_routes_input_updates_inactive_and_rejects_old_generation",
+        "rust_test_target:endpoint_viewer_marks_only_its_focused_tab_seen_while_focused",
+        "rust_test_target:endpoint_phone_pc_return_reclaims_actual_pty_geometry",
+        "rust_test_target:sidebar_jobs_remain_visible_between_snapshot_and_jobs_messages",
+        "drift_source_anchor:src/server/headless/endpoints.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2083",
+        "src/server/headless/endpoints.rs:32",
+        "src/client/endpoint/runtime.rs:61"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Actual-socket tests cover single-process paths; two real terminals typing into a remote Codex pane were verified manually on 2026-10-07"
       ]
     }
   ]
