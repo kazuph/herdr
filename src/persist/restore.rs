@@ -547,7 +547,7 @@ fn restore_tab(
         );
         let saved_history =
             old_id.and_then(|old_id| history.and_then(|history| history.panes.get(old_id)));
-        let startup = {
+        let mut startup = {
             let mut agent_restore = AgentRestoreState {
                 enabled: runtime_context.resume_agents_on_restore,
                 commands: runtime_context.agent_restore_commands,
@@ -560,6 +560,16 @@ fn restore_tab(
                 &mut agent_restore,
             )
         };
+        let imported_runtime = old_pane_id.and_then(|old_id| imported_panes.remove(&old_id));
+        let was_imported = imported_runtime.is_some();
+        if !was_imported {
+            skip_restore_running_elsewhere(
+                &mut startup,
+                saved_agent_session.as_ref(),
+                saved_history,
+                crate::agent_sessions::session_running_elsewhere,
+            );
+        }
         let initial_restore_agent = startup
             .restore_plan
             .as_ref()
@@ -570,8 +580,6 @@ fn restore_tab(
             crate::workspace::public_tab_id_for_number(workspace_id, number),
             format!("p{}", id.raw()),
         );
-        let imported_runtime = old_pane_id.and_then(|old_id| imported_panes.remove(&old_id));
-        let was_imported = imported_runtime.is_some();
         let pending_native_agent_restore = if was_imported {
             None
         } else {
@@ -906,6 +914,36 @@ fn pane_restore_startup<'a>(
         duplicate_agent_session,
         reserved_agent_session,
     }
+}
+
+/// Never resume a conversation that is already open in a live agent process
+/// somewhere else (another terminal, Herdr session or machine view): the pane
+/// comes back as a shell with its saved history instead, and gives up the
+/// session so the next restore does not claim it either.
+fn skip_restore_running_elsewhere<'a>(
+    startup: &mut PaneRestoreStartup<'a>,
+    session: Option<&PaneAgentSessionSnapshot>,
+    history: Option<&'a PaneHistorySnapshot>,
+    session_running_elsewhere: impl Fn(&str, &str) -> bool,
+) {
+    let Some(session) = session else {
+        return;
+    };
+    if startup.restore_plan.is_none()
+        || session.kind != crate::agent_resume::AgentSessionRefKind::Id
+        || !crate::agent_sessions::is_safe_session_id(&session.value)
+        || !session_running_elsewhere(&session.agent, &session.value)
+    {
+        return;
+    }
+    warn!(
+        agent = %session.agent,
+        session_id = %session.value,
+        "skipping agent resume: session already running elsewhere"
+    );
+    startup.restore_plan = None;
+    startup.initial_history_ansi = history.map(|history| history.ansi.as_str());
+    startup.duplicate_agent_session = true;
 }
 
 fn restore_plan_for_snapshot(
@@ -1859,6 +1897,43 @@ mod tests {
         assert!(startup.restore_plan.is_some());
         assert!(startup.initial_history_ansi.is_none());
         assert!(!startup.duplicate_agent_session);
+    }
+
+    #[test]
+    fn pane_restore_skips_sessions_running_elsewhere() {
+        let session = super::super::snapshot::PaneAgentSessionSnapshot {
+            source: "herdr:claude".into(),
+            agent: "claude".into(),
+            kind: crate::agent_resume::AgentSessionRefKind::Id,
+            value: "11111111-2222-3333-4444-555555555555".into(),
+        };
+        let history = super::super::snapshot::PaneHistorySnapshot {
+            ansi: "RESTORED_HISTORY\r\n".into(),
+            lines: 1,
+        };
+        let mut resumed = HashSet::new();
+        let mut agent_restore = AgentRestoreState {
+            enabled: true,
+            commands: &BTreeMap::new(),
+            agent_start_commands: &BTreeMap::new(),
+            resumed_sessions: &mut resumed,
+        };
+        let mut startup = pane_restore_startup(Some(&session), Some(&history), &mut agent_restore);
+        assert!(startup.restore_plan.is_some());
+
+        skip_restore_running_elsewhere(&mut startup, Some(&session), Some(&history), |_, _| false);
+        assert!(startup.restore_plan.is_some());
+        assert!(!startup.duplicate_agent_session);
+
+        skip_restore_running_elsewhere(
+            &mut startup,
+            Some(&session),
+            Some(&history),
+            |agent, id| agent == "claude" && id == "11111111-2222-3333-4444-555555555555",
+        );
+        assert!(startup.restore_plan.is_none());
+        assert!(startup.duplicate_agent_session);
+        assert_eq!(startup.initial_history_ansi, Some("RESTORED_HISTORY\r\n"));
     }
 
     #[test]
