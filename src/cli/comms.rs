@@ -276,9 +276,24 @@ pub(super) fn herdr_run(args: &[String]) -> std::io::Result<i32> {
     let mut close_on_success = false;
     let mut completion = "summary".to_string();
     let mut completion_set = false;
+    let mut machine = None;
+    let mut sync = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--machine" => {
+                let Some(value) = args.get(index + 1).filter(|value| !value.trim().is_empty())
+                else {
+                    eprintln!("missing value for --machine");
+                    return Ok(2);
+                };
+                machine = Some(value.clone());
+                index += 2;
+            }
+            "--sync" => {
+                sync = true;
+                index += 1;
+            }
             "--label" => {
                 let Some(value) = args.get(index + 1) else {
                     eprintln!("missing value for --label");
@@ -363,9 +378,34 @@ pub(super) fn herdr_run(args: &[String]) -> std::io::Result<i32> {
         eprintln!("--close-on-success requires --pane");
         return Ok(2);
     }
+    if sync && machine.is_none() {
+        eprintln!("--sync requires --machine");
+        return Ok(2);
+    }
 
     let command_args = &args[index..];
     let label = label.unwrap_or_else(|| default_run_label(command_args));
+    let remote_argv;
+    let (command_args, cwd) = match machine {
+        Some(machine) => {
+            let profile = match crate::machine::load().resolve(&machine) {
+                Ok(profile) => profile.clone(),
+                Err(error) => {
+                    eprintln!("{error}");
+                    return Ok(1);
+                }
+            };
+            match remote_job_argv(&profile, cwd.as_deref(), sync, pane_mode, command_args) {
+                Ok(argv) => remote_argv = argv,
+                Err(error) => {
+                    eprintln!("{error}");
+                    return Ok(1);
+                }
+            }
+            (remote_argv.as_slice(), None)
+        }
+        None => (command_args, cwd),
+    };
     let caller = match resolve_run_caller(caller.as_deref()) {
         Ok(caller) => caller,
         Err(err) => {
@@ -1504,6 +1544,96 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Wrap `command` so it runs on the saved machine while the job itself stays
+/// local. The remote directory mirrors the local one (home-relative when under
+/// `$HOME`) unless `--cwd` names it explicitly.
+fn remote_job_argv(
+    profile: &crate::machine::MachineProfile,
+    remote_cwd: Option<&str>,
+    sync: bool,
+    interactive: bool,
+    command: &[String],
+) -> Result<Vec<String>, String> {
+    let local_dir = std::env::current_dir()
+        .map_err(|err| format!("unable to read the current directory: {err}"))?;
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let dir = match remote_cwd {
+        Some(value) => crate::machine::RemoteDir::from_remote_arg(value),
+        None => crate::machine::RemoteDir::from_local(&local_dir, home.as_deref()),
+    };
+    let sync = sync
+        .then(|| remote_sync_plan(&local_dir, home.as_deref()))
+        .transpose()?;
+    Ok(crate::machine::build_remote_job_argv(
+        profile,
+        &dir,
+        command,
+        sync.as_ref(),
+        interactive,
+    ))
+}
+
+/// Inside a git work tree, sync the whole tree and protect everything git
+/// ignores (local ignored paths plus the root `.gitignore` patterns) so
+/// remote build output is neither overwritten nor deleted. Outside git, copy
+/// the directory without deleting anything remotely.
+fn remote_sync_plan(
+    local_dir: &std::path::Path,
+    home: Option<&std::path::Path>,
+) -> Result<crate::machine::RemoteSync, String> {
+    let git = |args: &[&str], dir: &std::path::Path| {
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| output.stdout)
+    };
+    let Some(top) = git(&["rev-parse", "--show-toplevel"], local_dir) else {
+        return Ok(crate::machine::RemoteSync {
+            remote_dir: crate::machine::RemoteDir::from_local(local_dir, home),
+            local_dir: local_dir.to_path_buf(),
+            excludes: Vec::new(),
+            delete: false,
+        });
+    };
+    let top = std::path::PathBuf::from(String::from_utf8_lossy(&top).trim());
+    let ignored = git(
+        &[
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+        ],
+        &top,
+    )
+    .ok_or_else(|| format!("unable to list git-ignored files in {}", top.display()))?;
+    let mut excludes: Vec<String> = ignored
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| format!("/{}", String::from_utf8_lossy(entry)))
+        .collect();
+    if let Ok(text) = std::fs::read_to_string(top.join(".gitignore")) {
+        excludes.extend(
+            text.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with('!'))
+                .map(str::to_string),
+        );
+    }
+    Ok(crate::machine::RemoteSync {
+        remote_dir: crate::machine::RemoteDir::from_local(&top, home),
+        local_dir: top,
+        excludes,
+        delete: true,
+    })
+}
+
 fn default_run_label(command_args: &[String]) -> String {
     command_args
         .first()
@@ -1583,9 +1713,13 @@ fn print_job_help() {
 }
 
 fn print_run_help() {
-    eprintln!("usage: herdr run [--label TEXT] [--cwd PATH] [--caller <pane>] [--completion summary|full|none] [--pane [--split right|down] [--close-on-success]] -- <command...>");
+    eprintln!("usage: herdr run [--label TEXT] [--cwd PATH] [--machine <saved machine> [--sync]] [--caller <pane>] [--completion summary|full|none] [--pane [--split right|down] [--close-on-success]] -- <command...>");
     eprintln!("  default: starts a pane-less background job and returns its job id immediately");
     eprintln!("  --pane starts the command in a visible same-space pane");
+    eprintln!("  --machine runs the command on a saved machine over ssh (in its interactive login shell) while the job, log and notice stay here;");
+    eprintln!("    the remote directory mirrors the current one (home-relative under $HOME) unless --cwd names a remote path");
+    eprintln!("  --sync first copies the current git work tree there with rsync; git-ignored paths are neither sent nor deleted remotely");
+    eprintln!("  cancelling a --machine job closes the ssh connection; the remote command stops when it next writes output");
     eprintln!("  when the job exits, the caller pane is notified `[herdr run] exit=<code> label=<label> job=<id>` (`pane=<pane>` for --pane runs; --completion none sends no notice)");
     eprintln!("  do not sleep or poll `herdr job status`/`herdr log` while waiting; end your turn, then read `herdr log <job_id>` when the notice arrives");
     eprintln!("  inspect background jobs with `herdr run list`, `herdr log <job_id>`, and `herdr run cancel <job_id>`");
