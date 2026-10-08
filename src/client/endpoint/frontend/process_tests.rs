@@ -4370,6 +4370,55 @@ async fn endpoint_frontend_sidebar_drag_resizes_actual_socket_and_persists() {
             })
             .await;
         }
+        // The line between the space list and the agents/jobs panel moves the
+        // section split the same way the in-process sidebar does.
+        let sidebar = frontend
+            .chrome
+            .compute_view(&frontend.runtime.shell, SIZE.0, SIZE.1)
+            .layout
+            .sidebar;
+        let divider = crate::ui::sidebar_section_divider_rect(
+            sidebar,
+            frontend.chrome.settings.sidebar_section_split,
+        );
+        assert!(divider.height > 0);
+        let target_row = sidebar.y + sidebar.height / 4;
+        for (kind, row) in [
+            (
+                crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                divider.y,
+            ),
+            (
+                crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+                target_row,
+            ),
+            (
+                crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+                target_row,
+            ),
+        ] {
+            frontend
+                .dispatch_input(RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                    kind,
+                    column: divider.x + 1,
+                    row,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                }))
+                .unwrap();
+        }
+        assert!(!frontend.sidebar_section_drag);
+        let expected_split =
+            ((target_row - sidebar.y) as f32 / sidebar.height as f32).clamp(0.1, 0.9);
+        assert_eq!(
+            frontend.chrome.settings.sidebar_section_split,
+            expected_split
+        );
+        assert_eq!(
+            preferences::load(&preferences_path)
+                .unwrap()
+                .sidebar_section_split,
+            Some(expected_split)
+        );
         let public_after = api(&server.socket, "session.snapshot", json!({}));
         for key in ["focused_workspace_id", "focused_tab_id", "focused_pane_id"] {
             assert!(public_before["snapshot"][key]

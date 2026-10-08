@@ -99,6 +99,8 @@ pub(crate) struct ClientFrontend {
     resize_mode: Option<copy::Owner>,
     split_drag: Option<resize::SplitDrag>,
     sidebar_drag: bool,
+    /// Dragging the line between the space list and the agents/jobs panel.
+    sidebar_section_drag: bool,
     workspace_drag: Option<workspace_drag::WorkspaceDrag>,
     pending_workspace_drop: Option<(super::ResourceKey, workspace_drag::Drop, std::time::Instant)>,
     right_click: Option<right_click::Gesture>,
@@ -216,6 +218,7 @@ impl ClientFrontend {
             resize_mode: None,
             split_drag: None,
             sidebar_drag: false,
+            sidebar_section_drag: false,
             workspace_drag: None,
             pending_workspace_drop: None,
             right_click: None,
