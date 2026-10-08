@@ -301,7 +301,6 @@ fn usable_process_cwd(pid: u32) -> Option<std::path::PathBuf> {
     crate::platform::process_cwd(pid).filter(|cwd| cwd.is_absolute() && cwd.is_dir())
 }
 
-#[cfg(unix)]
 /// How long a computed `foreground_cwd` is reused while the pane's shell and
 /// foreground process group stay the same. A `cd` inside the same foreground
 /// program shows up within this time; a new foreground program at once.
@@ -310,23 +309,31 @@ const FOREGROUND_CWD_TTL: std::time::Duration = std::time::Duration::from_millis
 
 // Fields are read by the unix-only foreground cwd probe.
 #[cfg_attr(not(unix), allow(dead_code))]
-#[derive(Clone, Debug)]
-struct ForegroundCwdCache {
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ForegroundCwdKey {
     pid: u32,
     foreground_pgid: Option<u32>,
+    shell_cwd: Option<std::path::PathBuf>,
+    leader_cwd: Option<std::path::PathBuf>,
+}
+
+// Fields are read by the unix-only foreground cwd probe.
+#[cfg_attr(not(unix), allow(dead_code))]
+#[derive(Clone, Debug)]
+struct ForegroundCwdCache {
+    key: ForegroundCwdKey,
     at: std::time::Instant,
-    cwd: Option<std::path::PathBuf>,
+    member_cwd: Option<std::path::PathBuf>,
 }
 
 impl ForegroundCwdCache {
     #[cfg_attr(not(unix), allow(dead_code))] // used by the unix-only foreground cwd probe
-    fn fresh_for(&self, pid: u32, foreground_pgid: Option<u32>, now: std::time::Instant) -> bool {
-        self.pid == pid
-            && self.foreground_pgid == foreground_pgid
-            && now.saturating_duration_since(self.at) < FOREGROUND_CWD_TTL
+    fn fresh_for(&self, key: &ForegroundCwdKey, now: std::time::Instant) -> bool {
+        self.key == *key && now.saturating_duration_since(self.at) < FOREGROUND_CWD_TTL
     }
 }
 
+#[cfg(unix)]
 fn foreground_member_cwd_different_from_shell(
     shell_pid: u32,
     shell_cwd: Option<&std::path::PathBuf>,
@@ -3149,38 +3156,49 @@ impl PaneRuntime {
         #[cfg(unix)]
         {
             let pid = self.child_pid.load(Ordering::Acquire);
+            let shell_cwd = usable_process_cwd(pid);
             let foreground_pgid = self
                 .io
                 .foreground_process_group_id()
                 .or_else(|| crate::platform::foreground_process_group_id(pid));
-            let now = std::time::Instant::now();
-            if let Some(cached) = self
-                .foreground_cwd_cache
-                .lock()
-                .ok()
-                .and_then(|cache| cache.clone())
-                .filter(|cached| cached.fresh_for(pid, foreground_pgid, now))
-            {
-                return cached.cwd;
-            }
-            let shell_cwd = usable_process_cwd(pid);
             let leader_cwd = foreground_pgid.and_then(usable_process_cwd);
-
-            let cwd = if leader_cwd.as_ref() == shell_cwd.as_ref() {
-                foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref()).or(leader_cwd)
-            } else {
-                leader_cwd
-                    .or_else(|| foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref()))
-            };
-            if let Ok(mut cache) = self.foreground_cwd_cache.lock() {
-                *cache = Some(ForegroundCwdCache {
+            // Only the job-member scan is expensive (it reads every member's
+            // argv with sysctl); the shell and leader cwd stay live, so a
+            // program that changes directory shows up at once.
+            let member_cwd = || {
+                let now = std::time::Instant::now();
+                let key = ForegroundCwdKey {
                     pid,
                     foreground_pgid,
-                    at: now,
-                    cwd: cwd.clone(),
-                });
+                    shell_cwd: shell_cwd.clone(),
+                    leader_cwd: leader_cwd.clone(),
+                };
+                if let Some(cached) = self
+                    .foreground_cwd_cache
+                    .lock()
+                    .ok()
+                    .and_then(|cache| cache.clone())
+                    .filter(|cached| cached.fresh_for(&key, now))
+                {
+                    return cached.member_cwd;
+                }
+                let member_cwd =
+                    foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref());
+                if let Ok(mut cache) = self.foreground_cwd_cache.lock() {
+                    *cache = Some(ForegroundCwdCache {
+                        key,
+                        at: now,
+                        member_cwd: member_cwd.clone(),
+                    });
+                }
+                member_cwd
+            };
+
+            if leader_cwd.as_ref() == shell_cwd.as_ref() {
+                member_cwd().or(leader_cwd)
+            } else {
+                leader_cwd.clone().or_else(member_cwd)
             }
-            cwd
         }
 
         #[cfg(not(unix))]
@@ -3197,16 +3215,30 @@ mod foreground_cwd_cache_tests {
     #[test]
     fn cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl() {
         let now = std::time::Instant::now();
-        let cached = ForegroundCwdCache {
+        let key = |pgid: u32, leader: &str| ForegroundCwdKey {
             pid: 10,
-            foreground_pgid: Some(20),
-            at: now,
-            cwd: Some("/tmp".into()),
+            foreground_pgid: Some(pgid),
+            shell_cwd: Some("/base".into()),
+            leader_cwd: Some(leader.into()),
         };
-        assert!(cached.fresh_for(10, Some(20), now + std::time::Duration::from_millis(500)));
-        assert!(!cached.fresh_for(10, Some(21), now));
-        assert!(!cached.fresh_for(11, Some(20), now));
-        assert!(!cached.fresh_for(10, Some(20), now + FOREGROUND_CWD_TTL));
+        let cached = ForegroundCwdCache {
+            key: key(20, "/base"),
+            at: now,
+            member_cwd: Some("/tmp".into()),
+        };
+        assert!(cached.fresh_for(
+            &key(20, "/base"),
+            now + std::time::Duration::from_millis(500)
+        ));
+        assert!(
+            !cached.fresh_for(&key(21, "/base"), now),
+            "a new foreground group"
+        );
+        assert!(
+            !cached.fresh_for(&key(20, "/elsewhere"), now),
+            "the leader changed directory"
+        );
+        assert!(!cached.fresh_for(&key(20, "/base"), now + FOREGROUND_CWD_TTL));
     }
 }
 
