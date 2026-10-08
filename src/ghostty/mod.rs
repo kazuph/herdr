@@ -477,6 +477,22 @@ unsafe extern "C" fn write_pty_trampoline(
     callback(bytes);
 }
 
+/// XTVERSION answer for panes that can show kitty graphics. Programs such as
+/// Claude Code only draw kitty images when XTVERSION names kitty or Ghostty;
+/// libghostty's default `libghostty` hid the support Herdr actually has.
+pub const KITTY_GRAPHICS_XTVERSION: &str =
+    concat!("ghostty (herdr ", env!("CARGO_PKG_VERSION"), ")");
+
+unsafe extern "C" fn xtversion_trampoline(
+    _terminal: ffi::GhosttyTerminal_ptr,
+    _userdata: *mut c_void,
+) -> ffi::GhosttyString {
+    ffi::GhosttyString {
+        ptr: KITTY_GRAPHICS_XTVERSION.as_ptr(),
+        len: KITTY_GRAPHICS_XTVERSION.len(),
+    }
+}
+
 unsafe extern "C" fn size_report_trampoline(
     _terminal: ffi::GhosttyTerminal_ptr,
     userdata: *mut c_void,
@@ -723,6 +739,12 @@ impl Terminal {
                 self.raw,
                 ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES_KITTY,
                 (&APC_MAX_BYTES_KITTY as *const usize).cast(),
+            )
+            .into_result()?;
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_XTVERSION,
+                (xtversion_trampoline as *const ()).cast(),
             )
             .into_result()?;
         }
@@ -3206,6 +3228,31 @@ mod tests {
         let output = responses.lock().unwrap().clone();
         assert!(!output.is_empty());
         assert!(String::from_utf8_lossy(&output).contains("R"));
+    }
+
+    #[test]
+    fn xtversion_names_ghostty_only_when_kitty_graphics_are_enabled() {
+        let query = |kitty: bool| {
+            let mut terminal = Terminal::new(8, 3, 100).unwrap();
+            if kitty {
+                terminal.enable_kitty_graphics().unwrap();
+            }
+            let responses = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+            let sink = responses.clone();
+            terminal
+                .set_write_pty_callback(move |bytes| sink.lock().unwrap().extend_from_slice(bytes))
+                .unwrap();
+            terminal.write(b"\x1b[>q");
+            let output = responses.lock().unwrap().clone();
+            String::from_utf8_lossy(&output).into_owned()
+        };
+
+        assert_eq!(
+            query(true),
+            format!("\x1bP>|{KITTY_GRAPHICS_XTVERSION}\x1b\\")
+        );
+        assert!(KITTY_GRAPHICS_XTVERSION.starts_with("ghostty "));
+        assert_eq!(query(false), "\x1bP>|libghostty\x1b\\");
     }
 
     #[test]

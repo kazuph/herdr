@@ -21,6 +21,7 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- With `[experimental] kitty_graphics` enabled, panes answer XTVERSION as `ghostty (herdr <version>)` instead of `libghostty`, so programs that gate kitty images on the terminal name (Claude Code mod panes, image previews) draw pictures in Herdr instead of their text fallback.
 - The sidebar width button (` NARROW ` / ` NORMAL ` / ` WIDE `) is back at the bottom of the agents/jobs panel in the machine-aware client; clicking it cycles narrow, normal and wide and remembers the choice.
 - `herdr log <job>` and `--completion full` notices no longer fail with "stream did not contain valid UTF-8" when a job printed non-UTF-8 bytes; invalid bytes are shown as U+FFFD and the rest of the log stays readable.
 - Agent restore no longer reopens a conversation that is already running somewhere else (another terminal, another Herdr session or machine view). Before typing `claude --resume`, `codex resume` or `devin --resume`, Herdr checks Claude Code's live session registry, Codex's held thread writer lock, Devin's session lock owner, and running command lines, and skips the pane with "session already running elsewhere" when the conversation is live.

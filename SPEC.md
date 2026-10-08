@@ -1817,6 +1817,19 @@
   - handoff前に有効だったmouse報告が、handoff後も同じ形式で届く。
 - **デグレ判定**: handoff後にmouseがpaneへ届かなくなる、または形式が変わる。
 
+### kitty画像対応paneのXTVERSION
+- **該当コミット**: 2026-10-08の修正
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — `[experimental] kitty_graphics`で画像を描けるpaneが、画像対応を正しく名乗る。
+- **目的**: Claude Codeなど、XTVERSIONの端末名がkittyかGhosttyの時だけkitty画像を描くprogramが、Herdrのpaneでも画像（mod paneのImage、貼り付け画像のpreview、構成図）を描けるようにする。
+- **挙動**:
+  - `kitty_graphics`が有効なpaneはXTVERSION（`CSI > q`）に`ghostty (herdr <version>)`と答える。中身の端末はlibghosttyで、kitty画像の問い合わせにも`OK`と答える。
+  - `kitty_graphics`が無効なpaneはlibghosttyの既定の`libghostty`のまま答え、画像対応を名乗らない。
+- **受け入れ条件**:
+  - kitty画像が有効なpaneのXTVERSION応答が`ghostty `で始まり、herdrの版を含む。
+  - kitty画像が無効なpaneのXTVERSION応答は`libghostty`のまま変わらない。
+- **デグレ判定**: 画像を描けないpaneで画像対応を名乗る、またはkitty画像が有効なpaneで画像を使うprogramが代替表示に落ちる。
+
 ### SPEC・運用規則・review evidenceの来歴
 - **該当コミット**: 56b1c24, 3d2dcd9, fc557be, 45da399, 9536cf1, 9c688d4
 - **分類**: POLICY
