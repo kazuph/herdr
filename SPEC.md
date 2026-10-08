@@ -2096,12 +2096,14 @@
 - **デグレ判定**: probe失敗のマシンを保存する、またはremoveがremote sessionを止める。
 
 ### endpoint clientでのfork操作と入力の保持
-- **元commit**: fork 3b893cfa, fcace862, f1848ca7, 9ecfe4aa, a28f8c27, 1ae3c754, ea14cc92, 1191e8b1、幅ボタンの復元（2026-10-08）。
+- **元commit**: fork 3b893cfa, fcace862, f1848ca7, 9ecfe4aa, a28f8c27, 1ae3c754, ea14cc92, 1191e8b1、幅ボタンの復元（2026-10-08）、sidebar幅とspaceのdragの復元（2026-10-08）。
 - **分類**: CORE-UI
 - **status: fork独自・保持 (C)** — client側shell描画へ移っても、G1〜G9の操作と表示を保つ。
 - **目的**: endpoint clientになっても、forkの操作感（title zoom、sidebar drag、pane action、job表示、既読、入力）が落ちないようにする。
 - **挙動**:
   - pane titleのclickは全paneでzoomする。sidebar dividerのdragで幅を変え、mouse up時に保存する。pane action barの操作はendpoint client上でも動く。
+  - sidebar幅のdragは、sidebarの最終列と、その右隣に見えるpane枠の列のどちらを掴んでも始まる。
+  - space cardのdragで、同じsection内の並べ替えと、別section（favorites・work・personal等）への移動ができる。dragの間は挿入位置に色付きの線を出し、離すと`workspace.set_section`（sectionが変わる時）と`workspace.move`を送る。押した時のspace表示切替が終わっていない間は、dropを最長5秒待ってから送る。
   - sidebar下部（agents/jobs欄の最終行）にG2「サイドバー幅プリセット」の幅ボタン（` NARROW `・` NORMAL `・` WIDE `）を出し、clickでnarrow→normal→wide→narrowの順に切り替えて保存する。normalはconfig default幅として扱う。
   - sidebarのjob行はsnapshotとjobs messageの間でも消えない。endpointの再描画中もagent restoreは進む。
   - viewerへ戻った時（電話からPCへ、workspaceへの復帰）はそのviewerの端末寸法をPTYへ取り戻す。
@@ -2110,6 +2112,8 @@
   - 一度画面を受け取ったviewerからの入力は、描き直し中でもserverが受け付ける（他viewerのfocus・寸法・snapshot変化で表示が捨てられた間も入力を落とさない）。
 - **受け入れ条件**:
   - endpoint client上でtitle click zoom、sidebar drag（保存込み）、pane action barが動く。
+  - endpoint client上で、sidebarの最終列とpane枠の列のどちらを掴んでもsidebar幅をdragで変えられる。
+  - endpoint client上で、space cardのdragで同じsection内の並び順を変えられ、別sectionの見出しやcardの上で離すとそのsectionへ移る。
   - endpoint client上でsidebar下部の幅ボタンが現在のpresetの表示で見え、clickでpresetが巡回して保存される。
   - 2つの画面が同じremote tabを見ていても入力が欠けずに届く。
   - window focusが戻った直後の入力が欠けない。

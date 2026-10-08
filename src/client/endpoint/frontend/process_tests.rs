@@ -4312,7 +4312,10 @@ async fn endpoint_frontend_sidebar_drag_resizes_actual_socket_and_persists() {
         frontend.chrome_preferences_path = Some(preferences_path.clone());
         let public_before = api(&server.socket, "session.snapshot", json!({}));
         let initial_width = frontend.chrome.settings.sidebar_width;
-        for column in [initial_width + 4, 0, SIZE.0 - 1, initial_width - 1] {
+        for (attempt, column) in [initial_width + 4, 0, SIZE.0 - 1, initial_width - 1]
+            .into_iter()
+            .enumerate()
+        {
             let sidebar = frontend
                 .chrome
                 .compute_view(&frontend.runtime.shell, SIZE.0, SIZE.1)
@@ -4321,7 +4324,12 @@ async fn endpoint_frontend_sidebar_drag_resizes_actual_socket_and_persists() {
             for (kind, col) in [
                 (
                     crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-                    sidebar.right() - 1,
+                    // Both the sidebar's last column and the pane border after it grab the divider.
+                    if attempt % 2 == 0 {
+                        sidebar.right() - 1
+                    } else {
+                        sidebar.right()
+                    },
                 ),
                 (
                     crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
@@ -4374,4 +4382,216 @@ async fn endpoint_frontend_sidebar_drag_resizes_actual_socket_and_persists() {
         }
         server.stop();
     }
+}
+
+#[tokio::test]
+async fn endpoint_frontend_workspace_drag_reorders_and_moves_sections_actual_socket() {
+    let id = ClientEndpointId::Local;
+    let root = std::env::current_dir()
+        .unwrap()
+        .join(".local")
+        .join(format!("workspace-drag-{}", std::process::id()));
+    let mut server = OwnedServer::start(root, "WORKSPACE-DRAG");
+    let created = ["a-space", "b-space", "c-space"].map(|label| {
+        // Distinct directories keep the spaces from folding into one group.
+        let cwd = server.root.join(label);
+        std::fs::create_dir_all(&cwd).unwrap();
+        api(
+            &server.socket,
+            "workspace.create",
+            json!({"label": label, "focus": false, "cwd": cwd}),
+        )["workspace"]["workspace_id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    });
+    for (workspace, section) in created.iter().zip(["favorite", "favorite", "work"]) {
+        api(
+            &server.socket,
+            "workspace.set_section",
+            json!({"workspace_id": workspace, "section": section}),
+        );
+    }
+    let config = crate::config::Config::default();
+    let settings =
+        ChromeSettings::from_config(&config, crate::app::state::Palette::catppuccin(), None);
+    let shell = ClientShellState::new();
+    let view = ClientChrome::new(ChromeSettings::from_config(
+        &config,
+        crate::app::state::Palette::catppuccin(),
+        None,
+    ))
+    .compute_view(&shell, SIZE.0, SIZE.1);
+    let options = EndpointConnectOptions {
+        surface_size: wire::ClientSurfaceSize {
+            cols: view.layout.pane_surface.width,
+            rows: view.layout.pane_surface.height,
+        },
+        cell_width_px: 0,
+        cell_height_px: 0,
+        pixel_geometry_exact: false,
+        endpoint_keybindings: false,
+        mouse_capture: true,
+        surface_active: false,
+    };
+    let runtime = EndpointRuntime::new(
+        shell,
+        EndpointRegistry::empty(),
+        EndpointSupervisors::new(&[], Instant::now()),
+        options,
+    );
+    // Tall enough that every space card is on screen without scrolling.
+    const TALL: u16 = 80;
+    let mut frontend =
+        ClientFrontend::from_runtime(runtime, &config, settings, (SIZE.0, TALL), options);
+    install(&mut frontend, &id, 1, &server);
+    pump(&mut frontend, |f| {
+        f.runtime
+            .shell
+            .endpoint(&id)
+            .and_then(|endpoint| endpoint.cache.live_snapshot(1))
+            .is_some_and(|snapshot| snapshot.workspaces.len() == 4)
+    })
+    .await;
+    let update = frontend.runtime.activate(id.clone(), None, Instant::now());
+    frontend.update(update).unwrap();
+    pump(&mut frontend, |f| f.runtime.input_lease_current()).await;
+    let shown = created.clone();
+    pump(&mut frontend, move |f| {
+        let endpoint = f.runtime.shell.endpoint(&ClientEndpointId::Local);
+        shown.iter().all(|workspace| {
+            endpoint
+                .and_then(|endpoint| endpoint.cache.displayed_workspace_facts(workspace))
+                .and_then(|facts| facts.section)
+                .is_some_and(|section| section != crate::workspace::WorkspaceSection::None)
+        })
+    })
+    .await;
+
+    let order = |server: &OwnedServer| {
+        api(&server.socket, "workspace.list", json!({}))["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|workspace| workspace["workspace_id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let card = |frontend: &mut ClientFrontend, workspace: &str| {
+        let view = frontend
+            .chrome
+            .compute_view(&frontend.runtime.shell, SIZE.0, TALL);
+        view.hits
+            .iter()
+            .find(|hit| matches!(&hit.target, ChromeTarget::Workspace(key) if key.id == workspace))
+            .map(|hit| hit.rect)
+            .unwrap_or_else(|| {
+                let keys = view
+                    .hits
+                    .iter()
+                    .filter_map(|hit| match &hit.target {
+                        ChromeTarget::Workspace(key) => Some(key.id.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let all = view
+                    .hits
+                    .iter()
+                    .map(|hit| format!("{:?}@{}", std::mem::discriminant(&hit.target), hit.rect.y))
+                    .collect::<Vec<_>>();
+                let text = view
+                    .lines
+                    .iter()
+                    .filter(|(rect, _)| rect.x < 30)
+                    .map(|(rect, line)| format!("{}:{}", rect.y, line))
+                    .collect::<Vec<_>>();
+                let snapshot = frontend
+                    .runtime
+                    .shell
+                    .endpoint(&ClientEndpointId::Local)
+                    .and_then(|endpoint| endpoint.cache.snapshot())
+                    .map(|snapshot| format!("{:?}", snapshot.workspaces))
+                    .unwrap_or_default();
+                panic!("no card for {workspace}; cards {keys:?}; hits {all:?}; text {text:#?}; snapshot {snapshot}")
+            })
+    };
+    let header = |frontend: &mut ClientFrontend, wanted: crate::workspace::WorkspaceSection| {
+        let view = frontend
+            .chrome
+            .compute_view(&frontend.runtime.shell, SIZE.0, TALL);
+        view.hits
+            .iter()
+            .find(|hit| matches!(&hit.target, ChromeTarget::WorkspaceSection(_, section) if *section == wanted))
+            .map(|hit| hit.rect)
+            .unwrap()
+    };
+    let drag = |frontend: &mut ClientFrontend, from: u16, to: u16| {
+        let event = |kind, row| {
+            RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                kind,
+                column: 4,
+                row,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            })
+        };
+        use crossterm::event::{MouseButton::Left, MouseEventKind::*};
+        frontend.dispatch_input(event(Down(Left), from)).unwrap();
+        let step: i32 = if to >= from { 1 } else { -1 };
+        let mut row = from as i32;
+        while row != to as i32 {
+            row += step;
+            frontend
+                .dispatch_input(event(Drag(Left), row as u16))
+                .unwrap();
+        }
+        frontend.dispatch_input(event(Up(Left), to)).unwrap();
+    };
+
+    // Within favorites: drag b above a.
+    let a = card(&mut frontend, &created[0]);
+    let b = card(&mut frontend, &created[1]);
+    drag(&mut frontend, b.y, a.y);
+    assert!(
+        frontend.notice.is_none(),
+        "drop notice: {:?}",
+        frontend.notice
+    );
+    let expected = {
+        let mut order = order(&server);
+        let from = order.iter().position(|w| *w == created[1]).unwrap();
+        let moved = order.remove(from);
+        let to = order.iter().position(|w| *w == created[0]).unwrap();
+        order.insert(to, moved);
+        order
+    };
+    pump(&mut frontend, |f| {
+        f.runtime
+            .shell
+            .endpoint(&id)
+            .and_then(|endpoint| endpoint.cache.snapshot())
+            .is_some_and(|snapshot| {
+                snapshot
+                    .workspaces
+                    .iter()
+                    .map(|w| w.workspace_id.as_str())
+                    .eq(expected.iter().map(String::as_str))
+            })
+    })
+    .await;
+    assert_eq!(order(&server), expected);
+
+    // Across sections: drag a onto the work header.
+    let a = card(&mut frontend, &created[0]);
+    let work = header(&mut frontend, crate::workspace::WorkspaceSection::Work);
+    drag(&mut frontend, a.y, work.y);
+    pump(&mut frontend, |f| {
+        f.runtime
+            .shell
+            .endpoint(&id)
+            .and_then(|endpoint| endpoint.cache.displayed_workspace_facts(&created[0]))
+            .and_then(|facts| facts.section)
+            == Some(crate::workspace::WorkspaceSection::Work)
+    })
+    .await;
+    assert!(frontend.workspace_drag.is_none());
+    server.stop();
 }
