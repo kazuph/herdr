@@ -111,6 +111,9 @@ impl DispatchStore {
                 .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
         }
         let conn = Connection::open(path)?;
+        // Several processes (server, CLI, job runners) write this database;
+        // wait for a writer instead of failing at once with SQLITE_BUSY.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let store = Self { conn };
         store.init()?;
         Ok(store)
@@ -545,17 +548,31 @@ impl DispatchStore {
         max_age: std::time::Duration,
     ) -> rusqlite::Result<Vec<String>> {
         let modifier = format!("-{} seconds", max_age.as_secs());
+        // Small batches keep each write lock short for the other writers.
         let mut stmt = self.conn.prepare(
             r#"
             DELETE FROM dispatches
-            WHERE kind='command'
-              AND finished_at IS NOT NULL
-              AND julianday(finished_at) < julianday('now', ?1)
+            WHERE id IN (
+              SELECT id FROM dispatches
+              WHERE kind='command'
+                AND finished_at IS NOT NULL
+                AND julianday(finished_at) < julianday('now', ?1)
+              LIMIT 500
+            )
             RETURNING external_id
             "#,
         )?;
-        let ids = stmt.query_map(params![modifier], |row| row.get::<_, Option<String>>(0))?;
-        Ok(ids.filter_map(|id| id.ok().flatten()).collect())
+        let mut removed = Vec::new();
+        loop {
+            let batch = stmt
+                .query_map(params![modifier], |row| row.get::<_, Option<String>>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            if batch.is_empty() {
+                break;
+            }
+            removed.extend(batch.into_iter().flatten());
+        }
+        Ok(removed)
     }
 
     /// Unfinished command rows created before `max_age` ago, with their runner
