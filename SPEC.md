@@ -1292,6 +1292,7 @@
   - pane 内アプリが FixTerm keyboard query `ESC [ ? u` を出した場合、Herdr は `ESC [ ? 0 u` を返す。
   - FixTerm keyboard query を見た Ghostty pane では、明示的な kitty keyboard protocol が有効でない限り、Legacy `Shift+Enter` を byte `\n` として送る。
   - pane 内アプリが明示的 keyboard protocol request `ESC [ >` を出したら、FixTerm query による Legacy `Shift+Enter` 特例を解除する。
+  - host terminal から届く kitty keyboard 形式のキー（`CSI key:shifted ; modifiers:event ; text u`）は、modifier 欄が空（Ghostty が修飾なしの文字キーを associated text 付きで送る `ESC[97;;97u`）でも修飾なしとして読む。associated text が key 自身か Shift 時の文字（`ESC[97:65;2;65u` の `A`）なら受け付ける。読めないとキーは捨てられ、kitty keyboard を有効にした pane（Codex など）へ文字が届かない。
   - GitHub Copilot CLI の screen detection は、`esc to cancel` だけでなく `esc cancel` も Working とみなす。
   - Copilot の status footer は、trim 後の先頭が `●` / `◉` / `◎` / `○` のいずれかで、かつ `thinking` と `esc cancel` を含む行、または `loading:` を含む行を Working とみなす。例: `● Thinking esc cancel`、`◉ Loading: 1 instruction, 5 hooks, 62 skills`。
   - workspace / sidebar / mobile summary の Working 状態は固定 dot ではなく spinner frame を表示する。
@@ -1302,6 +1303,7 @@
   - Ghostty host では modifyOtherKeys mode 1 が選ばれ、未知 host では勝手に有効化されない。
   - pane output に `ESC[?u` が含まれると response `ESC[?0u` が返る。
   - `ESC[?u` 後、kitty flags が 0 の Legacy `Shift+Enter` は `b"\n"` になる。`ESC[>` 後はこの特例に依存しない。
+  - `ESC[97;;97u` は修飾なしの `a` の press、`ESC[97:65;2;65u` は Shift 付きの `a`（shifted `A`）として読まれる。
   - `● Thinking esc cancel` と `◉ Loading: 1 instruction, 5 hooks, 62 skills` は Copilot Working と検出される。
   - Working workspace / agent summary が spinner 表示になる。
 - **実装方針**: 本家は raw LF preservation、modified Enter preservation、Copilot integration / manifest、host terminal keyboard protocol 周辺を既に大きく持つため PARTIAL。最新 upstream の input parse / encode / pane terminal protocol / agent detection の既存経路に、fork 固有として不足している Ghostty FixTerm query 互換、Copilot footer wording、summary spinner 表示だけを足す。

@@ -15,13 +15,20 @@ fn parse_kitty_key_sequence(data: &str) -> Option<TerminalKey> {
 
     let mut fields = body.split(';');
     let key_part = fields.next()?;
-    let modifier_part = fields.next().unwrap_or("1");
+    // Terminals leave the modifier field empty when a key has associated
+    // text but no modifiers (Ghostty sends `CSI 97;;97u` for a plain `a`).
+    let modifier_part = fields.next().filter(|part| !part.is_empty()).unwrap_or("1");
     let associated_text = fields.next();
     if fields.next().is_some() {
         return None;
     }
 
     let (modifier_text, event_type) = split_modifier_and_event(modifier_part);
+    let modifier_text = if modifier_text.is_empty() {
+        "1"
+    } else {
+        modifier_text
+    };
     let modifier = modifier_text.parse::<u8>().ok()?.checked_sub(1)?;
 
     let mut key_fields = key_part.split(':');
@@ -31,8 +38,11 @@ fn parse_kitty_key_sequence(data: &str) -> Option<TerminalKey> {
         .filter(|field| !field.is_empty())
         .and_then(|field| field.parse::<u32>().ok());
 
+    // The associated text is the key itself, or its shifted form when Shift
+    // is held (`CSI 97:65;2;65u` for `A`). Other text is not modeled here.
     if let Some(text) = associated_text {
-        if text.parse::<u32>().ok()? != codepoint {
+        let text = text.parse::<u32>().ok()?;
+        if text != codepoint && Some(text) != shifted_codepoint {
             return None;
         }
     }
@@ -609,6 +619,33 @@ mod tests {
             KeyModifiers::empty(),
             crossterm::event::KeyEventKind::Press,
             None,
+        );
+    }
+
+    #[test]
+    fn parse_kitty_sequence_with_text_and_empty_modifier_field() {
+        // Ghostty, with "report all keys" and "report associated text" on.
+        let key = parse_terminal_key_sequence("\x1b[97;;97u").unwrap();
+        assert_terminal_key_eq(
+            key,
+            KeyCode::Char('a'),
+            KeyModifiers::empty(),
+            crossterm::event::KeyEventKind::Press,
+            None,
+        );
+        let release = parse_terminal_key_sequence("\x1b[97;1:3u").unwrap();
+        assert_eq!(release.kind, crossterm::event::KeyEventKind::Release);
+    }
+
+    #[test]
+    fn parse_kitty_shifted_letter_with_its_shifted_text() {
+        let key = parse_terminal_key_sequence("\x1b[97:65;2;65u").unwrap();
+        assert_terminal_key_eq(
+            key,
+            KeyCode::Char('a'),
+            KeyModifiers::SHIFT,
+            crossterm::event::KeyEventKind::Press,
+            Some('A' as u32),
         );
     }
 
