@@ -19,6 +19,16 @@ pub(crate) fn snapshot(
     let focused_workspace_id = location.focused_workspace_id.clone();
     let focused_tab_id = location.focused_tab_id().map(str::to_owned);
     let focused_pane_id = location.focused_pane_id().map(str::to_owned);
+    // The session read already holds each pane's cwd and foreground cwd;
+    // reuse them instead of asking the pane's PTY again per client.
+    let follow_cwds = resources
+        .panes
+        .iter()
+        .filter_map(|pane| {
+            let cwd = pane.foreground_cwd.as_ref().or(pane.cwd.as_ref())?;
+            Some((pane.pane_id.clone(), std::path::PathBuf::from(cwd)))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
     let workspaces = resources
         .workspaces
         .into_iter()
@@ -40,7 +50,9 @@ pub(crate) fn snapshot(
                     if state.find_tab_index_for_pane(pane) != Some(tab_index) {
                         return None;
                     }
-                    app.follow_cwd_for_pane_in_workspace(workspace_index, pane)
+                    follow_cwds
+                        .get(&app.public_pane_id(workspace_index, pane)?)
+                        .cloned()
                 });
             let mut tokens = resource.tokens.into_iter().collect::<Vec<_>>();
             tokens.sort_by(|left, right| left.0.cmp(&right.0));

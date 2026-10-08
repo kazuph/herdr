@@ -301,13 +301,9 @@ fn usable_process_cwd(pid: u32) -> Option<std::path::PathBuf> {
     crate::platform::process_cwd(pid).filter(|cwd| cwd.is_absolute() && cwd.is_dir())
 }
 
-/// How long one foreground process group reading is reused, so a new
-/// foreground program shows up within this time.
-#[cfg_attr(not(unix), allow(dead_code))] // unix-only foreground cwd probe
-const FOREGROUND_PGID_TTL: std::time::Duration = std::time::Duration::from_millis(100);
 /// How long a computed `foreground_cwd` is reused while the pane's shell and
 /// foreground process group stay the same. A `cd` inside the same foreground
-/// program shows up within this time.
+/// program shows up within this time; a new foreground program at once.
 #[cfg_attr(not(unix), allow(dead_code))] // unix-only foreground cwd probe
 const FOREGROUND_CWD_TTL: std::time::Duration = std::time::Duration::from_millis(1500);
 
@@ -1182,10 +1178,6 @@ pub struct PaneRuntime {
     // Only `foreground_cwd` on unix reads it; Windows has no foreground cwd probe.
     #[cfg_attr(not(unix), allow(dead_code))]
     foreground_cwd_cache: Mutex<Option<ForegroundCwdCache>>,
-    /// Last foreground process group read from the PTY actor. Reading it is
-    /// a round trip to the actor thread, and one update can ask for the same
-    /// pane several times, so a reading is reused for a short moment.
-    foreground_pgid_cache: Mutex<Option<(std::time::Instant, Option<u32>)>>,
     // Task handles for deterministic shutdown
     detect_handle: Option<tokio::task::AbortHandle>,
 }
@@ -2139,7 +2131,6 @@ impl PaneRuntime {
             pending_release,
             preserve_processes_on_drop: true,
             foreground_cwd_cache: Mutex::new(None),
-            foreground_pgid_cache: Mutex::new(None),
             detect_handle: Some(detect_handle),
         })
     }
@@ -2731,7 +2722,6 @@ impl PaneRuntime {
             pending_release,
             preserve_processes_on_drop: false,
             foreground_cwd_cache: Mutex::new(None),
-            foreground_pgid_cache: Mutex::new(None),
             detect_handle,
         })
     }
@@ -3162,33 +3152,14 @@ impl PaneRuntime {
     }
 
     /// Get the current working directory of the process group controlling the pane PTY.
-    #[cfg_attr(not(unix), allow(dead_code))] // only the unix cwd probe asks
-    fn cached_foreground_process_group_id(&self) -> Option<u32> {
-        let now = std::time::Instant::now();
-        if let Some((at, pgid)) = self
-            .foreground_pgid_cache
-            .lock()
-            .ok()
-            .and_then(|cache| *cache)
-        {
-            if now.duration_since(at) < FOREGROUND_PGID_TTL {
-                return pgid;
-            }
-        }
-        let pgid = self.io.foreground_process_group_id();
-        if let Ok(mut cache) = self.foreground_pgid_cache.lock() {
-            *cache = Some((now, pgid));
-        }
-        pgid
-    }
-
     pub fn foreground_cwd(&self) -> Option<std::path::PathBuf> {
         #[cfg(unix)]
         {
             let pid = self.child_pid.load(Ordering::Acquire);
             let shell_cwd = usable_process_cwd(pid);
             let foreground_pgid = self
-                .cached_foreground_process_group_id()
+                .io
+                .foreground_process_group_id()
                 .or_else(|| crate::platform::foreground_process_group_id(pid));
             let leader_cwd = foreground_pgid.and_then(usable_process_cwd);
             // Only the job-member scan is expensive (it reads every member's
@@ -3240,24 +3211,6 @@ impl PaneRuntime {
 #[cfg(test)]
 mod foreground_cwd_cache_tests {
     use super::*;
-
-    #[tokio::test]
-    async fn foreground_process_group_reading_is_reused_only_within_its_ttl() {
-        let runtime = PaneRuntime::test_with_screen_bytes(80, 24, &[]);
-        *runtime.foreground_pgid_cache.lock().unwrap() =
-            Some((std::time::Instant::now(), Some(4242)));
-        assert_eq!(runtime.cached_foreground_process_group_id(), Some(4242));
-
-        *runtime.foreground_pgid_cache.lock().unwrap() = Some((
-            std::time::Instant::now() - FOREGROUND_PGID_TTL * 2,
-            Some(4242),
-        ));
-        assert_eq!(
-            runtime.cached_foreground_process_group_id(),
-            None,
-            "an old reading is replaced by a live one"
-        );
-    }
 
     #[test]
     fn cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl() {
@@ -3336,7 +3289,6 @@ impl PaneRuntime {
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,
             foreground_cwd_cache: Mutex::new(None),
-            foreground_pgid_cache: Mutex::new(None),
             detect_handle: Some(tokio::spawn(async {}).abort_handle()),
         };
         (runtime, peer)
@@ -3417,7 +3369,6 @@ impl PaneRuntime {
                 pending_release: Arc::new(Mutex::new(None)),
                 preserve_processes_on_drop: true,
                 foreground_cwd_cache: Mutex::new(None),
-                foreground_pgid_cache: Mutex::new(None),
                 detect_handle: Some(tokio::spawn(async {}).abort_handle()),
             },
             rx,
@@ -3954,7 +3905,6 @@ mod tests {
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,
             foreground_cwd_cache: Mutex::new(None),
-            foreground_pgid_cache: Mutex::new(None),
             detect_handle: Some(tokio::spawn(async {}).abort_handle()),
         };
 
@@ -3989,7 +3939,6 @@ mod tests {
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,
             foreground_cwd_cache: Mutex::new(None),
-            foreground_pgid_cache: Mutex::new(None),
             detect_handle: Some(tokio::spawn(async {}).abort_handle()),
         };
 
