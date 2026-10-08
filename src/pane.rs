@@ -3241,8 +3241,8 @@ impl PaneRuntime {
 mod foreground_cwd_cache_tests {
     use super::*;
 
-    #[test]
-    fn foreground_process_group_reading_is_reused_only_within_its_ttl() {
+    #[tokio::test]
+    async fn foreground_process_group_reading_is_reused_only_within_its_ttl() {
         let runtime = PaneRuntime::test_with_screen_bytes(80, 24, &[]);
         *runtime.foreground_pgid_cache.lock().unwrap() =
             Some((std::time::Instant::now(), Some(4242)));
