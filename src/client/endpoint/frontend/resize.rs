@@ -34,8 +34,11 @@ pub(super) fn sidebar_mouse(
     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
         && !frontend.chrome.settings.sidebar_collapsed
         && sidebar.width > 0
-        && sidebar.contains(position)
-        && mouse.column == sidebar.right().saturating_sub(1)
+        && mouse.row >= sidebar.y
+        && mouse.row < sidebar.bottom()
+        // The sidebar's last column, or the pane border right after it: that
+        // border is the visible boundary people grab.
+        && (mouse.column == sidebar.right().saturating_sub(1) || mouse.column == sidebar.right())
         && !crate::ui::expanded_sidebar_toggle_rect(sidebar).contains(position)
     {
         frontend.sidebar_drag = true;

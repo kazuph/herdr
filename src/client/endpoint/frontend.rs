@@ -46,6 +46,7 @@ mod right_click;
 mod selection;
 mod settings;
 mod startup;
+mod workspace_drag;
 mod worktrees;
 
 #[cfg(all(test, unix))]
@@ -98,6 +99,8 @@ pub(crate) struct ClientFrontend {
     resize_mode: Option<copy::Owner>,
     split_drag: Option<resize::SplitDrag>,
     sidebar_drag: bool,
+    workspace_drag: Option<workspace_drag::WorkspaceDrag>,
+    pending_workspace_drop: Option<(super::ResourceKey, workspace_drag::Drop, std::time::Instant)>,
     right_click: Option<right_click::Gesture>,
     host_theme: crate::terminal_theme::TerminalTheme,
     pointer_selection: selection::PointerSelection,
@@ -213,6 +216,8 @@ impl ClientFrontend {
             resize_mode: None,
             split_drag: None,
             sidebar_drag: false,
+            workspace_drag: None,
+            pending_workspace_drop: None,
             right_click: None,
             host_theme: crate::terminal_theme::TerminalTheme::default(),
             pointer_selection: selection::PointerSelection::default(),
@@ -378,6 +383,7 @@ impl ClientFrontend {
         resize::observe_drag(self)?;
         right_click::observe(self)?;
         worktrees::observe(self);
+        workspace_drag::observe(self)?;
         ascii::sync(self);
         Ok(repaint || machines_changed)
     }
@@ -414,6 +420,7 @@ impl ClientFrontend {
                 mobile::render(self, frame, view.layout.pane_surface);
                 navigator::render(self, frame);
                 notification::render(self, frame);
+                workspace_drag::render(self, frame, &view);
                 menu::render(self, frame, view.menu_launcher);
                 context::render(self, frame);
                 machines::render(self, frame);
