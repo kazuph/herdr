@@ -464,10 +464,7 @@ impl HeadlessServer {
     }
 
     pub(super) fn stream_endpoint_views(&mut self) {
-        // One session read per pass, shared by the topology and every client:
-        // it asks each pane's PTY for its foreground process, which is not free.
-        let resources = self.app.session_snapshot();
-        let topology = self.endpoint_topology_from(&resources);
+        let topology = self.endpoint_topology();
         for client in self.endpoint_clients.values_mut() {
             client.location.reconcile(&topology);
         }
@@ -480,7 +477,14 @@ impl HeadlessServer {
         });
         let mut clients = self.endpoint_clients.keys().copied().collect::<Vec<_>>();
         clients.sort_unstable();
+        // One session read after the tabs above were marked seen, shared by
+        // every client: it asks each pane's PTY for its foreground process,
+        // which is not free.
+        let resources = (!clients.is_empty()).then(|| self.app.session_snapshot());
         for client_id in clients {
+            let Some(resources) = resources.as_ref() else {
+                break;
+            };
             let client = self
                 .endpoint_clients
                 .get_mut(&client_id)

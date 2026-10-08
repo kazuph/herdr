@@ -10999,35 +10999,6 @@
       ]
     },
     {
-      "contract_id": "G9-abf03108e9",
-      "dimensions": [
-        "foreground cwd reuse",
-        "job retention",
-        "jobs refresh cadence"
-      ],
-      "verification_methods": [
-        "rust_test_target:cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl",
-        "rust_test_target:prune_removes_only_jobs_finished_before_the_cutoff_and_their_logs",
-        "rust_test_target:headless_scheduled_tasks_refresh_jobs_for_both_sidebar_tabs",
-        "drift_source_anchor:src/pane.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1854",
-        "src/pane.rs:308",
-        "src/app/runtime.rs:712"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
-      ]
-    },
-    {
       "contract_id": "G6-acd68780cb",
       "dimensions": [
         "kitty key with empty modifier field",
@@ -11105,6 +11076,35 @@
       ],
       "source_anchors": [
         "SPEC.md:1848",
+        "src/pane.rs:308",
+        "src/app/runtime.rs:712"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
+      ]
+    },
+    {
+      "contract_id": "G9-0b06da62d9",
+      "dimensions": [
+        "foreground cwd reuse",
+        "job retention",
+        "jobs refresh cadence"
+      ],
+      "verification_methods": [
+        "rust_test_target:cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl",
+        "rust_test_target:prune_removes_only_jobs_finished_before_the_cutoff_and_their_logs",
+        "rust_test_target:headless_scheduled_tasks_refresh_jobs_for_both_sidebar_tabs",
+        "drift_source_anchor:src/pane.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1854",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ],
