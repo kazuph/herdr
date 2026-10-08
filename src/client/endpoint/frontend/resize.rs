@@ -30,7 +30,32 @@ pub(super) fn sidebar_mouse(
         }
         return true;
     }
+    if frontend.sidebar_section_drag {
+        match mouse.kind {
+            MouseEventKind::Drag(MouseButton::Left) => {
+                set_section_split(frontend, sidebar, mouse.row)
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                frontend.sidebar_section_drag = false;
+                frontend.persist_chrome_preferences();
+            }
+            _ => {}
+        }
+        return true;
+    }
     let position = (mouse.column, mouse.row).into();
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && !frontend.chrome.settings.sidebar_collapsed
+        && crate::ui::sidebar_section_divider_rect(
+            sidebar,
+            frontend.chrome.settings.sidebar_section_split,
+        )
+        .contains(position)
+    {
+        frontend.sidebar_section_drag = true;
+        set_section_split(frontend, sidebar, mouse.row);
+        return true;
+    }
     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
         && !frontend.chrome.settings.sidebar_collapsed
         && sidebar.width > 0
@@ -45,6 +70,16 @@ pub(super) fn sidebar_mouse(
         return true;
     }
     false
+}
+
+/// Same ratio rule as the in-process sidebar: the dragged row's share of the
+/// sidebar height, kept between 10% and 90%.
+fn set_section_split(frontend: &mut ClientFrontend, sidebar: ratatui::layout::Rect, row: u16) {
+    if sidebar.height < 6 {
+        return;
+    }
+    let ratio = row.saturating_sub(sidebar.y) as f32 / sidebar.height as f32;
+    frontend.chrome.settings.sidebar_section_split = ratio.clamp(0.1, 0.9);
 }
 
 pub(super) struct SplitDrag {

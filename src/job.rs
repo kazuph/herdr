@@ -142,7 +142,42 @@ impl JobStore {
                 let _ = std::fs::remove_file(log_dir.join(format!("{id}.log")));
             }
         }
-        Ok(ids.len())
+        Ok(ids.len() + self.prune_orphan_logs(max_age, log_dir)?)
+    }
+
+    /// Logs untouched for `max_age` whose job has no record (left by an older
+    /// build or a crashed write) are removed as well, so the log directory
+    /// follows the same retention as the job list.
+    fn prune_orphan_logs(
+        &self,
+        max_age: std::time::Duration,
+        log_dir: &std::path::Path,
+    ) -> rusqlite::Result<usize> {
+        let Ok(entries) = std::fs::read_dir(log_dir) else {
+            return Ok(0);
+        };
+        let now = std::time::SystemTime::now();
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(id) = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(".log"))
+            else {
+                continue;
+            };
+            let old = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|age| age > max_age);
+            if old && self.store.command_row(id)?.is_none() && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
     }
 
     /// Bounded window for the sidebar, newest first.
@@ -214,11 +249,29 @@ mod tests {
         )
         .unwrap();
 
+        let orphan_old = logs.join("orphan-old.log");
+        let orphan_new = logs.join("orphan-new.log");
+        std::fs::write(&orphan_old, "log").unwrap();
+        std::fs::write(&orphan_new, "log").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&orphan_old)
+            .unwrap()
+            .set_modified(
+                std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 24 * 60 * 60),
+            )
+            .unwrap();
+
         let removed = store
             .prune_finished(std::time::Duration::from_secs(24 * 60 * 60), &logs)
             .unwrap();
 
-        assert_eq!(removed, 2);
+        assert_eq!(removed, 3);
+        assert!(
+            !orphan_old.exists(),
+            "an old log without a job record is dropped"
+        );
+        assert!(orphan_new.exists(), "a recent log without a record is kept");
         assert!(store.get("old-done").unwrap().is_none());
         assert!(store.get("new-done").unwrap().is_some());
         assert!(

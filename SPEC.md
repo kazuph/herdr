@@ -1292,6 +1292,7 @@
   - pane 内アプリが FixTerm keyboard query `ESC [ ? u` を出した場合、Herdr は `ESC [ ? 0 u` を返す。
   - FixTerm keyboard query を見た Ghostty pane では、明示的な kitty keyboard protocol が有効でない限り、Legacy `Shift+Enter` を byte `\n` として送る。
   - pane 内アプリが明示的 keyboard protocol request `ESC [ >` を出したら、FixTerm query による Legacy `Shift+Enter` 特例を解除する。
+  - host terminal から届く kitty keyboard 形式のキー（`CSI key:shifted ; modifiers:event ; text u`）は、modifier 欄が空（Ghostty が修飾なしの文字キーを associated text 付きで送る `ESC[97;;97u`）でも修飾なしとして読む。associated text が key 自身か Shift 時の文字（`ESC[97:65;2;65u` の `A`）なら受け付ける。読めないとキーは捨てられ、kitty keyboard を有効にした pane（Codex など）へ文字が届かない。
   - GitHub Copilot CLI の screen detection は、`esc to cancel` だけでなく `esc cancel` も Working とみなす。
   - Copilot の status footer は、trim 後の先頭が `●` / `◉` / `◎` / `○` のいずれかで、かつ `thinking` と `esc cancel` を含む行、または `loading:` を含む行を Working とみなす。例: `● Thinking esc cancel`、`◉ Loading: 1 instruction, 5 hooks, 62 skills`。
   - workspace / sidebar / mobile summary の Working 状態は固定 dot ではなく spinner frame を表示する。
@@ -1302,6 +1303,7 @@
   - Ghostty host では modifyOtherKeys mode 1 が選ばれ、未知 host では勝手に有効化されない。
   - pane output に `ESC[?u` が含まれると response `ESC[?0u` が返る。
   - `ESC[?u` 後、kitty flags が 0 の Legacy `Shift+Enter` は `b"\n"` になる。`ESC[>` 後はこの特例に依存しない。
+  - `ESC[97;;97u` は修飾なしの `a` の press、`ESC[97:65;2;65u` は Shift 付きの `a`（shifted `A`）として読まれる。
   - `● Thinking esc cancel` と `◉ Loading: 1 instruction, 5 hooks, 62 skills` は Copilot Working と検出される。
   - Working workspace / agent summary が spinner 表示になる。
 - **実装方針**: 本家は raw LF preservation、modified Enter preservation、Copilot integration / manifest、host terminal keyboard protocol 周辺を既に大きく持つため PARTIAL。最新 upstream の input parse / encode / pane terminal protocol / agent detection の既存経路に、fork 固有として不足している Ghostty FixTerm query 互換、Copilot footer wording、summary spinner 表示だけを足す。
@@ -1840,11 +1842,16 @@
   - job記録は終了から24時間で、そのlog fileと一緒に消す。作成から24時間を過ぎても実行中・待機中・取消中のままの記録は、runner processが既に終わっていれば同じく消す。runnerが生きているjob（`herdr run`で動かしているserver等）は消さない。jobの完了通知など、消したjobを返信先に持つmessageは本文を残し、返信先の紐付けだけを外す（紐付けがあるとDBの外部キーで削除が拒否され、掃除全体が止まるため）。掃除は10分に1回、job一覧の更新と同じ裏の処理で行う。
   - job一覧の更新は、待機中・実行中・取消中のjobか終了直後（1分以内）のjobがある間は1秒ごと、それ以外は10秒ごとにする。job databaseへの書き込み（別processによるjobの開始・終了を含む）は1秒ごとのfile時刻の確認で検知して、次の周期を待たずに更新する。`herdr run`の開始とmessage（完了通知を含む）の受信でも即座に更新する。
   - job一覧の問い合わせは`(kind, id)`の索引を使い、全記録を並べ替えない。
+  - 接続中のclientへ画面情報を配る時、session全体（pane・agent一覧）はclientごとに読み直さず、表示中tabを既読にした後に1回だけ読んで全clientで共有する。session全体を読む時、各paneの前面process情報は1回だけ求め、pane一覧とagent一覧の両方に使う。各spaceの新規terminal用の作業folder（前面programの作業folder）も、この1回の読み取り結果を使う。
+  - job logの置き場所にある、24時間以上更新されておらずjob記録も無いlog fileも、同じ掃除で消す。
 - **受け入れ条件**:
+  - 配信の時、各spaceの新規terminal用の作業folderは共有したsession読み取りのpane情報から決まり、paneへ改めて問い合わせない。`pane.get`などの問い合わせは毎回その時点の前面programを読む。
   - 前面job全体の調査結果は、shell・前面process group・shellとleaderの作業folderが同じ間だけ1.5秒使い回され、どれかが変わると調べ直す。
   - 終了から24時間を過ぎたjob記録とそのlogは消え、24時間以内のjobとrunnerが生きている実行中のjobは残る。
   - 作成から24時間を過ぎて未完了のままでrunnerが終わっている記録は、そのlogと一緒に消える。
   - 完了通知のmessageが返信しているjobも消え、そのmessageは返信先なしで残る。
+  - job記録が無く24時間以上更新されていないlog fileは消え、記録が無くても24時間以内に更新されたlog fileは残る。
+  - 複数clientが接続していても、1回の配信でclientへ渡すsession全体の読み取りは1回で、各clientに届くpane・agent一覧と既読状態は個別に読んだ場合と同じ内容になる。
   - 他のprocessがjob databaseに書き込んでいる最中でも、掃除は書き込みの終わりを待って（最長5秒）最後まで行い、途中の失敗を黙って捨てない。
   - jobが動いていない間、job一覧の更新は10秒ごとになり、`herdr run`の開始やjob databaseへの書き込みでは1秒以内に更新される。
 - **デグレ判定**: 前面programの切替がpane情報に遅れて反映される、実行中のjobや24時間以内のjobが消える、またはjobの開始や完了が一覧に出るまで10秒待たされる。
@@ -2098,13 +2105,14 @@
 - **デグレ判定**: probe失敗のマシンを保存する、またはremoveがremote sessionを止める。
 
 ### endpoint clientでのfork操作と入力の保持
-- **元commit**: fork 3b893cfa, fcace862, f1848ca7, 9ecfe4aa, a28f8c27, 1ae3c754, ea14cc92, 1191e8b1、幅ボタンの復元（2026-10-08）、sidebar幅とspaceのdragの復元（2026-10-08）。
+- **元commit**: fork 3b893cfa, fcace862, f1848ca7, 9ecfe4aa, a28f8c27, 1ae3c754, ea14cc92, 1191e8b1、幅ボタンの復元（2026-10-08）、sidebar幅とspaceのdragの復元（2026-10-08）、space一覧とagents/jobs欄の区切りdragの復元（2026-10-08）。
 - **分類**: CORE-UI
 - **status: fork独自・保持 (C)** — client側shell描画へ移っても、G1〜G9の操作と表示を保つ。
 - **目的**: endpoint clientになっても、forkの操作感（title zoom、sidebar drag、pane action、job表示、既読、入力）が落ちないようにする。
 - **挙動**:
   - pane titleのclickは全paneでzoomする。sidebar dividerのdragで幅を変え、mouse up時に保存する。pane action barの操作はendpoint client上でも動く。
   - sidebar幅のdragは、sidebarの最終列と、その右隣に見えるpane枠の列のどちらを掴んでも始まる。
+  - space一覧とagents/jobs欄の間の区切り線をdragすると、上下の高さの比率（sidebar高さに対する位置、10%〜90%）が変わり、mouse up時に保存する。
   - space cardのdragで、同じsection内の並べ替えと、別section（favorites・work・personal等）への移動ができる。dragの間は挿入位置に色付きの線を出し、離すと`workspace.set_section`（sectionが変わる時）と`workspace.move`を送る。押した時のspace表示切替が終わっていない間は、dropを最長5秒待ってから送る。
   - sidebar下部（agents/jobs欄の最終行）にG2「サイドバー幅プリセット」の幅ボタン（` NARROW `・` NORMAL `・` WIDE `）を出し、clickでnarrow→normal→wide→narrowの順に切り替えて保存する。normalはconfig default幅として扱う。
   - sidebarのjob行はsnapshotとjobs messageの間でも消えない。endpointの再描画中もagent restoreは進む。
@@ -2115,6 +2123,7 @@
 - **受け入れ条件**:
   - endpoint client上でtitle click zoom、sidebar drag（保存込み）、pane action barが動く。
   - endpoint client上で、sidebarの最終列とpane枠の列のどちらを掴んでもsidebar幅をdragで変えられる。
+  - endpoint client上で、space一覧とagents/jobs欄の区切り線をdragすると比率が変わり、client設定に保存される。
   - endpoint client上で、space cardのdragで同じsection内の並び順を変えられ、別sectionの見出しやcardの上で離すとそのsectionへ移る。
   - endpoint client上でsidebar下部の幅ボタンが現在のpresetの表示で見え、clickでpresetが巡回して保存される。
   - 2つの画面が同じremote tabを見ていても入力が欠けずに届く。
