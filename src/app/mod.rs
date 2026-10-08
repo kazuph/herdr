@@ -51,6 +51,12 @@ const RESIZE_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 /// How often the sidebar re-reads background jobs for Jobs and space indicators.
 pub(crate) const JOBS_REFRESH_INTERVAL: Duration = Duration::from_millis(1000);
+/// Jobs refresh cadence while nothing is queued, running or just finished.
+pub(crate) const JOBS_IDLE_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+/// Finished jobs (and their logs) are kept for one day.
+pub(crate) const JOB_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
+/// How often the retention sweep runs.
+pub(crate) const JOBS_PRUNE_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// How many job rows the sidebar keeps; the dispatch store holds every job ever run.
 const SIDEBAR_JOBS_LIMIT: usize = 200;
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -133,6 +139,8 @@ pub struct App {
     pub(crate) git_refresh_in_flight: bool,
     pub(crate) jobs_refresh_in_flight: bool,
     pub(crate) last_jobs_refresh: Instant,
+    pub(crate) last_jobs_prune: Option<Instant>,
+    pub(crate) last_jobs_db_stamp: Option<(std::time::SystemTime, Option<std::time::SystemTime>)>,
     pub(crate) regular_mail_in_flight: HashSet<i64>,
     pub(crate) git_refresh_due_after_in_flight: bool,
     pub(crate) git_status_cache: HashMap<std::path::PathBuf, crate::workspace::GitStatusCacheEntry>,
@@ -823,6 +831,8 @@ impl App {
             last_git_remote_status_refresh: Instant::now() - GIT_REMOTE_STATUS_REFRESH_INTERVAL,
             git_refresh_in_flight: false,
             jobs_refresh_in_flight: false,
+            last_jobs_prune: None,
+            last_jobs_db_stamp: None,
             last_jobs_refresh: Instant::now()
                 .checked_sub(JOBS_REFRESH_INTERVAL)
                 .unwrap_or_else(Instant::now),

@@ -633,11 +633,41 @@ impl App {
         if now < self.last_jobs_refresh + super::JOBS_REFRESH_INTERVAL {
             return;
         }
+        // Between the slow idle refreshes, a write to the job database (a job
+        // started or finished by another process) still refreshes within a
+        // second; a stat is all it costs.
+        let db_stamp = jobs_database_stamp();
+        let db_changed = db_stamp != self.last_jobs_db_stamp;
+        if !db_changed && now < self.last_jobs_refresh + self.jobs_refresh_interval() {
+            return;
+        }
+        self.last_jobs_db_stamp = db_stamp;
         self.jobs_refresh_in_flight = true;
         self.last_jobs_refresh = now;
+        let prune = self
+            .last_jobs_prune
+            .is_none_or(|at| now.saturating_duration_since(at) >= super::JOBS_PRUNE_INTERVAL);
+        if prune {
+            self.last_jobs_prune = Some(now);
+        }
         let event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
-            let jobs = crate::job::JobStore::open_active()
+            let store = crate::job::JobStore::open_active();
+            if prune {
+                if let Ok(store) = store.as_ref() {
+                    match store.prune_finished(
+                        super::JOB_RETENTION,
+                        &crate::session::data_dir().join("job-logs"),
+                    ) {
+                        Ok(0) => {}
+                        Ok(removed) => {
+                            tracing::info!(removed, "pruned finished jobs past retention")
+                        }
+                        Err(error) => tracing::warn!(%error, "pruning finished jobs failed"),
+                    }
+                }
+            }
+            let jobs = store
                 .and_then(|store| store.list_recent(super::SIDEBAR_JOBS_LIMIT))
                 .unwrap_or_default();
             let dead_runner_pids = jobs
@@ -670,8 +700,39 @@ impl App {
     }
 
     pub(crate) fn jobs_refresh_deadline(&self) -> Option<Instant> {
+        // Wake every second to notice database writes; the refresh itself
+        // only runs when something changed or the idle interval passed.
         (!self.jobs_refresh_in_flight)
             .then_some(self.last_jobs_refresh + super::JOBS_REFRESH_INTERVAL)
+    }
+
+    /// Every second while a job is queued, running or just finished (its
+    /// space dot is still shown); otherwise far less often. Starting a job or
+    /// a completion notice asks for a refresh at once.
+    pub(crate) fn jobs_refresh_interval(&self) -> std::time::Duration {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis())
+            .unwrap_or_default();
+        let lively = self.state.jobs.iter().any(|job| {
+            matches!(job.status.as_str(), "queued" | "running" | "cancelling")
+                || job.finished_unix_ms.is_some_and(|finished| {
+                    now_ms.saturating_sub(finished)
+                        < super::JOBS_IDLE_REFRESH_INTERVAL.as_millis() * 6
+                })
+        });
+        if lively {
+            super::JOBS_REFRESH_INTERVAL
+        } else {
+            super::JOBS_IDLE_REFRESH_INTERVAL
+        }
+    }
+
+    /// A job started or reported back: refresh the jobs snapshot on the next tick.
+    pub(crate) fn request_jobs_refresh(&mut self) {
+        self.last_jobs_refresh = Instant::now()
+            .checked_sub(super::JOBS_IDLE_REFRESH_INTERVAL)
+            .unwrap_or_else(Instant::now);
     }
 
     pub(crate) fn next_loop_deadline(&self, now: Instant, needs_render: bool) -> Option<Instant> {
@@ -839,6 +900,16 @@ pub(crate) fn refresh_workspace_git_statuses_with_cache(
         results,
         cache_updates,
     }
+}
+
+/// Modification times of the job database and its WAL; changes when any
+/// process records or finishes a job.
+fn jobs_database_stamp() -> Option<(std::time::SystemTime, Option<std::time::SystemTime>)> {
+    let db = crate::dispatch::DispatchStore::active_path();
+    let modified = |path: &std::path::Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let mut wal = db.clone().into_os_string();
+    wal.push("-wal");
+    Some((modified(&db)?, modified(std::path::Path::new(&wal))))
 }
 
 #[cfg(test)]

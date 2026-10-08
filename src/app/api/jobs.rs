@@ -10,6 +10,7 @@ use super::responses;
 
 impl App {
     pub(super) fn handle_run_start(&mut self, id: String, params: RunStartParams) -> String {
+        self.request_jobs_refresh();
         let caller = match self.agent_info_for_target(&params.caller_pane) {
             Ok(caller) => caller,
             Err(err) => return responses::encode_error_body(id, self.agent_target_error_body(err)),

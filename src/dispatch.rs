@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS dispatches (
 CREATE INDEX IF NOT EXISTS idx_dispatch_pending ON dispatches(to_actor, status);
 CREATE INDEX IF NOT EXISTS idx_dispatch_room_time ON dispatches(room, created_at);
 CREATE INDEX IF NOT EXISTS idx_dispatch_reply ON dispatches(reply_to);
+-- The jobs sidebar reads the newest command rows every second; without this
+-- index SQLite sorts every command row it has ever stored.
+CREATE INDEX IF NOT EXISTS idx_dispatch_kind_id ON dispatches(kind, id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dispatch_external ON dispatches(kind, external_id);
 
 CREATE VIEW IF NOT EXISTS v_reply_latency AS
@@ -532,6 +535,63 @@ impl DispatchStore {
         )?;
         let rows = stmt.query_map(params![limit as i64], job_from_row)?;
         rows.collect()
+    }
+
+    /// Delete finished command rows older than `max_age` and return their
+    /// external ids, so the caller can drop the matching job logs. Running,
+    /// queued and cancelling rows have no `finished_at` and are never touched.
+    pub(crate) fn prune_finished_commands(
+        &self,
+        max_age: std::time::Duration,
+    ) -> rusqlite::Result<Vec<String>> {
+        let modifier = format!("-{} seconds", max_age.as_secs());
+        let mut stmt = self.conn.prepare(
+            r#"
+            DELETE FROM dispatches
+            WHERE kind='command'
+              AND finished_at IS NOT NULL
+              AND julianday(finished_at) < julianday('now', ?1)
+            RETURNING external_id
+            "#,
+        )?;
+        let ids = stmt.query_map(params![modifier], |row| row.get::<_, Option<String>>(0))?;
+        Ok(ids.filter_map(|id| id.ok().flatten()).collect())
+    }
+
+    /// Unfinished command rows created before `max_age` ago, with their runner
+    /// pid, so the caller can drop the ones whose runner is gone.
+    pub(crate) fn stale_unfinished_commands(
+        &self,
+        max_age: std::time::Duration,
+    ) -> rusqlite::Result<Vec<(String, Option<u32>)>> {
+        let modifier = format!("-{} seconds", max_age.as_secs());
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT external_id, runner_pid FROM dispatches
+            WHERE kind='command'
+              AND finished_at IS NULL
+              AND julianday(created_at) < julianday('now', ?1)
+            "#,
+        )?;
+        let rows = stmt.query_map(params![modifier], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+            ))
+        })?;
+        Ok(rows
+            .filter_map(Result::ok)
+            .filter_map(|(id, pid)| Some((id?, pid.and_then(|pid| u32::try_from(pid).ok()))))
+            .collect())
+    }
+
+    pub(crate) fn delete_command(&self, external_id: &str) -> rusqlite::Result<bool> {
+        self.conn
+            .execute(
+                "DELETE FROM dispatches WHERE kind='command' AND external_id=?1",
+                params![external_id],
+            )
+            .map(|changed| changed > 0)
     }
 
     pub(crate) fn command_row(&self, id: &str) -> rusqlite::Result<Option<crate::job::JobRecord>> {
