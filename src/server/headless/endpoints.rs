@@ -466,7 +466,13 @@ impl HeadlessServer {
         });
         let mut clients = self.endpoint_clients.keys().copied().collect::<Vec<_>>();
         clients.sort_unstable();
+        // One session read per pass, shared by every client: it asks each
+        // pane's PTY for its foreground process, which is not free.
+        let resources = (!clients.is_empty()).then(|| self.app.session_snapshot());
         for client_id in clients {
+            let Some(resources) = resources.as_ref() else {
+                break;
+            };
             let client = self
                 .endpoint_clients
                 .get_mut(&client_id)
@@ -478,6 +484,7 @@ impl HeadlessServer {
                 self.server_config_diagnostic_without_keybindings.as_deref(),
                 &client.location,
                 Vec::new(),
+                resources.clone(),
             );
             let mut jobs = crate::server::endpoint_jobs::projection(
                 &self.app.state,

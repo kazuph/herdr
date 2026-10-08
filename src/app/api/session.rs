@@ -42,6 +42,29 @@ impl App {
             }
         }
 
+        // Read each pane once: the agent entries reuse the pane entries
+        // (same workspace/tab/pane order as `collect_panes_for_workspace`
+        // and `collect_agent_infos`).
+        let mut panes = Vec::new();
+        let mut agents = Vec::new();
+        for (ws_idx, ws) in self.state.workspaces.iter().enumerate() {
+            for tab in &ws.tabs {
+                for pane_id in tab.layout.pane_ids() {
+                    let Some(pane) = self.pane_info(ws_idx, pane_id) else {
+                        continue;
+                    };
+                    let terminal = ws.pane_state(pane_id).and_then(|pane_state| {
+                        self.state.terminals.get(&pane_state.attached_terminal_id)
+                    });
+                    if let Some(terminal) = terminal.filter(|terminal| terminal.is_agent_terminal())
+                    {
+                        agents.push(Self::agent_info_from_pane(terminal, pane_id, pane.clone()));
+                    }
+                    panes.push(pane);
+                }
+            }
+        }
+
         SessionSnapshot {
             version: crate::build_info::version(),
             protocol: crate::protocol::PROTOCOL_VERSION,
@@ -50,9 +73,9 @@ impl App {
             focused_pane_id,
             workspaces,
             tabs,
-            panes: self.collect_panes_for_workspace(None).unwrap_or_default(),
+            panes,
             layouts,
-            agents: self.collect_agent_infos(),
+            agents,
             agent_session_warnings: Some(
                 self.state
                     .restart_missing_agent_sessions()
@@ -102,6 +125,12 @@ mod tests {
         assert_eq!(snapshot.workspaces.len(), 1);
         assert_eq!(snapshot.tabs.len(), 2);
         assert_eq!(snapshot.panes.len(), 2);
+        assert_eq!(
+            snapshot.panes,
+            app.collect_panes_for_workspace(None).unwrap(),
+            "one pass reads the same panes as listing them"
+        );
+        assert_eq!(snapshot.agents, app.collect_agent_infos());
         assert_eq!(snapshot.layouts.len(), 2);
         assert_eq!(
             snapshot.focused_workspace_id.as_deref(),

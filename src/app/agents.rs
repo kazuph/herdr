@@ -520,8 +520,19 @@ impl App {
             return None;
         }
         let pane = self.pane_info(ws_idx, pane_id)?;
+        Some(Self::agent_info_from_pane(terminal, pane_id, pane))
+    }
+
+    /// Build an agent entry from pane info the caller already holds, so a
+    /// snapshot that lists both panes and agents reads each pane's process
+    /// state once.
+    pub(super) fn agent_info_from_pane(
+        terminal: &crate::terminal::TerminalState,
+        pane_id: crate::layout::PaneId,
+        pane: crate::api::schema::PaneInfo,
+    ) -> crate::api::schema::AgentInfo {
         let global_pane_number = pane_id.raw() as u64;
-        Some(crate::api::schema::AgentInfo {
+        crate::api::schema::AgentInfo {
             terminal_id: pane.terminal_id,
             name: terminal.agent_name.clone(),
             agent: pane.agent,
@@ -547,7 +558,7 @@ impl App {
             state_change_seq: terminal.last_agent_state_change_seq.unwrap_or(0),
             launch_pending: terminal.managed_agent_launch_pending(),
             interactive_ready: terminal.managed_agent_interactive_ready(),
-        })
+        }
     }
 
     fn agent_name_conflicts(

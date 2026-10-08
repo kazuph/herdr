@@ -14,8 +14,8 @@ pub(crate) fn snapshot(
     diagnostic: Option<&str>,
     location: &ClientShellLocation,
     commands: Vec<ClientShellCommand>,
+    resources: crate::api::schema::SessionSnapshot,
 ) -> crate::protocol::endpoint_projection::SnapshotJson {
-    let resources = app.session_snapshot();
     let focused_workspace_id = location.focused_workspace_id.clone();
     let focused_tab_id = location.focused_tab_id().map(str::to_owned);
     let focused_pane_id = location.focused_pane_id().map(str::to_owned);
