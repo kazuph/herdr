@@ -1837,13 +1837,14 @@
 - **目的**: `herdr pane list/get/current`などの問い合わせが毎秒何回も来る環境（Claude Codeの拡張、常駐の監視）で、serverの主処理がprocess情報の取得やjob記録の並べ替えで埋まり、入力が遅れるのを防ぐ。
 - **挙動**:
   - paneの前面作業folder（`foreground_cwd`）を求める時、前面jobの全processを調べる部分だけを、shell・前面process group・shellとjob leaderの作業folderが変わらない間1.5秒使い回す。shellとleaderの作業folderは毎回調べるので、前面programの切替やleaderの`cd`はすぐ反映される。
-  - job記録は終了から24時間で、そのlog fileと一緒に消す。作成から24時間を過ぎても実行中・待機中・取消中のままの記録は、runner processが既に終わっていれば同じく消す。runnerが生きているjob（`herdr run`で動かしているserver等）は消さない。掃除は10分に1回、job一覧の更新と同じ裏の処理で行う。
+  - job記録は終了から24時間で、そのlog fileと一緒に消す。作成から24時間を過ぎても実行中・待機中・取消中のままの記録は、runner processが既に終わっていれば同じく消す。runnerが生きているjob（`herdr run`で動かしているserver等）は消さない。jobの完了通知など、消したjobを返信先に持つmessageは本文を残し、返信先の紐付けだけを外す（紐付けがあるとDBの外部キーで削除が拒否され、掃除全体が止まるため）。掃除は10分に1回、job一覧の更新と同じ裏の処理で行う。
   - job一覧の更新は、待機中・実行中・取消中のjobか終了直後（1分以内）のjobがある間は1秒ごと、それ以外は10秒ごとにする。job databaseへの書き込み（別processによるjobの開始・終了を含む）は1秒ごとのfile時刻の確認で検知して、次の周期を待たずに更新する。`herdr run`の開始とmessage（完了通知を含む）の受信でも即座に更新する。
   - job一覧の問い合わせは`(kind, id)`の索引を使い、全記録を並べ替えない。
 - **受け入れ条件**:
   - 前面job全体の調査結果は、shell・前面process group・shellとleaderの作業folderが同じ間だけ1.5秒使い回され、どれかが変わると調べ直す。
   - 終了から24時間を過ぎたjob記録とそのlogは消え、24時間以内のjobとrunnerが生きている実行中のjobは残る。
   - 作成から24時間を過ぎて未完了のままでrunnerが終わっている記録は、そのlogと一緒に消える。
+  - 完了通知のmessageが返信しているjobも消え、そのmessageは返信先なしで残る。
   - 他のprocessがjob databaseに書き込んでいる最中でも、掃除は書き込みの終わりを待って（最長5秒）最後まで行い、途中の失敗を黙って捨てない。
   - jobが動いていない間、job一覧の更新は10秒ごとになり、`herdr run`の開始やjob databaseへの書き込みでは1秒以内に更新される。
 - **デグレ判定**: 前面programの切替がpane情報に遅れて反映される、実行中のjobや24時間以内のjobが消える、またはjobの開始や完了が一覧に出るまで10秒待たされる。

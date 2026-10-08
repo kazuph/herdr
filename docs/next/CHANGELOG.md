@@ -22,6 +22,7 @@
 
 ### Fixed
 - The server no longer stalls input when many agents and plugins poll it: a pane's foreground working directory is reused for 1.5 s while its foreground process group is unchanged, the jobs list uses an index instead of sorting every stored job, finished jobs and their logs are removed after 24 hours, and the jobs snapshot refreshes every 10 s when nothing is running (at once when a job starts or reports back).
+- Removing finished jobs past the 24-hour retention no longer fails when a completion message replies to the job; the message keeps its text and loses only the link.
 - Dragging in the sidebar works again in the machine-aware client: drag a space card to reorder it within its section or drop it on another section (favorites, work, personal) to move it there, with an insertion line while dragging; the sidebar width can be dragged from the visible pane border as well as the sidebar's last column.
 - With `[experimental] kitty_graphics` enabled, panes answer XTVERSION as `ghostty (herdr <version>)` instead of `libghostty`, so programs that gate kitty images on the terminal name (Claude Code mod panes, image previews) draw pictures in Herdr instead of their text fallback.
 - The sidebar width button (` NARROW ` / ` NORMAL ` / ` WIDE `) is back at the bottom of the agents/jobs panel in the machine-aware client; clicking it cycles narrow, normal and wide and remembers the choice.

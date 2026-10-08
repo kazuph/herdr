@@ -549,28 +549,24 @@ impl DispatchStore {
     ) -> rusqlite::Result<Vec<String>> {
         let modifier = format!("-{} seconds", max_age.as_secs());
         // Small batches keep each write lock short for the other writers.
-        let mut stmt = self.conn.prepare(
+        let mut select = self.conn.prepare(
             r#"
-            DELETE FROM dispatches
-            WHERE id IN (
-              SELECT id FROM dispatches
-              WHERE kind='command'
-                AND finished_at IS NOT NULL
-                AND julianday(finished_at) < julianday('now', ?1)
-              LIMIT 500
-            )
-            RETURNING external_id
+            SELECT id FROM dispatches
+            WHERE kind='command'
+              AND finished_at IS NOT NULL
+              AND julianday(finished_at) < julianday('now', ?1)
+            LIMIT 500
             "#,
         )?;
         let mut removed = Vec::new();
         loop {
-            let batch = stmt
-                .query_map(params![modifier], |row| row.get::<_, Option<String>>(0))?
+            let ids = select
+                .query_map(params![modifier], |row| row.get::<_, i64>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
-            if batch.is_empty() {
+            if ids.is_empty() {
                 break;
             }
-            removed.extend(batch.into_iter().flatten());
+            removed.extend(self.delete_dispatch_rows(&ids)?);
         }
         Ok(removed)
     }
@@ -603,12 +599,48 @@ impl DispatchStore {
     }
 
     pub(crate) fn delete_command(&self, external_id: &str) -> rusqlite::Result<bool> {
-        self.conn
-            .execute(
-                "DELETE FROM dispatches WHERE kind='command' AND external_id=?1",
+        let id = self
+            .conn
+            .query_row(
+                "SELECT id FROM dispatches WHERE kind='command' AND external_id=?1",
                 params![external_id],
+                |row| row.get::<_, i64>(0),
             )
-            .map(|changed| changed > 0)
+            .optional()?;
+        match id {
+            Some(id) => self
+                .delete_dispatch_rows(&[id])
+                .map(|removed| !removed.is_empty()),
+            None => Ok(false),
+        }
+    }
+
+    /// Delete dispatch rows by id in one transaction. Messages that reply to
+    /// them (a job's completion notice replies to its command row) keep their
+    /// text and lose only the link, which the foreign key would otherwise
+    /// refuse. Returns the deleted rows' external ids.
+    fn delete_dispatch_rows(&self, ids: &[i64]) -> rusqlite::Result<Vec<String>> {
+        let list = ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            &format!("UPDATE dispatches SET reply_to=NULL WHERE reply_to IN ({list})"),
+            [],
+        )?;
+        let removed = {
+            let mut delete = tx.prepare(&format!(
+                "DELETE FROM dispatches WHERE id IN ({list}) RETURNING external_id"
+            ))?;
+            let rows = delete
+                .query_map([], |row| row.get::<_, Option<String>>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows.into_iter().flatten().collect::<Vec<_>>()
+        };
+        tx.commit()?;
+        Ok(removed)
     }
 
     pub(crate) fn command_row(&self, id: &str) -> rusqlite::Result<Option<crate::job::JobRecord>> {
@@ -864,6 +896,72 @@ mod tests {
             )
             .unwrap();
         assert!(replied_at.is_some());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pruning_old_commands_keeps_their_completion_messages_and_drops_the_link() {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-dispatch-prune-replied-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = DispatchStore::open_at(dir.join("herdr.db")).unwrap();
+        let enforced: i64 = store
+            .conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(enforced, 1, "the bundled SQLite enforces the reply_to link");
+        for id in ["old-done", "old-dead"] {
+            store
+                .insert_command(
+                    id,
+                    "tests",
+                    "true",
+                    "/repo",
+                    "p_1",
+                    "alpha",
+                    "",
+                    "/tmp/x.log",
+                )
+                .unwrap();
+            let command_id = store.command_dispatch_id(id).unwrap().unwrap();
+            store
+                .insert_message(
+                    crate::msg::JOBS_ROOM,
+                    "/repo",
+                    "herdr-run",
+                    "alpha",
+                    "done",
+                    Some(command_id),
+                    false,
+                )
+                .unwrap();
+        }
+        store.mark_command_finished("old-done", Some(0)).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE dispatches SET finished_at='2026-01-01T00:00:00.000Z' WHERE external_id='old-done'",
+                [],
+            )
+            .unwrap();
+
+        let removed = store
+            .prune_finished_commands(std::time::Duration::from_secs(24 * 60 * 60))
+            .unwrap();
+        assert_eq!(removed, vec!["old-done".to_string()]);
+        assert!(store.delete_command("old-dead").unwrap());
+
+        let (messages, linked): (i64, i64) = store
+            .conn
+            .query_row(
+                "SELECT count(*), count(reply_to) FROM dispatches WHERE kind='message'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((messages, linked), (2, 0));
         let _ = std::fs::remove_dir_all(dir);
     }
 }
