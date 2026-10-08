@@ -305,8 +305,11 @@ fn usable_process_cwd(pid: u32) -> Option<std::path::PathBuf> {
 /// How long a computed `foreground_cwd` is reused while the pane's shell and
 /// foreground process group stay the same. A `cd` inside the same foreground
 /// program shows up within this time; a new foreground program at once.
+#[cfg_attr(not(unix), allow(dead_code))] // unix-only foreground cwd probe
 const FOREGROUND_CWD_TTL: std::time::Duration = std::time::Duration::from_millis(1500);
 
+// Fields are read by the unix-only foreground cwd probe.
+#[cfg_attr(not(unix), allow(dead_code))]
 #[derive(Clone, Debug)]
 struct ForegroundCwdCache {
     pid: u32,
@@ -316,6 +319,7 @@ struct ForegroundCwdCache {
 }
 
 impl ForegroundCwdCache {
+    #[cfg_attr(not(unix), allow(dead_code))] // used by the unix-only foreground cwd probe
     fn fresh_for(&self, pid: u32, foreground_pgid: Option<u32>, now: std::time::Instant) -> bool {
         self.pid == pid
             && self.foreground_pgid == foreground_pgid
@@ -1164,6 +1168,8 @@ pub struct PaneRuntime {
     /// Last `foreground_cwd` answer. Computing it walks the foreground job's
     /// processes with sysctl, and API readers (`pane get/list/current`) ask
     /// for every pane on every call, on the server's main loop.
+    // Only `foreground_cwd` on unix reads it; Windows has no foreground cwd probe.
+    #[cfg_attr(not(unix), allow(dead_code))]
     foreground_cwd_cache: Mutex<Option<ForegroundCwdCache>>,
     // Task handles for deterministic shutdown
     detect_handle: Option<tokio::task::AbortHandle>,
