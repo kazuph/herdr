@@ -1118,10 +1118,14 @@ impl App {
                 );
             }
             Method::AgentSend(params) => return self.handle_agent_send(request.id, params),
-            Method::MsgSend(params) => match self.handle_msg_send(params) {
-                Ok(result) => return responses::encode_success(request.id, result),
-                Err(error) => return responses::encode_error_body(request.id, error),
-            },
+            Method::MsgSend(params) => {
+                // Job completions arrive as messages; show them without waiting.
+                self.request_jobs_refresh();
+                match self.handle_msg_send(params) {
+                    Ok(result) => return responses::encode_success(request.id, result),
+                    Err(error) => return responses::encode_error_body(request.id, error),
+                }
+            }
             Method::MsgInbox(params) => match self.handle_msg_inbox(params) {
                 Ok(result) => return responses::encode_success(request.id, result),
                 Err(error) => return responses::encode_error_body(request.id, error),

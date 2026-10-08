@@ -302,6 +302,27 @@ fn usable_process_cwd(pid: u32) -> Option<std::path::PathBuf> {
 }
 
 #[cfg(unix)]
+/// How long a computed `foreground_cwd` is reused while the pane's shell and
+/// foreground process group stay the same. A `cd` inside the same foreground
+/// program shows up within this time; a new foreground program at once.
+const FOREGROUND_CWD_TTL: std::time::Duration = std::time::Duration::from_millis(1500);
+
+#[derive(Clone, Debug)]
+struct ForegroundCwdCache {
+    pid: u32,
+    foreground_pgid: Option<u32>,
+    at: std::time::Instant,
+    cwd: Option<std::path::PathBuf>,
+}
+
+impl ForegroundCwdCache {
+    fn fresh_for(&self, pid: u32, foreground_pgid: Option<u32>, now: std::time::Instant) -> bool {
+        self.pid == pid
+            && self.foreground_pgid == foreground_pgid
+            && now.saturating_duration_since(self.at) < FOREGROUND_CWD_TTL
+    }
+}
+
 fn foreground_member_cwd_different_from_shell(
     shell_pid: u32,
     shell_cwd: Option<&std::path::PathBuf>,
@@ -1140,6 +1161,10 @@ pub struct PaneRuntime {
     detect_reset_notify: Arc<Notify>,
     pending_release: Arc<Mutex<Option<PendingAgentRelease>>>,
     preserve_processes_on_drop: bool,
+    /// Last `foreground_cwd` answer. Computing it walks the foreground job's
+    /// processes with sysctl, and API readers (`pane get/list/current`) ask
+    /// for every pane on every call, on the server's main loop.
+    foreground_cwd_cache: Mutex<Option<ForegroundCwdCache>>,
     // Task handles for deterministic shutdown
     detect_handle: Option<tokio::task::AbortHandle>,
 }
@@ -2092,6 +2117,7 @@ impl PaneRuntime {
             detect_reset_notify,
             pending_release,
             preserve_processes_on_drop: true,
+            foreground_cwd_cache: Mutex::new(None),
             detect_handle: Some(detect_handle),
         })
     }
@@ -2682,6 +2708,7 @@ impl PaneRuntime {
             detect_reset_notify,
             pending_release,
             preserve_processes_on_drop: false,
+            foreground_cwd_cache: Mutex::new(None),
             detect_handle,
         })
     }
@@ -3116,25 +3143,64 @@ impl PaneRuntime {
         #[cfg(unix)]
         {
             let pid = self.child_pid.load(Ordering::Acquire);
-            let shell_cwd = usable_process_cwd(pid);
             let foreground_pgid = self
                 .io
                 .foreground_process_group_id()
                 .or_else(|| crate::platform::foreground_process_group_id(pid));
+            let now = std::time::Instant::now();
+            if let Some(cached) = self
+                .foreground_cwd_cache
+                .lock()
+                .ok()
+                .and_then(|cache| cache.clone())
+                .filter(|cached| cached.fresh_for(pid, foreground_pgid, now))
+            {
+                return cached.cwd;
+            }
+            let shell_cwd = usable_process_cwd(pid);
             let leader_cwd = foreground_pgid.and_then(usable_process_cwd);
 
-            if leader_cwd.as_ref() == shell_cwd.as_ref() {
+            let cwd = if leader_cwd.as_ref() == shell_cwd.as_ref() {
                 foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref()).or(leader_cwd)
             } else {
                 leader_cwd
                     .or_else(|| foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref()))
+            };
+            if let Ok(mut cache) = self.foreground_cwd_cache.lock() {
+                *cache = Some(ForegroundCwdCache {
+                    pid,
+                    foreground_pgid,
+                    at: now,
+                    cwd: cwd.clone(),
+                });
             }
+            cwd
         }
 
         #[cfg(not(unix))]
         {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod foreground_cwd_cache_tests {
+    use super::*;
+
+    #[test]
+    fn cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl() {
+        let now = std::time::Instant::now();
+        let cached = ForegroundCwdCache {
+            pid: 10,
+            foreground_pgid: Some(20),
+            at: now,
+            cwd: Some("/tmp".into()),
+        };
+        assert!(cached.fresh_for(10, Some(20), now + std::time::Duration::from_millis(500)));
+        assert!(!cached.fresh_for(10, Some(21), now));
+        assert!(!cached.fresh_for(11, Some(20), now));
+        assert!(!cached.fresh_for(10, Some(20), now + FOREGROUND_CWD_TTL));
     }
 }
 
@@ -3184,6 +3250,7 @@ impl PaneRuntime {
             detect_reset_notify: Arc::new(Notify::new()),
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,
+            foreground_cwd_cache: Mutex::new(None),
             detect_handle: Some(tokio::spawn(async {}).abort_handle()),
         };
         (runtime, peer)
@@ -3263,6 +3330,7 @@ impl PaneRuntime {
                 detect_reset_notify: Arc::new(Notify::new()),
                 pending_release: Arc::new(Mutex::new(None)),
                 preserve_processes_on_drop: true,
+                foreground_cwd_cache: Mutex::new(None),
                 detect_handle: Some(tokio::spawn(async {}).abort_handle()),
             },
             rx,
@@ -3798,6 +3866,7 @@ mod tests {
             detect_reset_notify: Arc::new(Notify::new()),
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,
+            foreground_cwd_cache: Mutex::new(None),
             detect_handle: Some(tokio::spawn(async {}).abort_handle()),
         };
 
@@ -3831,6 +3900,7 @@ mod tests {
             detect_reset_notify: Arc::new(Notify::new()),
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,
+            foreground_cwd_cache: Mutex::new(None),
             detect_handle: Some(tokio::spawn(async {}).abort_handle()),
         };
 

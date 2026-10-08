@@ -116,6 +116,35 @@ impl JobStore {
         self.store.command_rows()
     }
 
+    /// Drop finished jobs older than `max_age` together with their logs in
+    /// `log_dir`. Returns how many jobs were removed.
+    pub(crate) fn prune_finished(
+        &self,
+        max_age: std::time::Duration,
+        log_dir: &std::path::Path,
+    ) -> rusqlite::Result<usize> {
+        let mut ids = self.store.prune_finished_commands(max_age)?;
+        // A row still marked running, cancelling or queued a day later whose
+        // runner process is gone never finishes; drop it too. A live runner
+        // (a server started with `herdr run`) is kept however old it is.
+        for (id, runner_pid) in self.store.stale_unfinished_commands(max_age)? {
+            let runner_alive = runner_pid.is_some_and(crate::platform::process_exists);
+            if !runner_alive && self.store.delete_command(&id)? {
+                ids.push(id);
+            }
+        }
+        for id in &ids {
+            let valid = !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+            if valid {
+                let _ = std::fs::remove_file(log_dir.join(format!("{id}.log")));
+            }
+        }
+        Ok(ids.len())
+    }
+
     /// Bounded window for the sidebar, newest first.
     pub(crate) fn list_recent(&self, limit: usize) -> rusqlite::Result<Vec<JobRecord>> {
         self.store.recent_command_rows(limit)
@@ -150,6 +179,61 @@ mod tests {
             "the window is the newest jobs, whatever their status"
         );
         assert_eq!(store.list_recent(9).unwrap().len(), 5);
+    }
+
+    #[test]
+    fn prune_removes_only_jobs_finished_before_the_cutoff_and_their_logs() {
+        let dir = std::env::temp_dir().join(format!(
+            "herdr-job-prune-{}-{}",
+            std::process::id(),
+            nonce()
+        ));
+        let logs = dir.join("job-logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let db = dir.join("jobs.db");
+        let store = JobStore::open_at(db.clone()).unwrap();
+        for id in ["old-done", "new-done", "old-running", "old-dead"] {
+            store.insert(&record(id)).unwrap();
+            std::fs::write(logs.join(format!("{id}.log")), "log").unwrap();
+        }
+        store
+            .mark_running("old-running", std::process::id(), 1)
+            .unwrap();
+        store.mark_running("old-dead", u32::MAX - 7, 1).unwrap();
+        store.mark_finished("old-done", Some(0), 2).unwrap();
+        store.mark_finished("new-done", Some(0), 3).unwrap();
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute(
+            "UPDATE dispatches SET finished_at='2026-01-01T00:00:00.000Z', created_at='2026-01-01T00:00:00.000Z' WHERE external_id='old-done'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE dispatches SET created_at='2026-01-01T00:00:00.000Z' WHERE external_id IN ('old-running', 'old-dead')",
+            [],
+        )
+        .unwrap();
+
+        let removed = store
+            .prune_finished(std::time::Duration::from_secs(24 * 60 * 60), &logs)
+            .unwrap();
+
+        assert_eq!(removed, 2);
+        assert!(store.get("old-done").unwrap().is_none());
+        assert!(store.get("new-done").unwrap().is_some());
+        assert!(
+            store.get("old-running").unwrap().is_some(),
+            "a live runner is kept"
+        );
+        assert!(
+            store.get("old-dead").unwrap().is_none(),
+            "a dead runner's row is dropped"
+        );
+        assert!(!logs.join("old-dead.log").exists());
+        assert!(!logs.join("old-done.log").exists());
+        assert!(logs.join("new-done.log").exists());
+        assert!(logs.join("old-running.log").exists());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn record(id: &str) -> JobRecord {
