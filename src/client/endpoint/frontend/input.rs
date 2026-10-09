@@ -125,6 +125,9 @@ fn dispatch_inner(
             if shell_key(frontend, key)? {
                 return Ok(());
             }
+            if clipboard_images::host_paste_key(frontend, key) {
+                return Ok(());
+            }
             if let Some(popup) = popup_target(frontend) {
                 if let Some(event) = key_event(key) {
                     frontend.runtime.popup_input(&popup, vec![event]);

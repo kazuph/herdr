@@ -1371,6 +1371,33 @@ impl HeadlessServer {
         }
     }
 
+    /// Send an OSC 52 clipboard write from a pane to the viewer the user is on,
+    /// so text a program copies (on this machine or a saved machine) lands on
+    /// the viewer's own clipboard. Same owner rule as notifications: `None`
+    /// when no endpoint viewer owns the screen or a legacy client was used more
+    /// recently.
+    pub(in crate::server::headless) fn send_endpoint_clipboard(&self, data: &str) -> Option<bool> {
+        let owner = self
+            .endpoint_clients
+            .iter()
+            .filter(|(_, client)| client.active && client.presentation_committed)
+            .max_by_key(|(_, client)| client.last_activity);
+        let (_, client) = owner?;
+        if self
+            .foreground_client_id
+            .and_then(|id| self.clients.get(&id))
+            .is_some_and(|legacy| legacy.last_activity > client.last_activity)
+        {
+            return None;
+        }
+        let Ok(frame) = framed(&wire::ServerMessage::Clipboard {
+            data: data.to_owned(),
+        }) else {
+            return Some(false);
+        };
+        Some(client.writer.control.send(frame).is_ok())
+    }
+
     pub(in crate::server::headless) fn send_endpoint_notification(
         &self,
         notification: &ServerMessage,

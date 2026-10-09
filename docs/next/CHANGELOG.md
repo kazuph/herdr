@@ -22,6 +22,7 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- Copy and Cmd+V paste work on saved machines: OSC 52 clipboard writes from panes now reach the machine-aware client (Codex and Claude Code copy that way when the server was started over SSH), and Cmd+V, which Ghostty sends as a key while kitty "report all keys" is on, pastes this machine's clipboard into the remote pane.
 - The tab bar in the machine-aware client is back to the in-process design: fixed-width colored chips with the focused tab in the accent color, `<` `>` arrows when tabs overflow, and a `+` button that opens a new tab.
 - The server no longer stalls input when many agents and plugins poll it: a pane's foreground working directory is reused for 1.5 s while its foreground process group is unchanged, the jobs list uses an index instead of sorting every stored job, finished jobs and their logs are removed after 24 hours, and the jobs snapshot refreshes every 10 s when nothing is running (at once when a job starts or reports back).
 - Removing finished jobs past the 24-hour retention no longer fails when a completion message replies to the job; the message keeps its text and loses only the link.
