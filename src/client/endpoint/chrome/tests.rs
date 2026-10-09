@@ -348,3 +348,99 @@ fn endpoint_sidebar_width_button_renders_in_the_detail_footer_and_cycles_presets
     );
     assert_eq!(label_at(&mut chrome).trim_end(), " NORMAL");
 }
+
+#[test]
+fn endpoint_tab_bar_draws_fixed_width_chips_a_new_tab_button_and_scroll_arrows() {
+    let config = crate::config::Config::default();
+    let palette = Palette::catppuccin();
+    let mut chrome = ClientChrome::new(ChromeSettings::from_config(&config, palette.clone(), None));
+    let mut snapshot: crate::protocol::endpoint_wire::ClientShellSnapshot =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/upstream-gen1-endpoint-snapshot-v1.json"
+        )))
+        .unwrap();
+    let workspace = snapshot.focused_workspace_id.clone().unwrap();
+    let template = snapshot
+        .tabs
+        .iter()
+        .find(|tab| tab.workspace_id == workspace)
+        .unwrap()
+        .clone();
+    let tabs = |count: usize| {
+        (0..count)
+            .map(|index| crate::protocol::endpoint_wire::ClientShellTab {
+                tab_id: format!("{workspace}:t{index}"),
+                number: index + 1,
+                label: if index == 1 {
+                    "build".into()
+                } else {
+                    (index + 1).to_string()
+                },
+                custom_label: index == 1,
+                focused: index == 1,
+                ..template.clone()
+            })
+            .collect::<Vec<_>>()
+    };
+    snapshot.tabs.retain(|tab| tab.workspace_id != workspace);
+    snapshot.tabs.extend(tabs(3));
+    let mut shell = ClientShellState::new();
+    shell.begin_connection(&ClientEndpointId::Local, 1);
+    assert!(shell.receive_snapshot(&ClientEndpointId::Local, 1, snapshot.clone()));
+    let view = chrome.compute_view(&shell, 160, 20);
+    let tab_hits = view
+        .hits
+        .iter()
+        .filter(|hit| matches!(hit.target, ChromeTarget::Tab(_)))
+        .map(|hit| hit.rect)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tab_hits.iter().map(|rect| rect.width).collect::<Vec<_>>(),
+        vec![
+            crate::ui::tab_chip_width("1"),
+            crate::ui::tab_chip_width("build"),
+            crate::ui::tab_chip_width("3"),
+        ],
+        "chips keep the in-process minimum width and padding"
+    );
+    let active = view
+        .lines
+        .iter()
+        .find(|(rect, _)| *rect == tab_hits[1])
+        .unwrap();
+    assert_eq!(active.1.spans[0].style.bg, Some(palette.accent));
+    let inactive = view
+        .lines
+        .iter()
+        .find(|(rect, _)| *rect == tab_hits[0])
+        .unwrap();
+    assert_eq!(inactive.1.spans[0].style.bg, Some(palette.surface0));
+    let new_tab = view
+        .hits
+        .iter()
+        .find(|hit| matches!(hit.target, ChromeTarget::NewTab))
+        .unwrap();
+    assert_eq!(new_tab.rect.x, tab_hits[2].right());
+    assert!(!view
+        .hits
+        .iter()
+        .any(|hit| matches!(hit.target, ChromeTarget::TabScroll { .. })));
+
+    snapshot.tabs.retain(|tab| tab.workspace_id != workspace);
+    snapshot.tabs.extend(tabs(30));
+    let mut shell = ClientShellState::new();
+    shell.begin_connection(&ClientEndpointId::Local, 1);
+    assert!(shell.receive_snapshot(&ClientEndpointId::Local, 1, snapshot));
+    let view = chrome.compute_view(&shell, 80, 20);
+    for right in [false, true] {
+        assert!(view
+            .hits
+            .iter()
+            .any(|hit| matches!(hit.target, ChromeTarget::TabScroll { right: r } if r == right)));
+    }
+    assert!(view
+        .hits
+        .iter()
+        .any(|hit| matches!(hit.target, ChromeTarget::NewTab)));
+}
