@@ -167,15 +167,24 @@ impl EndpointRuntime {
                 generation,
                 status,
                 message,
+                interim,
             } => {
-                if self
-                    .supervisors
-                    .record_status(&endpoint_id, generation, status, now)
-                {
+                // An interim report (for example a pending Tailscale SSH
+                // approval URL) only updates the machine's display; resolving
+                // the attempt's retry bookkeeping would start a duplicate
+                // connection while this one is still running.
+                let accepted = if interim {
+                    self.supervisors
+                        .is_current_attempt(&endpoint_id, generation)
+                } else {
+                    self.supervisors
+                        .record_status(&endpoint_id, generation, status, now)
+                };
+                if accepted {
                     // Connection progress is shown with the machine, not as a global notice.
                     tracing::info!(endpoint = ?endpoint_id, ?status, %message, "endpoint connection status");
                     self.shell.set_endpoint_status(&endpoint_id, status);
-                    if status == ClientEndpointStatus::Attention {
+                    if !interim && status == ClientEndpointStatus::Attention {
                         // Only a state that needs the user's action is also announced.
                         let label = self.shell.endpoint(&endpoint_id).map_or_else(
                             || "machine".to_owned(),
@@ -1395,5 +1404,93 @@ mod display_regression_tests {
             [ClientMessage::ClientShellResize { surface_size, .. }]
                 if *surface_size == options.surface_size
         ));
+    }
+
+    #[test]
+    fn interim_endpoint_status_updates_the_machine_without_resolving_the_attempt() {
+        let options = EndpointConnectOptions {
+            surface_size: ClientSurfaceSize { cols: 80, rows: 24 },
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_geometry_exact: false,
+            endpoint_keybindings: false,
+            mouse_capture: true,
+            surface_active: true,
+        };
+        let now = Instant::now();
+        let profile = crate::machine::MachineProfile {
+            id: "mini".into(),
+            label: "Mac mini".into(),
+            target: "tailscaled-host".into(),
+            session: "saved".into(),
+            enabled: true,
+        };
+        let remote = ClientEndpointId::Ssh("mini".into());
+        let mut supervisors = EndpointSupervisors::new(std::slice::from_ref(&profile), now);
+        supervisors.mark_attempt_in_flight_for_test(&remote, 7);
+        let mut runtime = EndpointRuntime::new(
+            ClientShellState::new(),
+            EndpointRegistry::empty(),
+            supervisors,
+            options,
+        );
+        runtime.shell.set_endpoint_catalog(&[profile]);
+
+        // A stale interim report for a retired or superseded attempt is ignored.
+        let update = runtime.supervisor_event(
+            EndpointSupervisorEvent::Status {
+                endpoint_id: remote.clone(),
+                generation: 6,
+                status: ClientEndpointStatus::Reconnecting,
+                message: "stale".into(),
+                interim: true,
+            },
+            now,
+        );
+        assert!(!update.repaint);
+        assert!(update.error.is_none());
+        assert!(runtime
+            .shell
+            .endpoint(&remote)
+            .and_then(|endpoint| endpoint.diagnostic.as_deref())
+            .is_none());
+
+        // The live attempt's interim report updates its status and diagnostic,
+        // including the full Tailscale SSH approval URL.
+        let url = "https://login.tailscale.com/a/abc123";
+        let update = runtime.supervisor_event(
+            EndpointSupervisorEvent::Status {
+                endpoint_id: remote.clone(),
+                generation: 7,
+                status: ClientEndpointStatus::Reconnecting,
+                message: format!("waiting for Tailscale SSH approval: {url}"),
+                interim: true,
+            },
+            now,
+        );
+        assert!(update.repaint);
+        assert!(update.error.is_none());
+        let endpoint = runtime.shell.endpoint(&remote).unwrap();
+        assert_eq!(endpoint.status, ClientEndpointStatus::Reconnecting);
+        assert_eq!(
+            endpoint.diagnostic.as_deref(),
+            Some(format!("waiting for Tailscale SSH approval: {url}").as_str())
+        );
+        // The attempt is still in flight; no duplicate retry was scheduled.
+        assert!(runtime.supervisors.is_current_attempt(&remote, 7));
+
+        // The attempt's final status still resolves the bookkeeping normally.
+        let update = runtime.supervisor_event(
+            EndpointSupervisorEvent::Status {
+                endpoint_id: remote.clone(),
+                generation: 7,
+                status: ClientEndpointStatus::Reconnecting,
+                message: "still offline".into(),
+                interim: false,
+            },
+            now,
+        );
+        assert!(update.repaint);
+        assert!(!runtime.supervisors.is_current_attempt(&remote, 7));
     }
 }

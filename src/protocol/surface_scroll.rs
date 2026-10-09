@@ -361,7 +361,9 @@ pub(crate) fn decode(data: &str) -> Result<ScrollPatch, String> {
         return Err("surface scroll is truncated".into());
     }
     let scrolls = bytes[1..header]
-        .chunks_exact(SCROLL_BYTES)
+        .as_chunks::<SCROLL_BYTES>()
+        .0
+        .iter()
         .map(|chunk| {
             let value = |at: usize| u16::from_le_bytes([chunk[at], chunk[at + 1]]);
             SurfaceScroll {

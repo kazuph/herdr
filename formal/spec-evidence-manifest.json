@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 445,
+    "active_contract_count": 448,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -10191,7 +10191,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2087",
+        "SPEC.md:2088",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10222,7 +10222,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2088",
+        "SPEC.md:2089",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10253,7 +10253,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2089",
+        "SPEC.md:2090",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10284,7 +10284,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2090",
+        "SPEC.md:2091",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10296,6 +10296,90 @@
       ],
       "unrepresented_dimensions": [
         "Timing and rollback are unit-covered; the 2026-10-07 harness screenshots of a hung machine are manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G11-dbef70a87c",
+      "dimensions": [
+        "saved ssh reconnect keeps one ssh process through a tailscale check",
+        "approval url surfaced to the local browser once",
+        "approval url shown in full in the machine status"
+      ],
+      "verification_methods": [
+        "rust_test_target:saved_ssh_tailscale_check_waits_for_approval_and_completes_the_same_connection",
+        "rust_test_target:interim_endpoint_status_updates_the_machine_without_resolving_the_attempt",
+        "drift_source_anchor:src/remote/saved.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2092",
+        "src/remote/saved.rs:90",
+        "src/remote/saved/process.rs:23"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "A real tailscaled check round trip through the local browser remains live-unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-df73133396",
+      "dimensions": [
+        "per-machine browser-open interval of 30 minutes",
+        "other endpoints and Local keep working during an auth wait",
+        "retire and shutdown kill a waiting ssh child"
+      ],
+      "verification_methods": [
+        "rust_test_target:saved_ssh_tailscale_check_reopens_browser_only_after_the_interval",
+        "rust_test_target:another_endpoint_progresses_while_one_waits_for_tailscale_approval",
+        "rust_test_target:supervisor_shutdown_kills_a_waiting_tailscale_ssh_child",
+        "drift_source_anchor:src/client/endpoint/supervisor.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2093",
+        "src/remote/saved.rs:23",
+        "src/client/endpoint/supervisor.rs:51"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "GUI browser tab count over a real 30 minute window remains live-unverified"
+      ]
+    },
+    {
+      "contract_id": "G11-b62cf86e42",
+      "dimensions": [
+        "unchanged ssh failure text and classification without an auth url",
+        "unchanged 15 second nonresponsive timeout"
+      ],
+      "verification_methods": [
+        "rust_test_target:saved_ssh_without_auth_banner_keeps_the_existing_timeout_and_errors",
+        "rust_test_target:wait_with_output_timeout_grants_the_auth_wait_once_per_banner",
+        "drift_source_anchor:src/remote/saved/process.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2094",
+        "src/remote/saved/process.rs:45",
+        "src/remote/saved.rs:116"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Live non-Tailscale failure modes against a real host remain live-unverified"
       ]
     },
     {
@@ -10311,7 +10395,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2103",
+        "SPEC.md:2107",
         "src/client/endpoint/frontend/machines.rs:129"
       ],
       "test_status": [
@@ -10337,7 +10421,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2104",
+        "SPEC.md:2108",
         "src/client/endpoint/frontend/machines.rs:129"
       ],
       "test_status": [
@@ -10369,7 +10453,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2126",
+        "SPEC.md:2130",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10402,7 +10486,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2133",
+        "SPEC.md:2137",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10435,7 +10519,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2134",
+        "SPEC.md:2138",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10468,7 +10552,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2135",
+        "SPEC.md:2139",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10501,7 +10585,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2136",
+        "SPEC.md:2140",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10659,7 +10743,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2132",
+        "SPEC.md:2136",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10832,7 +10916,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2127",
+        "SPEC.md:2131",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10868,7 +10952,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2131",
+        "SPEC.md:2135",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11046,7 +11130,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2128",
+        "SPEC.md:2132",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11140,7 +11224,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2129",
+        "SPEC.md:2133",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11176,7 +11260,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2130",
+        "SPEC.md:2134",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],

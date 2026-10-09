@@ -302,8 +302,8 @@ fn parse_pane_focus_target(args: &[String]) -> Result<crate::api::schema::PaneFo
     let mut boot_id = None;
     let mut endpoint_id = None;
     let mut generation = None;
-    let mut options = args[1..].chunks_exact(2);
-    for pair in &mut options {
+    let (options, remainder) = args[1..].as_chunks::<2>();
+    for pair in options {
         match pair[0].as_str() {
             "--viewer" if client_id.is_none() => {
                 client_id = Some(pair[1].parse::<u64>().map_err(|_| "invalid viewer ID")?)
@@ -322,7 +322,7 @@ fn parse_pane_focus_target(args: &[String]) -> Result<crate::api::schema::PaneFo
             _ => return Err("usage: herdr pane focus <pane_id>".into()),
         }
     }
-    if !options.remainder().is_empty() {
+    if !remainder.is_empty() {
         return Err("usage: herdr pane focus <pane_id>".into());
     }
     let (Some(client_id), Some(boot_id), Some(endpoint_id), Some(generation)) =

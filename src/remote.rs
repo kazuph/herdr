@@ -4,11 +4,26 @@ mod unix;
 #[cfg(unix)]
 pub(crate) use unix::*;
 
+/// Per-attempt wiring for a saved SSH connect: the endpoint supervisor's
+/// cancellation flag and a sink for interim status text while the attempt is
+/// still running (for example a long Tailscale SSH check approval wait).
+// Only the Unix saved-SSH path reads the fields; Windows rejects saved SSH.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) struct SavedSshHooks<'a> {
+    /// Identifies the saved machine for per-machine auth-URL browser throttling.
+    pub(crate) profile_id: &'a str,
+    /// Set when the endpoint is retired or the client is shutting down; the
+    /// attempt kills its ssh child and returns instead of waiting on.
+    pub(crate) cancel: &'a std::sync::atomic::AtomicBool,
+    /// Interim status text for the machine's status display.
+    pub(crate) status: &'a dyn Fn(&str),
+}
+
 #[cfg(windows)]
 pub(crate) fn connect_saved_ssh(
-    _profile_id: &str,
     _target: &str,
     _session: &str,
+    _hooks: &SavedSshHooks<'_>,
 ) -> std::io::Result<(crate::ipc::LocalStream, Box<dyn Send>)> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
