@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any
@@ -37,6 +39,7 @@ KNOWN_CARRIER_COMMITS = {
     "0e434881",
     "22bb476d",
 }
+FULL_COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 REQUIRED_ROW_FIELDS = {
     "commit",
     "subject",
@@ -92,8 +95,8 @@ def load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def accepted_packets() -> list[dict[str, str]]:
-    packets: list[dict[str, str]] = []
+def accepted_packets() -> list[dict[str, Any]]:
+    packets: list[dict[str, Any]] = []
     for path in sorted(PACKETS_PATH.glob("*.json")):
         packet = load_json(path)
         packet_id = packet.get("id")
@@ -101,7 +104,19 @@ def accepted_packets() -> list[dict[str, str]]:
         commit = source.get("commit") if isinstance(source, dict) else None
         if not isinstance(packet_id, str) or not isinstance(commit, str):
             raise ValueError(f"{path} must contain id and source.commit strings")
-        packets.append({"id": packet_id, "source_commit": commit, "manifest": str(path.relative_to(ROOT))})
+        extra_commits = source.get("extra_commits", [])
+        if not isinstance(extra_commits, list) or not all(
+            isinstance(extra, str) for extra in extra_commits
+        ):
+            raise ValueError(f"{path} source.extra_commits must be a list of strings")
+        packets.append(
+            {
+                "id": packet_id,
+                "source_commit": commit,
+                "extra_commits": extra_commits,
+                "manifest": str(path.relative_to(ROOT)),
+            }
+        )
     return packets
 
 
@@ -146,7 +161,7 @@ def carrier_review_required(item: CommitMetadata, slices: list[dict[str, Any]], 
     )
 
 
-def template_inventory(metadata: list[CommitMetadata], packets: list[dict[str, str]]) -> dict[str, Any]:
+def template_inventory(metadata: list[CommitMetadata], packets: list[dict[str, Any]]) -> dict[str, Any]:
     packet_by_commit = {packet["source_commit"]: packet for packet in packets}
     rows = []
     for item in metadata:
@@ -348,7 +363,28 @@ def validate_slices(row: dict[str, Any], actual: CommitMetadata, errors: list[st
             errors.append(f"multiple primary slices for {commit}: {path}")
 
 
-def validate_packet_links(data: dict[str, Any], packets: list[dict[str, str]]) -> list[str]:
+def upstream_release_commits() -> set[str]:
+    return set(git("rev-list", f"{MERGE_BASE}..{RELEASE}").split())
+
+
+def upstream_commit_exists(commit: str) -> bool:
+    if not FULL_COMMIT_RE.fullmatch(commit):
+        return False
+    result = subprocess.run(
+        ["git", "cat-file", "-t", commit],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "commit"
+
+
+def validate_packet_links(
+    data: dict[str, Any],
+    packets: list[dict[str, Any]],
+    upstream_commits: set[str],
+    commit_exists: Callable[[str], bool] = upstream_commit_exists,
+) -> list[str]:
     errors: list[str] = []
     inventory_packets = {
         entry.get("id"): entry.get("source_commit")
@@ -367,9 +403,28 @@ def validate_packet_links(data: dict[str, Any], packets: list[dict[str, str]]) -
         if inventory_packets.get(packet_id) != source_commit:
             errors.append(f"accepted packet not linked: {packet_id}")
             continue
-        row = rows_by_commit.get(source_commit)
-        if not isinstance(row, dict) or row.get("accepted_packet") != packet_id:
-            errors.append(f"accepted packet source row not linked: {packet_id}")
+        if not FULL_COMMIT_RE.fullmatch(source_commit):
+            errors.append(
+                f"malformed accepted packet source commit for {packet_id}: {source_commit}"
+            )
+            continue
+        if source_commit in upstream_commits:
+            row = rows_by_commit.get(source_commit)
+            if not isinstance(row, dict) or row.get("accepted_packet") != packet_id:
+                errors.append(f"accepted packet source row not linked: {packet_id}")
+        elif not commit_exists(source_commit):
+            errors.append(
+                f"accepted packet source commit missing from upstream for {packet_id}: {source_commit}"
+            )
+        for extra_commit in packet.get("extra_commits", []):
+            if not FULL_COMMIT_RE.fullmatch(extra_commit):
+                errors.append(
+                    f"malformed accepted packet extra commit for {packet_id}: {extra_commit}"
+                )
+            elif not commit_exists(extra_commit):
+                errors.append(
+                    f"accepted packet extra commit missing from upstream for {packet_id}: {extra_commit}"
+                )
     return errors
 
 
@@ -379,7 +434,9 @@ def validate_current_tree(inventory_path: Path) -> list[str]:
     errors = validate_inventory(data, metadata)
     if len(metadata) != EXPECTED_NON_MERGE_COUNT:
         errors.append(f"expected {EXPECTED_NON_MERGE_COUNT} non-merge commits, found {len(metadata)}")
-    errors.extend(validate_packet_links(data, accepted_packets()))
+    errors.extend(
+        validate_packet_links(data, accepted_packets(), upstream_release_commits())
+    )
     return errors
 
 
