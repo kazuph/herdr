@@ -156,6 +156,12 @@ pub(crate) enum ChromeTarget {
     WorkspaceGroup(ResourceKey),
     Agent(ResourceKey),
     Tab(ResourceKey),
+    /// The `+` after the tabs: a new tab in the focused space.
+    NewTab,
+    /// The `<` / `>` arrows shown when the tabs overflow the bar.
+    TabScroll {
+        right: bool,
+    },
     DetailTab(crate::app::state::SidebarDetailView),
     SidebarWidthToggle,
     Job(ResourceKey),
@@ -218,6 +224,10 @@ pub(crate) struct ClientChrome {
     pub(crate) workspace_scroll: usize,
     pub(crate) agent_scroll: usize,
     pub(crate) tab_scroll: usize,
+    /// Keep the focused tab centered until the user scrolls the tab bar by
+    /// hand; a focus change re-enables it.
+    pub(crate) tab_follow_active: bool,
+    tab_follow_key: Option<String>,
     pub(crate) spinner_tick: u32,
     pub(crate) detail_view: crate::app::state::SidebarDetailView,
     pub(crate) jobs_scroll: usize,
@@ -263,10 +273,162 @@ impl ClientChrome {
             workspace_scroll: 0,
             agent_scroll: 0,
             tab_scroll: 0,
+            tab_follow_active: true,
+            tab_follow_key: None,
             spinner_tick: 0,
             detail_view: crate::app::state::SidebarDetailView::default(),
             jobs_scroll: 0,
             scratch: std::cell::RefCell::new(None),
+        }
+    }
+
+    /// Tab chips with the same layout rules as the in-process tab bar: fixed
+    /// chip widths, the focused tab in the accent color, `<` / `>` when the
+    /// tabs overflow, and a `+` that opens a new tab.
+    fn compute_tab_bar(
+        &mut self,
+        shell: &ClientShellState,
+        tabs: &[&crate::protocol::endpoint_wire::ClientShellTab],
+        area: Rect,
+        view: &mut ChromeView,
+    ) {
+        if area.is_empty() {
+            return;
+        }
+        let p = self.settings.palette.clone();
+        let labels = tabs
+            .iter()
+            .map(|tab| {
+                if tab.zoomed {
+                    format!("{} Z", tab.label)
+                } else {
+                    tab.label.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+        let widths = labels
+            .iter()
+            .map(|label| crate::ui::tab_chip_width(label))
+            .collect::<Vec<_>>();
+        let active = tabs.iter().position(|tab| tab.focused).unwrap_or(0);
+        let active_key = tabs.get(active).map(|tab| tab.tab_id.clone());
+        if active_key != self.tab_follow_key {
+            self.tab_follow_key = active_key;
+            self.tab_follow_active = true;
+        }
+        let bar = crate::ui::compute_tab_bar_view_for_widths(
+            &widths,
+            active,
+            area,
+            self.tab_scroll,
+            self.tab_follow_active,
+            self.settings.mouse_capture,
+        );
+        self.tab_scroll = bar.scroll;
+        let endpoint = shell.active_endpoint_id.clone();
+        for (idx, tab) in tabs.iter().enumerate() {
+            let Some(rect) = bar.tab_hit_areas.get(idx).copied() else {
+                break;
+            };
+            if rect.width == 0 {
+                continue;
+            }
+            let style = if tab.focused {
+                let base = Style::default()
+                    .fg(crate::ui::panel_contrast_fg(&p))
+                    .bg(p.accent);
+                if tab.custom_label {
+                    base.add_modifier(Modifier::BOLD)
+                } else {
+                    base
+                }
+            } else if tab.custom_label {
+                Style::default().fg(p.overlay1).bg(p.surface0)
+            } else {
+                Style::default()
+                    .fg(p.overlay0)
+                    .bg(p.surface0)
+                    .add_modifier(Modifier::DIM)
+            };
+            let width = rect.width as usize;
+            let text = format!(" {:width$}", labels[idx], width = width.saturating_sub(1));
+            let text = crate::ui::truncate_end(&text, width);
+            view.lines
+                .push((rect, Line::from(Span::styled(text, style))));
+            view.hits.push(ChromeHit {
+                rect,
+                target: ChromeTarget::Tab(ResourceKey {
+                    endpoint: endpoint.clone(),
+                    id: tab.tab_id.clone(),
+                }),
+            });
+        }
+        let last_visible = bar.tab_hit_areas.iter().rposition(|rect| rect.width > 0);
+        let first_visible = bar.tab_hit_areas.iter().position(|rect| rect.width > 0);
+        for (rect, right, enabled) in [
+            (bar.scroll_left_hit_area, false, bar.scroll > 0),
+            (
+                bar.scroll_right_hit_area,
+                true,
+                last_visible.is_some_and(|idx| idx + 1 < tabs.len()),
+            ),
+        ] {
+            if rect.width == 0 {
+                continue;
+            }
+            let style = if enabled {
+                Style::default().fg(p.overlay1).bg(p.surface0)
+            } else {
+                Style::default()
+                    .fg(p.overlay0)
+                    .bg(p.surface0)
+                    .add_modifier(Modifier::DIM)
+            };
+            let arrow = if right { " > " } else { " < " };
+            view.lines
+                .push((rect, Line::from(Span::styled(arrow, style))));
+            view.hits.push(ChromeHit {
+                rect,
+                target: ChromeTarget::TabScroll { right },
+            });
+        }
+        if bar.new_tab_hit_area.width > 0 {
+            view.lines.push((
+                bar.new_tab_hit_area,
+                Line::from(Span::styled(" + ", Style::default().fg(p.overlay1))),
+            ));
+            view.hits.push(ChromeHit {
+                rect: bar.new_tab_hit_area,
+                target: ChromeTarget::NewTab,
+            });
+        }
+        // Mark tabs hidden past either edge, like the in-process tab bar.
+        let ellipsis = Style::default().fg(p.overlay0);
+        if first_visible.is_some_and(|idx| idx > 0) {
+            let x = if bar.scroll_left_hit_area.width > 0 {
+                bar.scroll_left_hit_area.right()
+            } else {
+                area.x
+            };
+            if x < area.right() {
+                view.lines.push((
+                    Rect::new(x, area.y, 1, 1),
+                    Line::from(Span::styled("…", ellipsis)),
+                ));
+            }
+        }
+        if last_visible.is_some_and(|idx| idx + 1 < tabs.len()) {
+            let x = if bar.scroll_right_hit_area.width > 0 {
+                bar.scroll_right_hit_area.x.saturating_sub(1)
+            } else {
+                area.right().saturating_sub(1)
+            };
+            if x >= area.x && x < area.right() {
+                view.lines.push((
+                    Rect::new(x, area.y, 1, 1),
+                    Line::from(Span::styled("…", ellipsis)),
+                ));
+            }
         }
     }
 
@@ -320,45 +482,7 @@ impl ClientChrome {
         if view.surface.is_none() {
             self.offline_placeholder(shell, &mut view);
         }
-        let mut x = layout.tab_bar.x;
-        for tab in tabs.into_iter().skip(self.tab_scroll) {
-            if x >= layout.tab_bar.right() || layout.tab_bar.is_empty() {
-                break;
-            }
-            let label = if tab.zoomed {
-                format!("{} Z", tab.label)
-            } else {
-                tab.label.clone()
-            };
-            // Existing fork ui/tabs.rs minimum and label padding.
-            let width = u16::try_from(unicode_width::UnicodeWidthStr::width(label.as_str()))
-                .unwrap_or(u16::MAX)
-                .saturating_add(4)
-                .max(8)
-                .min(layout.tab_bar.right().saturating_sub(x));
-            let rect = Rect::new(x, layout.tab_bar.y, width, 1);
-            let style = Style::default()
-                .fg(if tab.focused {
-                    self.settings.palette.text
-                } else {
-                    self.settings.palette.overlay0
-                })
-                .add_modifier(if tab.focused {
-                    Modifier::BOLD
-                } else {
-                    Modifier::empty()
-                });
-            view.lines
-                .push((rect, Line::from(Span::styled(format!(" {label} "), style))));
-            view.hits.push(ChromeHit {
-                rect,
-                target: ChromeTarget::Tab(ResourceKey {
-                    endpoint: shell.active_endpoint_id.clone(),
-                    id: tab.tab_id.clone(),
-                }),
-            });
-            x = x.saturating_add(width).saturating_add(1);
-        }
+        self.compute_tab_bar(shell, &tabs, layout.tab_bar, &mut view);
         if !layout.mobile_header.is_empty() {
             let workspace = snapshot.and_then(|snapshot| {
                 snapshot

@@ -394,6 +394,26 @@ fn mouse_input(
                         ..RuntimeUpdate::default()
                     }
                 }
+                ChromeTarget::NewTab => {
+                    modal::action(frontend, crate::app::NavigateAction::NewTab)?;
+                    RuntimeUpdate {
+                        repaint: true,
+                        ..RuntimeUpdate::default()
+                    }
+                }
+                ChromeTarget::TabScroll { right } => {
+                    let chrome = &mut frontend.chrome;
+                    chrome.tab_follow_active = false;
+                    chrome.tab_scroll = if *right {
+                        chrome.tab_scroll.saturating_add(1)
+                    } else {
+                        chrome.tab_scroll.saturating_sub(1)
+                    };
+                    RuntimeUpdate {
+                        repaint: true,
+                        ..RuntimeUpdate::default()
+                    }
+                }
                 ChromeTarget::NewWorkspace => {
                     modal::action(frontend, crate::app::NavigateAction::NewWorkspace)?;
                     RuntimeUpdate {

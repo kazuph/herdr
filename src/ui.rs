@@ -143,7 +143,7 @@ pub(crate) use self::{
         MobileHeaderWorkspace, MobileSwitcherAreas, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
-    tabs::compute_tab_bar_view,
+    tabs::{compute_tab_bar_view, compute_tab_bar_view_for_widths, tab_chip_width},
     widgets::{centered_popup_rect, modal_stack_areas},
 };
 use crate::app::state::ViewLayout;

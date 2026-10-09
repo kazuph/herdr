@@ -22,10 +22,18 @@ pub(crate) struct TabBarView {
     pub new_tab_hit_area: Rect,
 }
 
-fn tab_width(ws: &crate::workspace::Workspace, tab_idx: usize) -> u16 {
-    display_width_u16(&tab_chrome_label(ws, tab_idx))
+/// Width of one tab chip for a label: the label plus padding, never below
+/// the minimum. Shared by the in-process and endpoint client tab bars.
+pub(crate) fn tab_chip_width(label: &str) -> u16 {
+    display_width_u16(label)
         .saturating_add(4)
         .max(MIN_TAB_WIDTH)
+}
+
+fn tab_widths(ws: &crate::workspace::Workspace) -> Vec<u16> {
+    (0..ws.tabs.len())
+        .map(|idx| tab_chip_width(&tab_chrome_label(ws, idx)))
+        .collect()
 }
 
 fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String {
@@ -39,8 +47,8 @@ fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String 
     }
 }
 
-fn layout_tab_hit_areas(ws: &crate::workspace::Workspace, area: Rect, scroll: usize) -> Vec<Rect> {
-    let mut rects = vec![Rect::default(); ws.tabs.len()];
+fn layout_tab_hit_areas(widths: &[u16], area: Rect, scroll: usize) -> Vec<Rect> {
+    let mut rects = vec![Rect::default(); widths.len()];
     if area.width == 0 || area.height == 0 {
         return rects;
     }
@@ -51,7 +59,7 @@ fn layout_tab_hit_areas(ws: &crate::workspace::Workspace, area: Rect, scroll: us
         if x >= right {
             break;
         }
-        let desired = tab_width(ws, idx);
+        let desired = widths[idx];
         let remaining = right.saturating_sub(x);
         let width = desired.min(remaining).max(1);
         *rect = Rect::new(x, area.y, width, 1);
@@ -60,14 +68,14 @@ fn layout_tab_hit_areas(ws: &crate::workspace::Workspace, area: Rect, scroll: us
     rects
 }
 
-fn centered_tab_scroll(ws: &crate::workspace::Workspace, area: Rect) -> usize {
-    let mut best_scroll = ws.active_tab;
+fn centered_tab_scroll(widths: &[u16], active: usize, area: Rect) -> usize {
+    let mut best_scroll = active;
     let mut best_distance = u16::MAX;
     let viewport_center = area.x.saturating_mul(2).saturating_add(area.width);
 
-    for scroll in 0..=ws.active_tab {
-        let rects = layout_tab_hit_areas(ws, area, scroll);
-        let Some(active_rect) = rects.get(ws.active_tab).copied() else {
+    for scroll in 0..=active {
+        let rects = layout_tab_hit_areas(widths, area, scroll);
+        let Some(active_rect) = rects.get(active).copied() else {
             continue;
         };
         if active_rect.width == 0 {
@@ -97,10 +105,10 @@ fn trailing_tab_controls_x(tab_hit_areas: &[Rect], fallback_x: u16) -> u16 {
         .unwrap_or(fallback_x)
 }
 
-fn max_tab_scroll(ws: &crate::workspace::Workspace, area: Rect) -> usize {
-    (0..ws.tabs.len())
+fn max_tab_scroll(widths: &[u16], area: Rect) -> usize {
+    (0..widths.len())
         .find(|&scroll| {
-            layout_tab_hit_areas(ws, area, scroll)
+            layout_tab_hit_areas(widths, area, scroll)
                 .last()
                 .is_some_and(|rect| rect.width > 0)
         })
@@ -114,20 +122,40 @@ pub(crate) fn compute_tab_bar_view(
     follow_active: bool,
     mouse_chrome: bool,
 ) -> TabBarView {
+    compute_tab_bar_view_for_widths(
+        &tab_widths(ws),
+        ws.active_tab,
+        area,
+        current_scroll,
+        follow_active,
+        mouse_chrome,
+    )
+}
+
+/// Tab bar geometry from chip widths alone, so a client that only has the
+/// tab labels lays tabs, scroll arrows and the new-tab button out the same way.
+pub(crate) fn compute_tab_bar_view_for_widths(
+    widths: &[u16],
+    active: usize,
+    area: Rect,
+    current_scroll: usize,
+    follow_active: bool,
+    mouse_chrome: bool,
+) -> TabBarView {
     if area.width == 0 || area.height == 0 {
         return TabBarView::default();
     }
 
     if !mouse_chrome {
-        let max_scroll = max_tab_scroll(ws, area);
+        let max_scroll = max_tab_scroll(widths, area);
         let scroll = if follow_active {
-            centered_tab_scroll(ws, area).min(max_scroll)
+            centered_tab_scroll(widths, active, area).min(max_scroll)
         } else {
             current_scroll.min(max_scroll)
         };
         return TabBarView {
             scroll,
-            tab_hit_areas: layout_tab_hit_areas(ws, area, scroll),
+            tab_hit_areas: layout_tab_hit_areas(widths, area, scroll),
             scroll_left_hit_area: Rect::default(),
             scroll_right_hit_area: Rect::default(),
             new_tab_hit_area: Rect::default(),
@@ -141,7 +169,7 @@ pub(crate) fn compute_tab_bar_view(
         area.width.saturating_sub(NEW_TAB_WIDTH),
         area.height,
     );
-    let all_tabs = layout_tab_hit_areas(ws, all_tabs_area, 0);
+    let all_tabs = layout_tab_hit_areas(widths, all_tabs_area, 0);
     let overflow = all_tabs.iter().any(|rect| rect.width == 0);
     if !overflow {
         let new_tab_x = trailing_tab_controls_x(&all_tabs, area.x);
@@ -171,13 +199,13 @@ pub(crate) fn compute_tab_bar_view(
         area.height,
     );
 
-    let max_scroll = max_tab_scroll(ws, tab_area);
+    let max_scroll = max_tab_scroll(widths, tab_area);
     let scroll = if follow_active {
-        centered_tab_scroll(ws, tab_area).min(max_scroll)
+        centered_tab_scroll(widths, active, tab_area).min(max_scroll)
     } else {
         current_scroll.min(max_scroll)
     };
-    let tab_hit_areas = layout_tab_hit_areas(ws, tab_area, scroll);
+    let tab_hit_areas = layout_tab_hit_areas(widths, tab_area, scroll);
     let trailing_x = trailing_tab_controls_x(&tab_hit_areas, tab_area_x).min(tab_area_right);
     let right_hit_area = Rect::new(
         trailing_x,
@@ -469,7 +497,7 @@ mod tests {
         ws.tabs[0].set_custom_name("abcdefgh".into());
         ws.tabs[0].zoomed = true;
 
-        assert_eq!(tab_width(&ws, 0), 14);
+        assert_eq!(tab_widths(&ws)[0], 14);
     }
 
     #[test]
@@ -478,7 +506,7 @@ mod tests {
         ws.tabs[0].set_custom_name("提交 herdr 的反馈".into());
 
         assert_eq!(
-            tab_width(&ws, 0),
+            tab_widths(&ws)[0],
             display_width_u16("提交 herdr 的反馈") + 4
         );
     }
