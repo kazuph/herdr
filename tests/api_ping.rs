@@ -1287,7 +1287,9 @@ fn agent_prompt_cli_submits_text_with_upstream_grammar() {
                 .as_str()
                 .unwrap()
                 .as_bytes()
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|hex| u8::from_str_radix(std::str::from_utf8(hex).unwrap(), 16).unwrap())
                 .collect::<Vec<_>>()
         })

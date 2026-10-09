@@ -513,7 +513,7 @@ fn canonicalize_bgra(
     if format != crate::api::schema::PaneGraphicsFormat::Bgra {
         return format;
     }
-    for pixel in data.chunks_exact_mut(4) {
+    for pixel in data.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     crate::api::schema::PaneGraphicsFormat::Rgba
