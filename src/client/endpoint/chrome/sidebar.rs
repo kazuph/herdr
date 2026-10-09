@@ -289,11 +289,7 @@ fn workspace_rows(
                     projection.key(&workspace.workspace_id),
                 )),
                 lines,
-                style: Style::default().bg(if selected {
-                    chrome.settings.palette.surface_dim
-                } else {
-                    chrome.settings.palette.surface0
-                }),
+                style: card_style(chrome, selected),
                 gap: if compact
                     || entry_index + 1 == entries.len()
                     || (indented
@@ -709,11 +705,7 @@ fn agent_rows(chrome: &ClientChrome, shell: &ClientShellState, width: u16) -> Ve
             rows.push(Row {
                 target: Some(ChromeTarget::Agent(projection.key(&agent.pane_id))),
                 lines,
-                style: Style::default().bg(if selected {
-                    chrome.settings.palette.surface_dim
-                } else {
-                    chrome.settings.palette.surface0
-                }),
+                style: card_style(chrome, selected),
                 gap: chrome.settings.agents.row_gap,
                 indented: false,
                 grouped_parent: false,
@@ -800,6 +792,19 @@ fn place(rows: Vec<Row>, area: Rect, scroll: &mut usize, view: &mut ChromeView) 
         offset = end.saturating_add(usize::from(row.gap));
     }
     max_scroll
+}
+
+/// A sidebar card's fill: the card colors, or none when the user lets the
+/// terminal background show through the cards.
+fn card_style(chrome: &ClientChrome, selected: bool) -> Style {
+    if chrome.settings.transparent_cards {
+        return Style::default();
+    }
+    Style::default().bg(if selected {
+        chrome.settings.palette.surface_dim
+    } else {
+        chrome.settings.palette.surface0
+    })
 }
 
 pub(super) fn compute(chrome: &mut ClientChrome, shell: &ClientShellState, view: &mut ChromeView) {
