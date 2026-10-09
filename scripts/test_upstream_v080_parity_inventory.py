@@ -132,13 +132,15 @@ class UpstreamV080ParityInventoryTests(unittest.TestCase):
 
     def test_validates_accepted_packet_source_row_link(self) -> None:
         packets = [{"id": PACKET_ID, "source_commit": COMMIT, "manifest": "packet.json"}]
-        self.assertEqual(validate_packet_links(inventory(), packets), [])
+        self.assertEqual(
+            validate_packet_links(inventory(), packets, upstream_commits={COMMIT}), []
+        )
 
         data = inventory()
         del data["rows"][0]["accepted_packet"]
         self.assertIn(
             f"accepted packet source row not linked: {PACKET_ID}",
-            validate_packet_links(data, packets),
+            validate_packet_links(data, packets, upstream_commits={COMMIT}),
         )
 
     def test_rejects_empty_behavior_slices(self) -> None:
@@ -241,6 +243,126 @@ class UpstreamV080ParityInventoryTests(unittest.TestCase):
             validate_packet_links(
                 data,
                 [{"id": PACKET_ID, "source_commit": COMMIT, "manifest": "packet.json"}],
+                upstream_commits={COMMIT},
+            ),
+        )
+
+    def test_accepts_post_release_packet_without_a_row(self) -> None:
+        packets = [
+            {"id": PACKET_ID, "source_commit": COMMIT, "manifest": "packet.json"},
+            {
+                "id": "UP-0004-machine-p1p2",
+                "source_commit": OTHER_COMMIT,
+                "extra_commits": [],
+                "manifest": "packet2.json",
+            },
+        ]
+        data = inventory()
+        data["accepted_packets"].append(
+            {"id": "UP-0004-machine-p1p2", "source_commit": OTHER_COMMIT}
+        )
+
+        self.assertEqual(
+            validate_packet_links(
+                data,
+                packets,
+                upstream_commits={COMMIT},
+                commit_exists=lambda commit: True,
+            ),
+            [],
+        )
+
+    def test_rejects_post_release_packet_with_a_missing_commit(self) -> None:
+        packets = [
+            {"id": PACKET_ID, "source_commit": COMMIT, "manifest": "packet.json"},
+            {
+                "id": "UP-0004-machine-p1p2",
+                "source_commit": OTHER_COMMIT,
+                "extra_commits": [],
+                "manifest": "packet2.json",
+            },
+        ]
+        data = inventory()
+        data["accepted_packets"].append(
+            {"id": "UP-0004-machine-p1p2", "source_commit": OTHER_COMMIT}
+        )
+
+        self.assertIn(
+            "accepted packet source commit missing from upstream for "
+            f"UP-0004-machine-p1p2: {OTHER_COMMIT}",
+            validate_packet_links(
+                data,
+                packets,
+                upstream_commits={COMMIT},
+                commit_exists=lambda commit: False,
+            ),
+        )
+
+    def test_rejects_post_release_packet_with_a_missing_extra_commit(self) -> None:
+        packets = [
+            {"id": PACKET_ID, "source_commit": COMMIT, "manifest": "packet.json"},
+            {
+                "id": "UP-0004-machine-p1p2",
+                "source_commit": OTHER_COMMIT,
+                "extra_commits": ["c" * 40],
+                "manifest": "packet2.json",
+            },
+        ]
+        data = inventory()
+        data["accepted_packets"].append(
+            {"id": "UP-0004-machine-p1p2", "source_commit": OTHER_COMMIT}
+        )
+
+        self.assertIn(
+            "accepted packet extra commit missing from upstream for "
+            f"UP-0004-machine-p1p2: {'c' * 40}",
+            validate_packet_links(
+                data,
+                packets,
+                upstream_commits={COMMIT},
+                commit_exists=lambda commit: commit == OTHER_COMMIT,
+            ),
+        )
+
+    def test_rejects_in_release_packet_without_a_row_link(self) -> None:
+        packets = [{"id": PACKET_ID, "source_commit": COMMIT, "manifest": "packet.json"}]
+        data = inventory()
+        del data["rows"][0]["accepted_packet"]
+
+        self.assertIn(
+            f"accepted packet source row not linked: {PACKET_ID}",
+            validate_packet_links(
+                data,
+                packets,
+                upstream_commits={COMMIT},
+                commit_exists=lambda commit: True,
+            ),
+        )
+
+    def test_rejects_comma_joined_source_commit(self) -> None:
+        joined = "3f809476,d30ab1b5,69d07dba,1955406e,b12da239"
+        packets = [
+            {"id": PACKET_ID, "source_commit": COMMIT, "manifest": "packet.json"},
+            {
+                "id": "UP-0004-automation-plugins",
+                "source_commit": joined,
+                "extra_commits": [],
+                "manifest": "packet3.json",
+            },
+        ]
+        data = inventory()
+        data["accepted_packets"].append(
+            {"id": "UP-0004-automation-plugins", "source_commit": joined}
+        )
+
+        self.assertIn(
+            "malformed accepted packet source commit for "
+            f"UP-0004-automation-plugins: {joined}",
+            validate_packet_links(
+                data,
+                packets,
+                upstream_commits={COMMIT},
+                commit_exists=lambda commit: True,
             ),
         )
 
