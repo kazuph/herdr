@@ -13,7 +13,7 @@ class SpecContractInventoryTests(unittest.TestCase):
     def test_current_spec_contract_counts_are_stable(self) -> None:
         data = inventory(ROOT / "SPEC.md")
 
-        self.assertEqual(data["counts"], {"raw": 456, "active": 443, "retired": 13})
+        self.assertEqual(data["counts"], {"raw": 459, "active": 446, "retired": 13})
         self.assertEqual(
             data["domains"],
             {
@@ -27,7 +27,7 @@ class SpecContractInventoryTests(unittest.TestCase):
                 "G8": {"raw": 35, "active": 35, "retired": 0},
                 "G9": {"raw": 82, "active": 82, "retired": 0},
                 "G10": {"raw": 23, "active": 23, "retired": 0},
-                "G11": {"raw": 26, "active": 26, "retired": 0},
+                "G11": {"raw": 29, "active": 29, "retired": 0},
             },
         )
 
