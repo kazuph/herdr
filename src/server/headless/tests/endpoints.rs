@@ -10,6 +10,51 @@ const TIMEOUT: Duration = crate::server::client_transport::HANDSHAKE_TIMEOUT;
 const PTY_OUTPUT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[tokio::test]
+async fn endpoint_viewer_receives_pane_clipboard_writes() {
+    use base64::Engine as _;
+    let mut server = test_headless_server();
+    let _terminal = owned_activation_pty(&mut server, "CLIPBOARD-OWNER").await;
+    let (_viewer_id, mut viewer) = connect_with_interest(&mut server, true).await;
+    server.stream_endpoint_views();
+    let _ = receive_view(&mut viewer);
+    protocol::write_message(
+        &mut viewer,
+        &ClientMessage::EndpointControl {
+            kind: crate::protocol::endpoint::PRESENTATION_EFFECTS_SYNC_KIND.into(),
+            data: "clipboard-owner-commit".into(),
+        },
+    )
+    .unwrap();
+    dispatch_input(&mut server).await;
+    loop {
+        if matches!(receive(&mut viewer), ServerMessage::EndpointControl { kind, data }
+            if kind == crate::protocol::endpoint::PRESENTATION_EFFECTS_READY_KIND
+                && data == "clipboard-owner-commit")
+        {
+            break;
+        }
+    }
+    protocol::write_message(&mut viewer, &ClientMessage::ClientShellFocus { focused: true }).unwrap();
+    dispatch_input(&mut server).await;
+
+    // A program in a pane copies text with OSC 52 (Codex and Claude Code do when
+    // the pane inherits SSH_CONNECTION from a server started over SSH).
+    server.handle_internal_event_with_forwarding(crate::events::AppEvent::ClipboardWrite {
+        content: b"copied-on-the-server".to_vec(),
+    });
+    loop {
+        if let ServerMessage::Clipboard { data } = receive(&mut viewer) {
+            assert_eq!(
+                base64::engine::general_purpose::STANDARD.decode(data).unwrap(),
+                b"copied-on-the-server"
+            );
+            break;
+        }
+    }
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
 async fn endpoint_notifications_actual_two_viewers_route_sound_and_toast_to_latest_owner() {
     let mut server = test_headless_server();
     let terminal = owned_activation_pty(&mut server, "NOTIFICATION-OWNER").await;

@@ -2109,7 +2109,7 @@
 - **デグレ判定**: probe失敗のマシンを保存する、またはremoveがremote sessionを止める。
 
 ### endpoint clientでのfork操作と入力の保持
-- **元commit**: fork 3b893cfa, fcace862, f1848ca7, 9ecfe4aa, a28f8c27, 1ae3c754, ea14cc92, 1191e8b1、幅ボタンの復元（2026-10-08）、sidebar幅とspaceのdragの復元（2026-10-08）、space一覧とagents/jobs欄の区切りdragの復元（2026-10-08）、tab barのchip・`+`・scroll矢印の復元（2026-10-09）、sidebar cardの透過設定（2026-10-09）。
+- **元commit**: fork 3b893cfa, fcace862, f1848ca7, 9ecfe4aa, a28f8c27, 1ae3c754, ea14cc92, 1191e8b1、幅ボタンの復元（2026-10-08）、sidebar幅とspaceのdragの復元（2026-10-08）、space一覧とagents/jobs欄の区切りdragの復元（2026-10-08）、tab barのchip・`+`・scroll矢印の復元（2026-10-09）、sidebar cardの透過設定（2026-10-09）、保存machineでのcopyと⌘V paste（2026-10-09）。
 - **分類**: CORE-UI
 - **status: fork独自・保持 (C)** — client側shell描画へ移っても、G1〜G9の操作と表示を保つ。
 - **目的**: endpoint clientになっても、forkの操作感（title zoom、sidebar drag、pane action、job表示、既読、入力）が落ちないようにする。
@@ -2126,6 +2126,8 @@
   - serverは表示中かつfocus中のviewerが見ているtabをsnapshot前に既読にする。viewerのnavigationはserverのactive workspaceを動かさない。
   - window focusが戻った時は切替手続きをやり直さず、描き直した画面が届くまで（最長1秒）キーを預かってから送る。
   - 一度画面を受け取ったviewerからの入力は、描き直し中でもserverが受け付ける（他viewerのfocus・寸法・snapshot変化で表示が捨てられた間も入力を落とさない）。
+  - paneのprogramがOSC 52でclipboardへ書くと、serverはそれを、表示中で最後に使われたendpoint viewerへ送り、viewerは自分の機械のclipboardに書く（旧来のclientの方が最近使われていればそちら）。保存machineで動くCodex・Claude Codeは、SSHで起動されたserverから`SSH_CONNECTION`を受け継ぐためOSC 52でcopyし、その内容が手元の機械に届く。
+  - 保存machineのpaneを表示している時の⌘V（Ghosttyはkitty keyboardの全キー報告が有効な間、⌘Vを貼り付けではなくキーとして送る）は、手元の機械のclipboardを読んで貼り付ける。画像なら画像の橋渡し、文字ならbracketed pasteで送り、⌘Vのキー自体（離した時を含む）はpaneへ送らない。
 - **受け入れ条件**:
   - endpoint client上でtitle click zoom、sidebar drag（保存込み）、pane action barが動く。
   - endpoint client上で、sidebarの最終列とpane枠の列のどちらを掴んでもsidebar幅をdragで変えられる。
@@ -2136,6 +2138,7 @@
   - endpoint client上でsidebar下部の幅ボタンが現在のpresetの表示で見え、clickでpresetが巡回して保存される。
   - 2つの画面が同じremote tabを見ていても入力が欠けずに届く。
   - window focusが戻った直後の入力が欠けない。
+  - 保存machineのpaneのOSC 52 copyが手元のclipboardに届き、保存machineのpaneで⌘Vを押すと手元のclipboardの文字が貼られる。
   - 表示中viewerのfocus tabだけが既読になり、他tabは未読のまま残る。
   - viewerへ戻るとPTY寸法がそのviewerの寸法に戻る。
 - **デグレ判定**: 「done, unseen」が消えない、focus復帰直後や複数画面で入力が欠ける、またはfork独自操作がendpoint clientで使えない。
