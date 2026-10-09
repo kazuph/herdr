@@ -683,6 +683,12 @@
           "description": "Hide the tab row when the workspace has one tab."
         },
         {
+          "key": "ui.transparent_sidebar_cards",
+          "type": "boolean",
+          "default": "false",
+          "description": "Draw the sidebar's space and agent cards without a fill, so a translucent terminal background shows through them. The selected card keeps its accent bar."
+        },
+        {
           "key": "ui.agent_panel_sort",
           "type": "enum",
           "default": "\"spaces\"",

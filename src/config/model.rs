@@ -890,6 +890,10 @@ pub struct UiConfig {
     pub show_tab_bar: bool,
     /// Hide the tab row when the workspace has one tab. Default: false.
     pub hide_tab_bar_when_single_tab: bool,
+    /// Draw the sidebar's space and agent cards without a fill, so a
+    /// translucent terminal background shows through them. The selected card
+    /// keeps its accent bar. Default: false.
+    pub transparent_sidebar_cards: bool,
     /// Agent sidebar ordering. Saved values are "spaces" or "priority". Default: "spaces".
     pub agent_panel_sort: AgentPanelSortConfig,
     /// Legacy fork agent ordering. Saved values are "all" or "sort".
@@ -1094,6 +1098,7 @@ impl Default for UiConfig {
             show_agent_labels_on_pane_borders: false,
             show_tab_bar: true,
             hide_tab_bar_when_single_tab: false,
+            transparent_sidebar_cards: false,
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             agent_panel_scope: AgentPanelScopeConfig::All,
             workspace_panel_density: WorkspacePanelDensityConfig::Full,
@@ -1387,6 +1392,7 @@ workspace_panel_density = "slim"
         assert!(!default_config.ui.show_agent_labels_on_pane_borders);
         assert!(default_config.ui.show_tab_bar);
         assert!(!default_config.ui.hide_tab_bar_when_single_tab);
+        assert!(!default_config.ui.transparent_sidebar_cards);
 
         let toml = r#"
 [ui]
@@ -1395,6 +1401,7 @@ pane_gaps = true
 show_agent_labels_on_pane_borders = true
 show_tab_bar = false
 hide_tab_bar_when_single_tab = true
+transparent_sidebar_cards = true
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.ui.pane_borders);
@@ -1402,6 +1409,7 @@ hide_tab_bar_when_single_tab = true
         assert!(config.ui.show_agent_labels_on_pane_borders);
         assert!(!config.ui.show_tab_bar);
         assert!(config.ui.hide_tab_bar_when_single_tab);
+        assert!(config.ui.transparent_sidebar_cards);
     }
 
     #[test]

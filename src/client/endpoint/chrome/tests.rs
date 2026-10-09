@@ -444,3 +444,44 @@ fn endpoint_tab_bar_draws_fixed_width_chips_a_new_tab_button_and_scroll_arrows()
         .iter()
         .any(|hit| matches!(hit.target, ChromeTarget::NewTab)));
 }
+
+#[test]
+fn transparent_sidebar_cards_leave_the_card_fill_to_the_terminal() {
+    let config = crate::config::Config::default();
+    let palette = Palette::catppuccin();
+    let snapshot: crate::protocol::endpoint_wire::ClientShellSnapshot =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/upstream-gen1-endpoint-snapshot-v1.json"
+        )))
+        .unwrap();
+    let mut shell = ClientShellState::new();
+    shell.begin_connection(&ClientEndpointId::Local, 1);
+    assert!(shell.receive_snapshot(&ClientEndpointId::Local, 1, snapshot));
+    let card_fills = |transparent: bool| {
+        let mut settings = ChromeSettings::from_config(&config, palette.clone(), None);
+        settings.transparent_cards = transparent;
+        let mut chrome = ClientChrome::new(settings);
+        let view = chrome.compute_view(&shell, 160, 30);
+        let cards = view
+            .hits
+            .iter()
+            .filter(|hit| matches!(hit.target, ChromeTarget::Workspace(_)))
+            .map(|hit| hit.rect)
+            .collect::<Vec<_>>();
+        assert!(!cards.is_empty());
+        view.backgrounds
+            .iter()
+            .filter(|(rect, style)| {
+                cards.iter().any(|card| card.intersects(*rect))
+                    && matches!(style.bg, Some(bg) if bg == palette.surface0 || bg == palette.surface_dim)
+            })
+            .count()
+    };
+    assert!(card_fills(false) > 0, "cards are filled by default");
+    assert_eq!(
+        card_fills(true),
+        0,
+        "no card fill when cards are transparent"
+    );
+}
