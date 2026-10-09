@@ -279,6 +279,10 @@ async fn endpoint_frontend_viewer_callback_actual_owner_rejects_stale_and_isolat
 }
 
 const TIMEOUT: Duration = crate::client::LOCAL_HANDSHAKE_READ_TIMEOUT;
+/// Waiting for a real server to grant the input lease or draw a frame can take
+/// many seconds on loaded CI runners (macOS runners running the whole suite in
+/// parallel); passing runs return as soon as the state is ready.
+const PUMP_TIMEOUT: Duration = Duration::from_secs(30);
 // Same owned proof geometry as standalone-product-client-proof.py.
 const SIZE: (u16, u16) = (160, 40);
 
@@ -638,7 +642,7 @@ fn workspace_context_item(frontend: &mut ClientFrontend, target: ResourceKey, it
 }
 
 async fn pump(frontend: &mut ClientFrontend, ready: impl Fn(&ClientFrontend) -> bool) {
-    let result = tokio::time::timeout(TIMEOUT, async {
+    let result = tokio::time::timeout(PUMP_TIMEOUT, async {
         while !ready(frontend) {
             let event = frontend.runtime.reader_events.recv().await.unwrap();
             let update = frontend.runtime.receive(event, Instant::now());
