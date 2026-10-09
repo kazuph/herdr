@@ -34,7 +34,11 @@ async fn endpoint_viewer_receives_pane_clipboard_writes() {
             break;
         }
     }
-    protocol::write_message(&mut viewer, &ClientMessage::ClientShellFocus { focused: true }).unwrap();
+    protocol::write_message(
+        &mut viewer,
+        &ClientMessage::ClientShellFocus { focused: true },
+    )
+    .unwrap();
     dispatch_input(&mut server).await;
 
     // A program in a pane copies text with OSC 52 (Codex and Claude Code do when
@@ -45,7 +49,9 @@ async fn endpoint_viewer_receives_pane_clipboard_writes() {
     loop {
         if let ServerMessage::Clipboard { data } = receive(&mut viewer) {
             assert_eq!(
-                base64::engine::general_purpose::STANDARD.decode(data).unwrap(),
+                base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .unwrap(),
                 b"copied-on-the-server"
             );
             break;
