@@ -20,6 +20,21 @@
       "id": "UP-0002-server-not-running",
       "source_commit": "f99647b2c2d7fbfd11269330a25ea4f9be59bafa",
       "manifest": "formal/upstream-packets/UP-0002-server-not-running.json"
+    },
+    {
+      "id": "UP-0003-multiclient-pr1",
+      "source_commit": "cc88b3b8e5bb9f7d9f23ed6ae85a52fd7b5b9ed6",
+      "manifest": "formal/upstream-packets/UP-0003-multiclient-pr1.json"
+    },
+    {
+      "id": "UP-0004-automation-plugins",
+      "source_commit": "b12da23918ff94099e7fcedd7db79f3d2fa8fa6f",
+      "manifest": "formal/upstream-packets/UP-0004-automation-plugins.json"
+    },
+    {
+      "id": "UP-0004-machine-p1p2",
+      "source_commit": "9e9bc8a144667a6b7debfd4f0c7a31ff0e11493a",
+      "manifest": "formal/upstream-packets/UP-0004-machine-p1p2.json"
     }
   ],
   "rows": [
