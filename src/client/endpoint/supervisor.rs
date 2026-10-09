@@ -19,6 +19,9 @@ pub(crate) enum EndpointSupervisorEvent {
         generation: u64,
         status: ClientEndpointStatus,
         message: String,
+        /// `interim` updates the machine's display while its connection attempt
+        /// is still running; it does not resolve the attempt's retry bookkeeping.
+        interim: bool,
     },
     Connected {
         endpoint_id: ClientEndpointId,
@@ -42,6 +45,10 @@ struct ReconnectState {
     in_flight: bool,
     generation: Option<u64>,
     online_since: Option<Instant>,
+    /// Cancels the in-flight attempt's blocking ssh work (for example a
+    /// Tailscale SSH approval wait) when the endpoint retires or the client
+    /// shuts down, so no ssh child is left behind.
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 impl ReconnectState {
@@ -53,6 +60,7 @@ impl ReconnectState {
             in_flight: false,
             generation: None,
             online_since: None,
+            cancel: None,
         }
     }
 }
@@ -109,6 +117,11 @@ impl EndpointSupervisors {
             });
             if !keep {
                 retired.push(endpoint_id.clone());
+                // An attempt still running for the retired endpoint must kill
+                // its ssh child rather than waiting out an approval deadline.
+                if let Some(cancel) = state.cancel.take() {
+                    cancel.store(true, Ordering::Release);
+                }
             }
             keep
         });
@@ -141,13 +154,23 @@ impl EndpointSupervisors {
             let target = state.target.clone();
             let event_tx = event_tx.clone();
             let shutdown = self.shutdown.clone();
+            let cancel = Arc::new(AtomicBool::new(false));
+            state.cancel = Some(Arc::clone(&cancel));
             tokio::spawn(async move {
                 if shutdown.load(Ordering::Acquire) {
                     return;
                 }
                 let task_endpoint_id = endpoint_id.clone();
+                let progress_tx = event_tx.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    connect_once(&target, options, endpoint_id, generation)
+                    connect_once(
+                        &target,
+                        options,
+                        endpoint_id,
+                        generation,
+                        &cancel,
+                        &progress_tx,
+                    )
                 })
                 .await;
                 let event = match result {
@@ -161,12 +184,14 @@ impl EndpointSupervisors {
                             ClientEndpointStatus::Reconnecting
                         },
                         message: error.to_string(),
+                        interim: false,
                     },
                     Err(error) => EndpointSupervisorEvent::Status {
                         endpoint_id: task_endpoint_id,
                         generation,
                         status: ClientEndpointStatus::Reconnecting,
                         message: format!("endpoint connection task stopped unexpectedly: {error}"),
+                        interim: false,
                     },
                 };
                 if !shutdown.load(Ordering::Acquire) {
@@ -190,6 +215,7 @@ impl EndpointSupervisors {
             return false;
         }
         state.in_flight = false;
+        state.cancel = None;
         match status {
             ClientEndpointStatus::Online => {
                 if endpoint_id.is_local() {
@@ -242,11 +268,43 @@ impl EndpointSupervisors {
             now,
         )
     }
+
+    /// True while the generation's connection attempt is still running; interim
+    /// status reports apply only to the live attempt so retired or superseded
+    /// work cannot move the machine's status display.
+    pub(crate) fn is_current_attempt(
+        &self,
+        endpoint_id: &ClientEndpointId,
+        generation: u64,
+    ) -> bool {
+        self.endpoints
+            .get(endpoint_id)
+            .is_some_and(|state| state.in_flight && state.generation == Some(generation))
+    }
+
+    /// Marks an attempt in flight so interim-status handling can be tested
+    /// without spawning a real connection task.
+    #[cfg(test)]
+    pub(crate) fn mark_attempt_in_flight_for_test(
+        &mut self,
+        endpoint_id: &ClientEndpointId,
+        generation: u64,
+    ) {
+        if let Some(state) = self.endpoints.get_mut(endpoint_id) {
+            state.in_flight = true;
+            state.generation = Some(generation);
+        }
+    }
 }
 
 impl Drop for EndpointSupervisors {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
+        for state in self.endpoints.values_mut() {
+            if let Some(cancel) = state.cancel.take() {
+                cancel.store(true, Ordering::Release);
+            }
+        }
     }
 }
 
@@ -255,6 +313,8 @@ fn connect_once(
     options: EndpointConnectOptions,
     endpoint_id: ClientEndpointId,
     generation: u64,
+    cancel: &AtomicBool,
+    progress: &tokio::sync::mpsc::Sender<EndpointSupervisorEvent>,
 ) -> Result<EndpointSupervisorEvent, std::io::Error> {
     let (mut stream, lifetime): (_, Box<dyn Send>) = match target {
         ConnectTarget::Local(path) => {
@@ -271,11 +331,29 @@ fn connect_once(
             })?;
             (stream, Box::new(()))
         }
-        ConnectTarget::Ssh(profile) => crate::remote::connect_saved_ssh(
-            profile.id.as_str(),
-            &profile.target,
-            &profile.session,
-        )?,
+        ConnectTarget::Ssh(profile) => {
+            let progress_endpoint_id = endpoint_id.clone();
+            // An in-flight attempt reports interim detail (for example a
+            // Tailscale SSH approval URL) without resolving its own bookkeeping.
+            let status = move |message: &str| {
+                let _ = progress.try_send(EndpointSupervisorEvent::Status {
+                    endpoint_id: progress_endpoint_id.clone(),
+                    generation,
+                    status: ClientEndpointStatus::Reconnecting,
+                    message: message.to_owned(),
+                    interim: true,
+                });
+            };
+            crate::remote::connect_saved_ssh(
+                &profile.target,
+                &profile.session,
+                &crate::remote::SavedSshHooks {
+                    profile_id: profile.id.as_str(),
+                    cancel,
+                    status: &status,
+                },
+            )?
+        }
     };
     let handshake = super::handshake::connect(
         &mut stream,
@@ -410,5 +488,126 @@ mod tests {
             Some(current + INITIAL_RETRY_DELAY)
         );
         assert_eq!(retry_delay(u32::MAX), MAX_RETRY_DELAY);
+    }
+
+    #[cfg(unix)]
+    fn options() -> EndpointConnectOptions {
+        EndpointConnectOptions {
+            surface_size: crate::protocol::endpoint_wire::ClientSurfaceSize { cols: 80, rows: 24 },
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_geometry_exact: false,
+            endpoint_keybindings: false,
+            mouse_capture: true,
+            surface_active: true,
+        }
+    }
+
+    /// One endpoint parked in a Tailscale SSH approval wait must not stop
+    /// another endpoint's connection attempt, and retiring the waiting
+    /// endpoint kills its ssh child.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn another_endpoint_progresses_while_one_waits_for_tailscale_approval() {
+        let fake = crate::remote::test_fakes::FakeSsh::new("supervisor-concurrent")
+            .with_banner("https://login.tailscale.com/a/concurrent")
+            .with_approve_gate()
+            .with_env_text("FAKE_SSH_FAIL_TARGET", "fail-host");
+        let now = Instant::now();
+        let mut waiting = profile("waiting");
+        waiting.target = "gate-host".into();
+        let mut fast = profile("fast");
+        fast.target = "fail-host".into();
+        let waiting_id = ClientEndpointId::Ssh("waiting".into());
+        let fast_id = ClientEndpointId::Ssh("fast".into());
+        let mut supervisors = EndpointSupervisors::new(&[waiting, fast.clone()], now);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        supervisors.spawn_due(now, options(), &tx);
+
+        let outcome = tokio::time::timeout(Duration::from_secs(20), async {
+            let mut fast_reported = false;
+            let mut waiting_auth = false;
+            while !(fast_reported && waiting_auth) {
+                match rx.recv().await {
+                    Some(EndpointSupervisorEvent::Status {
+                        endpoint_id,
+                        interim,
+                        message,
+                        ..
+                    }) => {
+                        if endpoint_id == fast_id {
+                            fast_reported = true;
+                        }
+                        if endpoint_id == waiting_id
+                            && interim
+                            && message.contains("https://login.tailscale.com/a/concurrent")
+                        {
+                            waiting_auth = true;
+                        }
+                    }
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+            (fast_reported, waiting_auth)
+        })
+        .await;
+        let Ok((fast_reported, waiting_auth)) = outcome else {
+            panic!("endpoint progress stalled during the auth wait: {outcome:?}");
+        };
+        assert!(
+            fast_reported,
+            "the healthy endpoint made no progress during the auth wait"
+        );
+        assert!(
+            waiting_auth,
+            "the auth-waiting endpoint never reported its interim status"
+        );
+        assert!(supervisors.endpoints[&waiting_id].in_flight);
+
+        // Retiring the waiting endpoint cancels the attempt and kills its ssh.
+        let pids = fake.wait_for_pid(Duration::from_secs(10));
+        assert!(!pids.is_empty(), "the waiting endpoint never spawned ssh");
+        supervisors.reconcile_profiles(&[fast], now);
+        assert!(
+            fake.all_dead(Duration::from_secs(5)),
+            "retire left an ssh child behind: {pids:?}"
+        );
+    }
+
+    /// Dropping the supervisors (client shutdown) cancels every in-flight
+    /// attempt, so no auth-waiting ssh process survives.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn supervisor_shutdown_kills_a_waiting_tailscale_ssh_child() {
+        let fake = crate::remote::test_fakes::FakeSsh::new("supervisor-shutdown")
+            .with_banner("https://login.tailscale.com/a/shutdown")
+            .with_approve_gate();
+        let now = Instant::now();
+        let mut waiting = profile("waiting");
+        waiting.target = "gate-host".into();
+        let mut supervisors = EndpointSupervisors::new(&[waiting], now);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        supervisors.spawn_due(now, options(), &tx);
+        // Wait until the ssh child is inside its approval wait.
+        let outcome = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                match rx.recv().await {
+                    Some(EndpointSupervisorEvent::Status { interim: true, .. }) => break,
+                    Some(_) => {}
+                    None => panic!("event channel closed before the interim status"),
+                }
+            }
+        })
+        .await;
+        assert!(outcome.is_ok(), "no interim auth-wait status arrived");
+        let pids = fake.wait_for_pid(Duration::from_secs(10));
+        assert!(!pids.is_empty(), "the waiting endpoint never spawned ssh");
+        drop(supervisors);
+        assert!(
+            fake.all_dead(Duration::from_secs(5)),
+            "shutdown left an ssh child behind: {pids:?}"
+        );
+        drop(rx);
     }
 }
