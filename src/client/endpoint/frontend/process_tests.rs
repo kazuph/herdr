@@ -278,7 +278,10 @@ async fn endpoint_frontend_viewer_callback_actual_owner_rejects_stale_and_isolat
     std::fs::write(root.join("evidence.json"), serde_json::to_vec_pretty(&json!({"scope":"real two server sockets, same opaque pane ID, receiver stale generation/endpoint rejection and qualified callback; not SSH transport or OS click", "notification":notification,"target":target,"rejected":rejected,"public_local_before":before_local,"public_local_after":after_local,"public_remote_before":before_remote,"public_remote_after":after_remote,"other_notification":other_notification,"owner_before":{"endpoint":format!("{:?}",owner_before.endpoint),"pane_id":owner_before.id},"owner_after":{"endpoint":format!("{:?}",owner_after.endpoint),"pane_id":owner_after.id},"other_before":{"endpoint":format!("{:?}",other_before.endpoint),"pane_id":other_before.id},"other_after":{"endpoint":format!("{:?}",other_after.endpoint),"pane_id":other_after.id},"test_pid":std::process::id(),"owned_pids":pids})).unwrap()).unwrap();
 }
 
-const TIMEOUT: Duration = crate::client::LOCAL_HANDSHAKE_READ_TIMEOUT;
+// Upper bound for each wait on an owned server process. These waits succeed as
+// soon as the state arrives; the bound only needs to absorb slow shared CI
+// runners, where a step that takes ~1s locally has exceeded 5s.
+const TIMEOUT: Duration = Duration::from_secs(30);
 // Same owned proof geometry as standalone-product-client-proof.py.
 const SIZE: (u16, u16) = (160, 40);
 
