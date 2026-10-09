@@ -805,11 +805,24 @@ mod tests {
     /// `pump` advances any event loop the command depends on.
     fn read_capture_when_ready(path: &std::path::Path, mut pump: impl FnMut()) -> String {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // A single visible line can still be a partial write: the pane's shell
+        // creates the file and then streams lines into it. Wait until the
+        // contents stop changing across polls so callers assert on the final text.
+        let mut last = None::<String>;
+        let mut stable_polls = 0_u8;
         loop {
             pump();
             if let Ok(contents) = std::fs::read_to_string(path) {
                 if !contents.is_empty() {
-                    return contents;
+                    stable_polls = if last.as_deref() == Some(contents.as_str()) {
+                        stable_polls.saturating_add(1)
+                    } else {
+                        0
+                    };
+                    last = Some(contents);
+                    if stable_polls >= 3 {
+                        return last.unwrap_or_default();
+                    }
                 }
             }
             assert!(
