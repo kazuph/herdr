@@ -7,6 +7,8 @@ pub(crate) use unix::*;
 /// Per-attempt wiring for a saved SSH connect: the endpoint supervisor's
 /// cancellation flag and a sink for interim status text while the attempt is
 /// still running (for example a long Tailscale SSH check approval wait).
+// Only the Unix saved-SSH path reads the fields; Windows rejects saved SSH.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct SavedSshHooks<'a> {
     /// Identifies the saved machine for per-machine auth-URL browser throttling.
     pub(crate) profile_id: &'a str,
