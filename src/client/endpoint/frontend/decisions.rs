@@ -317,10 +317,11 @@ pub(super) fn dialog_rects(
     frontend: &ClientFrontend,
     pending: &PendingDecision,
 ) -> Option<crate::ui::DecisionDialogRects> {
+    let facts = facts(frontend, pending)?;
     crate::ui::decision_dialog_rects(
         Rect::new(0, 0, frontend.cols, frontend.rows),
-        pending.decision.allow_text,
-        pending.decision.options.len(),
+        &facts,
+        &frontend.chrome.settings.palette,
     )
 }
 

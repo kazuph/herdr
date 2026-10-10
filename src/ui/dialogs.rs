@@ -985,10 +985,30 @@ pub(crate) struct DecisionDialogRects {
 
 pub(crate) fn decision_dialog_rects(
     area: Rect,
-    allow_text: bool,
-    option_count: usize,
+    facts: &DecisionDialogFacts,
+    palette: &Palette,
 ) -> Option<DecisionDialogRects> {
-    let popup = centered_popup_rect(area, DECISION_DIALOG_WIDTH, DECISION_DIALOG_MAX_HEIGHT)?;
+    // Fit the popup to the content (title/body/origin/timeout + text row +
+    // options + footer); only when the content outgrows the cap does the
+    // middle band scroll.
+    let popup_w = DECISION_DIALOG_WIDTH.min(area.width.saturating_sub(4));
+    let content_width = popup_w.saturating_sub(2);
+    if content_width == 0 {
+        return None;
+    }
+    let content_lines = Paragraph::new(decision_dialog_content_lines(facts, palette))
+        .wrap(Wrap { trim: false })
+        .line_count(content_width) as u16;
+    let inner_needed = 1u16
+        .saturating_add(content_lines.max(1))
+        .saturating_add(u16::from(facts.allow_text))
+        .saturating_add(facts.options.len().max(1) as u16)
+        .saturating_add(1);
+    let popup_h = inner_needed
+        .saturating_add(2)
+        .min(DECISION_DIALOG_MAX_HEIGHT)
+        .max(4);
+    let popup = centered_popup_rect(area, DECISION_DIALOG_WIDTH, popup_h)?;
     let inner = Rect::new(
         popup.x + 1,
         popup.y + 1,
@@ -996,20 +1016,20 @@ pub(crate) fn decision_dialog_rects(
         popup.height.saturating_sub(2),
     );
     let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
-    if allow_text {
+    if facts.allow_text {
         constraints.push(Constraint::Length(1));
     }
-    constraints.push(Constraint::Length(option_count.max(1) as u16));
+    constraints.push(Constraint::Length(facts.options.len().max(1) as u16));
     constraints.push(Constraint::Length(1));
     let slots = Layout::vertical(constraints).split(inner);
     let mut cursor = 2usize;
-    let text = allow_text.then(|| {
+    let text = facts.allow_text.then(|| {
         let rect = slots[cursor];
         cursor += 1;
         rect
     });
     let options_band = slots[cursor];
-    let options = (0..option_count)
+    let options = (0..facts.options.len())
         .map(|index| {
             Rect::new(
                 options_band.x,
@@ -1094,7 +1114,7 @@ pub(crate) fn render_decision_dialog(
     palette: &Palette,
 ) -> Option<DecisionDialogRects> {
     super::dim_background(frame, area);
-    let rects = decision_dialog_rects(area, facts.allow_text, facts.options.len())?;
+    let rects = decision_dialog_rects(area, facts, palette)?;
     let inner = render_panel_shell(frame, rects.popup, palette.accent, palette.panel_bg)?;
     if inner.height < 4 {
         return None;
@@ -1294,5 +1314,55 @@ mod shared_dialog_tests {
                 }
             }
         }
+    }
+
+    fn decision_facts(body: Option<&str>, allow_text: bool, options: usize) -> DecisionDialogFacts {
+        DecisionDialogFacts {
+            machine: "Local".into(),
+            position: 1,
+            total: 1,
+            title: "title".into(),
+            body: body.map(|body| body.to_owned()),
+            origin: Vec::new(),
+            options: (0..options).map(|index| format!("opt{index}")).collect(),
+            selected: 0,
+            allow_text,
+            text: String::new(),
+            remaining: Some("42s".into()),
+            scroll: 0,
+            keyboard_active: false,
+        }
+    }
+
+    #[test]
+    fn decision_dialog_height_fits_short_content() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let facts = decision_facts(Some("one line"), false, 2);
+        let rects =
+            decision_dialog_rects(Rect::new(0, 0, 140, 40), &facts, &palette).expect("rects");
+        // header(1) + content(title+blank+body+blank+expires = 5) + options(2)
+        // + footer(1) + borders(2) = 11
+        assert_eq!(rects.popup.height, 11);
+        assert_eq!(rects.options.len(), 2);
+        // No spare rows inside: the last option sits directly above the footer.
+        assert_eq!(rects.close.y, rects.options[1].y + 1);
+    }
+
+    #[test]
+    fn decision_dialog_height_caps_and_scrolls_long_content() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let long_body = (0..40)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let facts = decision_facts(Some(&long_body), true, 2);
+        let rects =
+            decision_dialog_rects(Rect::new(0, 0, 140, 40), &facts, &palette).expect("rects");
+        assert_eq!(rects.popup.height, DECISION_DIALOG_MAX_HEIGHT);
+        assert!(decision_dialog_scroll_max(&facts, rects.content, &palette) > 0);
+        // A small surface still clamps to the area instead of overflowing.
+        let small =
+            decision_dialog_rects(Rect::new(0, 0, 140, 12), &facts, &palette).expect("rects");
+        assert_eq!(small.popup.height, 10);
     }
 }
