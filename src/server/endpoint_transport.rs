@@ -243,6 +243,7 @@ pub(crate) fn handle_socket_handshake(
                 endpoint::SURFACE_INTEREST_CAPABILITY.into(),
                 endpoint::PRESENTATION_EFFECTS_FENCE_CAPABILITY.into(),
                 crate::protocol::endpoint_jobs::JOBS_PROJECTION_CAPABILITY.into(),
+                crate::protocol::endpoint_decisions::DECISIONS_PROJECTION_CAPABILITY.into(),
             ],
             endpoint_events,
             should_quit,

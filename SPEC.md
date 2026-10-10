@@ -1903,6 +1903,27 @@
 - **検証契約**: Rust unit testsでrecord保存・first-answer-wins・期限切れ・wait終了・plugin event名を固定する。複数client同時応答と隔離sessionでのCLI end-to-endは実地検証で扱う。
 - **デグレ判定**: 判断待ちをTUI専用stateにする、2件目の回答で上書きする、再起動でpendingが消える、plugin hookがdecision eventを受け取れない。
 
+### 判断待ちのマシン横断UI（decision dialog、工程2）
+- **該当コミット**: feat/decision-dialogの実装
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — 工程1でserverが所有する判断待ちを、マシン対応画面（endpoint client shell）へ、接続中の全マシン分をまとめて提示する。
+- **目的**: つないでいる複数マシン（local・SSH endpoint）のどこで判断待ちが起きても同じclient画面から答えられ、誤回答を防ぐ操作設計を持つUIを作る。
+- **挙動**:
+  - serverは接続中の各endpoint clientへ、pending判断待ちの全件リストをboot_id・projection revision付きのEndpointControl projectionとしてpushする。判断待ちの作成・回答・取消・期限切れイベントでprojectionを更新し、非active（surfaceをpresentしていない）clientにも届ける。clientはこのprojectionだけをpendingの根拠とし、自前で判断待ち状態を合成しない。
+  - endpoint client shellは接続中の全endpointのprojectionを束ね、`created_unix_ms`の古い順に並べて1件ずつdialogへ出す。dialogはtitle・body・マシン表示名・origin情報（存在する分）・選択肢・`N/M`形式のキュー位置・`expires_unix_ms`がある場合の残り時間を表示し、本文・commandが長い場合は枠内で折返しまたはscrollする。見た目・Esc・閉じる操作は既存のmodal/dialogパターンに従う。
+  - 選択肢のクリックはその判断待ちを所有するendpointへ`decision.answer`を送り、`responder`にはUI由来を示す値（`client`）を入れる。`allow_text`の判断待ちはtext入力欄を表示し、入力したtextを回答へ添える。回答対象のendpointはpresenting endpointでなくてもよい。
+  - dialogが開いていても、dialog内をクリックするまではキーボード入力はpaneへそのまま届き、Enter一発で誤回答しない既定動作はない。dialog内のクリックでキーボードがdialogへ移り、上下キーの選択・Enterの確定・text入力が有効になる。Escまたはcloseボタンで回答せず閉じる。
+  - 回答せず閉じた判断待ちが残る間は`! N`形式の目印をアクションバーへ出し、クリックで同じ判断待ちのdialogを再表示する。
+  - 別のclient・CLI・pluginなど他の受け口で回答・取消・期限切れになった判断待ちは、次のprojectionでdialogと目印から自動で消える。endpointが切断されたマシンの判断待ちはqueueから外れ、再接続ではserverのprojectionから復帰する。
+- **受け入れ条件**:
+  - localを含む接続中マシンで作ったpending判断待ちがdialogへ出て、title・body・マシン名・origin・選択肢・残り時間・`N/M`カウントを表示し、最古が先に出る。
+  - 選択肢クリックが所有マシンへ`decision.answer`を送り、store上の回答が`responder="client"`と選んだoption_idになる。`allow_text`では入力textが届く。
+  - dialogをクリックするまでキーボードはpaneへ届き、クリック後はキー操作だけで選択・確定・text入力できる。
+  - 閉じたあとも件数目印が残り、クリックでdialogが再表示される。
+  - `decision.answer`/取消/期限切れを別経路で行うとdialogと目印が消え、endpoint切断でそのマシン分がqueueから外れ、再接続で復帰する。
+- **検証契約**: Rust unit testsでqueueの対象・順序・カウント・close/reopen・外部解決・切断除去を固定し、実socket経由のactual-process testでクリック→`decision.answer`送信→store反映→外部解決での消去を固定する。隔離server上の`herdr decision ask`とANSI/画面証拠で実地確認する。
+- **デグレ判定**: clientがprojection以外の根拠でpending判断待ちを作る、dialog外クリックやEnterで誤回答できる、閉じた判断待ちを二度と開けない、他マシンへの回答がactive endpoint以外へ届かない。
+
 ## G10. 本家最新リリース v0.8.0 と現状fork版の差分・段階取込契約
 
 ### 比較基準と差分範囲

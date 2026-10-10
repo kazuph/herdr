@@ -4,6 +4,7 @@ use crate::client::endpoint::chrome::ChromeTarget;
 use crate::client::endpoint::{transport, ClientEndpointStatus, ResourceKey};
 use crate::raw_input::RawInputEvent;
 use interprocess::local_socket::traits::Stream as _;
+use ratatui::layout::Rect;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -4646,4 +4647,199 @@ async fn endpoint_frontend_workspace_drag_reorders_and_moves_sections_actual_soc
     .await;
     assert!(frontend.workspace_drag.is_none());
     server.stop();
+}
+
+#[tokio::test]
+async fn endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process() {
+    let root = std::env::current_dir()
+        .unwrap()
+        .join(".local")
+        .join(format!("frontend-decision-dialog-{}", std::process::id()));
+    let server = OwnedServer::start(root.join("server"), "DECISION-DIALOG");
+    let config = crate::config::Config::default();
+    let (palette, _) =
+        crate::app::resolve_effective_theme(&crate::app::theme_runtime_config(&config, true), None);
+    let settings = ChromeSettings::from_config(&config, palette, None);
+    let shell = ClientShellState::new();
+    let view = ClientChrome::new(ChromeSettings::from_config(
+        &config,
+        settings.palette.clone(),
+        None,
+    ))
+    .compute_view(&shell, SIZE.0, SIZE.1);
+    let options = EndpointConnectOptions {
+        surface_size: wire::ClientSurfaceSize {
+            cols: view.layout.pane_surface.width,
+            rows: view.layout.pane_surface.height,
+        },
+        cell_width_px: 0,
+        cell_height_px: 0,
+        pixel_geometry_exact: false,
+        endpoint_keybindings: false,
+        mouse_capture: true,
+        surface_active: false,
+    };
+    let runtime = EndpointRuntime::new(
+        shell,
+        EndpointRegistry::empty(),
+        EndpointSupervisors::new(&[], Instant::now()),
+        options,
+    );
+    let mut frontend = ClientFrontend::from_runtime(runtime, &config, settings, SIZE, options);
+    install(&mut frontend, &ClientEndpointId::Local, 1, &server);
+    let update = frontend
+        .runtime
+        .activate(ClientEndpointId::Local, None, Instant::now());
+    frontend.update(update).unwrap();
+    pump(&mut frontend, |f| {
+        f.runtime.input_lease_current()
+            && surface_has(f, "READY:DECISION-DIALOG:")
+            && f.runtime
+                .shell
+                .endpoint(&ClientEndpointId::Local)
+                .and_then(|endpoint| {
+                    endpoint
+                        .cache
+                        .snapshot()
+                        .and_then(|snapshot| endpoint.decisions.for_presentation(snapshot))
+                })
+                .is_some()
+    })
+    .await;
+
+    // 1. A pending decision on the connected machine opens the dialog.
+    let created = api(
+        &server.socket,
+        "decision.create",
+        json!({
+            "kind": "ask",
+            "title": "ALLOW-TEST-ACTION",
+            "body": "decision body marker",
+            "options": [
+                {"id": "yes", "label": "Yes"},
+                {"id": "no", "label": "No", "role": "reject"}
+            ],
+            "origin": {"command": "danger command", "reason": "test"}
+        }),
+    );
+    let decision_id = created["decision"]["decision_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    pump(&mut frontend, |f| {
+        f.decisions
+            .current()
+            .is_some_and(|pending| pending.decision.decision_id == decision_id)
+    })
+    .await;
+    let mut terminal =
+        ratatui::Terminal::new(ratatui::backend::TestBackend::new(SIZE.0, SIZE.1)).unwrap();
+    terminal
+        .draw(|frame| super::decisions::render(&frontend, frame, Rect::new(0, 0, SIZE.0, SIZE.1)))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    for marker in [
+        "ALLOW-TEST-ACTION",
+        "decision body marker",
+        "Local",
+        "Yes",
+        "No",
+    ] {
+        assert!(text.contains(marker), "missing {marker:?}\n{text}");
+    }
+
+    // 2. Clicking the option sends decision.answer to the owning machine.
+    let pending = frontend.decisions.current().cloned().unwrap();
+    let rects = super::decisions::dialog_rects(&frontend, &pending).unwrap();
+    frontend
+        .dispatch_input(RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: rects.options[0].x,
+            row: rects.options[0].y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }))
+        .unwrap();
+    pump(&mut frontend, |f| {
+        f.decisions.dialog.is_none() && f.decisions.pending.is_empty()
+    })
+    .await;
+    let answered = api(
+        &server.socket,
+        "decision.get",
+        json!({"decision_id": decision_id}),
+    );
+    assert_eq!(answered["decision"]["status"], "answered");
+    assert_eq!(answered["decision"]["answer"]["option_id"], "yes");
+    assert_eq!(answered["decision"]["answer"]["responder"], "client");
+
+    // 3. Closing shows the indicator; clicking it reopens the dialog.
+    let second = api(
+        &server.socket,
+        "decision.create",
+        json!({
+            "kind": "ask",
+            "title": "SECOND-DECISION",
+            "options": [{"id": "ok", "label": "Ok"}]
+        }),
+    );
+    let second_id = second["decision"]["decision_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    pump(&mut frontend, |f| {
+        f.decisions
+            .current()
+            .is_some_and(|pending| pending.decision.decision_id == second_id)
+    })
+    .await;
+    let pending = frontend.decisions.current().cloned().unwrap();
+    let rects = super::decisions::dialog_rects(&frontend, &pending).unwrap();
+    frontend
+        .dispatch_input(RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: rects.close.x,
+            row: rects.close.y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }))
+        .unwrap();
+    assert!(frontend.decisions.dialog.is_none());
+    let view = frontend
+        .chrome
+        .compute_view(&frontend.runtime.shell, SIZE.0, SIZE.1);
+    let Some((indicator, _)) = super::decisions::indicator_rect(&view, 1) else {
+        panic!("closed pending decision must leave a reopen indicator");
+    };
+    frontend
+        .dispatch_input(RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: indicator.x,
+            row: indicator.y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        }))
+        .unwrap();
+    assert!(frontend.decisions.dialog.is_some());
+
+    // 4. Resolving elsewhere drops the dialog and the pending entry.
+    api(
+        &server.socket,
+        "decision.answer",
+        json!({"decision_id": second_id, "option_id": "ok", "responder": "cli"}),
+    );
+    pump(&mut frontend, |f| {
+        f.decisions.dialog.is_none() && f.decisions.pending.is_empty()
+    })
+    .await;
+    let view = frontend
+        .chrome
+        .compute_view(&frontend.runtime.shell, SIZE.0, SIZE.1);
+    assert!(
+        super::decisions::indicator_rect(&view, 0).is_none()
+            || frontend.decisions.pending.is_empty()
+    );
 }

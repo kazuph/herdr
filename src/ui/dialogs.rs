@@ -943,6 +943,248 @@ pub(crate) fn confirm_danger_button_rects(inner: Rect) -> (Rect, Rect) {
     (rects[0], rects[1])
 }
 
+const DECISION_DIALOG_WIDTH: u16 = 64;
+const DECISION_DIALOG_MAX_HEIGHT: u16 = 22;
+
+/// Render facts for one pending decision, already resolved for display by the
+/// caller (machine label, queue position, remaining time).
+pub(crate) struct DecisionDialogFacts {
+    pub machine: String,
+    /// 1-based position inside the pending queue.
+    pub position: usize,
+    pub total: usize,
+    pub title: String,
+    pub body: Option<String>,
+    /// `(label, value)` origin rows such as `("pane", "p1")`.
+    pub origin: Vec<(String, String)>,
+    pub options: Vec<String>,
+    /// Option highlighted for keyboard activation; only used when
+    /// `keyboard_active` is set.
+    pub selected: usize,
+    pub allow_text: bool,
+    pub text: String,
+    /// Remaining time such as `"42s"`, when the decision expires.
+    pub remaining: Option<String>,
+    /// Scroll offset of the content band (title/body/origin).
+    pub scroll: u16,
+    /// False while keyboard input is still going to the pane (before the first
+    /// click inside the dialog).
+    pub keyboard_active: bool,
+}
+
+/// Geometry shared by the renderer and the mouse hit-test. The content band is
+/// a scroll region; option rows sit at the bottom so long bodies never push
+/// the answers off screen.
+pub(crate) struct DecisionDialogRects {
+    pub popup: Rect,
+    pub content: Rect,
+    pub text: Option<Rect>,
+    pub options: Vec<Rect>,
+    pub close: Rect,
+}
+
+pub(crate) fn decision_dialog_rects(
+    area: Rect,
+    facts: &DecisionDialogFacts,
+    palette: &Palette,
+) -> Option<DecisionDialogRects> {
+    // Fit the popup to the content (title/body/origin/timeout + text row +
+    // options + footer); only when the content outgrows the cap does the
+    // middle band scroll.
+    let popup_w = DECISION_DIALOG_WIDTH.min(area.width.saturating_sub(4));
+    let content_width = popup_w.saturating_sub(2);
+    if content_width == 0 {
+        return None;
+    }
+    let content_lines = Paragraph::new(decision_dialog_content_lines(facts, palette))
+        .wrap(Wrap { trim: false })
+        .line_count(content_width) as u16;
+    let inner_needed = 1u16
+        .saturating_add(content_lines.max(1))
+        .saturating_add(u16::from(facts.allow_text))
+        .saturating_add(facts.options.len().max(1) as u16)
+        .saturating_add(1);
+    let popup_h = inner_needed
+        .saturating_add(2)
+        .clamp(4, DECISION_DIALOG_MAX_HEIGHT);
+    let popup = centered_popup_rect(area, DECISION_DIALOG_WIDTH, popup_h)?;
+    let inner = Rect::new(
+        popup.x + 1,
+        popup.y + 1,
+        popup.width.saturating_sub(2),
+        popup.height.saturating_sub(2),
+    );
+    let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
+    if facts.allow_text {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Length(facts.options.len().max(1) as u16));
+    constraints.push(Constraint::Length(1));
+    let slots = Layout::vertical(constraints).split(inner);
+    let mut cursor = 2usize;
+    let text = facts.allow_text.then(|| {
+        let rect = slots[cursor];
+        cursor += 1;
+        rect
+    });
+    let options_band = slots[cursor];
+    let options = (0..facts.options.len())
+        .map(|index| {
+            Rect::new(
+                options_band.x,
+                options_band.y + index as u16,
+                options_band.width,
+                1,
+            )
+        })
+        .collect();
+    let footer = slots[cursor + 1];
+    let close = Rect::new(
+        footer.right().saturating_sub(11),
+        footer.y,
+        11.min(footer.width),
+        1,
+    );
+    Some(DecisionDialogRects {
+        popup,
+        content: slots[1],
+        text,
+        options,
+        close,
+    })
+}
+
+/// Styled content lines for the scrollable band. The caller also uses this to
+/// bound wheel/keyboard scrolling before a frame is drawn.
+pub(crate) fn decision_dialog_content_lines(
+    facts: &DecisionDialogFacts,
+    palette: &Palette,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(Span::styled(
+        facts.title.clone(),
+        Style::default()
+            .fg(palette.text)
+            .add_modifier(Modifier::BOLD),
+    ))];
+    if let Some(body) = facts.body.as_deref().filter(|body| !body.is_empty()) {
+        lines.push(Line::default());
+        for line in body.lines() {
+            lines.push(Line::from(Span::styled(
+                line.to_owned(),
+                Style::default().fg(palette.subtext0),
+            )));
+        }
+    }
+    if !facts.origin.is_empty() {
+        lines.push(Line::default());
+        for (label, value) in &facts.origin {
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {label}: "), Style::default().fg(palette.overlay0)),
+                Span::styled(value.clone(), Style::default().fg(palette.subtext0)),
+            ]));
+        }
+    }
+    if let Some(remaining) = &facts.remaining {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            format!(" expires in {remaining}"),
+            Style::default().fg(palette.peach),
+        )));
+    }
+    lines
+}
+
+/// Highest usable scroll offset for the content band at `content` width.
+pub(crate) fn decision_dialog_scroll_max(
+    facts: &DecisionDialogFacts,
+    content: Rect,
+    palette: &Palette,
+) -> u16 {
+    Paragraph::new(decision_dialog_content_lines(facts, palette))
+        .wrap(Wrap { trim: false })
+        .line_count(content.width)
+        .saturating_sub(content.height as usize) as u16
+}
+
+pub(crate) fn render_decision_dialog(
+    frame: &mut Frame,
+    area: Rect,
+    facts: &DecisionDialogFacts,
+    palette: &Palette,
+) -> Option<DecisionDialogRects> {
+    super::dim_background(frame, area);
+    let rects = decision_dialog_rects(area, facts, palette)?;
+    let inner = render_panel_shell(frame, rects.popup, palette.accent, palette.panel_bg)?;
+    if inner.height < 4 {
+        return None;
+    }
+
+    let header = Rect::new(inner.x, inner.y, inner.width, 1);
+    render_modal_header(frame, header, " decision", palette);
+    let machine = format!(" {} · {}/{}", facts.machine, facts.position, facts.total);
+    let machine_x = header
+        .x
+        .saturating_add(display_width_u16(" decision "))
+        .min(header.right());
+    frame.render_widget(
+        Paragraph::new(Span::styled(machine, Style::default().fg(palette.overlay0))),
+        Rect::new(machine_x, header.y, header.right() - machine_x, 1),
+    );
+
+    frame.render_widget(
+        Paragraph::new(decision_dialog_content_lines(facts, palette))
+            .style(Style::default().fg(palette.text))
+            .wrap(Wrap { trim: false })
+            .scroll((facts.scroll, 0)),
+        rects.content,
+    );
+
+    if let Some(text) = rects.text {
+        let style = Style::default().fg(palette.text).bg(palette.surface0);
+        frame.render_widget(
+            Paragraph::new(format!(" {}", facts.text)).style(style),
+            text,
+        );
+    }
+
+    for (index, (label, rect)) in facts.options.iter().zip(rects.options.iter()).enumerate() {
+        let selected = facts.keyboard_active && index == facts.selected;
+        let style = if selected {
+            Style::default()
+                .fg(panel_contrast_fg(palette))
+                .bg(palette.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(palette.text).bg(palette.surface0)
+        };
+        frame.render_widget(
+            Paragraph::new(format!(" {} ", truncate_end(label, rect.width as usize)))
+                .style(style)
+                .alignment(ratatui::layout::Alignment::Center),
+            *rect,
+        );
+    }
+
+    if !facts.keyboard_active {
+        frame.render_widget(
+            Paragraph::new(" click the dialog to use the keyboard")
+                .style(Style::default().fg(palette.overlay0)),
+            Rect::new(inner.x, rects.close.y, rects.close.x - inner.x, 1),
+        );
+    }
+    render_action_button(
+        frame,
+        rects.close,
+        Some("esc"),
+        "close",
+        Style::default()
+            .fg(palette.text)
+            .bg(palette.surface0)
+            .add_modifier(Modifier::BOLD),
+    );
+    Some(rects)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -1071,5 +1313,55 @@ mod shared_dialog_tests {
                 }
             }
         }
+    }
+
+    fn decision_facts(body: Option<&str>, allow_text: bool, options: usize) -> DecisionDialogFacts {
+        DecisionDialogFacts {
+            machine: "Local".into(),
+            position: 1,
+            total: 1,
+            title: "title".into(),
+            body: body.map(|body| body.to_owned()),
+            origin: Vec::new(),
+            options: (0..options).map(|index| format!("opt{index}")).collect(),
+            selected: 0,
+            allow_text,
+            text: String::new(),
+            remaining: Some("42s".into()),
+            scroll: 0,
+            keyboard_active: false,
+        }
+    }
+
+    #[test]
+    fn decision_dialog_height_fits_short_content() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let facts = decision_facts(Some("one line"), false, 2);
+        let rects =
+            decision_dialog_rects(Rect::new(0, 0, 140, 40), &facts, &palette).expect("rects");
+        // header(1) + content(title+blank+body+blank+expires = 5) + options(2)
+        // + footer(1) + borders(2) = 11
+        assert_eq!(rects.popup.height, 11);
+        assert_eq!(rects.options.len(), 2);
+        // No spare rows inside: the last option sits directly above the footer.
+        assert_eq!(rects.close.y, rects.options[1].y + 1);
+    }
+
+    #[test]
+    fn decision_dialog_height_caps_and_scrolls_long_content() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let long_body = (0..40)
+            .map(|index| format!("line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let facts = decision_facts(Some(&long_body), true, 2);
+        let rects =
+            decision_dialog_rects(Rect::new(0, 0, 140, 40), &facts, &palette).expect("rects");
+        assert_eq!(rects.popup.height, DECISION_DIALOG_MAX_HEIGHT);
+        assert!(decision_dialog_scroll_max(&facts, rects.content, &palette) > 0);
+        // A small surface still clamps to the area instead of overflowing.
+        let small =
+            decision_dialog_rects(Rect::new(0, 0, 140, 12), &facts, &palette).expect("rects");
+        assert_eq!(small.popup.height, 10);
     }
 }

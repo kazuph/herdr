@@ -595,6 +595,26 @@ impl EndpointRuntime {
                 }
             }
             ServerMessage::EndpointControl { kind, data }
+                if kind == crate::protocol::endpoint_decisions::DECISIONS_PROJECTION_KIND =>
+            {
+                match serde_json::from_str::<
+                    crate::protocol::endpoint_decisions::EndpointDecisionsProjection,
+                >(&data)
+                {
+                    Ok(projection) => {
+                        if let Some(endpoint) = self.shell.endpoint_mut(&id) {
+                            update.repaint |=
+                                endpoint
+                                    .decisions
+                                    .replace(generation, &endpoint.cache, projection);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(endpoint = ?id, %error, "decisions projection parse failed");
+                    }
+                }
+            }
+            ServerMessage::EndpointControl { kind, data }
                 if kind == crate::protocol::endpoint::PRESENTATION_EFFECTS_READY_KIND =>
             {
                 if let Some(pending) = self.pending.as_mut() {
@@ -1013,6 +1033,57 @@ impl EndpointRuntime {
             cancelled,
             ..RuntimeUpdate::default()
         })
+    }
+
+    /// Issue a method on a specific endpoint without requiring the active input
+    /// lease. Decision answers target the machine that owns the pending
+    /// decision, which may not be the presenting endpoint.
+    pub(crate) fn command_on(
+        &mut self,
+        id: &ClientEndpointId,
+        method: crate::api::schema::Method,
+    ) -> Result<(String, RuntimeUpdate), String> {
+        self.next_serial = self
+            .next_serial
+            .checked_add(1)
+            .ok_or_else(|| "endpoint request serial exhausted".to_owned())?;
+        let request = Box::new(
+            EndpointCommandRequest::try_from(crate::api::schema::Request {
+                id: format!("client-shell-command:{}", self.next_serial),
+                method,
+            })
+            .map_err(|error| error.to_string())?,
+        );
+        let request_id = request.id.clone();
+        let connection = self
+            .endpoints
+            .connection(id)
+            .ok_or_else(|| "endpoint is unavailable".to_owned())?;
+        let (boot, _) = self
+            .shell
+            .endpoint_snapshot_identity(id, connection.generation)
+            .ok_or_else(|| "endpoint snapshot is unavailable".to_owned())?;
+        if !connection.negotiation.supports_method(&request.method) {
+            return Err(format!("endpoint does not support {}", request.method));
+        }
+        self.commands
+            .enqueue(id.clone(), connection.generation, boot.to_owned(), request);
+        let cancelled = self
+            .commands
+            .send_next(id, &mut self.endpoints)
+            .into_iter()
+            .map(|request_id| ResourceKey {
+                endpoint: id.clone(),
+                id: request_id,
+            })
+            .collect();
+        Ok((
+            request_id,
+            RuntimeUpdate {
+                cancelled,
+                ..RuntimeUpdate::default()
+            },
+        ))
     }
 
     pub(crate) fn resize(

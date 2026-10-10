@@ -1,5 +1,6 @@
 //! Client-owned endpoint projections. Runtime resources stay on their owning server.
 use super::cache::EndpointCache;
+use super::decisions::EndpointDecisionsCache;
 use super::jobs::EndpointJobsCache;
 use super::{ClientEndpointId, ClientEndpointStatus, ResourceKey};
 use crate::machine::MachineProfile;
@@ -16,6 +17,7 @@ pub(crate) struct ClientShellEndpoint {
     pub(crate) diagnostic: Option<String>,
     pub(crate) cache: EndpointCache,
     pub(crate) jobs: EndpointJobsCache,
+    pub(crate) decisions: EndpointDecisionsCache,
 }
 
 impl ClientShellEndpoint {
@@ -32,6 +34,7 @@ impl ClientShellEndpoint {
             diagnostic: None,
             cache: EndpointCache::default(),
             jobs: EndpointJobsCache::default(),
+            decisions: EndpointDecisionsCache::default(),
         }
     }
 }
@@ -128,6 +131,7 @@ impl ClientShellState {
             return false;
         }
         endpoint.jobs.begin_connection(generation);
+        endpoint.decisions.begin_connection(generation);
         endpoint.generation = Some(generation);
         endpoint.status = ClientEndpointStatus::Connecting;
         if self.endpoint_is_active(id) {
