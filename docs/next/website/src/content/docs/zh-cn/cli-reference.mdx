@@ -299,6 +299,20 @@ herdr wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [
 
 普通命令和服务器用 `wait output`。编程智能体用 `wait agent-status`。
 
+## 决策
+
+由服务器持有的待定决策允许任何已连接的客户端回答一次,第一个回答获胜:
+
+```bash
+herdr decision ask --kind ask --title "Continue?" --option yes:Yes:approve --option no:No:reject [--body TEXT] [--allow-text] [--timeout SECS]
+herdr decision answer <decision_id> <option_id> [--text TEXT] [--responder NAME]
+herdr decision list [--status pending|answered|expired|cancelled]
+herdr decision get <decision_id>
+herdr decision cancel <decision_id>
+```
+
+`decision ask` 创建决策并等待其解决,然后输出决策 JSON。退出码:answered 为 0、expired 为 3、cancelled 为 4。在 Herdr 窗格内运行时会把调用方窗格记入 `origin.pane_id`。决策会向 `events.subscribe` 订阅者和插件的 `[[events]]` 挂钩发出 `decision.created` 和 `decision.resolved` 事件。
+
 ## 智能体状态报告
 
 ```bash

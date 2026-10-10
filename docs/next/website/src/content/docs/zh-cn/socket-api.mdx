@@ -105,8 +105,11 @@ herdr pane read w1:p2 --source recent --lines 50
 | 智能体 | `agent.list`、`agent.get`、`agent.read`、`agent.explain`、`agent.send`、`agent.rename`、`agent.focus`、`agent.start` |
 | 事件 | `events.subscribe`、`events.wait` |
 | 插件 | `plugin.link`、`plugin.list`、`plugin.unlink`、`plugin.enable`、`plugin.disable`、`plugin.action.list`、`plugin.action.invoke`、`plugin.log.list`、`plugin.pane.open`、`plugin.pane.focus`、`plugin.pane.close` |
+| 决策 | `decision.create`、`decision.get`、`decision.list`、`decision.wait`、`decision.answer`、`decision.cancel` |
 
 一些 CLI 命令是这些方法的便捷包装。比如 `herdr agent wait` 先解析智能体目标,然后订阅窗格智能体状态事件。
+
+决策(decision)方法管理由服务器持有的待定决策:任何已连接的客户端(CLI、插件或集成)都可以回答的问题或批准。`decision.create` 保存一条以 `dec-` 开头的待定决策并发出 `decision.created`。`decision.answer` 只接受第一个有效回答,之后的回答会以 `decision_already_resolved` 失败。`decision.cancel` 不回答就结束决策,带 `timeout_ms` 的决策由服务器判定过期。`decision.wait` 阻塞到决策离开 `pending` 并返回已解决的记录,或在 `timeout_ms` 超时后返回仍为 pending 的记录。每次解决都会发出携带完整决策记录的 `decision.resolved`,插件可以挂钩 `decision.created` 和 `decision.resolved`,把待定决策转发到其他入口。
 
 `session.snapshot` 为维护本地运行时缓存的客户端返回一次性引导快照。响应包含版本/协议元数据、当前聚焦的工作区/标签页/窗格 id、工作区记录、标签页记录、窗格记录、标签页布局快照和智能体记录。它不是订阅;读取后应订阅资源事件,并根据事件更新本地缓存。重新连接后或本地缓存可能已过期时,再次调用 `session.snapshot`。工作区记录也包含关联 worktree 的来源信息。完整的仓库 worktree 发现仍使用 `worktree.list`。
 
@@ -564,6 +567,8 @@ workspace 的 get/list 响应会公开生成的 `tokens` 映射,空间侧边栏�
 标签页事件订阅包括 `tab.created`、`tab.closed`、`tab.focused`、`tab.renamed` 和 `tab.moved`。`tab.moved` 包含被移动的 `tab_id`、`workspace_id`、请求的 `insert_index` 和该工作区更新后的有序 `tabs` 列表。
 窗格事件订阅包括 `pane.created`、`pane.updated`、`pane.closed`、`pane.focused`、`pane.moved`、`pane.exited`、`pane.agent_detected`、`pane.output_matched`、`pane.agent_status_changed` 和 `pane.scroll_changed`。终端标题变化可能发出 `pane.updated`,但如果原始标题只有旋转指示符发生变化且 `terminal_title_stripped` 不变,则不会发出。`pane.scroll_changed` 只针对一个 `pane_id`,每当 Herdr 观察到滚动快照变化时,都会发出 `pane_id`、`workspace_id` 和当前 `scroll` 指标。
 布局事件订阅包括 `layout.updated`。该事件携带一个标签页更新后的 `PaneLayoutSnapshot`。使用 `session.snapshot` 引导的客户端应替换具有相同 `workspace_id` 和 `tab_id` 的缓存布局。
+
+决策事件订阅包括 `decision.created` 和 `decision.resolved`。`decision.resolved` 在 answered、expired、cancelled 任一情况下都会发出,两种 payload 都携带完整决策记录。
 
 Worktree 事件订阅包括 `worktree.created`、`worktree.opened` 和 `worktree.removed`。Worktree 事件描述 Git 检出的生命周期。`worktree.created` 包含打开的 `workspace` 和创建的 `worktree`。`worktree.opened` 包含目标 `workspace`、打开的 `worktree` 和 `already_open`。`worktree.removed` 包含 `workspace_id`、被移除的 `worktree` 和 `forced`。
 

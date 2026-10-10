@@ -300,6 +300,20 @@ herdr wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [
 
 通常のコマンドやサーバーには `wait output` を使います。コーディングエージェントには `wait agent-status` を使います。
 
+## 判断待ち
+
+サーバーが所有する保留中の判断は、接続中のどのクライアントからでも一度だけ回答でき、最初の回答が採用されます:
+
+```bash
+herdr decision ask --kind ask --title "Continue?" --option yes:Yes:approve --option no:No:reject [--body TEXT] [--allow-text] [--timeout SECS]
+herdr decision answer <decision_id> <option_id> [--text TEXT] [--responder NAME]
+herdr decision list [--status pending|answered|expired|cancelled]
+herdr decision get <decision_id>
+herdr decision cancel <decision_id>
+```
+
+`decision ask` は判断待ちを作成して解決まで待ち、判断待ちの JSON を出力します。終了コードは answered が 0、expired が 3、cancelled が 4 です。Herdr ペイン内で実行すると `origin.pane_id` に呼び出し元ペインが記録されます。判断待ちは `events.subscribe` の購読者とプラグインの `[[events]]` フックへ向けて `decision.created` と `decision.resolved` イベントを発行します。
+
 ## エージェント状態報告
 
 ```bash
