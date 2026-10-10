@@ -1006,8 +1006,7 @@ pub(crate) fn decision_dialog_rects(
         .saturating_add(1);
     let popup_h = inner_needed
         .saturating_add(2)
-        .min(DECISION_DIALOG_MAX_HEIGHT)
-        .max(4);
+        .clamp(4, DECISION_DIALOG_MAX_HEIGHT);
     let popup = centered_popup_rect(area, DECISION_DIALOG_WIDTH, popup_h)?;
     let inner = Rect::new(
         popup.x + 1,
