@@ -707,6 +707,130 @@ fn event_match_subscription(
     }
 }
 
+/// Fallback interval for `decision.wait` probes. Resolution normally wakes the
+/// wait through `decision.resolved` events; the probe only guards against
+/// event-history overflow.
+const DECISION_WAIT_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+pub(super) fn wait_for_decision(
+    request_id: String,
+    params: crate::api::schema::DecisionWaitParams,
+    stream: &mut LocalStream,
+    api_tx: &ApiRequestSender,
+    event_hub: &EventHub,
+    running: &Arc<AtomicBool>,
+) -> std::io::Result<Option<String>> {
+    crate::logging::api_wait_started(&request_id, &params.decision_id, params.timeout_ms);
+    let deadline = params
+        .timeout_ms
+        .map(|ms| std::time::Instant::now() + std::time::Duration::from_millis(ms));
+    let mut last_sequence = event_hub.current_sequence();
+    let mut last_probe = std::time::Instant::now()
+        .checked_sub(DECISION_WAIT_PROBE_INTERVAL)
+        .unwrap_or_else(std::time::Instant::now);
+
+    loop {
+        if should_stop_connection(stream, running)? {
+            crate::logging::api_wait_completed(
+                &request_id,
+                &params.decision_id,
+                "client_disconnected",
+            );
+            return Ok(None);
+        }
+
+        let mut resolved_seen = false;
+        for (sequence, event) in event_hub.events_after(last_sequence) {
+            last_sequence = sequence;
+            if event.event != EventKind::DecisionResolved {
+                continue;
+            }
+            if let EventData::DecisionResolved { decision } = &event.data {
+                if decision.decision_id == params.decision_id {
+                    resolved_seen = true;
+                }
+            }
+        }
+
+        let timed_out = deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+        if resolved_seen || timed_out || last_probe.elapsed() >= DECISION_WAIT_PROBE_INTERVAL {
+            last_probe = std::time::Instant::now();
+            match fetch_decision(&request_id, &params.decision_id, api_tx) {
+                Ok(decision) => {
+                    if decision.status != crate::api::schema::DecisionStatus::Pending || timed_out {
+                        crate::logging::api_wait_completed(
+                            &request_id,
+                            &params.decision_id,
+                            if timed_out
+                                && decision.status == crate::api::schema::DecisionStatus::Pending
+                            {
+                                "timeout"
+                            } else {
+                                "resolved"
+                            },
+                        );
+                        return Ok(Some(
+                            serde_json::to_string(&SuccessResponse {
+                                id: request_id,
+                                result: ResponseResult::Decision { decision },
+                            })
+                            .unwrap_or_else(|_| {
+                                r#"{"id":"","error":{"code":"internal_error","message":"failed to encode response"}}"#
+                                    .to_string()
+                            }),
+                        ));
+                    }
+                }
+                Err(response) => return Ok(Some(response)),
+            }
+        }
+
+        std::thread::sleep(CONNECTION_POLL_INTERVAL);
+    }
+}
+
+fn fetch_decision(
+    request_id: &str,
+    decision_id: &str,
+    api_tx: &ApiRequestSender,
+) -> Result<crate::api::schema::Decision, String> {
+    let response = dispatch_to_app_with_timeout(
+        Request {
+            id: format!("{request_id}:get"),
+            method: Method::DecisionGet(crate::api::schema::DecisionGetParams {
+                decision_id: decision_id.to_string(),
+            }),
+        },
+        api_tx,
+        Some(APP_RESPONSE_TIMEOUT),
+    );
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&response) else {
+        return Err(response);
+    };
+    if value.get("error").is_some() {
+        let mut value = value;
+        value["id"] = serde_json::Value::String(request_id.to_string());
+        return Err(serde_json::to_string(&value).unwrap_or_else(|_| {
+            r#"{"id":"","error":{"code":"internal_error","message":"failed to encode response"}}"#
+                .to_string()
+        }));
+    }
+    serde_json::from_value::<crate::api::schema::Decision>(value["result"]["decision"].clone())
+        .map_err(|_| {
+            serde_json::to_string(&ErrorResponse {
+                id: request_id.to_string(),
+                error: ErrorBody {
+                    code: "internal_error".into(),
+                    message: "failed to decode decision result".into(),
+                },
+            })
+            .unwrap_or_else(|_| {
+                r#"{"id":"","error":{"code":"internal_error","message":"failed to encode response"}}"#
+                    .to_string()
+            })
+        })
+}
+
 fn wait_matched_response(request_id: &str, event: serde_json::Value) -> String {
     let Ok(event) = serde_json::from_value::<SubscriptionEventEnvelope>(event) else {
         return serde_json::to_string(&ErrorResponse {
@@ -753,6 +877,214 @@ fn wait_matched_response(request_id: &str, event: serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use interprocess::local_socket::traits::Listener as _;
+    use std::sync::Mutex;
+
+    fn decision_fixture(
+        decision_id: &str,
+        status: crate::api::schema::DecisionStatus,
+    ) -> crate::api::schema::Decision {
+        crate::api::schema::Decision {
+            decision_id: decision_id.into(),
+            kind: crate::api::schema::DecisionKind::Ask,
+            title: "continue?".into(),
+            body: None,
+            options: vec![crate::api::schema::DecisionOption {
+                id: "yes".into(),
+                label: "Yes".into(),
+                role: crate::api::schema::DecisionOptionRole::Approve,
+            }],
+            allow_text: false,
+            origin: None,
+            created_unix_ms: 1_000,
+            expires_unix_ms: None,
+            status,
+            answer: None,
+        }
+    }
+
+    fn spawn_decision_get_responder(
+        state: Arc<Mutex<crate::api::schema::Decision>>,
+    ) -> (ApiRequestSender, std::thread::JoinHandle<()>) {
+        let (api_tx, mut api_rx) =
+            tokio::sync::mpsc::unbounded_channel::<crate::api::ApiRequestMessage>();
+        let responder = std::thread::spawn(move || {
+            while let Some(msg) = api_rx.blocking_recv() {
+                let Method::DecisionGet(_) = msg.request.method else {
+                    panic!("unexpected request: {:?}", msg.request.method);
+                };
+                let decision = state.lock().unwrap().clone();
+                msg.respond_to
+                    .send(
+                        serde_json::to_string(&SuccessResponse {
+                            id: msg.request.id,
+                            result: ResponseResult::Decision { decision },
+                        })
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+        });
+        (api_tx, responder)
+    }
+
+    fn wait_stream_pair(tag: &str) -> (LocalStream, LocalStream, std::path::PathBuf) {
+        let path = std::env::temp_dir().join(format!("herdr-{tag}-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let listener = crate::ipc::bind_local_listener(&path).unwrap();
+        let client = crate::ipc::connect_local_stream(&path).unwrap();
+        let server = listener.accept().unwrap();
+        (client, server, path)
+    }
+
+    #[test]
+    fn decision_wait_returns_already_resolved_decision() {
+        let (api_tx, responder) = spawn_decision_get_responder(Arc::new(Mutex::new(
+            decision_fixture("dec-w-1", crate::api::schema::DecisionStatus::Answered),
+        )));
+        let (_client, mut server, path) = wait_stream_pair("decision-wait-resolved");
+        crate::ipc::set_local_stream_polling(&mut server, true).unwrap();
+        let running = Arc::new(AtomicBool::new(true));
+        let hub = EventHub::default();
+
+        let response = wait_for_decision(
+            "wait:decision".into(),
+            crate::api::schema::DecisionWaitParams {
+                decision_id: "dec-w-1".into(),
+                timeout_ms: None,
+            },
+            &mut server,
+            &api_tx,
+            &hub,
+            &running,
+        )
+        .unwrap()
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["id"], "wait:decision");
+        assert_eq!(value["result"]["decision"]["status"], "answered");
+
+        drop(api_tx);
+        responder.join().unwrap();
+        drop(server);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn decision_wait_returns_pending_decision_on_timeout() {
+        let (api_tx, responder) = spawn_decision_get_responder(Arc::new(Mutex::new(
+            decision_fixture("dec-w-2", crate::api::schema::DecisionStatus::Pending),
+        )));
+        let (_client, mut server, path) = wait_stream_pair("decision-wait-timeout");
+        crate::ipc::set_local_stream_polling(&mut server, true).unwrap();
+        let running = Arc::new(AtomicBool::new(true));
+        let hub = EventHub::default();
+
+        let started = std::time::Instant::now();
+        let response = wait_for_decision(
+            "wait:decision".into(),
+            crate::api::schema::DecisionWaitParams {
+                decision_id: "dec-w-2".into(),
+                timeout_ms: Some(150),
+            },
+            &mut server,
+            &api_tx,
+            &hub,
+            &running,
+        )
+        .unwrap()
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["result"]["decision"]["status"], "pending");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+
+        drop(api_tx);
+        responder.join().unwrap();
+        drop(server);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn decision_wait_wakes_when_resolved_event_arrives() {
+        let state = Arc::new(Mutex::new(decision_fixture(
+            "dec-w-3",
+            crate::api::schema::DecisionStatus::Pending,
+        )));
+        let (api_tx, responder) = spawn_decision_get_responder(state.clone());
+        let (_client, mut server, path) = wait_stream_pair("decision-wait-event");
+        crate::ipc::set_local_stream_polling(&mut server, true).unwrap();
+        let running = Arc::new(AtomicBool::new(true));
+        let hub = EventHub::default();
+
+        let resolve_hub = hub.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let mut decision = state.lock().unwrap().clone();
+            decision.status = crate::api::schema::DecisionStatus::Answered;
+            *state.lock().unwrap() = decision.clone();
+            resolve_hub.push(EventEnvelope {
+                event: EventKind::DecisionResolved,
+                data: EventData::DecisionResolved { decision },
+            });
+        });
+
+        let started = std::time::Instant::now();
+        let response = wait_for_decision(
+            "wait:decision".into(),
+            crate::api::schema::DecisionWaitParams {
+                decision_id: "dec-w-3".into(),
+                timeout_ms: None,
+            },
+            &mut server,
+            &api_tx,
+            &hub,
+            &running,
+        )
+        .unwrap()
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(value["result"]["decision"]["status"], "answered");
+        assert!(
+            started.elapsed() < DECISION_WAIT_PROBE_INTERVAL,
+            "the resolved event should wake the wait before the fallback probe"
+        );
+
+        drop(api_tx);
+        responder.join().unwrap();
+        drop(server);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn decision_wait_returns_none_when_client_disconnects() {
+        let (api_tx, responder) = spawn_decision_get_responder(Arc::new(Mutex::new(
+            decision_fixture("dec-w-4", crate::api::schema::DecisionStatus::Pending),
+        )));
+        let (client, mut server, path) = wait_stream_pair("decision-wait-disconnect");
+        crate::ipc::set_local_stream_polling(&mut server, true).unwrap();
+        let running = Arc::new(AtomicBool::new(true));
+        let hub = EventHub::default();
+        drop(client);
+
+        let response = wait_for_decision(
+            "wait:decision".into(),
+            crate::api::schema::DecisionWaitParams {
+                decision_id: "dec-w-4".into(),
+                timeout_ms: None,
+            },
+            &mut server,
+            &api_tx,
+            &hub,
+            &running,
+        )
+        .unwrap();
+        assert!(response.is_none());
+
+        drop(api_tx);
+        responder.join().unwrap();
+        drop(server);
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn agent_wait_probe_only_translates_agent_disappearance() {

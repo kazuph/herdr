@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod agents;
 pub mod common;
+pub mod decisions;
 pub mod events;
 pub mod integrations;
 pub mod jobs;
@@ -17,6 +18,7 @@ pub mod worktrees;
 
 pub use agents::*;
 pub use common::*;
+pub use decisions::*;
 pub use events::*;
 pub use integrations::*;
 pub use jobs::*;
@@ -147,6 +149,18 @@ pub enum Method {
     MsgHistory(MsgHistoryParams),
     #[serde(rename = "msg.rooms")]
     MsgRooms(EmptyParams),
+    #[serde(rename = "decision.create")]
+    DecisionCreate(DecisionCreateParams),
+    #[serde(rename = "decision.get")]
+    DecisionGet(DecisionGetParams),
+    #[serde(rename = "decision.list")]
+    DecisionList(DecisionListParams),
+    #[serde(rename = "decision.wait")]
+    DecisionWait(DecisionWaitParams),
+    #[serde(rename = "decision.answer")]
+    DecisionAnswer(DecisionAnswerParams),
+    #[serde(rename = "decision.cancel")]
+    DecisionCancel(DecisionCancelParams),
     #[serde(rename = "run.start")]
     RunStart(RunStartParams),
     #[serde(rename = "run.log.open")]

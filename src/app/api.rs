@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 mod agent_view;
 mod agents;
+mod decisions;
 mod env;
 mod jobs;
 mod layouts;
@@ -1138,6 +1139,28 @@ impl App {
                 Ok(result) => return responses::encode_success(request.id, result),
                 Err(error) => return responses::encode_error_body(request.id, error),
             },
+            Method::DecisionCreate(params) => {
+                return self.handle_decision_create(request.id, params);
+            }
+            Method::DecisionGet(params) => {
+                return self.handle_decision_get(request.id, params);
+            }
+            Method::DecisionList(params) => {
+                return self.handle_decision_list(request.id, params);
+            }
+            Method::DecisionAnswer(params) => {
+                return self.handle_decision_answer(request.id, params);
+            }
+            Method::DecisionCancel(params) => {
+                return self.handle_decision_cancel(request.id, params);
+            }
+            Method::DecisionWait(_) => {
+                return responses::encode_error(
+                    request.id,
+                    "invalid_request",
+                    "decision.wait is handled by the socket wait loop",
+                );
+            }
             Method::RunStart(params) => return self.handle_run_start(request.id, params),
             Method::RunLogOpen(params) => {
                 let job = self.job_log_target(&params.job_id);
