@@ -821,6 +821,16 @@ impl App {
     }
 
     pub(super) fn emit_event(&mut self, event: crate::api::schema::EventEnvelope) {
+        // Decision state is server-owned; flag the endpoint decisions
+        // projection dirty so connected shells pick up every transition
+        // (create, answer, cancel, expiry) instead of merging events.
+        if matches!(
+            event.event,
+            crate::api::schema::EventKind::DecisionCreated
+                | crate::api::schema::EventKind::DecisionResolved
+        ) {
+            self.decisions_projection_dirty = true;
+        }
         self.run_plugin_event_hooks(&event);
         self.event_hub.push(event);
     }

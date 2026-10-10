@@ -258,6 +258,9 @@ pub struct HeadlessServer {
     endpoint_native: endpoints::native_graphics::NativeGraphics,
     endpoint_tab_geometry: HashMap<String, u64>,
     endpoint_boot_id: String,
+    /// Latest server-owned pending-decision set projected to endpoint shells;
+    /// refreshed whenever `app.decisions_projection_dirty` is set.
+    endpoint_pending_decisions: Vec<crate::api::schema::Decision>,
     endpoint_event_rx: mpsc::Receiver<crate::server::endpoint_transport::EndpointTransportEvent>,
     endpoint_event_tx: mpsc::Sender<crate::server::endpoint_transport::EndpointTransportEvent>,
     #[cfg(unix)]
@@ -484,6 +487,7 @@ impl HeadlessServer {
             endpoint_native: Default::default(),
             endpoint_tab_geometry: HashMap::new(),
             endpoint_boot_id: endpoints::new_boot_id(),
+            endpoint_pending_decisions: Vec::new(),
             endpoint_event_rx,
             endpoint_event_tx,
             #[cfg(unix)]
@@ -724,6 +728,12 @@ impl HeadlessServer {
                 needs_full_render = false;
                 needs_graphics_render = false;
                 continue;
+            }
+
+            // Decision state changes are independent of pane rendering; push a
+            // fresh endpoint decisions projection even when no frame streamed.
+            if self.app.decisions_projection_dirty {
+                self.stream_endpoint_views();
             }
 
             // 8. Wait for next event.
@@ -4815,6 +4825,7 @@ mod tests {
             endpoint_native: Default::default(),
             endpoint_tab_geometry: HashMap::new(),
             endpoint_boot_id: endpoints::new_boot_id(),
+            endpoint_pending_decisions: Vec::new(),
             endpoint_event_rx,
             endpoint_event_tx,
             #[cfg(unix)]

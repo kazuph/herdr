@@ -162,6 +162,9 @@ pub struct App {
     /// one-time rescan so decisions that outlived a restart/handoff still
     /// expire; afterwards it tracks the earliest pending `expires_unix_ms`.
     pub(crate) decision_expiry_deadline: Option<Instant>,
+    /// Set whenever the pending-decision set may have changed; the headless
+    /// loop turns it into a fresh endpoint decisions projection.
+    pub(crate) decisions_projection_dirty: bool,
     pub(crate) pending_agent_resume_deadline: Option<Instant>,
     pub(crate) pending_agent_resume_wait: Duration,
     pub(crate) headless_agent_restore_enabled: bool,
@@ -860,6 +863,7 @@ impl App {
             loaded_host_cursor: config.ui.host_cursor,
             agent_metadata_deadline: None,
             decision_expiry_deadline: Some(Instant::now()),
+            decisions_projection_dirty: true,
             pending_agent_resume_deadline: None,
             pending_agent_resume_wait: Duration::from_millis(config.agent_restore.restore_delay_ms)
                 .max(PENDING_AGENT_RESUME_THEME_WAIT),

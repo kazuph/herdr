@@ -5,6 +5,7 @@ pub(crate) mod client_transport;
 pub(crate) mod client_view;
 pub(crate) mod clients;
 pub(crate) mod clipboard_image;
+pub(crate) mod endpoint_decisions;
 pub(crate) mod endpoint_input;
 pub(crate) mod endpoint_jobs;
 pub(crate) mod endpoint_keyboard;
