@@ -597,12 +597,20 @@ impl EndpointRuntime {
             ServerMessage::EndpointControl { kind, data }
                 if kind == crate::protocol::endpoint_decisions::DECISIONS_PROJECTION_KIND =>
             {
-                if let Ok(projection) = serde_json::from_str(&data) {
-                    if let Some(endpoint) = self.shell.endpoint_mut(&id) {
-                        update.repaint |=
-                            endpoint
-                                .decisions
-                                .replace(generation, &endpoint.cache, projection);
+                match serde_json::from_str::<
+                    crate::protocol::endpoint_decisions::EndpointDecisionsProjection,
+                >(&data)
+                {
+                    Ok(projection) => {
+                        if let Some(endpoint) = self.shell.endpoint_mut(&id) {
+                            update.repaint |=
+                                endpoint
+                                    .decisions
+                                    .replace(generation, &endpoint.cache, projection);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(endpoint = ?id, %error, "decisions projection parse failed");
                     }
                 }
             }

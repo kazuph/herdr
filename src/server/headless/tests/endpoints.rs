@@ -1251,6 +1251,20 @@ fn receive(stream: &mut crate::ipc::LocalStream) -> ServerMessage {
     protocol::read_message(stream, MAX_GRAPHICS_FRAME_SIZE).unwrap()
 }
 
+fn receive_decisions(stream: &mut crate::ipc::LocalStream, snapshot: &wire::ClientShellSnapshot) {
+    let ServerMessage::EndpointControl { kind, data } = receive(stream) else {
+        panic!("expected decision projection");
+    };
+    assert_eq!(
+        kind,
+        crate::protocol::endpoint_decisions::DECISIONS_PROJECTION_KIND
+    );
+    let decisions: crate::protocol::endpoint_decisions::EndpointDecisionsProjection =
+        serde_json::from_str(&data).unwrap();
+    assert_eq!(decisions.boot_id, snapshot.boot_id);
+    assert_eq!(decisions.revision, snapshot.revision);
+}
+
 fn receive_view(
     stream: &mut crate::ipc::LocalStream,
 ) -> (wire::ClientShellSnapshot, wire::PaneSurfaceFrame) {
@@ -1267,6 +1281,7 @@ fn receive_view(
         serde_json::from_str(&data).unwrap();
     assert_eq!(jobs.boot_id, snapshot.boot_id);
     assert_eq!(jobs.revision, snapshot.revision);
+    receive_decisions(stream, &snapshot);
     let ServerMessage::PaneSurface(surface) = receive(stream) else {
         panic!("expected surface");
     };
@@ -2063,6 +2078,7 @@ fn receive_jobs(
         serde_json::from_str(&data).unwrap();
     assert_eq!(jobs.boot_id, snapshot.boot_id);
     assert_eq!(jobs.revision, snapshot.revision);
+    receive_decisions(stream, &snapshot);
     (snapshot, jobs)
 }
 
