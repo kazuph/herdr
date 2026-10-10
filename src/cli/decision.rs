@@ -61,7 +61,14 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
                     eprintln!("missing value for --kind");
                     return Ok(2);
                 };
-                kind = Some(parse_decision_kind(value)?);
+                match parse_decision_kind(value) {
+                    Ok(parsed) => kind = Some(parsed),
+                    Err(err) => {
+                        eprintln!("{err}");
+                        eprintln!("{DECISION_ASK_USAGE}");
+                        return Ok(2);
+                    }
+                }
                 index += 2;
             }
             "--title" => {
@@ -85,7 +92,14 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
                     eprintln!("missing value for --option");
                     return Ok(2);
                 };
-                options.push(parse_decision_option(value)?);
+                match parse_decision_option(value) {
+                    Ok(parsed) => options.push(parsed),
+                    Err(err) => {
+                        eprintln!("{err}");
+                        eprintln!("{DECISION_ASK_USAGE}");
+                        return Ok(2);
+                    }
+                }
                 index += 2;
             }
             "--allow-text" => {
@@ -97,8 +111,14 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
                     eprintln!("missing value for --timeout");
                     return Ok(2);
                 };
-                let seconds = super::parse_u64_flag("--timeout", value)?;
-                timeout_ms = Some(seconds.saturating_mul(1000));
+                match super::parse_u64_flag("--timeout", value) {
+                    Ok(seconds) => timeout_ms = Some(seconds.saturating_mul(1000)),
+                    Err(err) => {
+                        eprintln!("{err}");
+                        eprintln!("{DECISION_ASK_USAGE}");
+                        return Ok(2);
+                    }
+                }
                 index += 2;
             }
             other => {
