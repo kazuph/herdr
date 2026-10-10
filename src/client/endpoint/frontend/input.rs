@@ -96,6 +96,7 @@ fn dispatch_inner(
         || resize::input(frontend, &event)?
         || worktrees::input(frontend, &event)?
         || modal::input(frontend, &event)?
+        || decisions::input(frontend, &event)?
         || mobile::input(frontend, &event)?
         || navigator::input(frontend, &event)?
     {

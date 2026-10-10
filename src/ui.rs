@@ -101,13 +101,14 @@ use self::tabs::render_tab_bar;
 pub(crate) use self::{
     dialogs::{
         confirm_close_button_rects, confirm_close_popup_rect, confirm_danger_button_rects,
-        confirm_danger_popup_rect, new_linked_worktree_button_rects,
-        new_linked_worktree_inner_rect, open_existing_worktree_button_rects,
-        open_existing_worktree_inner_rect, open_existing_worktree_max_visible_rows,
-        open_existing_worktree_visible_start, remove_worktree_button_rects,
-        remove_worktree_popup_rect, rename_button_rects, render_confirm_close_dialog,
-        render_pending_input_dialog, render_rename_dialog, render_worktree_create,
-        render_worktree_open, render_worktree_remove,
+        confirm_danger_popup_rect, decision_dialog_rects, decision_dialog_scroll_max,
+        new_linked_worktree_button_rects, new_linked_worktree_inner_rect,
+        open_existing_worktree_button_rects, open_existing_worktree_inner_rect,
+        open_existing_worktree_max_visible_rows, open_existing_worktree_visible_start,
+        remove_worktree_button_rects, remove_worktree_popup_rect, rename_button_rects,
+        render_confirm_close_dialog, render_decision_dialog, render_pending_input_dialog,
+        render_rename_dialog, render_worktree_create, render_worktree_open, render_worktree_remove,
+        DecisionDialogFacts, DecisionDialogRects,
     },
     settings::{
         render_settings_from, settings_button_rects, settings_popup_height, SettingsRenderFacts,
