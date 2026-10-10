@@ -67,6 +67,7 @@ mod cli;
 mod client;
 mod config;
 mod copy_mode;
+mod decision;
 mod detect;
 mod dispatch;
 mod events;
@@ -511,6 +512,7 @@ herdr run --label tests -- cargo test
 - `herdr pane get <target>` accepts global pane numbers, `%N`, and `pN` pane targets.
 - `herdr agent <subcommand>` controls agent identity, reads, sends, and restore actions.
 - `herdr machine <subcommand>` manages saved SSH machines (`list`, `add`, `rename`, `remove`, `enable`, `disable`).
+- `herdr decision <subcommand>` manages server-owned pending decisions (`ask`, `answer`, `list`, `get`, `cancel`) that any client can answer once.
 - `herdr workspace`, `herdr tab`, and `herdr pane` manage session layout through the socket API.
 
 ## Essential Agent Recipes
