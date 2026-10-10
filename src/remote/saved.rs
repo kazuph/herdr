@@ -73,10 +73,19 @@ fn ssh_command(target: &str) -> Command {
 
 fn open_auth_url(url: &str) -> io::Result<()> {
     #[cfg(test)]
-    if let Some(hook) = test_hooks::open_url_hook() {
-        return hook(url);
+    {
+        if let Some(hook) = test_hooks::open_url_hook() {
+            return hook(url);
+        }
+        // A test build never opens the real browser: with no hook installed the
+        // open is only recorded so a hookless test still observes it.
+        test_hooks::record_auth_url_open(url);
+        Ok(())
     }
-    crate::platform::open_url(url)
+    #[cfg(not(test))]
+    {
+        crate::platform::open_url(url)
+    }
 }
 
 /// Surface a Tailscale SSH check URL: the machine's status line carries the
@@ -495,6 +504,30 @@ pub(crate) mod test_hooks {
     pub(crate) fn open_url_hook() -> Option<OpenUrlHook> {
         take(&OPEN_URL)
     }
+
+    static AUTH_URL_OPENS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    /// Where a test build records a browser open when no hook is installed.
+    pub(crate) fn record_auth_url_open(url: &str) {
+        AUTH_URL_OPENS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(url.to_owned());
+    }
+
+    pub(crate) fn auth_url_opens() -> Vec<String> {
+        AUTH_URL_OPENS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub(crate) fn clear_auth_url_opens() {
+        AUTH_URL_OPENS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
 }
 
 #[cfg(test)]
@@ -711,6 +744,7 @@ sys.exit(0)
             test_hooks::set_connect_timeout(None);
             test_hooks::set_auth_wait(None);
             test_hooks::set_open_url_hook(None);
+            test_hooks::clear_auth_url_opens();
             for name in [
                 "FAKE_SSH_PID_FILE",
                 "FAKE_SSH_APPROVE_FILE",
@@ -782,6 +816,21 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[test]
+    fn open_auth_url_without_a_hook_is_only_recorded_never_opened() {
+        let _lock = test_hooks::lock();
+        test_hooks::clear_auth_url_opens();
+        // No open_url hook installed: a test build must record the open instead
+        // of calling the platform browser (the real call is cfg(not(test))
+        // gated out of this binary entirely).
+        open_auth_url("https://login.tailscale.com/a/recorded")
+            .unwrap_or_else(|error| panic!("recorded open failed: {error}"));
+        assert_eq!(
+            test_hooks::auth_url_opens(),
+            ["https://login.tailscale.com/a/recorded"]
+        );
     }
 
     #[test]
