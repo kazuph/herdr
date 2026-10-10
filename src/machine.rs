@@ -296,7 +296,21 @@ pub(crate) fn remote_binary() -> String {
 /// Subcommands that may be routed to a saved machine (G11 P2).
 /// Everything else is rejected so local-only commands (`run`, `inbox`,
 /// `machine` itself, …) can never silently execute against the wrong host.
-pub(crate) const ROUTABLE_SUBCOMMANDS: &[&str] = &["agent", "pane", "workspace", "worktree"];
+/// `decision` is routable so `decision answer` can resolve a saved machine's
+/// pending decision; `local` stays reserved for this machine.
+pub(crate) const ROUTABLE_SUBCOMMANDS: &[&str] =
+    &["agent", "decision", "pane", "workspace", "worktree"];
+
+/// The `--machine` value that means "this machine" for the `decision`
+/// subcommand, matching the `local` machine id `decision watch` emits. Other
+/// subcommands keep the existing saved-profile resolution for that label.
+pub(crate) const LOCAL_MACHINE_ROUTE: &str = "local";
+
+/// True when the route names the reserved local machine for a subcommand
+/// that supports a local target, meaning no SSH hop should happen.
+pub(crate) fn route_targets_local(args: &[String], route: &MachineRoute) -> bool {
+    route.label_or_id == LOCAL_MACHINE_ROUTE && args.get(1).map(String::as_str) == Some("decision")
+}
 
 /// Parsed `--machine <label-or-id>` request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -569,7 +583,7 @@ pub(crate) fn classify_machine_request(args: &[String]) -> Result<MachineRequest
     };
     if !ROUTABLE_SUBCOMMANDS.contains(&subcommand) {
         return Err((
-            "--machine can only route agent, pane, workspace, or worktree".to_string(),
+            "--machine can only route agent, decision, pane, workspace, or worktree".to_string(),
             2,
         ));
     }
@@ -932,9 +946,16 @@ mod tests {
                 subcommand: "agent".to_string()
             })
         );
-        for subcommand in ["pane", "workspace", "worktree"] {
+        for subcommand in ["decision", "pane", "workspace", "worktree"] {
             assert!(matches!(route(&["herdr", subcommand]), Ok(Route { .. })));
         }
+        // `decision answer` keeps its full argument tail on the remote argv.
+        assert_eq!(
+            route(&["herdr", "decision", "answer", "dec-1", "yes"]),
+            Ok(Route {
+                subcommand: "decision".to_string()
+            })
+        );
         assert_eq!(route(&["herdr", "--help"]), Ok(LocalHelp));
         // Anything else is refused before any resolve/spawn, so a refusal
         // can never fall through to local execution.
@@ -989,11 +1010,33 @@ mod tests {
         let remote = posix_shell_split(argv.last().expect("remote command")).unwrap();
         assert_eq!(remote, ["herdr", "--session", "work", "agent", "list"]);
         assert!(ROUTABLE_SUBCOMMANDS.contains(&"agent"));
+        assert!(ROUTABLE_SUBCOMMANDS.contains(&"decision"));
         assert!(ROUTABLE_SUBCOMMANDS.contains(&"pane"));
         assert!(ROUTABLE_SUBCOMMANDS.contains(&"workspace"));
         assert!(ROUTABLE_SUBCOMMANDS.contains(&"worktree"));
         assert!(!ROUTABLE_SUBCOMMANDS.contains(&"run"));
         assert!(!ROUTABLE_SUBCOMMANDS.contains(&"machine"));
+    }
+
+    #[test]
+    fn route_targets_local_only_covers_decision() {
+        let route = MachineRoute {
+            label_or_id: "local".to_string(),
+        };
+        let decision_args = vec![
+            "herdr".to_string(),
+            "decision".to_string(),
+            "answer".to_string(),
+            "dec-1".to_string(),
+            "yes".to_string(),
+        ];
+        assert!(route_targets_local(&decision_args, &route));
+        let agent_args = vec!["herdr".to_string(), "agent".to_string(), "list".to_string()];
+        assert!(!route_targets_local(&agent_args, &route));
+        let saved_route = MachineRoute {
+            label_or_id: "office".to_string(),
+        };
+        assert!(!route_targets_local(&decision_args, &saved_route));
     }
 
     fn test_route_profile() -> MachineProfile {

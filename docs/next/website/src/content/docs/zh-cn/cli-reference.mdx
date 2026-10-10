@@ -305,13 +305,16 @@ herdr wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [
 
 ```bash
 herdr decision ask --kind ask --title "Continue?" --option yes:Yes:approve --option no:No:reject [--body TEXT] [--allow-text] [--timeout SECS]
-herdr decision answer <decision_id> <option_id> [--text TEXT] [--responder NAME]
+herdr decision answer <decision_id> <option_id> [--text TEXT] [--responder NAME] [--machine LABEL_OR_ID]
 herdr decision list [--status pending|answered|expired|cancelled]
 herdr decision get <decision_id>
 herdr decision cancel <decision_id>
+herdr decision watch [--all-machines]
 ```
 
 `decision ask` 创建决策并等待其解决,然后输出决策 JSON。退出码:answered 为 0、expired 为 3、cancelled 为 4。在 Herdr 窗格内运行时会把调用方窗格记入 `origin.pane_id`。决策会向 `events.subscribe` 订阅者和插件的 `[[events]]` 挂钩发出 `decision.created` 和 `decision.resolved` 事件。
+
+`decision watch` 持续运行,每个事件输出一行已刷新的 JSON: `machine_up`、每个待处理决策一条 `created`、随后按变化输出 `created`/`resolved`,连接断开时输出带 reason 的 `machine_down`(重连后重新输出 `machine_up` 和全部待处理决策)。`--all-machines` 会以各已启用 SSH 保存机器的 id 和显示名转发其行;一台机器失败不会中断其他流,Tailscale SSH 认证横幅会变为带 check URL 的 `machine_down`(十分钟后重试,不打开浏览器)。`decision answer --machine <label-or-id>` 回答保存机器上的决策;`--machine local` 或省略该参数回答本机服务器。
 
 ## 智能体状态报告
 

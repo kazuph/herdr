@@ -527,7 +527,7 @@ herdr run --label tests -- cargo test
 - `--no-session` runs monolithically without server/client.
 - `--session <name>` uses or creates a named persistent session.
 - `--remote <target>` attaches through SSH to a remote Herdr server.
-- `--machine <label-or-id>` routes `agent`, `pane`, `workspace`, or `worktree` to a saved SSH machine without opening a Herdr window.
+- `--machine <label-or-id>` routes `agent`, `decision`, `pane`, `workspace`, or `worktree` to a saved SSH machine without opening a Herdr window. `local` targets this machine's server for `decision`.
 - `--default-config` prints the default configuration.
 - `--version`, `-V` prints the version.
 - `--help`, `-h` shows this help.
@@ -556,6 +556,30 @@ fn run_machine_routed(args: &[String], route: &machine::MachineRoute) -> i32 {
             eprintln!("run 'herdr --help' for usage");
             return code;
         }
+    }
+    // `herdr --machine local decision …` runs against this machine's server,
+    // matching the `local` machine id `decision watch` reports.
+    if machine::route_targets_local(args, route) {
+        return match cli::maybe_run(args) {
+            Ok(cli::CommandOutcome::Handled(code)) => code,
+            Ok(cli::CommandOutcome::NotCli) => {
+                eprintln!("error: --machine local requires a subcommand");
+                2
+            }
+            Err(err) if cli::protocol_mismatch_was_reported(&err) => 1,
+            Err(err) if cli::server_not_running_was_reported(&err) => {
+                if let Some(response) = cli::server_not_running_reported_response(&err) {
+                    if let Ok(json) = serde_json::to_string(response) {
+                        eprintln!("{json}");
+                    }
+                }
+                1
+            }
+            Err(err) => {
+                eprintln!("error: {err}");
+                1
+            }
+        };
     }
     let catalog = machine::load();
     let profile = match catalog.resolve(&route.label_or_id) {

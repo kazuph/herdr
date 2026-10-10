@@ -306,13 +306,16 @@ herdr wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [
 
 ```bash
 herdr decision ask --kind ask --title "Continue?" --option yes:Yes:approve --option no:No:reject [--body TEXT] [--allow-text] [--timeout SECS]
-herdr decision answer <decision_id> <option_id> [--text TEXT] [--responder NAME]
+herdr decision answer <decision_id> <option_id> [--text TEXT] [--responder NAME] [--machine LABEL_OR_ID]
 herdr decision list [--status pending|answered|expired|cancelled]
 herdr decision get <decision_id>
 herdr decision cancel <decision_id>
+herdr decision watch [--all-machines]
 ```
 
 `decision ask` は判断待ちを作成して解決まで待ち、判断待ちの JSON を出力します。終了コードは answered が 0、expired が 3、cancelled が 4 です。Herdr ペイン内で実行すると `origin.pane_id` に呼び出し元ペインが記録されます。判断待ちは `events.subscribe` の購読者とプラグインの `[[events]]` フックへ向けて `decision.created` と `decision.resolved` イベントを発行します。
+
+`decision watch` は動き続け、イベントごとに flush 済みの JSON を1行ずつ出力します: `machine_up`、pending の判断待ちごとの `created`、以後は変化に応じた `created`/`resolved`、接続が切れた時は reason 付きの `machine_down` です（再接続では `machine_up` と pending 全件を出し直します）。`--all-machines` では有効な保存 SSH マシンすべての分も保存マシンの id・表示名で流れ、1台の失敗は他を止めず、Tailscale SSH の認証バナーはチェック URL 入りの `machine_down` になります（10分後にリトライ、ブラウザは開きません）。`decision answer --machine <label-or-id>` は保存マシン上の判断待ちへ回答し、`--machine local` または省略は手元の server へ回答します。
 
 ## エージェント状態報告
 
