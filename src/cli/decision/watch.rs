@@ -906,7 +906,7 @@ mod tests {
         fn pending(&mut self) -> io::Result<Vec<Decision>> {
             match &self.pending {
                 Ok(decisions) => Ok(decisions.clone()),
-                Err(_) => Err(io::Error::other("pending failed")),
+                Err(err) => Err(io::Error::other(err.to_string())),
             }
         }
 
