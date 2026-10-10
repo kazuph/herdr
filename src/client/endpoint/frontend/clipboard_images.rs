@@ -30,10 +30,8 @@ fn remote_paste_target(
     }
     let (key, popup) = if let Some(key) = input::popup_target(frontend) {
         (key, true)
-    } else if let Some(key) = input::focused_pane(frontend) {
-        (key, false)
     } else {
-        return None;
+        (input::focused_pane(frontend)?, false)
     };
     if copy::active(frontend) && (!popup || copy::search_active(frontend)) {
         return None;
