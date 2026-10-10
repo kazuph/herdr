@@ -6,6 +6,8 @@ use crate::api::schema::{
     DecisionStatus, DecisionWaitParams, Method, PaneCurrentParams, Request,
 };
 
+mod watch;
+
 const DECISION_WAIT_RETRY_DELAY: Duration = Duration::from_millis(300);
 
 const DECISION_ASK_USAGE: &str = "usage: herdr decision ask --kind <command_guard|tool_permission|agent_prompt|ask> --title <text> [--body <text>] --option <id:label[:approve|reject|other]>... [--allow-text] [--timeout <secs>]";
@@ -26,6 +28,7 @@ pub(super) fn run_decision_command(args: &[String]) -> std::io::Result<i32> {
         "list" => decision_list(&args[1..]),
         "get" => decision_get(&args[1..]),
         "cancel" => decision_cancel(&args[1..]),
+        "watch" => watch::run_watch(&args[1..]),
         "help" | "--help" | "-h" => {
             print_decision_help();
             Ok(0)
@@ -425,6 +428,7 @@ fn print_decision_help() {
     eprintln!("  {DECISION_LIST_USAGE}");
     eprintln!("  usage: herdr decision get <decision_id>");
     eprintln!("  usage: herdr decision cancel <decision_id>");
+    eprintln!("  {}", watch::DECISION_WATCH_USAGE);
 }
 
 #[cfg(test)]
