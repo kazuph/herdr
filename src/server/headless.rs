@@ -576,6 +576,10 @@ impl HeadlessServer {
                 needs_full_render = true;
                 crate::render_prof::event("full_render_cause.metadata_expiry");
             }
+            if self.app.expire_due_decisions(Instant::now()) {
+                needs_render = true;
+                crate::render_prof::event("render.request.decision_expiry");
+            }
 
             // 3. Drain API requests.
             if self.pane_graphics_runtime_active() {
@@ -3242,7 +3246,8 @@ impl HeadlessServer {
             return false;
         }
 
-        let metadata_expired = self.app.expire_due_metadata(Instant::now());
+        let metadata_expired = self.app.expire_due_metadata(Instant::now())
+            | self.app.expire_due_decisions(Instant::now());
         if let api::schema::Method::PaneFocus(target) = &msg.request.method {
             if target.viewer.is_some() {
                 let response = self.route_viewer_pane_focus(&msg.request.id, target);
@@ -4756,6 +4761,9 @@ mod tests {
         let config = crate::config::Config::default();
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = crate::app::App::new(&config, true, None, api_rx, event_hub);
+        // Mirror the first expiry rescan a running server performs: with no
+        // pending decisions there is no decision deadline to aggregate.
+        app.decision_expiry_deadline = None;
         app.state.local_sound_playback = false;
         app.local_terminal_notifications = false;
         app.local_input_source_switch = false;

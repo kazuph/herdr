@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::agents::{AgentInfo, AgentRestoreActionInfo};
 use super::common::{ClientWindowTitleReason, NotificationShowReason};
+use super::decisions::Decision;
 use super::events::EventEnvelope;
 use super::messages::MsgMessage;
 use super::panes::{
@@ -117,6 +118,12 @@ pub enum ResponseResult {
     },
     MsgRooms {
         rooms: Vec<String>,
+    },
+    Decision {
+        decision: Decision,
+    },
+    DecisionList {
+        decisions: Vec<Decision>,
     },
     RunLogOpened {
         caller_pane: Option<String>,

@@ -108,8 +108,21 @@ Raw socket method names use dot notation:
 | Agent | `agent.list`, `agent.get`, `agent.read`, `agent.explain`, `agent.send`, `agent.rename`, `agent.focus`, `agent.start` |
 | Events | `events.subscribe`, `events.wait` |
 | Plugins | `plugin.link`, `plugin.list`, `plugin.unlink`, `plugin.enable`, `plugin.disable`, `plugin.action.list`, `plugin.action.invoke`, `plugin.log.list`, `plugin.pane.open`, `plugin.pane.focus`, `plugin.pane.close` |
+| Decision | `decision.create`, `decision.get`, `decision.list`, `decision.wait`, `decision.answer`, `decision.cancel` |
 
 Some CLI commands are conveniences around these methods. For example, `herdr agent wait` resolves an agent target and then subscribes to pane agent state events.
+
+Decision methods manage server-owned pending decisions: questions or
+approvals that any connected client (CLI, plugin, or integration) can answer.
+`decision.create` stores a pending decision with a `dec-` id and emits
+`decision.created`. `decision.answer` resolves it with the first valid answer
+only; later answers fail with `decision_already_resolved`. `decision.cancel`
+resolves without an answer, and decisions with `timeout_ms` expire server-side.
+`decision.wait` blocks until the decision leaves `pending` and returns the
+resolved record, or returns the still-pending record when `timeout_ms` passes.
+Every resolution emits `decision.resolved` with the full decision record, so
+plugins can hook `decision.created` and `decision.resolved` to forward pending
+decisions to other surfaces.
 
 `session.snapshot` returns a one-time bootstrap snapshot for clients that keep
 their own local runtime cache. The response includes version/protocol metadata,
@@ -732,6 +745,10 @@ Layout event subscriptions include `layout.updated`. The event carries the
 updated `PaneLayoutSnapshot` for one tab. Clients that bootstrap with
 `session.snapshot` should replace the cached layout with the same
 `workspace_id` and `tab_id`.
+
+Decision event subscriptions include `decision.created` and
+`decision.resolved`. `decision.resolved` fires for answered, expired, and
+cancelled decisions alike; both payloads carry the full decision record.
 
 Worktree event subscriptions include `worktree.created`, `worktree.opened`, and `worktree.removed`. Worktree events describe Git checkout lifecycle. `worktree.created` includes the opened `workspace` and created `worktree`. `worktree.opened` includes the target `workspace`, opened `worktree`, and `already_open`. `worktree.removed` includes the `workspace_id`, removed `worktree`, and `forced`.
 

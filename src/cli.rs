@@ -14,6 +14,7 @@ mod agent;
 mod api;
 mod comms;
 mod completion;
+mod decision;
 mod integration;
 mod machine;
 mod notification;
@@ -93,6 +94,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "inbox" => comms::msg_inbox(&args[2..])?,
         "job" => comms::run_job_command(&args[2..])?,
         "msg" => comms::run_msg_command(&args[2..])?,
+        "decision" => decision::run_decision_command(&args[2..])?,
         "wait" => run_wait_command(&args[2..])?,
         "integration" => integration::run_integration_command(&args[2..])?,
         "machine" => machine::run_machine_command(&args[2..])?,

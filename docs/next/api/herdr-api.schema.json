@@ -79,6 +79,203 @@
           ],
           "type": "string"
         },
+        "Decision": {
+          "properties": {
+            "allow_text": {
+              "type": "boolean"
+            },
+            "answer": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/event/$defs/DecisionAnswer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "created_unix_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "decision_id": {
+              "type": "string"
+            },
+            "expires_unix_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "kind": {
+              "$ref": "#/schemas/event/$defs/DecisionKind"
+            },
+            "options": {
+              "items": {
+                "$ref": "#/schemas/event/$defs/DecisionOption"
+              },
+              "type": "array"
+            },
+            "origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/event/$defs/DecisionOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "$ref": "#/schemas/event/$defs/DecisionStatus"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "decision_id",
+            "kind",
+            "title",
+            "options",
+            "allow_text",
+            "created_unix_ms",
+            "status"
+          ],
+          "type": "object"
+        },
+        "DecisionAnswer": {
+          "properties": {
+            "answered_unix_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "option_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "responder": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "answered_unix_ms"
+          ],
+          "type": "object"
+        },
+        "DecisionKind": {
+          "enum": [
+            "command_guard",
+            "tool_permission",
+            "agent_prompt",
+            "ask"
+          ],
+          "type": "string"
+        },
+        "DecisionOption": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/schemas/event/$defs/DecisionOptionRole",
+              "default": "other"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "type": "object"
+        },
+        "DecisionOptionRole": {
+          "enum": [
+            "approve",
+            "reject",
+            "other"
+          ],
+          "type": "string"
+        },
+        "DecisionOrigin": {
+          "properties": {
+            "agent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "machine": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "DecisionStatus": {
+          "enum": [
+            "pending",
+            "answered",
+            "expired",
+            "cancelled"
+          ],
+          "type": "string"
+        },
         "EventData": {
           "oneOf": [
             {
@@ -691,6 +888,38 @@
                 "layout"
               ],
               "type": "object"
+            },
+            {
+              "properties": {
+                "decision": {
+                  "$ref": "#/schemas/event/$defs/Decision"
+                },
+                "type": {
+                  "const": "decision_created",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "decision"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "decision": {
+                  "$ref": "#/schemas/event/$defs/Decision"
+                },
+                "type": {
+                  "const": "decision_resolved",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "decision"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -720,7 +949,9 @@
             "pane_exited",
             "pane_agent_detected",
             "pane_agent_status_changed",
-            "layout_updated"
+            "layout_updated",
+            "decision_created",
+            "decision_resolved"
           ],
           "type": "string"
         },
@@ -1688,6 +1919,233 @@
             "plugin_action"
           ],
           "type": "string"
+        },
+        "DecisionAnswerParams": {
+          "properties": {
+            "decision_id": {
+              "type": "string"
+            },
+            "option_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "responder": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "decision_id"
+          ],
+          "type": "object"
+        },
+        "DecisionCancelParams": {
+          "properties": {
+            "decision_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "decision_id"
+          ],
+          "type": "object"
+        },
+        "DecisionCreateParams": {
+          "properties": {
+            "allow_text": {
+              "default": false,
+              "type": "boolean"
+            },
+            "body": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "$ref": "#/schemas/request/$defs/DecisionKind"
+            },
+            "options": {
+              "items": {
+                "$ref": "#/schemas/request/$defs/DecisionOption"
+              },
+              "type": "array"
+            },
+            "origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/request/$defs/DecisionOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "options"
+          ],
+          "type": "object"
+        },
+        "DecisionGetParams": {
+          "properties": {
+            "decision_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "decision_id"
+          ],
+          "type": "object"
+        },
+        "DecisionKind": {
+          "enum": [
+            "command_guard",
+            "tool_permission",
+            "agent_prompt",
+            "ask"
+          ],
+          "type": "string"
+        },
+        "DecisionListParams": {
+          "properties": {
+            "status": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/request/$defs/DecisionStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "DecisionOption": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/schemas/request/$defs/DecisionOptionRole",
+              "default": "other"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "type": "object"
+        },
+        "DecisionOptionRole": {
+          "enum": [
+            "approve",
+            "reject",
+            "other"
+          ],
+          "type": "string"
+        },
+        "DecisionOrigin": {
+          "properties": {
+            "agent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "machine": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "DecisionStatus": {
+          "enum": [
+            "pending",
+            "answered",
+            "expired",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        "DecisionWaitParams": {
+          "properties": {
+            "decision_id": {
+              "type": "string"
+            },
+            "timeout_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "decision_id"
+          ],
+          "type": "object"
         },
         "EmptyParams": {
           "type": "object"
@@ -4461,6 +4919,30 @@
                 "type"
               ],
               "type": "object"
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "decision.created",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "decision.resolved",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -5663,6 +6145,102 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/EmptyParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "decision.create",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/DecisionCreateParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "decision.get",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/DecisionGetParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "decision.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/DecisionListParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "decision.wait",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/DecisionWaitParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "decision.answer",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/DecisionAnswerParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "decision.cancel",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/DecisionCancelParams"
             }
           },
           "required": [
@@ -7178,6 +7756,203 @@
           ],
           "type": "string"
         },
+        "Decision": {
+          "properties": {
+            "allow_text": {
+              "type": "boolean"
+            },
+            "answer": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/success_response/$defs/DecisionAnswer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "created_unix_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "decision_id": {
+              "type": "string"
+            },
+            "expires_unix_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "kind": {
+              "$ref": "#/schemas/success_response/$defs/DecisionKind"
+            },
+            "options": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/DecisionOption"
+              },
+              "type": "array"
+            },
+            "origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/success_response/$defs/DecisionOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "$ref": "#/schemas/success_response/$defs/DecisionStatus"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "decision_id",
+            "kind",
+            "title",
+            "options",
+            "allow_text",
+            "created_unix_ms",
+            "status"
+          ],
+          "type": "object"
+        },
+        "DecisionAnswer": {
+          "properties": {
+            "answered_unix_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "option_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "responder": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "answered_unix_ms"
+          ],
+          "type": "object"
+        },
+        "DecisionKind": {
+          "enum": [
+            "command_guard",
+            "tool_permission",
+            "agent_prompt",
+            "ask"
+          ],
+          "type": "string"
+        },
+        "DecisionOption": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/schemas/success_response/$defs/DecisionOptionRole",
+              "default": "other"
+            }
+          },
+          "required": [
+            "id",
+            "label"
+          ],
+          "type": "object"
+        },
+        "DecisionOptionRole": {
+          "enum": [
+            "approve",
+            "reject",
+            "other"
+          ],
+          "type": "string"
+        },
+        "DecisionOrigin": {
+          "properties": {
+            "agent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "command": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "machine": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "DecisionStatus": {
+          "enum": [
+            "pending",
+            "answered",
+            "expired",
+            "cancelled"
+          ],
+          "type": "string"
+        },
         "EventData": {
           "oneOf": [
             {
@@ -7790,6 +8565,38 @@
                 "layout"
               ],
               "type": "object"
+            },
+            {
+              "properties": {
+                "decision": {
+                  "$ref": "#/schemas/success_response/$defs/Decision"
+                },
+                "type": {
+                  "const": "decision_created",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "decision"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "decision": {
+                  "$ref": "#/schemas/success_response/$defs/Decision"
+                },
+                "type": {
+                  "const": "decision_resolved",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "decision"
+              ],
+              "type": "object"
             }
           ]
         },
@@ -7834,7 +8641,9 @@
             "pane_exited",
             "pane_agent_detected",
             "pane_agent_status_changed",
-            "layout_updated"
+            "layout_updated",
+            "decision_created",
+            "decision_resolved"
           ],
           "type": "string"
         },
@@ -9874,6 +10683,41 @@
               "required": [
                 "type",
                 "rooms"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "decision": {
+                  "$ref": "#/schemas/success_response/$defs/Decision"
+                },
+                "type": {
+                  "const": "decision",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "decision"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "decisions": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/Decision"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "decision_list",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "decisions"
               ],
               "type": "object"
             },

@@ -104,6 +104,7 @@ impl App {
         };
         let stream_active = msg.stream_active.clone();
         let mut changed = self.expire_due_metadata(Instant::now());
+        changed |= self.expire_due_decisions(Instant::now());
         changed |= crate::api::request_changes_ui(&msg.request);
         let skip_default_workspace = matches!(
             &msg.request.method,
@@ -782,6 +783,7 @@ impl App {
             self.next_auto_update_check,
             self.next_agent_manifest_update_check,
             self.agent_metadata_deadline,
+            self.decision_expiry_deadline,
             self.pending_agent_resume_deadline,
             self.session_save_deadline,
             self.selection_autoscroll_deadline,
@@ -1070,6 +1072,7 @@ mod tests {
             tokio::sync::mpsc::unbounded_channel().1,
             crate::api::EventHub::default(),
         );
+        app.decision_expiry_deadline = None;
         app.state.sidebar_detail_view = crate::app::state::SidebarDetailView::Agents;
         let due = app.last_jobs_refresh + super::super::JOBS_REFRESH_INTERVAL;
         assert_eq!(
@@ -1093,6 +1096,7 @@ mod tests {
             tokio::sync::mpsc::unbounded_channel().1,
             crate::api::EventHub::default(),
         );
+        app.decision_expiry_deadline = None;
         app.state.workspaces.push(Workspace::test_new("test"));
         let now = Instant::now();
         app.last_git_remote_status_refresh = now - super::super::GIT_REMOTE_STATUS_REFRESH_INTERVAL;

@@ -51,6 +51,16 @@ CREATE INDEX IF NOT EXISTS idx_dispatch_reply ON dispatches(reply_to);
 CREATE INDEX IF NOT EXISTS idx_dispatch_kind_id ON dispatches(kind, id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dispatch_external ON dispatches(kind, external_id);
 
+CREATE TABLE IF NOT EXISTS decisions (
+  decision_id     TEXT PRIMARY KEY,
+  status          TEXT NOT NULL,
+  expires_unix_ms INTEGER,
+  created_unix_ms INTEGER NOT NULL,
+  record_json     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_status ON decisions(status);
+CREATE INDEX IF NOT EXISTS idx_decisions_pending_expiry ON decisions(status, expires_unix_ms);
+
 CREATE VIEW IF NOT EXISTS v_reply_latency AS
 SELECT d.id, d.room, d.project,
        fa.name AS asked_by,  fa.model AS asked_model,
@@ -103,6 +113,14 @@ impl DispatchStore {
 
     pub(crate) fn open_active() -> rusqlite::Result<Self> {
         Self::open_at(Self::active_path())
+    }
+
+    pub(crate) fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    pub(crate) fn conn_mut(&mut self) -> &mut Connection {
+        &mut self.conn
     }
 
     pub(crate) fn open_at(path: PathBuf) -> rusqlite::Result<Self> {

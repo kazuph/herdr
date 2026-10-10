@@ -158,6 +158,10 @@ pub struct App {
     pub(crate) update_manifest_check_enabled: bool,
     pub(crate) loaded_host_cursor: crate::config::HostCursorModeConfig,
     pub(crate) agent_metadata_deadline: Option<Instant>,
+    /// Next server-owned decision expiry check. `Some(now)` at startup forces a
+    /// one-time rescan so decisions that outlived a restart/handoff still
+    /// expire; afterwards it tracks the earliest pending `expires_unix_ms`.
+    pub(crate) decision_expiry_deadline: Option<Instant>,
     pub(crate) pending_agent_resume_deadline: Option<Instant>,
     pub(crate) pending_agent_resume_wait: Duration,
     pub(crate) headless_agent_restore_enabled: bool,
@@ -855,6 +859,7 @@ impl App {
             update_manifest_check_enabled: config.update.manifest_check,
             loaded_host_cursor: config.ui.host_cursor,
             agent_metadata_deadline: None,
+            decision_expiry_deadline: Some(Instant::now()),
             pending_agent_resume_deadline: None,
             pending_agent_resume_wait: Duration::from_millis(config.agent_restore.restore_delay_ms)
                 .max(PENDING_AGENT_RESUME_THEME_WAIT),
@@ -1041,6 +1046,9 @@ impl App {
                 needs_render = true;
             }
             if self.expire_due_metadata(Instant::now()) {
+                needs_render = true;
+            }
+            if self.expire_due_decisions(Instant::now()) {
                 needs_render = true;
             }
             if self.drain_api_requests() {
@@ -1962,13 +1970,17 @@ mod tests {
 
     fn test_app() -> App {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
-        App::new(
+        let mut app = App::new(
             &Config::default(),
             true,
             None,
             api_rx,
             crate::api::EventHub::default(),
-        )
+        );
+        // Mirror the first expiry rescan a running server performs: with no
+        // pending decisions there is no decision deadline to aggregate.
+        app.decision_expiry_deadline = None;
+        app
     }
 
     fn unique_temp_path(name: &str) -> std::path::PathBuf {

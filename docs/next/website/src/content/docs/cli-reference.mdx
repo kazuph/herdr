@@ -330,6 +330,25 @@ herdr wait agent-status <pane_id> --status <idle|working|blocked|done|unknown> [
 
 Use `wait output` for normal commands and servers. Use `wait agent-status` for coding agents.
 
+## Decisions
+
+Server-owned pending decisions let any connected client answer a question or
+approval once, with the first answer winning:
+
+```bash
+herdr decision ask --kind ask --title "Continue?" --option yes:Yes:approve --option no:No:reject [--body TEXT] [--allow-text] [--timeout SECS]
+herdr decision answer <decision_id> <option_id> [--text TEXT] [--responder NAME]
+herdr decision list [--status pending|answered|expired|cancelled]
+herdr decision get <decision_id>
+herdr decision cancel <decision_id>
+```
+
+`decision ask` creates the decision, waits for it to resolve, and prints the
+decision JSON. Its exit code is 0 when answered, 3 when expired, and 4 when
+cancelled. Inside a Herdr pane it records the caller pane in `origin.pane_id`.
+Decisions emit `decision.created` and `decision.resolved` events for
+`events.subscribe` consumers and plugin `[[events]]` hooks.
+
 ## Agent state reporting
 
 ```bash

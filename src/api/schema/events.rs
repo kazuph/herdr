@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::common::{AgentStatus, ReadSource};
+use super::decisions::Decision;
 use super::panes::{PaneInfo, PaneReadResult, PaneScrollInfo};
 use super::tabs::TabInfo;
 use super::workspaces::WorkspaceInfo;
@@ -80,6 +81,10 @@ pub enum Subscription {
     PaneScrollChanged { pane_id: String },
     #[serde(rename = "layout.updated")]
     LayoutUpdated {},
+    #[serde(rename = "decision.created")]
+    DecisionCreated {},
+    #[serde(rename = "decision.resolved")]
+    DecisionResolved {},
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -215,6 +220,8 @@ pub enum EventKind {
     PaneAgentDetected,
     PaneAgentStatusChanged,
     LayoutUpdated,
+    DecisionCreated,
+    DecisionResolved,
 }
 
 impl EventKind {
@@ -245,6 +252,8 @@ impl EventKind {
             EventKind::PaneAgentDetected => "pane.agent_detected",
             EventKind::PaneAgentStatusChanged => "pane.agent_status_changed",
             EventKind::LayoutUpdated => "layout.updated",
+            EventKind::DecisionCreated => "decision.created",
+            EventKind::DecisionResolved => "decision.resolved",
         }
     }
 }
@@ -276,6 +285,8 @@ pub const KNOWN_EVENT_KINDS: &[EventKind] = &[
     EventKind::PaneAgentDetected,
     EventKind::PaneAgentStatusChanged,
     EventKind::LayoutUpdated,
+    EventKind::DecisionCreated,
+    EventKind::DecisionResolved,
 ];
 
 pub const PLUGIN_HOOK_EVENT_KINDS: &[EventKind] = &[
@@ -300,6 +311,8 @@ pub const PLUGIN_HOOK_EVENT_KINDS: &[EventKind] = &[
     EventKind::PaneExited,
     EventKind::PaneAgentDetected,
     EventKind::PaneAgentStatusChanged,
+    EventKind::DecisionCreated,
+    EventKind::DecisionResolved,
 ];
 
 #[cfg(test)]
@@ -349,6 +362,13 @@ mod known_event_name_tests {
         assert!(!names.contains(&"workspace.metadata_updated"));
         assert!(!names.contains(&"pane.updated"));
         assert!(names.contains(&"pane.moved"));
+    }
+
+    #[test]
+    fn plugin_hook_event_names_include_decision_events() {
+        let names = plugin_hook_event_names();
+        assert!(names.contains(&"decision.created"));
+        assert!(names.contains(&"decision.resolved"));
     }
 }
 
@@ -540,5 +560,11 @@ pub enum EventData {
     },
     LayoutUpdated {
         layout: super::panes::PaneLayoutSnapshot,
+    },
+    DecisionCreated {
+        decision: Decision,
+    },
+    DecisionResolved {
+        decision: Decision,
     },
 }
