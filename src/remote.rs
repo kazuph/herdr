@@ -10,7 +10,8 @@ pub(crate) use unix::*;
 // Only the Unix saved-SSH path reads the fields; Windows rejects saved SSH.
 #[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct SavedSshHooks<'a> {
-    /// Identifies the saved machine for per-machine auth-URL browser throttling.
+    /// Identifies the saved machine; the private bridge socket path is derived
+    /// from it so concurrent machines never share a forwarding socket.
     pub(crate) profile_id: &'a str,
     /// Set when the endpoint is retired or the client is shutting down; the
     /// attempt kills its ssh child and returns instead of waiting on.
@@ -29,6 +30,40 @@ pub(crate) fn connect_saved_ssh(
         std::io::ErrorKind::Unsupported,
         "saved SSH endpoints are not supported on Windows yet",
     ))
+}
+
+/// Marks a saved-SSH connect whose Tailscale check approval wait expired
+/// unapproved. It is distinct from every other connect failure so the endpoint
+/// supervisor can park the machine at "click to retry" instead of
+/// auto-reconnecting into a fresh authentication URL.
+#[derive(Debug)]
+pub(crate) struct TailscaleApprovalTimeout(String);
+
+impl TailscaleApprovalTimeout {
+    /// `action` is the existing timeout prefix (for example
+    /// "noninteractive SSH command timed out"); the message keeps naming the
+    /// approval wait and adds the retry hint plus the last URL for display.
+    pub(crate) fn new(action: &str, last_url: &str) -> Self {
+        Self(format!(
+            "{action} waiting for Tailscale SSH approval; click the machine to retry (last approval URL: {last_url})"
+        ))
+    }
+}
+
+impl std::fmt::Display for TailscaleApprovalTimeout {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TailscaleApprovalTimeout {}
+
+/// True only for the unapproved Tailscale approval wait; ordinary timeouts and
+/// other failures keep the existing automatic retry handling.
+pub(crate) fn saved_ssh_failure_is_tailscale_approval_timeout(error: &std::io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.downcast_ref::<TailscaleApprovalTimeout>().is_some())
 }
 
 // Fixed upstream remote/saved.rs: authentication/configuration failures affect only this endpoint.

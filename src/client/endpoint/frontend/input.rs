@@ -475,13 +475,20 @@ fn mouse_input(
                     }
                 }
                 ChromeTarget::Machine(id) => {
-                    if !frontend.chrome.collapsed_machines.remove(id) {
-                        frontend.chrome.collapsed_machines.insert(id.clone());
-                    }
-                    RuntimeUpdate {
-                        repaint: true,
-                        ..RuntimeUpdate::default()
-                    }
+                    // A machine parked at its unapproved Tailscale wait retries
+                    // on click; other machines keep the collapse toggle.
+                    frontend
+                        .runtime
+                        .retry_parked_endpoint(id, Instant::now())
+                        .unwrap_or_else(|| {
+                            if !frontend.chrome.collapsed_machines.remove(id) {
+                                frontend.chrome.collapsed_machines.insert(id.clone());
+                            }
+                            RuntimeUpdate {
+                                repaint: true,
+                                ..RuntimeUpdate::default()
+                            }
+                        })
                 }
                 ChromeTarget::Workspace(key) => frontend.runtime.activate(
                     key.endpoint.clone(),

@@ -85,7 +85,7 @@ pub(super) fn wait_with_output_timeout(
         })
     };
     let mut deadline = Instant::now() + timeout;
-    let mut auth_wait_started = false;
+    let mut auth_wait_url: Option<String> = None;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -103,17 +103,17 @@ pub(super) fn wait_with_output_timeout(
                 ),
             ));
         }
-        if !auth_wait_started {
+        if auth_wait_url.is_none() {
             let url = observed
                 .lock()
                 .ok()
                 .and_then(|seen| tailscale_check_url(seen.as_slice()));
             if let Some(url) = url {
-                auth_wait_started = true;
                 // tailssh itself waits this long for the check approval, so the
                 // same ssh stays alive and resumes once the visit is approved.
                 deadline = Instant::now() + hooks.auth_wait;
                 (hooks.on_auth_url)(&url);
+                auth_wait_url = Some(url);
             }
         }
         if Instant::now() >= deadline {
@@ -121,14 +121,19 @@ pub(super) fn wait_with_output_timeout(
                 child,
                 stdout,
                 stderr,
-                io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    if auth_wait_started {
-                        "noninteractive SSH command timed out waiting for Tailscale SSH approval"
-                    } else {
-                        "noninteractive SSH command timed out"
-                    },
-                ),
+                match &auth_wait_url {
+                    Some(url) => io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        crate::remote::TailscaleApprovalTimeout::new(
+                            "noninteractive SSH command timed out",
+                            url,
+                        ),
+                    ),
+                    None => io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "noninteractive SSH command timed out",
+                    ),
+                },
             ));
         }
         thread::sleep(POLL_INTERVAL);
