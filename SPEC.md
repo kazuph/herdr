@@ -1924,6 +1924,29 @@
 - **検証契約**: Rust unit testsでqueueの対象・順序・カウント・close/reopen・外部解決・切断除去を固定し、実socket経由のactual-process testでクリック→`decision.answer`送信→store反映→外部解決での消去を固定する。隔離server上の`herdr decision ask`とANSI/画面証拠で実地確認する。
 - **デグレ判定**: clientがprojection以外の根拠でpending判断待ちを作る、dialog外クリックやEnterで誤回答できる、閉じた判断待ちを二度と開けない、他マシンへの回答がactive endpoint以外へ届かない。
 
+### 判断待ちの配信とマシン横断回答（decision watch、工程3A）
+- **該当コミット**: feat/decision-watchの実装
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — saberanteなどの外部consumerへ、判断待ちをJSON行のstreamとして配信し、回答を保存マシンへ届ける口を持つ。
+- **目的**: 判断待ちの監視・回答をHerdr画面の外から一つの契約で行えるようにし、consumerがマシンごとの接続管理やpending初期同期を自前で実装しなくて済むようにする。
+- **挙動**:
+  - `herdr decision watch`は1行1JSON objectをstdoutへflushしながら出し続ける長時間コマンドで、親processに止められるまで終わらない。行の形は`{"event":"created","machine":{"id":...,"label":...},"decision":{...}}`、`{"event":"resolved","machine":{...},"decision":{...}}`、`{"event":"machine_down","machine":{...},"reason":"..."}`、`{"event":"machine_up","machine":{...}}`の4種で、`created`のdecisionは`status:"pending"`、`resolved`のdecisionは`answered`/`expired`/`cancelled`の全体を載せる。
+  - 既定ではlocal serverだけを見る。起動直後に`machine_up`（machineは`{"id":"local","label":"Local"}`）を出し、その時点のpending全件を`created`として出し、その後`decision.created`→`created`、`decision.resolved`→`resolved`を流す。接続が切れたら`machine_down`を出して接続し直し、再接続のたびに`machine_up`とその時点のpending全件の`created`を出し直す。`created`は重複しうるため、consumerは`(machine.id, decision.decision_id)`で重複を潰す。
+  - `--all-machines`ではlocalに加えて`machines.json`のenabledな保存マシンごとにsshで`herdr --session <session> decision watch`を起動し、出てくる行の`machine`を保存マシンのidと表示名へ置き換えて流す。1台の失敗はそのマシンのstreamだけに留め、sshが切れたら`machine_down`（reason付き）を出して間隔を空けてつなぎ直し、繰り返し失敗では間隔を伸ばす。
+  - sshの出力にTailscale SSHの`To authenticate, visit: <URL>`が含まれる場合、watchはブラウザを開かず、そのマシンを`machine_down`にしてreasonへ認証が要ることとURLを入れ、10分待ってからリトライする。画面側のsaved endpoint接続の認証URLをブラウザで開く挙動は変えない。
+  - `herdr decision answer`は`--machine <label-or-id>`を受け付け、省略時と`--machine local`は手元のserverへ、保存マシンのlabelまたはidはそのマシンのserverへ回答を送る。回答の結果JSON・終了code・`decision_already_resolved`などのエラーは変更しない。
+- **受け入れ条件**:
+  - `herdr decision watch`がlocalのpending判断待ちを`created`、回答済みを`resolved`として各行1JSON objectで出し、`machine.id`は`local`になる。
+  - `decision.created`/`decision.resolved`がstreamへforwardされ、各decisionにはrecord全体が含まれる。
+  - `created`/`resolved`/`machine_up`/`machine_down`の各行が契約のJSON形になっており、各行はflushされ、パイプの先が閉じたら静かに終わる。
+  - serverとの接続が切れると`machine_down`を出し、つなぎ直しでは`machine_up`とその時点のpending全件の`created`を出し直す。
+  - `--all-machines`が保存マシンの判断待ちをそのマシンのid・表示名の`machine`で流し、1台の失敗が他マシン・localのstreamを止めない。
+  - sshでTailscale認証の行を見たらブラウザを開かず`machine_down`（認証が要ることとURL入りのreason）にし、そのマシンは10分後にリトライする。
+  - `decision answer --machine <保存マシン>`がそのマシンのserverへ回答を届け、`--machine`省略・`--machine local`は手元のserverを使い、結果と終了codeは従来どおりで2回目の回答は`decision_already_resolved`になる。
+  - 既存のdecision API・event・CLI・UI・socket protocol・画面側saved endpointの認証挙動を変えない。
+- **検証契約**: Rust unit testsで行の形・再接続・machine置換・1台失敗の隔離・Tailscale認証のmachine_down化と10分待機・`answer --machine`の振り分けを固定する。隔離sessionの実serverと検証用の保存マシン経路（偽sshまたは実機）でend-to-endを実地確認する。
+- **デグレ判定**: JSON以外の行や未改行の出力を混ぜる、パイプ切断で落ちる、再接続時にpendingの`created`を出し直さない、失敗したマシンが他streamを巻き込む、Tailscale認証でブラウザを開く、保存マシンへの回答がlocalへ届く、`machine`のid/labelを保存profileの値にしない。
+
 ## G10. 本家最新リリース v0.8.0 と現状fork版の差分・段階取込契約
 
 ### 比較基準と差分範囲

@@ -337,10 +337,11 @@ approval once, with the first answer winning:
 
 ```bash
 herdr decision ask --kind ask --title "Continue?" --option yes:Yes:approve --option no:No:reject [--body TEXT] [--allow-text] [--timeout SECS]
-herdr decision answer <decision_id> <option_id> [--text TEXT] [--responder NAME]
+herdr decision answer <decision_id> <option_id> [--text TEXT] [--responder NAME] [--machine LABEL_OR_ID]
 herdr decision list [--status pending|answered|expired|cancelled]
 herdr decision get <decision_id>
 herdr decision cancel <decision_id>
+herdr decision watch [--all-machines]
 ```
 
 `decision ask` creates the decision, waits for it to resolve, and prints the
@@ -348,6 +349,17 @@ decision JSON. Its exit code is 0 when answered, 3 when expired, and 4 when
 cancelled. Inside a Herdr pane it records the caller pane in `origin.pane_id`.
 Decisions emit `decision.created` and `decision.resolved` events for
 `events.subscribe` consumers and plugin `[[events]]` hooks.
+
+`decision watch` keeps running and prints one flushed JSON line per event:
+`machine_up`, a `created` line per pending decision, then `created`/`resolved`
+as decisions change, and `machine_down` with a reason when the connection
+drops (reconnects re-emit `machine_up` and the pending backlog). With
+`--all-machines` every enabled saved SSH machine streams too, re-tagged with
+its saved machine id and label; a failing machine never stops the others, and
+a Tailscale SSH authentication banner becomes a `machine_down` carrying the
+check URL (retried after ten minutes, no browser is opened). `decision answer
+--machine <label-or-id>` answers a decision on a saved machine; `--machine
+local` or omitting the flag answers this machine's server.
 
 ## Agent state reporting
 
