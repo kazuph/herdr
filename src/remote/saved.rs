@@ -6,6 +6,7 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::Ordering;
+#[cfg(test)]
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -21,12 +22,6 @@ mod process;
 /// approval; matching it keeps one ssh process alive instead of throwing away
 /// a fresh authentication URL on every reconnect attempt.
 const SSH_AUTH_WAIT: Duration = Duration::from_secs(30 * 60);
-/// The browser is opened at most once per machine per this window: every new
-/// ssh attempt mints a fresh URL, and without a cap overnight reconnects would
-/// pile up tabs when approval never comes.
-const AUTH_URL_BROWSER_OPEN_INTERVAL: Duration = Duration::from_secs(30 * 60);
-
-static AUTH_URL_BROWSER_OPENED_AT: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
 
 fn timeout() -> Duration {
     #[cfg(test)]
@@ -78,41 +73,30 @@ fn ssh_command(target: &str) -> Command {
 
 fn open_auth_url(url: &str) -> io::Result<()> {
     #[cfg(test)]
-    if let Some(hook) = test_hooks::open_url_hook() {
-        return hook(url);
+    {
+        if let Some(hook) = test_hooks::open_url_hook() {
+            return hook(url);
+        }
+        // A test build never opens the real browser: with no hook installed the
+        // open is only recorded so a hookless test still observes it.
+        test_hooks::record_auth_url_open(url);
+        Ok(())
     }
-    crate::platform::open_url(url)
+    #[cfg(not(test))]
+    {
+        crate::platform::open_url(url)
+    }
 }
 
-/// Surface a Tailscale SSH check URL: the machine's status line always carries
-/// the newest URL so it can be opened from another terminal, while the local
-/// browser is opened at most once per machine per AUTH_URL_BROWSER_OPEN_INTERVAL.
-fn note_tailscale_auth_url(profile_id: &str, url: &str, status: &dyn Fn(&str)) {
+/// Surface a Tailscale SSH check URL: the machine's status line carries the
+/// newest URL so it can be opened from another terminal, and the local browser
+/// opens it exactly once for this wait. A wait that ends unapproved parks the
+/// machine instead of reconnecting, so a tab can only reappear after a new
+/// wait — the first connect of a fresh client or a user retry.
+fn note_tailscale_auth_url(url: &str, status: &dyn Fn(&str)) {
     status(&format!("waiting for Tailscale SSH approval: {url}"));
-    let should_open = {
-        let mut opened_at = AUTH_URL_BROWSER_OPENED_AT
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let now = Instant::now();
-        let due = opened_at
-            .iter()
-            .find(|(id, _)| id == profile_id)
-            .is_none_or(|(_, previous)| {
-                now.duration_since(*previous) >= AUTH_URL_BROWSER_OPEN_INTERVAL
-            });
-        if due {
-            if let Some(entry) = opened_at.iter_mut().find(|(id, _)| id == profile_id) {
-                entry.1 = now;
-            } else {
-                opened_at.push((profile_id.to_owned(), now));
-            }
-        }
-        due
-    };
-    if should_open {
-        if let Err(error) = open_auth_url(url) {
-            tracing::warn!(%error, %url, "failed to open the Tailscale SSH approval URL");
-        }
+    if let Err(error) = open_auth_url(url) {
+        tracing::warn!(%error, %url, "failed to open the Tailscale SSH approval URL");
     }
 }
 
@@ -130,7 +114,7 @@ fn read_remote(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut on_auth_url = |url: &str| note_tailscale_auth_url(hooks.profile_id, url, hooks.status);
+    let mut on_auth_url = |url: &str| note_tailscale_auth_url(url, hooks.status);
     process::wait_with_output_timeout(
         command.spawn()?,
         timeout(),
@@ -380,7 +364,7 @@ fn forward_stream(
         .stderr(stderr);
     bridge.child = Some(command.spawn()?);
     let mut deadline = Instant::now() + timeout();
-    let mut auth_wait_started = false;
+    let mut auth_wait_url: Option<String> = None;
     loop {
         let child = bridge
             .child
@@ -396,16 +380,16 @@ fn forward_stream(
         if hooks.cancel.load(Ordering::Acquire) {
             return Err(connect_cancelled());
         }
-        if !auth_wait_started {
+        if auth_wait_url.is_none() {
             // The bridge's stderr lands in this file; watch it so a Tailscale
             // check banner starts the approval wait instead of the 15s timeout.
             if let Some(url) = fs::read(&stderr_path)
                 .ok()
                 .and_then(|bytes| process::tailscale_check_url(&bytes))
             {
-                auth_wait_started = true;
                 deadline = Instant::now() + auth_wait();
-                note_tailscale_auth_url(hooks.profile_id, &url, hooks.status);
+                note_tailscale_auth_url(&url, hooks.status);
+                auth_wait_url = Some(url);
             }
         }
         match crate::ipc::connect_local_stream(&path) {
@@ -418,14 +402,19 @@ fn forward_stream(
             Err(error) => return Err(error),
         }
         if Instant::now() >= deadline {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                if auth_wait_started {
-                    "saved SSH socket forwarding timed out waiting for Tailscale SSH approval"
-                } else {
-                    "saved SSH socket forwarding timed out"
-                },
-            ));
+            return Err(match &auth_wait_url {
+                Some(url) => io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    crate::remote::TailscaleApprovalTimeout::new(
+                        "saved SSH socket forwarding timed out",
+                        url,
+                    ),
+                ),
+                None => io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "saved SSH socket forwarding timed out",
+                ),
+            });
         }
         std::thread::sleep(
             super::BRIDGE_ACCEPT_POLL.min(deadline.saturating_duration_since(Instant::now())),
@@ -516,22 +505,28 @@ pub(crate) mod test_hooks {
         take(&OPEN_URL)
     }
 
+    static AUTH_URL_OPENS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    /// Where a test build records a browser open when no hook is installed.
+    pub(crate) fn record_auth_url_open(url: &str) {
+        AUTH_URL_OPENS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(url.to_owned());
+    }
+
+    pub(crate) fn auth_url_opens() -> Vec<String> {
+        AUTH_URL_OPENS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
     pub(crate) fn clear_auth_url_opens() {
-        AUTH_URL_BROWSER_OPENED_AT
+        AUTH_URL_OPENS
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clear();
-    }
-
-    /// Pretend the machine's last browser open happened `age` ago so the
-    /// 30-minute reopen interval can be exercised without sleeping.
-    pub(crate) fn age_auth_url_open(profile_id: &str, age: Duration) {
-        let mut opened_at = AUTH_URL_BROWSER_OPENED_AT
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some((_, previous)) = opened_at.iter_mut().find(|(id, _)| id == profile_id) {
-            *previous = Instant::now() - age;
-        }
     }
 }
 
@@ -577,6 +572,8 @@ if env("FAKE_SSH_FAIL_TARGET") and env("FAKE_SSH_FAIL_TARGET") == target:
 
 banner = env("FAKE_SSH_BANNER_URL")
 gate = env("FAKE_SSH_APPROVE_FILE")
+if env("FAKE_SSH_BANNER_FORWARD_ONLY") and "-N" not in args:
+    banner = ""
 if banner and not (gate and os.path.exists(gate)):
     sys.stderr.write("# Tailscale SSH requires an additional check.\n")
     sys.stderr.write("# To authenticate, visit: %s\n" % banner)
@@ -683,6 +680,14 @@ sys.exit(0)
             self.with_env_text("FAKE_SSH_BANNER_URL", url)
         }
 
+        /// Only the `-N` socket-forwarding ssh prints the check banner; the
+        /// discovery commands answer immediately, so the approval wait lands in
+        /// the forwarding path instead of a remote probe.
+        pub(crate) fn with_forward_only_banner(self, url: &str) -> Self {
+            self.with_banner(url)
+                .with_env_text("FAKE_SSH_BANNER_FORWARD_ONLY", "1")
+        }
+
         pub(crate) fn with_env(self, name: &str, value: &Path) -> Self {
             std::env::set_var(name, value);
             self
@@ -744,6 +749,7 @@ sys.exit(0)
                 "FAKE_SSH_PID_FILE",
                 "FAKE_SSH_APPROVE_FILE",
                 "FAKE_SSH_BANNER_URL",
+                "FAKE_SSH_BANNER_FORWARD_ONLY",
                 "FAKE_SSH_FAIL_TARGET",
                 "FAKE_SSH_SESSION_SOCKET",
                 "FAKE_SSH_SESSION",
@@ -813,6 +819,21 @@ mod tests {
     }
 
     #[test]
+    fn open_auth_url_without_a_hook_is_only_recorded_never_opened() {
+        let _lock = test_hooks::lock();
+        test_hooks::clear_auth_url_opens();
+        // No open_url hook installed: a test build must record the open instead
+        // of calling the platform browser (the real call is cfg(not(test))
+        // gated out of this binary entirely).
+        open_auth_url("https://login.tailscale.com/a/recorded")
+            .unwrap_or_else(|error| panic!("recorded open failed: {error}"));
+        assert_eq!(
+            test_hooks::auth_url_opens(),
+            ["https://login.tailscale.com/a/recorded"]
+        );
+    }
+
+    #[test]
     fn tailscale_check_url_only_accepts_complete_http_urls() {
         let url = process::tailscale_check_url(
             b"# Tailscale SSH requires an additional check.\n# To authenticate, visit: https://login.tailscale.com/a/abc123\n",
@@ -866,6 +887,7 @@ mod tests {
         assert!(error
             .to_string()
             .contains("waiting for Tailscale SSH approval"));
+        assert!(crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(&error));
         assert_eq!(
             urls.lock().unwrap_or_else(|p| p.into_inner()).as_slice(),
             ["https://login.tailscale.com/a/xyz"]
@@ -895,7 +917,7 @@ mod tests {
                     "fake-host",
                     "saved",
                     &crate::remote::SavedSshHooks {
-                        profile_id: "machine-a",
+                        profile_id: "test-machine",
                         cancel: &cancel,
                         status: &sink,
                     },
@@ -930,14 +952,21 @@ mod tests {
         assert!(fake.all_dead(Duration::from_secs(5)), "ssh child survived");
     }
 
-    /// Run one connect attempt on a scoped worker; it parks inside the
-    /// Tailscale approval wait (the gate file is never created) until `cancel`
-    /// is set, then its ssh child is killed and the attempt returns.
-    fn auth_wait_attempt<'scope, 'env>(
+    fn opened_count(opened: &Arc<Mutex<Vec<String>>>) -> usize {
+        opened
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
+    }
+
+    /// One connect attempt that ends in its unapproved approval wait, on a
+    /// scoped worker so the caller can watch the status meanwhile.
+    fn unapproved_attempt<'scope, 'env>(
         scope: &'scope std::thread::Scope<'scope, 'env>,
         cancel: &'env AtomicBool,
         messages: &'env Arc<Mutex<Vec<String>>>,
-    ) -> std::thread::ScopedJoinHandle<'scope, ()> {
+    ) -> std::thread::ScopedJoinHandle<'scope, io::Result<(crate::ipc::LocalStream, Box<dyn Send>)>>
+    {
         scope.spawn(move || {
             let sink = {
                 let messages = Arc::clone(messages);
@@ -948,84 +977,151 @@ mod tests {
                         .push(message.to_owned());
                 }
             };
-            let _ = connect_saved_ssh(
+            connect_saved_ssh(
                 "fake-host",
                 "saved",
                 &crate::remote::SavedSshHooks {
-                    profile_id: "machine-a",
+                    profile_id: "test-machine",
                     cancel,
                     status: &sink,
                 },
-            );
+            )
         })
     }
 
-    fn opened_count(opened: &Arc<Mutex<Vec<String>>>) -> usize {
-        opened
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .len()
-    }
-
     #[test]
-    fn saved_ssh_tailscale_check_reopens_browser_only_after_the_interval() {
-        let _fake = FakeSsh::new("ratelimit")
-            .with_banner("https://login.tailscale.com/a/second")
+    fn saved_ssh_unapproved_approval_wait_opens_once_and_a_manual_retry_opens_once_more() {
+        let _fake = FakeSsh::new("parked")
+            .with_banner("https://login.tailscale.com/a/first")
             .with_approve_gate();
+        test_hooks::set_auth_wait(Some(Duration::from_millis(300)));
         let opened = open_recorder();
-        let cancel1 = AtomicBool::new(false);
-        let messages1 = Arc::new(Mutex::new(Vec::new()));
-        let cancel2 = AtomicBool::new(false);
-        let messages2 = Arc::new(Mutex::new(Vec::new()));
-        let cancel3 = AtomicBool::new(false);
-        let messages3 = Arc::new(Mutex::new(Vec::new()));
+        let cancel = AtomicBool::new(false);
+        let messages = Arc::new(Mutex::new(Vec::new()));
         std::thread::scope(|scope| {
-            // Attempt 1: the banner URL opens the browser once.
-            let worker1 = auth_wait_attempt(scope, &cancel1, &messages1);
+            let worker = unapproved_attempt(scope, &cancel, &messages);
             wait_for_status(
-                &messages1,
-                "https://login.tailscale.com/a/second",
+                &messages,
+                "https://login.tailscale.com/a/first",
                 Duration::from_secs(10),
             );
+            // The wait expires unapproved: exactly one tab opened, and the error
+            // is the distinct approval timeout that parks the machine.
+            let error = match worker
+                .join()
+                .unwrap_or_else(|_| panic!("connect worker panicked"))
+            {
+                Ok(_) => panic!("the unapproved wait should not have connected"),
+                Err(error) => error,
+            };
+            assert!(crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(&error));
+            assert!(error.to_string().contains("click the machine to retry"));
+            assert!(error
+                .to_string()
+                .contains("https://login.tailscale.com/a/first"));
             assert_eq!(opened_count(&opened), 1);
-            cancel1.store(true, Ordering::Release);
-            worker1.join().unwrap_or_else(|_| panic!("worker panicked"));
 
-            // Attempt 2 inside the interval: the status still carries the newest
-            // URL, but the browser is not opened again.
-            let worker2 = auth_wait_attempt(scope, &cancel2, &messages2);
-            wait_for_status(
-                &messages2,
-                "https://login.tailscale.com/a/second",
-                Duration::from_secs(10),
-            );
-            assert_eq!(
-                opened_count(&opened),
-                1,
-                "a retry inside 30 minutes must not open another tab"
-            );
-            cancel2.store(true, Ordering::Release);
-            worker2.join().unwrap_or_else(|_| panic!("worker panicked"));
-
-            // Once the interval passed, a fresh auth wait opens the browser again.
-            test_hooks::age_auth_url_open(
-                "machine-a",
-                AUTH_URL_BROWSER_OPEN_INTERVAL + Duration::from_secs(60),
-            );
-            let worker3 = auth_wait_attempt(scope, &cancel3, &messages3);
-            wait_for_status(
-                &messages3,
-                "https://login.tailscale.com/a/second",
-                Duration::from_secs(10),
-            );
+            // The manual retry is a new attempt: its wait opens the new URL
+            // exactly once, and an unapproved end parks it the same way.
+            let retry = unapproved_attempt(scope, &cancel, &messages);
+            wait_for_status(&messages, "a/first", Duration::from_secs(10));
+            let error = match retry
+                .join()
+                .unwrap_or_else(|_| panic!("retry worker panicked"))
+            {
+                Ok(_) => panic!("the unapproved retry should not have connected"),
+                Err(error) => error,
+            };
+            assert!(crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(&error));
             assert_eq!(opened_count(&opened), 2);
-            cancel3.store(true, Ordering::Release);
-            worker3.join().unwrap_or_else(|_| panic!("worker panicked"));
         });
         assert!(
             _fake.all_dead(Duration::from_secs(5)),
-            "cancelled attempts left ssh children behind"
+            "unapproved waits left ssh children behind"
         );
+    }
+
+    #[test]
+    fn saved_ssh_forwarding_wait_unapproved_opens_once_and_reports_tailscale_timeout() {
+        let _fake = FakeSsh::new("forward-parked")
+            .with_forward_only_banner("https://login.tailscale.com/a/forward")
+            .with_approve_gate();
+        test_hooks::set_auth_wait(Some(Duration::from_millis(300)));
+        let opened = open_recorder();
+        let cancel = AtomicBool::new(false);
+        let (messages, sink) = status_recorder();
+        let error = match connect_saved_ssh(
+            "fake-host",
+            "saved",
+            &crate::remote::SavedSshHooks {
+                profile_id: "test-machine",
+                cancel: &cancel,
+                status: &sink,
+            },
+        ) {
+            Ok(_) => panic!("the unapproved forwarding wait should not have connected"),
+            Err(error) => error,
+        };
+        assert!(crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(&error));
+        assert!(error
+            .to_string()
+            .contains("saved SSH socket forwarding timed out"));
+        assert!(error
+            .to_string()
+            .contains("https://login.tailscale.com/a/forward"));
+        assert_eq!(opened_count(&opened), 1);
+        let messages = messages.lock().unwrap_or_else(|p| p.into_inner());
+        assert!(messages
+            .iter()
+            .any(|message| message.contains("https://login.tailscale.com/a/forward")));
+        assert!(
+            _fake.all_dead(Duration::from_secs(5)),
+            "the unapproved forwarding wait left an ssh child behind"
+        );
+    }
+
+    #[test]
+    fn saved_ssh_forwarding_approval_completes_the_same_forwarding_connection() {
+        let fake = FakeSsh::new("forward-approve")
+            .with_forward_only_banner("https://login.tailscale.com/a/forwardok")
+            .with_approve_gate();
+        let opened = open_recorder();
+        let cancel = AtomicBool::new(false);
+        let (messages, sink) = status_recorder();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                connect_saved_ssh(
+                    "fake-host",
+                    "saved",
+                    &crate::remote::SavedSshHooks {
+                        profile_id: "test-machine",
+                        cancel: &cancel,
+                        status: &sink,
+                    },
+                )
+            });
+            wait_for_status(
+                &messages,
+                "https://login.tailscale.com/a/forwardok",
+                Duration::from_secs(10),
+            );
+            assert!(!worker.is_finished());
+            fake.approve();
+            let (stream, bridge) = worker
+                .join()
+                .unwrap_or_else(|_| panic!("connect worker panicked"))
+                .unwrap_or_else(|error| {
+                    panic!("an approved forwarding connection should complete: {error}")
+                });
+            drop(stream);
+            drop(bridge);
+        });
+        assert_eq!(
+            opened.lock().unwrap_or_else(|p| p.into_inner()).as_slice(),
+            ["https://login.tailscale.com/a/forwardok"],
+            "the forwarding wait opens the URL exactly once"
+        );
+        assert!(fake.all_dead(Duration::from_secs(5)), "ssh child survived");
     }
 
     #[test]
@@ -1061,7 +1157,7 @@ mod tests {
             "denied-host",
             "saved",
             &crate::remote::SavedSshHooks {
-                profile_id: "machine-b",
+                profile_id: "test-machine",
                 cancel: &cancel,
                 status: &sink,
             },
@@ -1088,7 +1184,7 @@ mod tests {
                     "fake-host",
                     "saved",
                     &crate::remote::SavedSshHooks {
-                        profile_id: "machine-c",
+                        profile_id: "test-machine",
                         cancel: &cancel,
                         status: &sink,
                     },

@@ -28,6 +28,9 @@ pub(crate) enum ClientEndpointStatus {
     Connecting,
     Online,
     Reconnecting,
+    /// A Tailscale SSH approval wait ended unapproved. The machine is parked:
+    /// no automatic retry is scheduled, and a machine click retries it.
+    AwaitingApproval,
     Attention,
     Disabled,
 }

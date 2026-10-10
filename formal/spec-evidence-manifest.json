@@ -10307,6 +10307,7 @@
       ],
       "verification_methods": [
         "rust_test_target:saved_ssh_tailscale_check_waits_for_approval_and_completes_the_same_connection",
+        "rust_test_target:saved_ssh_forwarding_approval_completes_the_same_forwarding_connection",
         "rust_test_target:interim_endpoint_status_updates_the_machine_without_resolving_the_attempt",
         "drift_source_anchor:src/remote/saved.rs",
         "platform_live_acceptance:unverified"
@@ -10327,14 +10328,19 @@
       ]
     },
     {
-      "contract_id": "G11-df73133396",
+      "contract_id": "G11-38d2de3c07",
       "dimensions": [
-        "per-machine browser-open interval of 30 minutes",
+        "browser opens the url once per approval wait",
+        "an unapproved wait parks the machine at click-to-retry without auto-reconnect",
+        "a machine heading click retries the connection and opens the new url once",
         "other endpoints and Local keep working during an auth wait",
         "retire and shutdown kill a waiting ssh child"
       ],
       "verification_methods": [
-        "rust_test_target:saved_ssh_tailscale_check_reopens_browser_only_after_the_interval",
+        "rust_test_target:saved_ssh_unapproved_approval_wait_opens_once_and_a_manual_retry_opens_once_more",
+        "rust_test_target:saved_ssh_forwarding_wait_unapproved_opens_once_and_reports_tailscale_timeout",
+        "rust_test_target:unapproved_tailscale_wait_parks_until_a_manual_retry",
+        "rust_test_target:awaiting_approval_status_parks_and_a_machine_click_retries_it",
         "rust_test_target:another_endpoint_progresses_while_one_waits_for_tailscale_approval",
         "rust_test_target:supervisor_shutdown_kills_a_waiting_tailscale_ssh_child",
         "drift_source_anchor:src/client/endpoint/supervisor.rs",
@@ -10342,8 +10348,9 @@
       ],
       "source_anchors": [
         "SPEC.md:2159",
-        "src/remote/saved.rs:23",
-        "src/client/endpoint/supervisor.rs:51"
+        "src/remote.rs:40",
+        "src/client/endpoint/supervisor.rs:181",
+        "src/client/endpoint/runtime.rs:162"
       ],
       "test_status": [
         "unverified"
@@ -10352,25 +10359,27 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "GUI browser tab count over a real 30 minute window remains live-unverified"
+        "A real tailscaled approval expiry and a real machine-heading click remain live-unverified"
       ]
     },
     {
-      "contract_id": "G11-b62cf86e42",
+      "contract_id": "G11-415422c853",
       "dimensions": [
         "unchanged ssh failure text and classification without an auth url",
-        "unchanged 15 second nonresponsive timeout"
+        "unchanged 15 second nonresponsive timeout",
+        "non-auth failures keep the automatic reconnect"
       ],
       "verification_methods": [
         "rust_test_target:saved_ssh_without_auth_banner_keeps_the_existing_timeout_and_errors",
         "rust_test_target:wait_with_output_timeout_grants_the_auth_wait_once_per_banner",
+        "rust_test_target:endpoint_supervisor_flapping_backoff_attention_and_local_recovery_are_independent",
         "drift_source_anchor:src/remote/saved/process.rs",
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
         "SPEC.md:2160",
-        "src/remote/saved/process.rs:45",
-        "src/remote/saved.rs:116"
+        "src/remote/saved/process.rs:119",
+        "src/client/endpoint/supervisor.rs:181"
       ],
       "test_status": [
         "unverified"

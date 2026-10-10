@@ -64,6 +64,7 @@
 - Sidebar outer and section divider lines now use a brighter theme color so they remain visible against dark backgrounds.
 - Running servers now activate remote agent-detection manifests downloaded by another server, so newly fetched detection rules take effect without a restart. (upstream #3204)
 - Claude panes no longer report working when only a background shell remains after the turn ends, and the bundled Claude manifest matches upstream 2026.09.11.1 (background MCP tasks, MCP elicitation dialogs, unicode spinner frames, and "don't ask again" Bash approvals). Devin panes now stay working while the live footer shows the new "(esc twice to interrupt)" hint or a queued-message bar, while an idle prompt with only queued messages stays idle.
+- A saved machine whose Tailscale SSH approval wait expires unapproved no longer auto-reconnects and opens another authentication tab. The browser still opens the URL once per wait, the machine parks at "approval pending - click to retry", and clicking its header retries the connection, opening the fresh URL once.
 
 ## [0.7.4] - 2026-07-15
 
