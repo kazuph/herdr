@@ -578,8 +578,7 @@ impl HeadlessServer {
             }
             if self.app.expire_due_decisions(Instant::now()) {
                 needs_render = true;
-                needs_full_render = true;
-                crate::render_prof::event("full_render_cause.decision_expiry");
+                crate::render_prof::event("render.request.decision_expiry");
             }
 
             // 3. Drain API requests.

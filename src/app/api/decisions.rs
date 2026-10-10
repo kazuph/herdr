@@ -184,11 +184,10 @@ impl App {
         if now < deadline {
             return false;
         }
-        self.expire_due_decisions_at(now);
-        true
+        self.expire_due_decisions_at(now)
     }
 
-    fn expire_due_decisions_at(&mut self, now: Instant) {
+    fn expire_due_decisions_at(&mut self, now: Instant) -> bool {
         let expired = match DecisionStore::open_active() {
             Ok(mut store) => match store.expire_pending(unix_ms_now()) {
                 Ok(expired) => expired,
@@ -202,10 +201,12 @@ impl App {
                 Vec::new()
             }
         };
+        let expired_any = !expired.is_empty();
         for decision in expired {
             self.emit_decision_resolved(decision);
         }
         self.sync_decision_expiry_deadline(now);
+        expired_any
     }
 
     fn sync_decision_expiry_deadline(&mut self, now: Instant) {
@@ -310,5 +311,58 @@ mod tests {
         assert!(
             validate_decision_create(&create_params("t", vec![option("a"), option("b")])).is_ok()
         );
+    }
+
+    #[test]
+    fn expire_due_decisions_reports_change_only_when_rows_expire() {
+        let config_home =
+            std::env::temp_dir().join(format!("herdr-decision-expiry-test-{}", std::process::id()));
+        std::env::set_var("XDG_CONFIG_HOME", &config_home);
+        std::env::set_var(
+            crate::session::SESSION_ENV_VAR,
+            format!("decision-expiry-{}", std::process::id()),
+        );
+
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.decision_expiry_deadline = Some(Instant::now() - Duration::from_secs(1));
+        assert!(!app.expire_due_decisions(Instant::now()));
+        assert!(app.decision_expiry_deadline.is_none());
+
+        let mut store = DecisionStore::open_active().unwrap();
+        store
+            .insert(&Decision {
+                decision_id: "dec-expiry-test".into(),
+                kind: DecisionKind::Ask,
+                title: "title".into(),
+                body: None,
+                options: vec![option("ok")],
+                allow_text: false,
+                origin: None,
+                created_unix_ms: 1,
+                expires_unix_ms: Some(1),
+                status: DecisionStatus::Pending,
+                answer: None,
+            })
+            .unwrap();
+        drop(store);
+
+        app.decision_expiry_deadline = Some(Instant::now() - Duration::from_secs(1));
+        assert!(app.expire_due_decisions(Instant::now()));
+        let store = DecisionStore::open_active().unwrap();
+        assert_eq!(
+            store.get("dec-expiry-test").unwrap().unwrap().status,
+            DecisionStatus::Expired
+        );
+
+        std::env::remove_var(crate::session::SESSION_ENV_VAR);
+        std::env::remove_var("XDG_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&config_home);
     }
 }
