@@ -179,6 +179,9 @@ fn rows(frontend: &ClientFrontend, width: u16) -> Vec<Row> {
                 ClientEndpointStatus::Connecting => ("◐", "connecting", p.yellow),
                 ClientEndpointStatus::Online => ("●", "online", p.green),
                 ClientEndpointStatus::Reconnecting => ("◐", "reconnecting", p.yellow),
+                ClientEndpointStatus::AwaitingApproval => {
+                    ("◌", "approval pending - tap to retry", p.yellow)
+                }
                 ClientEndpointStatus::Attention => ("!", "attention", p.red),
                 ClientEndpointStatus::Disabled => ("·", "disabled", p.overlay0),
             };

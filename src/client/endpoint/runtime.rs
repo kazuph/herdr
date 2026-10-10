@@ -155,6 +155,32 @@ impl EndpointRuntime {
         update
     }
 
+    /// A machine parked at its unapproved Tailscale approval wait retries on
+    /// click; any other machine keeps the click's collapse-toggle meaning, so
+    /// the caller falls through to the toggle when this returns None. The new
+    /// attempt is picked up by the next maintenance tick.
+    pub(crate) fn retry_parked_endpoint(
+        &mut self,
+        id: &ClientEndpointId,
+        now: Instant,
+    ) -> Option<RuntimeUpdate> {
+        let parked = self
+            .shell
+            .endpoint(id)
+            .is_some_and(|endpoint| endpoint.status == ClientEndpointStatus::AwaitingApproval);
+        if !parked {
+            return None;
+        }
+        if self.supervisors.retry(id, now) {
+            self.shell
+                .set_endpoint_status(id, ClientEndpointStatus::Reconnecting);
+        }
+        Some(RuntimeUpdate {
+            repaint: true,
+            ..RuntimeUpdate::default()
+        })
+    }
+
     pub(crate) fn supervisor_event(
         &mut self,
         event: EndpointSupervisorEvent,
@@ -184,7 +210,13 @@ impl EndpointRuntime {
                     // Connection progress is shown with the machine, not as a global notice.
                     tracing::info!(endpoint = ?endpoint_id, ?status, %message, "endpoint connection status");
                     self.shell.set_endpoint_status(&endpoint_id, status);
-                    if !interim && status == ClientEndpointStatus::Attention {
+                    if !interim
+                        && matches!(
+                            status,
+                            ClientEndpointStatus::Attention
+                                | ClientEndpointStatus::AwaitingApproval
+                        )
+                    {
                         // Only a state that needs the user's action is also announced.
                         let label = self.shell.endpoint(&endpoint_id).map_or_else(
                             || "machine".to_owned(),
@@ -1563,5 +1595,88 @@ mod display_regression_tests {
         );
         assert!(update.repaint);
         assert!(!runtime.supervisors.is_current_attempt(&remote, 7));
+    }
+
+    #[test]
+    fn awaiting_approval_status_parks_and_a_machine_click_retries_it() {
+        let options = EndpointConnectOptions {
+            surface_size: ClientSurfaceSize { cols: 80, rows: 24 },
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_geometry_exact: false,
+            endpoint_keybindings: false,
+            mouse_capture: true,
+            surface_active: true,
+        };
+        let now = Instant::now();
+        let profile = crate::machine::MachineProfile {
+            id: "mini".into(),
+            label: "Mac mini".into(),
+            target: "tailscaled-host".into(),
+            session: "saved".into(),
+            enabled: true,
+        };
+        let remote = ClientEndpointId::Ssh("mini".into());
+        let mut supervisors = EndpointSupervisors::new(std::slice::from_ref(&profile), now);
+        supervisors.mark_attempt_in_flight_for_test(&remote, 7);
+        let mut runtime = EndpointRuntime::new(
+            ClientShellState::new(),
+            EndpointRegistry::empty(),
+            supervisors,
+            options,
+        );
+        runtime.shell.set_endpoint_catalog(&[profile]);
+
+        // The unapproved wait's final status parks the machine, keeps the
+        // timeout detail with it, and announces the needed user action.
+        let message = "noninteractive SSH command timed out waiting for Tailscale SSH approval; click the machine to retry (last approval URL: https://login.tailscale.com/a/parked)";
+        let update = runtime.supervisor_event(
+            EndpointSupervisorEvent::Status {
+                endpoint_id: remote.clone(),
+                generation: 7,
+                status: ClientEndpointStatus::AwaitingApproval,
+                message: message.to_owned(),
+                interim: false,
+            },
+            now,
+        );
+        assert!(update.repaint);
+        assert_eq!(
+            update.error.as_deref(),
+            Some(format!("Mac mini: {message}").as_str())
+        );
+        let endpoint = runtime.shell.endpoint(&remote).unwrap();
+        assert_eq!(endpoint.status, ClientEndpointStatus::AwaitingApproval);
+        assert_eq!(endpoint.diagnostic.as_deref(), Some(message));
+        assert_eq!(
+            runtime.supervisors.next_attempt_for_test(&remote),
+            None,
+            "an unapproved approval wait must not auto-reconnect"
+        );
+
+        // A machine in any other status keeps the click's collapse-toggle
+        // meaning (the click path returns None and the caller toggles).
+        runtime
+            .shell
+            .set_endpoint_status(&remote, ClientEndpointStatus::Reconnecting);
+        assert!(runtime.retry_parked_endpoint(&remote, now).is_none());
+
+        // Park it again, then the click schedules an immediate retry and shows
+        // the machine as reconnecting until the new attempt reports.
+        runtime
+            .shell
+            .set_endpoint_status(&remote, ClientEndpointStatus::AwaitingApproval);
+        let update = runtime
+            .retry_parked_endpoint(&remote, now)
+            .expect("a parked machine answers a click with a retry");
+        assert!(update.repaint);
+        assert_eq!(
+            runtime.supervisors.next_attempt_for_test(&remote),
+            Some(now)
+        );
+        assert_eq!(
+            runtime.shell.endpoint(&remote).unwrap().status,
+            ClientEndpointStatus::Reconnecting
+        );
     }
 }

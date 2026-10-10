@@ -178,7 +178,11 @@ impl EndpointSupervisors {
                     Ok(Err(error)) => EndpointSupervisorEvent::Status {
                         endpoint_id: task_endpoint_id,
                         generation,
-                        status: if failure_needs_attention(&error) {
+                        status: if crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(
+                            &error,
+                        ) {
+                            ClientEndpointStatus::AwaitingApproval
+                        } else if failure_needs_attention(&error) {
                             ClientEndpointStatus::Attention
                         } else {
                             ClientEndpointStatus::Reconnecting
@@ -230,7 +234,10 @@ impl EndpointSupervisors {
                 state.next_attempt =
                     (!endpoint_id.is_local()).then_some(now + Duration::from_secs(30));
             }
-            ClientEndpointStatus::Disabled => {
+            ClientEndpointStatus::AwaitingApproval | ClientEndpointStatus::Disabled => {
+                // The unapproved Tailscale wait and a disabled machine both park:
+                // only a manual retry (machine click or profile toggle) resumes
+                // the endpoint, so a parked wait cannot mint tab after tab.
                 state.online_since = None;
                 state.next_attempt = None;
             }
@@ -269,6 +276,22 @@ impl EndpointSupervisors {
         )
     }
 
+    /// Schedules an immediate new attempt for a parked endpoint (a machine
+    /// whose Tailscale approval wait ended unapproved and the user asked to
+    /// retry). Returns false when an attempt is already running or the
+    /// endpoint is unknown.
+    pub(crate) fn retry(&mut self, endpoint_id: &ClientEndpointId, now: Instant) -> bool {
+        let Some(state) = self.endpoints.get_mut(endpoint_id) else {
+            return false;
+        };
+        if state.in_flight {
+            return false;
+        }
+        state.attempts = 0;
+        state.next_attempt = Some(now);
+        true
+    }
+
     /// True while the generation's connection attempt is still running; interim
     /// status reports apply only to the live attempt so retired or superseded
     /// work cannot move the machine's status display.
@@ -280,6 +303,15 @@ impl EndpointSupervisors {
         self.endpoints
             .get(endpoint_id)
             .is_some_and(|state| state.in_flight && state.generation == Some(generation))
+    }
+
+    /// The next scheduled attempt, exposed so parked-versus-retrying behavior
+    /// can be asserted from the runtime layer.
+    #[cfg(test)]
+    pub(crate) fn next_attempt_for_test(&self, endpoint_id: &ClientEndpointId) -> Option<Instant> {
+        self.endpoints
+            .get(endpoint_id)
+            .and_then(|state| state.next_attempt)
     }
 
     /// Marks an attempt in flight so interim-status handling can be tested
@@ -573,6 +605,112 @@ mod tests {
             fake.all_dead(Duration::from_secs(5)),
             "retire left an ssh child behind: {pids:?}"
         );
+    }
+
+    /// An unapproved Tailscale approval wait ends in AwaitingApproval with no
+    /// automatic retry scheduled; a manual retry starts a fresh attempt whose
+    /// banner opens the browser exactly once more.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unapproved_tailscale_wait_parks_until_a_manual_retry() {
+        let fake = crate::remote::test_fakes::FakeSsh::new("supervisor-parked")
+            .with_banner("https://login.tailscale.com/a/parked")
+            .with_approve_gate();
+        crate::remote::test_hooks::set_auth_wait(Some(Duration::from_millis(300)));
+        let opened: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        crate::remote::test_hooks::set_open_url_hook(Some(std::sync::Arc::new({
+            let opened = std::sync::Arc::clone(&opened);
+            move |url: &str| {
+                opened
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(url.to_owned());
+                Ok(())
+            }
+        })));
+        let now = Instant::now();
+        let mut waiting = profile("waiting");
+        waiting.target = "gate-host".into();
+        let waiting_id = ClientEndpointId::Ssh("waiting".into());
+        let mut supervisors = EndpointSupervisors::new(&[waiting], now);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        supervisors.spawn_due(now, options(), &tx);
+
+        let outcome = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                match rx.recv().await {
+                    Some(EndpointSupervisorEvent::Status {
+                        endpoint_id,
+                        generation,
+                        status,
+                        interim: false,
+                        ..
+                    }) if endpoint_id == waiting_id => break (generation, status),
+                    Some(_) => {}
+                    None => panic!("event channel closed before the final status"),
+                }
+            }
+        })
+        .await;
+        let Ok((generation, status)) = outcome else {
+            panic!("no final status arrived: {outcome:?}");
+        };
+        assert_eq!(status, ClientEndpointStatus::AwaitingApproval);
+        assert!(supervisors.record_status(&waiting_id, generation, status, now));
+        assert_eq!(
+            supervisors.endpoints[&waiting_id].next_attempt, None,
+            "an unapproved approval wait must not schedule an automatic retry"
+        );
+        // Even far past the wait, nothing spawns on its own and the parked wait
+        // opened the URL exactly once.
+        supervisors.spawn_due(now + Duration::from_secs(60), options(), &tx);
+        assert_eq!(
+            opened
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len(),
+            1
+        );
+
+        // The manual retry starts a fresh attempt whose wait opens the new URL
+        // exactly once, then parks the same way.
+        assert!(supervisors.retry(&waiting_id, now));
+        supervisors.spawn_due(now, options(), &tx);
+        let outcome = tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                match rx.recv().await {
+                    Some(EndpointSupervisorEvent::Status {
+                        endpoint_id,
+                        status,
+                        interim: false,
+                        ..
+                    }) if endpoint_id == waiting_id => break status,
+                    Some(_) => {}
+                    None => panic!("event channel closed before the retry status"),
+                }
+            }
+        })
+        .await;
+        assert!(
+            matches!(outcome, Ok(ClientEndpointStatus::AwaitingApproval)),
+            "the retry attempt did not park again: {outcome:?}"
+        );
+        assert_eq!(
+            opened
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_slice(),
+            [
+                "https://login.tailscale.com/a/parked",
+                "https://login.tailscale.com/a/parked"
+            ]
+        );
+        assert!(
+            fake.all_dead(Duration::from_secs(5)),
+            "parked attempts left an ssh child behind"
+        );
+        drop(rx);
     }
 
     /// Dropping the supervisors (client shutdown) cancels every in-flight

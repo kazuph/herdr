@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 mod saved;
 pub(crate) use saved::connect_saved_ssh;
 #[cfg(test)]
-pub(crate) use saved::test_fakes;
+pub(crate) use saved::{test_fakes, test_hooks};
 
 #[cfg(test)]
 use std::collections::BTreeMap;
