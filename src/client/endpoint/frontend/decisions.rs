@@ -115,16 +115,8 @@ pub(super) fn observe(frontend: &mut ClientFrontend) {
         .decisions
         .dialog
         .as_ref()
-        .is_some_and(|dialog| keys.contains(&dialog.key))
-        .then(|| {
-            frontend
-                .decisions
-                .dialog
-                .as_ref()
-                .expect("dialog")
-                .key
-                .clone()
-        });
+        .filter(|dialog| keys.contains(&dialog.key))
+        .map(|dialog| dialog.key.clone());
     frontend.decisions.pending = pending;
     frontend.decisions.snoozed.retain(|key| keys.contains(key));
     match open_key {
@@ -282,12 +274,11 @@ fn remaining(decision: &Decision) -> Option<String> {
     })
 }
 
-fn facts(frontend: &ClientFrontend, pending: &PendingDecision) -> crate::ui::DecisionDialogFacts {
-    let dialog = frontend
-        .decisions
-        .dialog
-        .as_ref()
-        .expect("dialog for facts");
+fn facts(
+    frontend: &ClientFrontend,
+    pending: &PendingDecision,
+) -> Option<crate::ui::DecisionDialogFacts> {
+    let dialog = frontend.decisions.dialog.as_ref()?;
     let total = frontend.decisions.pending.len();
     let position = frontend
         .decisions
@@ -295,7 +286,7 @@ fn facts(frontend: &ClientFrontend, pending: &PendingDecision) -> crate::ui::Dec
         .iter()
         .position(|entry| entry.key == pending.key)
         .map_or(1, |index| index + 1);
-    crate::ui::DecisionDialogFacts {
+    Some(crate::ui::DecisionDialogFacts {
         machine: pending.machine.clone(),
         position,
         total,
@@ -319,7 +310,7 @@ fn facts(frontend: &ClientFrontend, pending: &PendingDecision) -> crate::ui::Dec
         remaining: remaining(&pending.decision),
         scroll: dialog.scroll,
         keyboard_active: dialog.keyboard,
-    }
+    })
 }
 
 pub(super) fn dialog_rects(
@@ -383,7 +374,9 @@ pub(super) fn render(frontend: &ClientFrontend, frame: &mut ratatui::Frame, area
     let Some(pending) = frontend.decisions.current() else {
         return;
     };
-    let facts = facts(frontend, pending);
+    let Some(facts) = facts(frontend, pending) else {
+        return;
+    };
     crate::ui::render_decision_dialog(frame, area, &facts, &frontend.chrome.settings.palette);
 }
 
@@ -443,8 +436,11 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                     return Ok(false);
                 }
                 let palette = frontend.chrome.settings.palette.clone();
-                let facts = facts(frontend, &pending);
-                let max = crate::ui::decision_dialog_scroll_max(&facts, rects.content, &palette);
+                let max = facts(frontend, &pending)
+                    .map(|facts| {
+                        crate::ui::decision_dialog_scroll_max(&facts, rects.content, &palette)
+                    })
+                    .unwrap_or(0);
                 if let Some(dialog) = frontend.decisions.dialog.as_mut() {
                     dialog.scroll = if mouse.kind == MouseEventKind::ScrollUp {
                         dialog.scroll.saturating_sub(1)
@@ -459,10 +455,12 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
         _ => {
             // Keys and paste keep reaching the pane until the user clicks
             // inside the dialog.
-            let Some(dialog) = frontend.decisions.dialog.as_mut() else {
-                return Ok(false);
-            };
-            if !dialog.keyboard {
+            if !frontend
+                .decisions
+                .dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.keyboard)
+            {
                 return Ok(false);
             }
             match event {
@@ -472,44 +470,57 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                         KeyCode::Esc => close(frontend),
                         KeyCode::Up => {
                             let options = pending.decision.options.len().max(1);
-                            let dialog = frontend.decisions.dialog.as_mut().expect("dialog");
-                            dialog.selected = (dialog.selected + options - 1) % options;
+                            if let Some(dialog) = frontend.decisions.dialog.as_mut() {
+                                dialog.selected = (dialog.selected + options - 1) % options;
+                            }
                         }
                         KeyCode::Down => {
                             let options = pending.decision.options.len().max(1);
-                            let dialog = frontend.decisions.dialog.as_mut().expect("dialog");
-                            dialog.selected = (dialog.selected + 1) % options;
+                            if let Some(dialog) = frontend.decisions.dialog.as_mut() {
+                                dialog.selected = (dialog.selected + 1) % options;
+                            }
                         }
                         KeyCode::Enter => {
-                            let selected =
-                                frontend.decisions.dialog.as_ref().expect("dialog").selected;
+                            let Some(selected) = frontend
+                                .decisions
+                                .dialog
+                                .as_ref()
+                                .map(|dialog| dialog.selected)
+                            else {
+                                return Ok(true);
+                            };
                             answer(frontend, selected)?;
                         }
                         KeyCode::PageUp | KeyCode::PageDown => {
                             let palette = frontend.chrome.settings.palette.clone();
-                            let facts = facts(frontend, &pending);
-                            let max = crate::ui::decision_dialog_scroll_max(
-                                &facts,
-                                dialog_rects(frontend, &pending)
-                                    .map(|rects| rects.content)
-                                    .unwrap_or_default(),
-                                &palette,
-                            );
-                            let dialog = frontend.decisions.dialog.as_mut().expect("dialog");
-                            dialog.scroll = if key.code == KeyCode::PageUp {
-                                dialog.scroll.saturating_sub(4)
-                            } else {
-                                (dialog.scroll + 4).min(max)
-                            };
+                            let max = facts(frontend, &pending)
+                                .map(|facts| {
+                                    crate::ui::decision_dialog_scroll_max(
+                                        &facts,
+                                        dialog_rects(frontend, &pending)
+                                            .map(|rects| rects.content)
+                                            .unwrap_or_default(),
+                                        &palette,
+                                    )
+                                })
+                                .unwrap_or(0);
+                            if let Some(dialog) = frontend.decisions.dialog.as_mut() {
+                                dialog.scroll = if key.code == KeyCode::PageUp {
+                                    dialog.scroll.saturating_sub(4)
+                                } else {
+                                    (dialog.scroll + 4).min(max)
+                                };
+                            }
                         }
                         _ => {
                             if pending.decision.allow_text {
-                                let dialog = frontend.decisions.dialog.as_mut().expect("dialog");
-                                crate::input::rename::edit_key(
-                                    &mut dialog.text,
-                                    &mut dialog.replace_on_type,
-                                    key,
-                                );
+                                if let Some(dialog) = frontend.decisions.dialog.as_mut() {
+                                    crate::input::rename::edit_key(
+                                        &mut dialog.text,
+                                        &mut dialog.replace_on_type,
+                                        key,
+                                    );
+                                }
                             }
                         }
                     }
@@ -517,12 +528,13 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                 }
                 RawInputEvent::Paste(text) => {
                     if pending.decision.allow_text {
-                        let dialog = frontend.decisions.dialog.as_mut().expect("dialog");
-                        crate::input::rename::insert(
-                            &mut dialog.text,
-                            &mut dialog.replace_on_type,
-                            text,
-                        );
+                        if let Some(dialog) = frontend.decisions.dialog.as_mut() {
+                            crate::input::rename::insert(
+                                &mut dialog.text,
+                                &mut dialog.replace_on_type,
+                                text,
+                            );
+                        }
                     }
                     Ok(true)
                 }
@@ -697,7 +709,7 @@ mod tests {
         let pending = frontend.decisions.current().expect("dialog decision");
         assert_eq!(pending.decision.decision_id, "old");
         assert_eq!(pending.machine, "Local");
-        let facts = facts(&frontend, pending);
+        let facts = facts(&frontend, pending).expect("facts");
         assert_eq!(facts.position, 1);
         assert_eq!(facts.total, 2);
     }
@@ -880,5 +892,59 @@ mod tests {
         ] {
             assert!(text.contains(needle), "missing {needle:?}\n{text}");
         }
+    }
+
+    #[test]
+    fn endpoint_decision_input_after_pending_drop_never_panics() {
+        let mut frontend = make_frontend();
+        set_pending(
+            &mut frontend,
+            &ClientEndpointId::Local,
+            1,
+            vec![decision("a", 1)],
+        );
+        let pending = frontend.decisions.current().cloned().expect("decision");
+        let rects = dialog_rects(&frontend, &pending).expect("rects");
+        input(
+            &mut frontend,
+            &mouse_down(rects.popup.x + 1, rects.popup.y + 1),
+        )
+        .unwrap();
+        // The decision leaves the queue while the dialog is up; every input
+        // path must degrade to a no-op instead of expecting a dialog.
+        set_pending(&mut frontend, &ClientEndpointId::Local, 1, Vec::new());
+        assert!(frontend.decisions.dialog.is_none());
+        for event in [
+            key(KeyCode::Esc),
+            key(KeyCode::Down),
+            key(KeyCode::Enter),
+            key(KeyCode::PageDown),
+            RawInputEvent::Paste("text".into()),
+            mouse_down(10, 10),
+        ] {
+            input(&mut frontend, &event).unwrap();
+        }
+        // Rendering with pending state but no dialog must be a no-op too.
+        frontend.decisions.dialog = Some(Dialog {
+            key: PendingKey {
+                endpoint: ClientEndpointId::Local,
+                generation: 1,
+                decision_id: "gone".into(),
+            },
+            text: String::new(),
+            selected: 0,
+            scroll: 0,
+            keyboard: true,
+            replace_on_type: false,
+            answering: None,
+        });
+        // The stale dialog never reaches the renderer: current() is None, so
+        // render/facts/dialog_rects all return early instead of unwrapping.
+        assert!(frontend.decisions.current().is_none());
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).expect("terminal");
+        terminal
+            .draw(|frame| render(&frontend, frame, Rect::new(0, 0, 100, 30)))
+            .unwrap();
     }
 }
