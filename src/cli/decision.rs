@@ -12,7 +12,7 @@ const DECISION_WAIT_RETRY_DELAY: Duration = Duration::from_millis(300);
 
 const DECISION_ASK_USAGE: &str = "usage: herdr decision ask --kind <command_guard|tool_permission|agent_prompt|ask> --title <text> [--body <text>] --option <id:label[:approve|reject|other]>... [--allow-text] [--timeout <secs>]";
 const DECISION_ANSWER_USAGE: &str =
-    "usage: herdr decision answer <decision_id> <option_id> [--text <text>] [--responder <name>]";
+    "usage: herdr decision answer <decision_id> <option_id> [--text <text>] [--responder <name>] [--machine <label-or-id>]";
 const DECISION_LIST_USAGE: &str =
     "usage: herdr decision list [--status <pending|answered|expired|cancelled>]";
 
