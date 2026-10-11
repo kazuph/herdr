@@ -14,7 +14,11 @@
 //! SSH `check` banner (`To authenticate, visit: <url>`) becomes a
 //! `machine_down` whose reason carries the URL, the ssh child is killed, and
 //! the machine retries after a fixed ten-minute wait — the watch never opens
-//! a browser, unlike the interactive saved-machine connect path.
+//! a browser, unlike the interactive saved-machine connect path. A saved
+//! machine whose `herdr` predates `decision` (`unknown command: decision`
+//! on stderr) emits one `machine_down` naming the unsupported command and is
+//! retried on a thirty-minute cadence without further `machine_down` lines
+//! until it forwards a real watch line again.
 
 use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -48,6 +52,11 @@ const REMOTE_RETRY_MAX: Duration = Duration::from_secs(60);
 /// check URL faster than the approval can complete would only churn, so the
 /// machine waits the contract's ten minutes before the next ssh attempt.
 const TAILSCALE_AUTH_RETRY: Duration = Duration::from_secs(10 * 60);
+/// A saved machine running an old `herdr` without `decision` cannot get
+/// better until someone upgrades it; retrying on the normal failure backoff
+/// just repeats the same `machine_down` every minute, so unsupported machines
+/// wait thirty minutes between attempts.
+const UNSUPPORTED_RETRY: Duration = Duration::from_secs(30 * 60);
 /// How long the watch gives a child to exit after its stdout closed before
 /// killing it.
 const CHILD_EXIT_GRACE: Duration = Duration::from_secs(1);
@@ -69,6 +78,7 @@ struct WatchTimings {
     remote_retry_initial: Duration,
     remote_retry_max: Duration,
     tailscale_auth_retry: Duration,
+    unsupported_retry: Duration,
 }
 
 const PRODUCTION_TIMINGS: WatchTimings = WatchTimings {
@@ -77,6 +87,7 @@ const PRODUCTION_TIMINGS: WatchTimings = WatchTimings {
     remote_retry_initial: REMOTE_RETRY_INITIAL,
     remote_retry_max: REMOTE_RETRY_MAX,
     tailscale_auth_retry: TAILSCALE_AUTH_RETRY,
+    unsupported_retry: UNSUPPORTED_RETRY,
 };
 
 /// Doubling retry interval capped at `max`; `reset` after a healthy attempt.
@@ -251,6 +262,24 @@ fn rewrite_remote_line(raw: &str, profile: &MachineProfile) -> Option<Value> {
     }
     *value.get_mut("machine")? = machine_object(&profile.id, &profile.label);
     Some(value)
+}
+
+/// An old remote `herdr` rejects the routed `decision` subcommand on stderr
+/// (`unknown command: decision`, or a clap-style `unrecognized` error) and
+/// exits without emitting watch lines. Classify that as unsupported rather
+/// than a flaky connection so the caller can throttle retries.
+fn unsupported_reason(stderr_tail: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(stderr_tail);
+    let lower = text.to_lowercase();
+    if !lower.contains("decision")
+        || !(lower.contains("unknown command") || lower.contains("unrecognized"))
+    {
+        return None;
+    }
+    let detail: String = text.trim().chars().take(240).collect();
+    Some(format!(
+        "remote herdr does not support the decision command: {detail}"
+    ))
 }
 
 /// Mirrors the banner parser in `remote::saved::process`: the saved-machine
@@ -460,7 +489,15 @@ fn pump_local(
 enum AttemptOutcome {
     Stopped,
     TailscaleAuth(String),
-    Failed { reason: String, forwarded: bool },
+    /// The remote `herdr` predates the `decision` command; the reason names
+    /// the unsupported command.
+    Unsupported {
+        reason: String,
+    },
+    Failed {
+        reason: String,
+        forwarded: bool,
+    },
 }
 
 /// One ssh `herdr decision watch` process plus the observation state needed
@@ -485,6 +522,13 @@ impl SshWatchProcess {
 
     fn auth_url(&self) -> Option<String> {
         self.auth_url.lock().ok().and_then(|url| url.clone())
+    }
+
+    fn stderr_tail(&self) -> Vec<u8> {
+        self.stderr_tail
+            .lock()
+            .map(|tail| tail.clone())
+            .unwrap_or_default()
     }
 
     /// Kill and reap the child if it is still running, then join the stderr
@@ -698,10 +742,13 @@ fn pump_machine_once(
                 if let Some(url) = process.auth_url() {
                     break AttemptOutcome::TailscaleAuth(url);
                 }
-                break AttemptOutcome::Failed {
-                    reason: process.failure_reason(&profile.target),
-                    forwarded,
-                };
+                let reason = process.failure_reason(&profile.target);
+                if !forwarded {
+                    if let Some(reason) = unsupported_reason(&process.stderr_tail()) {
+                        break AttemptOutcome::Unsupported { reason };
+                    }
+                }
+                break AttemptOutcome::Failed { reason, forwarded };
             }
             Err(err) => {
                 break AttemptOutcome::Failed {
@@ -723,6 +770,7 @@ fn pump_machine(
 ) {
     let machine = machine_object(&profile.id, &profile.label);
     let mut backoff = Backoff::new(timings.remote_retry_initial, timings.remote_retry_max);
+    let mut unsupported_announced = false;
     while !stop.load(Ordering::Relaxed) {
         let delay = match pump_machine_once(profile, sink, stop) {
             AttemptOutcome::Stopped => break,
@@ -739,6 +787,18 @@ fn pump_machine(
                 }
                 timings.tailscale_auth_retry
             }
+            AttemptOutcome::Unsupported { reason } => {
+                // One machine_down names the unsupported command; retries on
+                // the slow cadence stay silent until the remote is upgraded
+                // and forwards lines again.
+                if !unsupported_announced {
+                    unsupported_announced = true;
+                    if !emit_or_stop(sink, stop, &machine_down_line(&machine, &reason)) {
+                        break;
+                    }
+                }
+                timings.unsupported_retry
+            }
             AttemptOutcome::Failed { reason, forwarded } => {
                 if !emit_or_stop(sink, stop, &machine_down_line(&machine, &reason)) {
                     break;
@@ -746,6 +806,7 @@ fn pump_machine(
                 // A stream that forwarded lines was healthy until now; a
                 // fast-failing one keeps doubling.
                 if forwarded {
+                    unsupported_announced = false;
                     backoff.reset();
                 }
                 backoff.next()
@@ -770,6 +831,7 @@ mod tests {
             remote_retry_initial: Duration::from_millis(1),
             remote_retry_max: Duration::from_millis(5),
             tailscale_auth_retry: Duration::from_millis(30),
+            unsupported_retry: Duration::from_millis(40),
         }
     }
 
@@ -1413,6 +1475,102 @@ exit 0
             elapsed >= Duration::from_millis(30),
             "retry respected the auth wait: {elapsed:?}"
         );
+    }
+
+    #[test]
+    fn unsupported_reason_matches_old_remote_errors_only() {
+        for tail in [
+            b"unknown command: decision\nrun 'herdr --help' for usage\n".as_slice(),
+            b"error: unrecognized subcommand 'decision'\n".as_slice(),
+        ] {
+            let reason = unsupported_reason(tail).expect("unsupported");
+            assert!(
+                reason.contains("does not support"),
+                "reason explains the remote lacks decision: {reason}"
+            );
+        }
+        // Unrelated failures — including a watch-time error mentioning
+        // decisions — are not classified as unsupported.
+        for tail in [
+            b"ssh: connect to host dead: refused\n".as_slice(),
+            b"decision list failed: boom\n".as_slice(),
+            b"unknown command: pane\n".as_slice(),
+            b"remote error while listing decisions\n".as_slice(),
+        ] {
+            assert!(
+                unsupported_reason(tail).is_none(),
+                "not unsupported: {}",
+                String::from_utf8_lossy(tail)
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_remote_downs_once_and_retries_on_the_slow_cadence() {
+        let dir = temp_dir("unsupported");
+        install_fake_ssh(&dir);
+        std::fs::write(
+            dir.join("old.stderr"),
+            "unknown command: decision\nrun 'herdr --help' for usage\n",
+        )
+        .expect("stderr fixture");
+        std::fs::write(dir.join("old.exit"), "1").expect("exit fixture");
+
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        // Unsupported retries emit no lines, so the sink never stops itself.
+        let sink = recording_sink(Arc::clone(&lines), usize::MAX, Arc::clone(&stop));
+        let pump_stop = Arc::clone(&stop);
+        let pump = thread::spawn(move || {
+            pump_machine(
+                &profile("mold", "Old", "old"),
+                &sink,
+                &pump_stop,
+                test_timings(),
+            );
+        });
+
+        // Record when each ssh attempt becomes visible; the spacing between
+        // attempts is the unsupported cadence (40ms in tests, 30min in prod),
+        // not the fast doubling backoff.
+        let mut attempt_times: Vec<Instant> = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while attempt_times.len() < 3 && Instant::now() < deadline {
+            let count = attempts(&dir).len();
+            while attempt_times.len() < count {
+                attempt_times.push(Instant::now());
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        stop.store(true, Ordering::Relaxed);
+        pump.join().expect("unsupported pump");
+
+        assert!(
+            attempt_times.len() >= 3,
+            "retries kept attempting ssh: {:?}",
+            attempts(&dir)
+        );
+        assert!(
+            attempt_times[2].duration_since(attempt_times[1]) >= Duration::from_millis(30),
+            "the retry respected the slow cadence: {attempt_times:?}"
+        );
+
+        let lines = lines.lock().unwrap_or_else(|p| p.into_inner());
+        let downs: Vec<&Value> = lines
+            .iter()
+            .filter(|line| line["event"] == "machine_down" && line["machine"]["id"] == "mold")
+            .collect();
+        assert_eq!(
+            downs.len(),
+            1,
+            "unsupported machine emits exactly one machine_down: {lines:?}"
+        );
+        let reason = downs[0]["reason"].as_str().unwrap_or("");
+        assert!(
+            reason.contains("does not support") && reason.contains("unknown command"),
+            "reason names the unsupported command: {reason}"
+        );
+        assert!(downs[0]["machine"]["label"] == "Old");
     }
 
     #[test]
