@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 490,
+    "active_contract_count": 498,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -12359,6 +12359,244 @@
       ]
     },
     {
+      "contract_id": "G12-1b249a79b7",
+      "dimensions": [
+        "mode config default",
+        "record passthrough",
+        "disabled no injection"
+      ],
+      "verification_methods": [
+        "rust_test_target:apply_guard_env_marks_enforcing_panes_for_ai_guard_skip",
+        "rust_test_target:unmarked_pane_executes_without_judging",
+        "drift_source_anchor:src/config/model.rs",
+        "drift_source_anchor:src/guard/assets.rs",
+        "rust_test_target:record_mode_keeps_executing_blocked_commands",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2266",
+        "src/config/model.rs:332",
+        "src/guard/assets.rs:47",
+        "src/cli/guard.rs:150"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Mode default, disabled early-return, and record passthrough are covered by the new env-injection unit test and the record-mode e2e; the TOML parse table itself is exercised through the shared config loader"
+      ]
+    },
+    {
+      "contract_id": "G12-27327813ab",
+      "dimensions": [
+        "allow verdict passthrough",
+        "child exit code"
+      ],
+      "verification_methods": [
+        "rust_test_target:unmarked_pane_executes_without_judging",
+        "rust_test_target:enforce_ask_approval_executes_the_command",
+        "drift_source_anchor:src/cli/guard.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2267",
+        "src/cli/guard.rs:188"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Allow passthrough is covered by the approval e2e (rm really ran) and the unmarked-pane test; the exit-code propagation is asserted through the child status in the same runs"
+      ]
+    },
+    {
+      "contract_id": "G12-bf208f6592",
+      "dimensions": [
+        "block refusal",
+        "ai_guard block wording",
+        "no execution"
+      ],
+      "verification_methods": [
+        "rust_test_target:block_message_includes_reason_and_no_override_hint",
+        "rust_test_target:wildcard_send_block_uses_the_full_ai_guard_wording",
+        "rust_test_target:enforce_blocks_main_push_without_executing",
+        "drift_source_anchor:src/guard/enforce.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2268",
+        "src/guard/enforce.rs:150",
+        "src/cli/guard.rs:211"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Message wording is unit-covered; the e2e proves the real git push never ran (exit 1, stderr carries the block text)"
+      ]
+    },
+    {
+      "contract_id": "G12-4036a534a9",
+      "dimensions": [
+        "request reason required",
+        "env name indirection",
+        "japanese requirement",
+        "no decision on invalid reason"
+      ],
+      "verification_methods": [
+        "rust_test_target:request_reason_validation_normalizes_and_rejects_blank",
+        "rust_test_target:japanese_detection_matches_ai_guard_ranges",
+        "rust_test_target:enforce_ask_without_request_reason_fails_before_creating_a_decision",
+        "rust_test_target:enforce_ask_non_japanese_request_reason_is_rejected",
+        "drift_source_anchor:src/guard/enforce.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2269",
+        "src/guard/enforce.rs:60",
+        "src/cli/guard.rs:228"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Reason validation and Japanese detection are unit-covered; both e2e cases assert no pending decision exists after refusal"
+      ]
+    },
+    {
+      "contract_id": "G12-2d5edc3fcb",
+      "dimensions": [
+        "command_guard decision creation",
+        "approve/day/reject options",
+        "free text and timeout",
+        "wait loop"
+      ],
+      "verification_methods": [
+        "rust_test_target:decision_options_offer_approve_day_and_reject",
+        "rust_test_target:decision_title_and_body_carry_the_context",
+        "rust_test_target:enforce_ask_approval_executes_the_command",
+        "rust_test_target:enforce_ask_expiry_refuses_the_command",
+        "drift_source_anchor:src/guard/enforce.rs",
+        "drift_source_anchor:src/cli/decision.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2270",
+        "src/guard/enforce.rs:100",
+        "src/cli/guard.rs:232",
+        "src/cli/decision.rs:60"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Option construction and the shared wait_for_decision loop are unit-covered; creation and expiry are proven end-to-end against a real server socket"
+      ]
+    },
+    {
+      "contract_id": "G12-9638a08165",
+      "dimensions": [
+        "approve executes and caches",
+        "day approval writes day key",
+        "reject shows reason",
+        "expiry/cancel/server-down refuse"
+      ],
+      "verification_methods": [
+        "rust_test_target:deny_and_approved_messages_carry_the_reason",
+        "rust_test_target:enforce_ask_approval_executes_the_command",
+        "rust_test_target:enforce_ask_day_approval_suppresses_the_second_prompt",
+        "rust_test_target:enforce_ask_rejection_keeps_the_command_from_running",
+        "rust_test_target:enforce_ask_cancellation_refuses_the_command",
+        "drift_source_anchor:src/guard/enforce.rs",
+        "drift_source_anchor:src/guard/judge.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2271",
+        "src/guard/enforce.rs:170",
+        "src/guard/judge.rs:1550",
+        "src/cli/guard.rs:232"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "All four answer outcomes are e2e-covered with a real decision socket; server-down refusal shares the same deny path as cancellation and is asserted by message-text unit tests"
+      ]
+    },
+    {
+      "contract_id": "G12-1ceb000f92",
+      "dimensions": [
+        "uncached verdicts stay prompted",
+        "no suppression write without temp key"
+      ],
+      "verification_methods": [
+        "rust_test_target:herdr_wildcard_send_has_no_temp_approval_key",
+        "drift_source_anchor:src/guard/judge.rs",
+        "drift_source_anchor:src/cli/guard.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2272",
+        "src/guard/judge.rs:1524",
+        "src/cli/guard.rs:240"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The no-temp-key verdict set is unit-covered; guard exec only writes suppression when approval_key is Some so an approval without a key cannot cache"
+      ]
+    },
+    {
+      "contract_id": "G12-34e17d2c9a",
+      "dimensions": [
+        "enforcing env marker",
+        "record and disabled skip it",
+        "dotfiles skip hook"
+      ],
+      "verification_methods": [
+        "rust_test_target:apply_guard_env_marks_enforcing_panes_for_ai_guard_skip",
+        "drift_source_anchor:src/guard/assets.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2273",
+        "src/guard/assets.rs:62",
+        "src/guard/mod.rs:40"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Injection across enforce/record/disabled is unit-covered; the dotfiles-side skip on HERDR_GUARD_ENFORCING is delivered as a proposed diff in RESULT.md, not code in this repo"
+      ]
+    },
+    {
       "contract_id": "G12-922c4a20ab",
       "dimensions": [
         "match statuses",
@@ -12372,7 +12610,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2266",
+        "SPEC.md:2281",
         "src/guard/compare.rs:49"
       ],
       "test_status": [
@@ -12396,7 +12634,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2267",
+        "SPEC.md:2282",
         "src/guard/compare.rs:173"
       ],
       "test_status": [
@@ -12424,7 +12662,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2268",
+        "SPEC.md:2283",
         "src/guard/record.rs:299"
       ],
       "test_status": [

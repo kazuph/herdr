@@ -1787,7 +1787,7 @@ pub struct AppState {
     pub outer_terminal_focus: Option<bool>,
     // Config
     pub agent_start_config: crate::config::AgentStartConfig,
-    /// `[guard]` config: record-only command watcher for agent panes.
+    /// `[guard]` config: command watcher for agent panes.
     pub guard_config: crate::config::GuardConfig,
     pub prefix_code: KeyCode,
     pub prefix_mods: KeyModifiers,

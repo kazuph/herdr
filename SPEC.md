@@ -2216,13 +2216,13 @@
 - ID名前空間（複合ID vs machine修飾子）は未決定。P1/P2はlabel-or-id完全一致＋曖昧拒否で進め、pane解決・mailbox・`herdr run`への波及はP3着手時に親が決定する。
 - 単発`--remote`と保存machineの責務分界は現状維持（畳み込みなし）。machine側からのattach再利用は将来packetで検討する。
 
-## G12. 危険コマンドの見張り（command guard、工程4A・記録のみ）
+## G12. 危険コマンドの見張り（command guard、既定 enforce）
 
 ### 判定部品（src/guard）
 - **該当コミット**: feat/command-guardの実装
 - **分類**: CORE-RUNTIME
-- **status: fork独自・保持 (C)** — dotfiles の ai_guard の判定を herdr へ移植した、記録のみ段階の見張り部品。
-- **目的**: herdr が起動したペインの中でエージェントが実行する危険コマンドを ai_guard と同じ判定で分類し、次の工程で判断待ち（decision）へ繋ぐための判定部品と比較用の記録を得る。
+- **status: fork独自・保持 (C)** — dotfiles の ai_guard の判定を herdr へ移植した見張り部品。
+- **目的**: herdr が起動したペインの中でエージェントが実行する危険コマンドを ai_guard と同じ判定で分類し、mode に応じて記録・停止・判断待ち（decision）へ繋ぐための判定部品と比較用の記録を得る。
 - **挙動**: `herdr guard check`・`herdr guard exec` がコマンド名・引数・作業ディレクトリ・起動ディレクトリを受けて `allow`（通す）・`block`（承認では解除しない）・`ask`（将来の判断待ち対象）と理由を返す。判定規則は ai_guard の移植で、対象コマンド一覧・`rm` の安全なパス・git/gh・HTTP 書き込み・aws・wrangler・危険語・herdr ワイルドカード送信・保護パターン・1日許可と一時許可キーを含む。
 - **受け入れ条件**:
   - 判定部品はコマンド名・引数配列・作業ディレクトリ・起動ディレクトリ・環境を入力に `allow`/`block`/`ask` と理由を返し、`herdr guard check` が同じ判定を JSON で出す。
@@ -2249,13 +2249,28 @@
 ### エージェントペインだけの判定と記録のみモード
 - **該当コミット**: feat/command-guardの実装
 - **分類**: CORE-RUNTIME
-- **status: fork独自・保持 (C)** — herdr が把握するペインのエージェント情報だけで判定対象を決め、今回の工程では記録しかしない。
-- **挙動**: `<state>/guard/agent-panes/<p_N>.json` の marker は herdr のペインのエージェント状態（`agent start`・検出・解除・ペイン終了・ペイン close）に同期する。`herdr guard exec` は marker が存在するときだけ判定して `<state>/guard/decisions.jsonl` に1行1JSONで追記し、その後は判定に関係なく必ず本物のコマンドを実行する。判断待ち（decision）は作らない。
+- **status: fork独自・保持 (C)** — herdr が把握するペインのエージェント情報だけで判定対象を決める。`[guard].mode = "record"` は移植時点の記録のみ挙動をそのまま保つ。
+- **挙動**: `<state>/guard/agent-panes/<p_N>.json` の marker は herdr のペインのエージェント状態（`agent start`・検出・解除・ペイン終了・ペイン close）に同期する。`herdr guard exec` は marker が存在するときだけ判定して `<state>/guard/decisions.jsonl` に1行1JSONで追記する。record モードではその後は判定に関係なく必ず本物のコマンドを実行し、判断待ち（decision）は作らない。
 - **受け入れ条件**:
   - エージェント情報を持つペインでは対象コマンドが判定・記録され、エージェント情報を持たないペイン（人が使うペイン）では同じコマンドを打っても判定・記録が起きず、コマンドはそのまま実行される。
   - marker はエージェントの開始・解除・ペインの終了・close で同期され、残ったままの marker が無いペインを後からエージェント扱いしない。
   - `herdr guard exec` は `block` を含むどの判定でもコマンドを止めず、判定部品の終了code ではなく実行したコマンドの終了codeをそのまま返し、decision を作成しない。
   - `decisions.jsonl` の各行は時刻・判定・理由（rule）・コマンド行・cwd・起動cwd・ペイン/ workspace / tab・エージェント・経由（`shim`/`shell-func`/`line`）・承認の抑制情報を含む JSON object である。
+
+### 既定の enforce モード（block を止め、ask は判断待ち）
+- **該当コミット**: feat/guard-enforceの実装
+- **分類**: CORE-RUNTIME
+- **status: fork独自・保持 (C)** — 既定モード。`block` は実行を止め、`ask` は既存の判断待ち基盤へ流して承認・1日許可・却下を待つ。
+- **挙動**: `[guard].mode = "enforce"`（省略時の既定）では、marker のあるエージェントペインで `herdr guard exec` が判定を実行する。`allow` は記録してそのまま実行、`block` は ai_guard と同じ文言で拒否、`ask` は `command_guard` の判断待ちをペインのサーバーへ作成して回答を待つ。待機時間は `[guard].ask_timeout_seconds`（既定300秒）で、承認・1日許可はコマンドを実行し、却下・期限切れ・取り消し・サーバー不通は実行せず終了code 1 で返る。enforce で監視されるペインの環境には `HERDR_GUARD_ENFORCING=1` を差し込み、dotfiles の ai_guard が自身を skip して二重確認にならない印にする。
+- **受け入れ条件**:
+  - `[guard].mode` は `record` と `enforce` を取り、省略時は `enforce` になる。`record` は判定・記録だけでコマンドを止めず decision も作らず、`[guard].enabled = false` は shim・ZDOTDIR・BASH_ENV・marker・`HERDR_GUARD_ENFORCING` を一切差し込まない。
+  - enforce で `allow` は判定を記録した上でコマンドを通常どおり実行し、その終了codeをそのまま返す。
+  - enforce で `block` は ai_guard と同じ文言（ブロック理由と承認では解除できない旨）を標準エラーに出し、コマンドを実行せず終了code 1 を返す。
+  - enforce で `ask` は判定を記録した上で申請文を要求し、申請文は `AI_GUARD_REQUEST_REASON`、または `AI_GUARD_REQUEST_ENV_NAME` が指す環境変数から取る。空白のみ・日本語を含まない値は ai_guard と同じく拒否し、decision を作らずコマンドも実行しない。
+  - 申請文が有効なら、そのペインのサーバーへ `command_guard` の判断待ちを `承認`・`1日許可`・`却下` の選択肢と自由記述入力・`[guard].ask_timeout_seconds`（既定300秒）の期限で作成し、回答が出るまで待つ。
+  - `承認` はコマンドを実行して ai_guard と同じ一時許可キーを承認ファイルへ書き、`1日許可` はコマンドを実行して `day:<cwd>` をローカル日の終わりまでの期限で書く。`却下` は自由記述の理由を示して実行せず、期限切れ・取り消し・サーバー不通も実行せず終了code 1 を返す。
+  - 一時許可キーを持たない判定（ワイルドカード送信など）は承認されても抑制を書き込まず、毎回 `block`/`ask` に戻る。
+  - enforce で監視されるペインには `HERDR_GUARD_ENFORCING=1` が環境に入り、`record` モードでは入らない。dotfiles 側の ai_guard ローダーの変更はこの工程では行わず、親へ提案差分として渡す。
 
 ### ai_guard との突合（herdr guard compare）
 - **該当コミット**: feat/command-guardの実装
@@ -2266,4 +2281,4 @@
   - 同じ時刻窓の同じコマンド行に対し、写像後の判定が一致すれば `AGREE`、食い違えば `DIVERGE`、片方にしか無ければ `HERDR-ONLY`/`AI-GUARD-ONLY`、窓の外は `OUT-OF-WINDOW` として行を出す。
   - `DIVERGE` が1件でもあれば終了code 1、無ければ 0 を返す。
   - ai_guard ログの ISO8601（オフセット付き）時刻とタブ区切り行を解釈し、解釈できない行を集計から落とさないよう数える。
-- **デグレ判定**: 記録のみ段階でコマンドや判断待ちを止める経路を足す、人のペインで記録を残す、本番の state ディレクトリ以外に書く、`compare` が食い違いを終了codeへ反映しない。
+- **デグレ判定**: record モードでコマンドや判断待ちを止める経路を足す、enforce で marker の無いペインや `enabled = false` のペインへ差し込む、人のペインで記録を残す、本番の state ディレクトリ以外に書く、`compare` が食い違いを終了codeへ反映しない。
