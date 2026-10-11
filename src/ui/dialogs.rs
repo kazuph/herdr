@@ -8,8 +8,9 @@ use ratatui::{
 
 use super::text::{display_width_u16, truncate_end};
 use super::widgets::{
-    action_button_row_rects, centered_popup_rect, panel_contrast_fg, render_action_button,
-    render_modal_header, render_modal_shell, render_panel_shell, ActionButtonSpec,
+    action_button_row_rects, action_button_width, centered_popup_rect, panel_contrast_fg,
+    render_action_button, render_modal_header, render_modal_shell, render_panel_shell,
+    ActionButtonSpec,
 };
 use crate::app::{
     state::{Palette, WorktreeCreateState, WorktreeOpenState, WorktreeRemoveState},
@@ -980,6 +981,7 @@ pub(crate) struct DecisionDialogRects {
     pub content: Rect,
     pub text: Option<Rect>,
     pub options: Vec<Rect>,
+    pub confirm: Rect,
     pub close: Rect,
 }
 
@@ -1045,11 +1047,19 @@ pub(crate) fn decision_dialog_rects(
         11.min(footer.width),
         1,
     );
+    let confirm_width = action_button_width(Some("↵"), "confirm");
+    let confirm = Rect::new(
+        close.x.saturating_sub(confirm_width + 1).max(footer.x),
+        footer.y,
+        confirm_width.min(footer.width),
+        1,
+    );
     Some(DecisionDialogRects {
         popup,
         content: slots[1],
         text,
         options,
+        confirm,
         close,
     })
 }
@@ -1169,9 +1179,24 @@ pub(crate) fn render_decision_dialog(
         frame.render_widget(
             Paragraph::new(" click the dialog to use the keyboard")
                 .style(Style::default().fg(palette.overlay0)),
-            Rect::new(inner.x, rects.close.y, rects.close.x - inner.x, 1),
+            Rect::new(
+                inner.x,
+                rects.close.y,
+                rects.confirm.x.saturating_sub(inner.x),
+                1,
+            ),
         );
     }
+    render_action_button(
+        frame,
+        rects.confirm,
+        Some("↵"),
+        "confirm",
+        Style::default()
+            .fg(panel_contrast_fg(palette))
+            .bg(palette.accent)
+            .add_modifier(Modifier::BOLD),
+    );
     render_action_button(
         frame,
         rects.close,

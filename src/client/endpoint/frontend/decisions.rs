@@ -185,24 +185,30 @@ fn answer(frontend: &mut ClientFrontend, option_index: usize) -> io::Result<()> 
             frontend.decisions.dialog = None;
             return Ok(());
         }
-        let Some(option) = pending.decision.options.get(option_index) else {
-            return Ok(());
-        };
+        let option_id = pending
+            .decision
+            .options
+            .get(option_index)
+            .map(|option| option.id.clone());
         let text = pending
             .decision
             .allow_text
             .then(|| dialog.text.trim().to_owned())
             .filter(|text| !text.is_empty());
+        // A decision without options is answered by text alone.
+        if option_id.is_none() && text.is_none() {
+            return Ok(());
+        }
         (
             pending.key.endpoint.clone(),
             pending.decision.decision_id.clone(),
-            option.id.clone(),
+            option_id,
             text,
         )
     };
     let method = schema::Method::DecisionAnswer(schema::DecisionAnswerParams {
         decision_id,
-        option_id: Some(option_id),
+        option_id,
         text,
         responder: Some("client".into()),
     });
@@ -419,12 +425,23 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                 }
                 if rects.close.contains(position) {
                     close(frontend);
+                } else if rects.confirm.contains(position) {
+                    let selected = frontend
+                        .decisions
+                        .dialog
+                        .as_ref()
+                        .map(|dialog| dialog.selected)
+                        .unwrap_or(0);
+                    answer(frontend, selected)?;
                 } else if let Some(index) = rects
                     .options
                     .iter()
                     .position(|rect| rect.contains(position))
                 {
-                    answer(frontend, index)?;
+                    // A click only selects; the confirm button or Enter sends.
+                    if let Some(dialog) = frontend.decisions.dialog.as_mut() {
+                        dialog.selected = index;
+                    }
                 }
                 Ok(true)
             }
@@ -766,7 +783,7 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_decision_option_click_and_enter_route_the_answer() {
+    fn endpoint_decision_option_click_only_selects_confirm_or_enter_sends() {
         let mut frontend = make_frontend();
         set_pending(
             &mut frontend,
@@ -776,16 +793,42 @@ mod tests {
         );
         let pending = frontend.decisions.current().cloned().expect("decision");
         let rects = dialog_rects(&frontend, &pending).expect("rects");
-        // Without a live endpoint connection the send fails, but the click must
-        // still be consumed by the option row rather than reaching the pane.
+        // A click on an option only selects it. Without a live endpoint the
+        // send fails with a notice, so notice.is_none() proves no answer was
+        // attempted by the click.
         assert!(input(
             &mut frontend,
-            &mouse_down(rects.options[0].x, rects.options[0].y)
+            &mouse_down(rects.options[1].x, rects.options[1].y)
         )
         .unwrap());
+        assert_eq!(frontend.decisions.dialog.as_ref().unwrap().selected, 1);
+        assert!(
+            frontend.notice.is_none(),
+            "a click must not send the answer"
+        );
+        // The confirm button sends the selected option.
+        assert!(input(&mut frontend, &mouse_down(rects.confirm.x, rects.confirm.y)).unwrap());
         assert!(frontend.notice.is_some());
         frontend.notice = None;
-        // Enter after grabbing the keyboard answers the highlighted option.
+        // Enter after selecting by click answers the same option.
+        let mut frontend = make_frontend();
+        set_pending(
+            &mut frontend,
+            &ClientEndpointId::Local,
+            1,
+            vec![decision("a", 1)],
+        );
+        let pending = frontend.decisions.current().cloned().expect("decision");
+        let rects = dialog_rects(&frontend, &pending).expect("rects");
+        input(
+            &mut frontend,
+            &mouse_down(rects.options[1].x, rects.options[1].y),
+        )
+        .unwrap();
+        assert!(input(&mut frontend, &key(KeyCode::Enter)).unwrap());
+        assert!(frontend.notice.is_some());
+        // Keyboard-only selection still works: click inside the dialog, then
+        // Down + Enter.
         let mut frontend = make_frontend();
         set_pending(
             &mut frontend,
@@ -804,6 +847,82 @@ mod tests {
         assert_eq!(frontend.decisions.dialog.as_ref().unwrap().selected, 1);
         assert!(input(&mut frontend, &key(KeyCode::Enter)).unwrap());
         assert!(frontend.notice.is_some());
+    }
+
+    #[test]
+    fn endpoint_decision_clicked_option_is_visually_selected() {
+        let mut frontend = make_frontend();
+        set_pending(
+            &mut frontend,
+            &ClientEndpointId::Local,
+            1,
+            vec![decision("a", 1)],
+        );
+        let pending = frontend.decisions.current().cloned().expect("decision");
+        let rects = dialog_rects(&frontend, &pending).expect("rects");
+        input(
+            &mut frontend,
+            &mouse_down(rects.options[1].x, rects.options[1].y),
+        )
+        .unwrap();
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).expect("terminal");
+        terminal
+            .draw(|frame| render(&frontend, frame, Rect::new(0, 0, 100, 30)))
+            .unwrap();
+        let accent = frontend.chrome.settings.palette.accent;
+        let surface0 = frontend.chrome.settings.palette.surface0;
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer
+                .cell((rects.options[1].x, rects.options[1].y))
+                .map(|cell| cell.bg),
+            Some(accent),
+            "clicked option is highlighted"
+        );
+        assert_eq!(
+            buffer
+                .cell((rects.options[0].x, rects.options[0].y))
+                .map(|cell| cell.bg),
+            Some(surface0),
+            "other options keep the unselected style"
+        );
+        // The stripped text still shows both options and the confirm affordance.
+        let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        for needle in ["Yes", "No", "confirm", "close"] {
+            assert!(text.contains(needle), "missing {needle:?}\n{text}");
+        }
+        if let Ok(path) = std::env::var("HERDR_DECISION_DIALOG_DUMP") {
+            let rows: Vec<String> = buffer
+                .content()
+                .chunks(100)
+                .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+                .collect();
+            let _ = std::fs::write(&path, rows.join("\n"));
+            let rgb = |color: ratatui::style::Color, fallback: (u8, u8, u8)| match color {
+                ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+                _ => fallback,
+            };
+            let ansi_rows: Vec<String> = buffer
+                .content()
+                .chunks(100)
+                .map(|row| {
+                    let mut line = String::new();
+                    for cell in row {
+                        let (fr, fg, fb) = rgb(cell.fg, (205, 214, 244));
+                        let (br, bg, bb) = rgb(cell.bg, (24, 24, 37));
+                        line.push_str(&format!(
+                            "\x1b[38;2;{fr};{fg};{fb}m\x1b[48;2;{br};{bg};{bb}m{}",
+                            cell.symbol()
+                        ));
+                    }
+                    line.push_str("\x1b[0m");
+                    line
+                })
+                .collect();
+            let _ = std::fs::write(format!("{path}.ansi"), ansi_rows.join("\n"));
+        }
     }
 
     #[test]

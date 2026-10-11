@@ -204,13 +204,16 @@ impl ActiveSubscription {
                 event_kind: crate::api::schema::EventKind::LayoutUpdated,
                 last_sequence: 0,
             })),
+            // Decision consumers reconcile against `decision.list`, so they
+            // must not replay hub history: a retained `decision.created` for a
+            // long-resolved decision would be re-announced as if it were new.
             Subscription::DecisionCreated {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::DecisionCreated,
-                last_sequence: 0,
+                last_sequence: event_hub.current_sequence(),
             })),
             Subscription::DecisionResolved {} => Ok(Self::Event(ActiveEventSubscription {
                 event_kind: crate::api::schema::EventKind::DecisionResolved,
-                last_sequence: 0,
+                last_sequence: event_hub.current_sequence(),
             })),
             Subscription::PaneOutputMatched {
                 pane_id,
@@ -710,6 +713,74 @@ mod tests {
         assert_eq!(data.pane_id, "pane_1");
         assert_eq!(data.workspace_id, "workspace_1");
         assert_eq!(data.scroll, scrolled_back);
+    }
+
+    fn decision(
+        id: &str,
+        status: crate::api::schema::DecisionStatus,
+    ) -> crate::api::schema::Decision {
+        crate::api::schema::Decision {
+            decision_id: id.to_string(),
+            kind: crate::api::schema::DecisionKind::Ask,
+            title: format!("title {id}"),
+            body: None,
+            options: vec![],
+            allow_text: false,
+            origin: None,
+            created_unix_ms: 1,
+            expires_unix_ms: None,
+            status,
+            answer: None,
+        }
+    }
+
+    #[test]
+    fn decision_subscriptions_do_not_replay_hub_history() {
+        let event_hub = EventHub::default();
+        // A decision created and resolved before the subscriber arrived left
+        // both envelopes in the retained hub history.
+        event_hub.push(EventEnvelope {
+            event: EventKind::DecisionCreated,
+            data: EventData::DecisionCreated {
+                decision: decision("dec-old", crate::api::schema::DecisionStatus::Pending),
+            },
+        });
+        event_hub.push(EventEnvelope {
+            event: EventKind::DecisionResolved,
+            data: EventData::DecisionResolved {
+                decision: decision("dec-old", crate::api::schema::DecisionStatus::Answered),
+            },
+        });
+
+        let (api_tx, _api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut created = ActiveSubscription::new(
+            Subscription::DecisionCreated {},
+            "test",
+            0,
+            &api_tx,
+            &event_hub,
+        )
+        .expect("created subscription");
+        let mut resolved = ActiveSubscription::new(
+            Subscription::DecisionResolved {},
+            "test",
+            1,
+            &api_tx,
+            &event_hub,
+        )
+        .expect("resolved subscription");
+
+        assert!(created.poll(&api_tx, &event_hub).is_none());
+        assert!(resolved.poll(&api_tx, &event_hub).is_none());
+
+        // Events pushed after the subscription are still delivered.
+        event_hub.push(EventEnvelope {
+            event: EventKind::DecisionCreated,
+            data: EventData::DecisionCreated {
+                decision: decision("dec-new", crate::api::schema::DecisionStatus::Pending),
+            },
+        });
+        assert!(created.poll(&api_tx, &event_hub).is_some());
     }
 
     #[test]

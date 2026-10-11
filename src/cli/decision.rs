@@ -174,14 +174,36 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
     };
     let decision_id = decision_id.to_string();
 
-    // The server closes long-lived wait requests when it restarts or when the
-    // socket drops, so retry the wait against the same decision_id until the
-    // decision resolves or the caller interrupts.
+    let response = wait_for_decision(&decision_id)?;
+    if response.get("error").is_some() {
+        return super::print_response(&response);
+    }
+    let Ok(decision) = serde_json::from_value::<crate::api::schema::Decision>(
+        response["result"]["decision"].clone(),
+    ) else {
+        return Err(std::io::Error::other(
+            "decision.wait response did not include a decision",
+        ));
+    };
+    super::print_response(&response)?;
+    Ok(match decision.status {
+        DecisionStatus::Answered => 0,
+        DecisionStatus::Expired => 3,
+        DecisionStatus::Cancelled => 4,
+        DecisionStatus::Pending => 1,
+    })
+}
+
+/// Wait on a decision until it leaves `pending`. The server closes long-lived
+/// wait requests when it restarts or when the socket drops, so the wait is
+/// retried against the same decision_id until the decision resolves or the
+/// caller interrupts. Returns the raw wait response (which may carry `error`).
+pub(super) fn wait_for_decision(decision_id: &str) -> std::io::Result<serde_json::Value> {
     loop {
         let response = super::send_request(&Request {
             id: "cli:decision:wait".into(),
             method: Method::DecisionWait(DecisionWaitParams {
-                decision_id: decision_id.clone(),
+                decision_id: decision_id.to_string(),
                 timeout_ms: None,
             }),
         });
@@ -194,7 +216,7 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
             Ok(response) => response,
         };
         if response.get("error").is_some() {
-            return super::print_response(&response);
+            return Ok(response);
         }
         let Ok(decision) = serde_json::from_value::<crate::api::schema::Decision>(
             response["result"]["decision"].clone(),
@@ -207,13 +229,7 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
             std::thread::sleep(DECISION_WAIT_RETRY_DELAY);
             continue;
         }
-        super::print_response(&response)?;
-        return Ok(match decision.status {
-            DecisionStatus::Answered => 0,
-            DecisionStatus::Expired => 3,
-            DecisionStatus::Cancelled => 4,
-            DecisionStatus::Pending => 1,
-        });
+        return Ok(response);
     }
 }
 

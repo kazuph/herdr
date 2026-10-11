@@ -1,15 +1,17 @@
-//! Record-only command guard for agent panes.
+//! Command guard for agent panes.
 //!
 //! Ports the dotfiles `ai_guard` judgement into herdr. When a pane is spawned,
 //! herdr prepends a shim directory to `PATH` and injects zsh/bash startup
 //! hooks (see `assets`). The shims and shell functions call
 //! `herdr guard exec -- <cmd> <args...>`, which judges the command when the
-//! pane is known to run an agent, appends a JSONL record, and always executes
-//! the original command. Nothing is blocked and no decision is created in
-//! this phase.
+//! pane is known to run an agent and appends a JSONL record. What happens
+//! next is chosen by `[guard] mode`: `record` always executes the command;
+//! `enforce` (the default) stops `block` verdicts and turns `ask` verdicts
+//! into a `command_guard` decision wait.
 
 pub(crate) mod assets;
 pub(crate) mod compare;
+pub(crate) mod enforce;
 pub(crate) mod judge;
 pub(crate) mod marker;
 pub(crate) mod record;
@@ -94,6 +96,10 @@ pub(crate) const HERDR_EXE_ENV_VAR: &str = "HERDR_GUARD_HERDR";
 /// Environment variable holding the per-pane agent marker file path. When the
 /// file exists the pane is believed to host an agent and commands are judged.
 pub(crate) const MARKER_ENV_VAR: &str = "HERDR_GUARD_MARKER";
+/// Environment variable set to `1` on panes where the guard enforces
+/// (`[guard] mode = "enforce"`). The dotfiles ai_guard loader checks this
+/// marker and skips itself so a pane never sees both confirmation systems.
+pub(crate) const ENFORCING_ENV_VAR: &str = "HERDR_GUARD_ENFORCING";
 /// Environment variable recording the user's original `ZDOTDIR` (or HOME when
 /// unset) so the injected zsh startup files can chain-load the real ones.
 pub(crate) const ZDOTDIR_ORIG_ENV_VAR: &str = "HERDR_GUARD_ZDOTDIR_ORIG";

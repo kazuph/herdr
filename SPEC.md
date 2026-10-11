@@ -1911,18 +1911,18 @@
 - **挙動**:
   - serverは接続中の各endpoint clientへ、pending判断待ちの全件リストをboot_id・projection revision付きのEndpointControl projectionとしてpushする。判断待ちの作成・回答・取消・期限切れイベントでprojectionを更新し、非active（surfaceをpresentしていない）clientにも届ける。clientはこのprojectionだけをpendingの根拠とし、自前で判断待ち状態を合成しない。
   - endpoint client shellは接続中の全endpointのprojectionを束ね、`created_unix_ms`の古い順に並べて1件ずつdialogへ出す。dialogはtitle・body・マシン表示名・origin情報（存在する分）・選択肢・`N/M`形式のキュー位置・`expires_unix_ms`がある場合の残り時間を表示し、本文・commandが長い場合は枠内で折返しまたはscrollする。見た目・Esc・閉じる操作は既存のmodal/dialogパターンに従う。
-  - 選択肢のクリックはその判断待ちを所有するendpointへ`decision.answer`を送り、`responder`にはUI由来を示す値（`client`）を入れる。`allow_text`の判断待ちはtext入力欄を表示し、入力したtextを回答へ添える。回答対象のendpointはpresenting endpointでなくてもよい。
+  - 選択肢のクリックはその選択肢を選ぶだけに留め（選択中の選択肢はaccentの強調表示で分かる）、`↵ confirm`ボタンまたはEnterがその判断待ちを所有するendpointへ`decision.answer`を送る。`responder`にはUI由来を示す値（`client`）を入れる。`allow_text`の判断待ちはtext入力欄を表示し、入力したtextを回答へ添える。回答対象のendpointはpresenting endpointでなくてもよい。
   - dialogが開いていても、dialog内をクリックするまではキーボード入力はpaneへそのまま届き、Enter一発で誤回答しない既定動作はない。dialog内のクリックでキーボードがdialogへ移り、上下キーの選択・Enterの確定・text入力が有効になる。Escまたはcloseボタンで回答せず閉じる。
   - 回答せず閉じた判断待ちが残る間は`! N`形式の目印をアクションバーへ出し、クリックで同じ判断待ちのdialogを再表示する。
   - 別のclient・CLI・pluginなど他の受け口で回答・取消・期限切れになった判断待ちは、次のprojectionでdialogと目印から自動で消える。endpointが切断されたマシンの判断待ちはqueueから外れ、再接続ではserverのprojectionから復帰する。
 - **受け入れ条件**:
   - localを含む接続中マシンで作ったpending判断待ちがdialogへ出て、title・body・マシン名・origin・選択肢・残り時間・`N/M`カウントを表示し、最古が先に出る。
-  - 選択肢クリックが所有マシンへ`decision.answer`を送り、store上の回答が`responder="client"`と選んだoption_idになる。`allow_text`では入力textが届く。
+  - 選択肢クリックは回答を送らずその選択肢の選択（強調表示）だけを行い、決定ボタンまたはEnterが所有マシンへ`decision.answer`を送り、store上の回答が`responder="client"`と選んだoption_idになる。`allow_text`では入力textが届く。
   - dialogをクリックするまでキーボードはpaneへ届き、クリック後はキー操作だけで選択・確定・text入力できる。
   - 閉じたあとも件数目印が残り、クリックでdialogが再表示される。
   - `decision.answer`/取消/期限切れを別経路で行うとdialogと目印が消え、endpoint切断でそのマシン分がqueueから外れ、再接続で復帰する。
-- **検証契約**: Rust unit testsでqueueの対象・順序・カウント・close/reopen・外部解決・切断除去を固定し、実socket経由のactual-process testでクリック→`decision.answer`送信→store反映→外部解決での消去を固定する。隔離server上の`herdr decision ask`とANSI/画面証拠で実地確認する。
-- **デグレ判定**: clientがprojection以外の根拠でpending判断待ちを作る、dialog外クリックやEnterで誤回答できる、閉じた判断待ちを二度と開けない、他マシンへの回答がactive endpoint以外へ届かない。
+- **検証契約**: Rust unit testsでqueueの対象・順序・カウント・選択と確定の分離・close/reopen・外部解決・切断除去を固定し、実socket経由のactual-process testで選択クリック→決定ボタン→`decision.answer`送信→store反映→外部解決での消去を固定する。隔離server上の`herdr decision ask`とANSI/画面証拠で実地確認する。
+- **デグレ判定**: clientがprojection以外の根拠でpending判断待ちを作る、選択肢の1クリックだけやdialog外クリック・未focusのEnterで誤回答できる、閉じた判断待ちを二度と開けない、他マシンへの回答がactive endpoint以外へ届かない。
 
 ### 判断待ちの配信とマシン横断回答（decision watch、工程3A）
 - **該当コミット**: feat/decision-watchの実装
@@ -1931,8 +1931,9 @@
 - **目的**: 判断待ちの監視・回答をHerdr画面の外から一つの契約で行えるようにし、consumerがマシンごとの接続管理やpending初期同期を自前で実装しなくて済むようにする。
 - **挙動**:
   - `herdr decision watch`は1行1JSON objectをstdoutへflushしながら出し続ける長時間コマンドで、親processに止められるまで終わらない。行の形は`{"event":"created","machine":{"id":...,"label":...},"decision":{...}}`、`{"event":"resolved","machine":{...},"decision":{...}}`、`{"event":"machine_down","machine":{...},"reason":"..."}`、`{"event":"machine_up","machine":{...}}`の4種で、`created`のdecisionは`status:"pending"`、`resolved`のdecisionは`answered`/`expired`/`cancelled`の全体を載せる。
-  - 既定ではlocal serverだけを見る。起動直後に`machine_up`（machineは`{"id":"local","label":"Local"}`）を出し、その時点のpending全件を`created`として出し、その後`decision.created`→`created`、`decision.resolved`→`resolved`を流す。接続が切れたら`machine_down`を出して接続し直し、再接続のたびに`machine_up`とその時点のpending全件の`created`を出し直す。`created`は重複しうるため、consumerは`(machine.id, decision.decision_id)`で重複を潰す。
+  - 既定ではlocal serverだけを見る。起動直後に`machine_up`（machineは`{"id":"local","label":"Local"}`）を出し、その時点のpending全件を`created`として出し、その後`decision.created`→`created`、`decision.resolved`→`resolved`を流す。decision購読は接続時点以降のイベントだけを見るため、serverが保持する購読前の履歴（すでに決定済みの判断待ちを`created`→`resolved`で流し直すような過去イベント）や、その回のwatchで`created`を出していない判断待ちの`resolved`は流さない。接続が切れたら`machine_down`を出して接続し直し、再接続のたびに`machine_up`とその時点のpending全件の`created`を出し直す。`created`は重複しうるため、consumerは`(machine.id, decision.decision_id)`で重複を潰す。
   - `--all-machines`ではlocalに加えて`machines.json`のenabledな保存マシンごとにsshで`herdr --session <session> decision watch`を起動し、出てくる行の`machine`を保存マシンのidと表示名へ置き換えて流す。1台の失敗はそのマシンのstreamだけに留め、sshが切れたら`machine_down`（reason付き）を出して間隔を空けてつなぎ直し、繰り返し失敗では間隔を伸ばす。
+  - 保存マシンのherdrが`decision`コマンドを知らない（`unknown command: decision`等）場合、そのマシンを未対応と分類し、reasonに未対応と書いた`machine_down`を1回だけ出し、そのマシンの再試行は30分おきにだけ行う（実際のwatch行が来たら未対応扱いを解除する）。他マシンの再試行間隔・Tailscale認証待ちには影響しない。
   - sshの出力にTailscale SSHの`To authenticate, visit: <URL>`が含まれる場合、watchはブラウザを開かず、そのマシンを`machine_down`にしてreasonへ認証が要ることとURLを入れ、10分待ってからリトライする。画面側のsaved endpoint接続の認証URLをブラウザで開く挙動は変えない。
   - `herdr decision answer`は`--machine <label-or-id>`を受け付け、省略時と`--machine local`は手元のserverへ、保存マシンのlabelまたはidはそのマシンのserverへ回答を送る。回答の結果JSON・終了code・`decision_already_resolved`などのエラーは変更しない。
 - **受け入れ条件**:
@@ -1943,9 +1944,11 @@
   - `--all-machines`が保存マシンの判断待ちをそのマシンのid・表示名の`machine`で流し、1台の失敗が他マシン・localのstreamを止めない。
   - sshでTailscale認証の行を見たらブラウザを開かず`machine_down`（認証が要ることとURL入りのreason）にし、そのマシンは10分後にリトライする。
   - `decision answer --machine <保存マシン>`がそのマシンのserverへ回答を届け、`--machine`省略・`--machine local`は手元のserverを使い、結果と終了codeは従来どおりで2回目の回答は`decision_already_resolved`になる。
+  - watch起動直後に、すでに決定済みの判断待ちを`created`→`resolved`で流し直さず、その回のwatchで`created`を出していない判断待ちの`resolved`も流さない。
+  - 保存マシンのherdrが`decision`を知らない場合、そのマシンは未対応と書いたreason付きの`machine_down`を1回だけ出し、30分おきにだけ再試行し、他マシンの再試行間隔は変えない。
   - 既存のdecision API・event・CLI・UI・socket protocol・画面側saved endpointの認証挙動を変えない。
-- **検証契約**: Rust unit testsで行の形・再接続・machine置換・1台失敗の隔離・Tailscale認証のmachine_down化と10分待機・`answer --machine`の振り分けを固定する。隔離sessionの実serverと検証用の保存マシン経路（偽sshまたは実機）でend-to-endを実地確認する。
-- **デグレ判定**: JSON以外の行や未改行の出力を混ぜる、パイプ切断で落ちる、再接続時にpendingの`created`を出し直さない、失敗したマシンが他streamを巻き込む、Tailscale認証でブラウザを開く、保存マシンへの回答がlocalへ届く、`machine`のid/labelを保存profileの値にしない。
+- **検証契約**: Rust unit testsで行の形・再接続・machine置換・1台失敗の隔離・Tailscale認証のmachine_down化と10分待機・`answer --machine`の振り分け・起動時のdecision購読が履歴を再生しないこと・未告知decisionのresolved抑止・未対応マシンのmachine_downと30分待機を固定する。隔離sessionの実serverと検証用の保存マシン経路（偽sshまたは実機）でend-to-endを実地確認する。
+- **デグレ判定**: JSON以外の行や未改行の出力を混ぜる、パイプ切断で落ちる、起動直後に購読前の履歴や未告知decisionのresolvedを流し直す、再接続時にpendingの`created`を出し直さない、失敗したマシンが他streamを巻き込む、未対応マシンを短い間隔で繰り返し`machine_down`し続ける、Tailscale認証でブラウザを開く、保存マシンへの回答がlocalへ届く、`machine`のid/labelを保存profileの値にしない。
 
 ### エージェント画面の質問と許可確認の判断待ち化（screen prompt decisions、工程6）
 - **該当コミット**: feat/screen-prompt-decisionsの実装
@@ -2237,13 +2240,13 @@
 - ID名前空間（複合ID vs machine修飾子）は未決定。P1/P2はlabel-or-id完全一致＋曖昧拒否で進め、pane解決・mailbox・`herdr run`への波及はP3着手時に親が決定する。
 - 単発`--remote`と保存machineの責務分界は現状維持（畳み込みなし）。machine側からのattach再利用は将来packetで検討する。
 
-## G12. 危険コマンドの見張り（command guard、工程4A・記録のみ）
+## G12. 危険コマンドの見張り（command guard、既定 enforce）
 
 ### 判定部品（src/guard）
 - **該当コミット**: feat/command-guardの実装
 - **分類**: CORE-RUNTIME
-- **status: fork独自・保持 (C)** — dotfiles の ai_guard の判定を herdr へ移植した、記録のみ段階の見張り部品。
-- **目的**: herdr が起動したペインの中でエージェントが実行する危険コマンドを ai_guard と同じ判定で分類し、次の工程で判断待ち（decision）へ繋ぐための判定部品と比較用の記録を得る。
+- **status: fork独自・保持 (C)** — dotfiles の ai_guard の判定を herdr へ移植した見張り部品。
+- **目的**: herdr が起動したペインの中でエージェントが実行する危険コマンドを ai_guard と同じ判定で分類し、mode に応じて記録・停止・判断待ち（decision）へ繋ぐための判定部品と比較用の記録を得る。
 - **挙動**: `herdr guard check`・`herdr guard exec` がコマンド名・引数・作業ディレクトリ・起動ディレクトリを受けて `allow`（通す）・`block`（承認では解除しない）・`ask`（将来の判断待ち対象）と理由を返す。判定規則は ai_guard の移植で、対象コマンド一覧・`rm` の安全なパス・git/gh・HTTP 書き込み・aws・wrangler・危険語・herdr ワイルドカード送信・保護パターン・1日許可と一時許可キーを含む。
 - **受け入れ条件**:
   - 判定部品はコマンド名・引数配列・作業ディレクトリ・起動ディレクトリ・環境を入力に `allow`/`block`/`ask` と理由を返し、`herdr guard check` が同じ判定を JSON で出す。
@@ -2270,13 +2273,28 @@
 ### エージェントペインだけの判定と記録のみモード
 - **該当コミット**: feat/command-guardの実装
 - **分類**: CORE-RUNTIME
-- **status: fork独自・保持 (C)** — herdr が把握するペインのエージェント情報だけで判定対象を決め、今回の工程では記録しかしない。
-- **挙動**: `<state>/guard/agent-panes/<p_N>.json` の marker は herdr のペインのエージェント状態（`agent start`・検出・解除・ペイン終了・ペイン close）に同期する。`herdr guard exec` は marker が存在するときだけ判定して `<state>/guard/decisions.jsonl` に1行1JSONで追記し、その後は判定に関係なく必ず本物のコマンドを実行する。判断待ち（decision）は作らない。
+- **status: fork独自・保持 (C)** — herdr が把握するペインのエージェント情報だけで判定対象を決める。`[guard].mode = "record"` は移植時点の記録のみ挙動をそのまま保つ。
+- **挙動**: `<state>/guard/agent-panes/<p_N>.json` の marker は herdr のペインのエージェント状態（`agent start`・検出・解除・ペイン終了・ペイン close）に同期する。`herdr guard exec` は marker が存在するときだけ判定して `<state>/guard/decisions.jsonl` に1行1JSONで追記する。record モードではその後は判定に関係なく必ず本物のコマンドを実行し、判断待ち（decision）は作らない。
 - **受け入れ条件**:
   - エージェント情報を持つペインでは対象コマンドが判定・記録され、エージェント情報を持たないペイン（人が使うペイン）では同じコマンドを打っても判定・記録が起きず、コマンドはそのまま実行される。
   - marker はエージェントの開始・解除・ペインの終了・close で同期され、残ったままの marker が無いペインを後からエージェント扱いしない。
   - `herdr guard exec` は `block` を含むどの判定でもコマンドを止めず、判定部品の終了code ではなく実行したコマンドの終了codeをそのまま返し、decision を作成しない。
   - `decisions.jsonl` の各行は時刻・判定・理由（rule）・コマンド行・cwd・起動cwd・ペイン/ workspace / tab・エージェント・経由（`shim`/`shell-func`/`line`）・承認の抑制情報を含む JSON object である。
+
+### 既定の enforce モード（block を止め、ask は判断待ち）
+- **該当コミット**: feat/guard-enforceの実装
+- **分類**: CORE-RUNTIME
+- **status: fork独自・保持 (C)** — 既定モード。`block` は実行を止め、`ask` は既存の判断待ち基盤へ流して承認・1日許可・却下を待つ。
+- **挙動**: `[guard].mode = "enforce"`（省略時の既定）では、marker のあるエージェントペインで `herdr guard exec` が判定を実行する。`allow` は記録してそのまま実行、`block` は ai_guard と同じ文言で拒否、`ask` は `command_guard` の判断待ちをペインのサーバーへ作成して回答を待つ。待機時間は `[guard].ask_timeout_seconds`（既定300秒）で、承認・1日許可はコマンドを実行し、却下・期限切れ・取り消し・サーバー不通は実行せず終了code 1 で返る。enforce で監視されるペインの環境には `HERDR_GUARD_ENFORCING=1` を差し込み、dotfiles の ai_guard が自身を skip して二重確認にならない印にする。
+- **受け入れ条件**:
+  - `[guard].mode` は `record` と `enforce` を取り、省略時は `enforce` になる。`record` は判定・記録だけでコマンドを止めず decision も作らず、`[guard].enabled = false` は shim・ZDOTDIR・BASH_ENV・marker・`HERDR_GUARD_ENFORCING` を一切差し込まない。
+  - enforce で `allow` は判定を記録した上でコマンドを通常どおり実行し、その終了codeをそのまま返す。
+  - enforce で `block` は ai_guard と同じ文言（ブロック理由と承認では解除できない旨）を標準エラーに出し、コマンドを実行せず終了code 1 を返す。
+  - enforce で `ask` は判定を記録した上で申請文を要求し、申請文は `AI_GUARD_REQUEST_REASON`、または `AI_GUARD_REQUEST_ENV_NAME` が指す環境変数から取る。空白のみ・日本語を含まない値は ai_guard と同じく拒否し、decision を作らずコマンドも実行しない。
+  - 申請文が有効なら、そのペインのサーバーへ `command_guard` の判断待ちを `承認`・`1日許可`・`却下` の選択肢と自由記述入力・`[guard].ask_timeout_seconds`（既定300秒）の期限で作成し、回答が出るまで待つ。
+  - `承認` はコマンドを実行して ai_guard と同じ一時許可キーを承認ファイルへ書き、`1日許可` はコマンドを実行して `day:<cwd>` をローカル日の終わりまでの期限で書く。`却下` は自由記述の理由を示して実行せず、期限切れ・取り消し・サーバー不通も実行せず終了code 1 を返す。
+  - 一時許可キーを持たない判定（ワイルドカード送信など）は承認されても抑制を書き込まず、毎回 `block`/`ask` に戻る。
+  - enforce で監視されるペインには `HERDR_GUARD_ENFORCING=1` が環境に入り、`record` モードでは入らない。dotfiles 側の ai_guard ローダーの変更はこの工程では行わず、親へ提案差分として渡す。
 
 ### ai_guard との突合（herdr guard compare）
 - **該当コミット**: feat/command-guardの実装
@@ -2287,4 +2305,4 @@
   - 同じ時刻窓の同じコマンド行に対し、写像後の判定が一致すれば `AGREE`、食い違えば `DIVERGE`、片方にしか無ければ `HERDR-ONLY`/`AI-GUARD-ONLY`、窓の外は `OUT-OF-WINDOW` として行を出す。
   - `DIVERGE` が1件でもあれば終了code 1、無ければ 0 を返す。
   - ai_guard ログの ISO8601（オフセット付き）時刻とタブ区切り行を解釈し、解釈できない行を集計から落とさないよう数える。
-- **デグレ判定**: 記録のみ段階でコマンドや判断待ちを止める経路を足す、人のペインで記録を残す、本番の state ディレクトリ以外に書く、`compare` が食い違いを終了codeへ反映しない。
+- **デグレ判定**: record モードでコマンドや判断待ちを止める経路を足す、enforce で marker の無いペインや `enabled = false` のペインへ差し込む、人のペインで記録を残す、本番の state ディレクトリ以外に書く、`compare` が食い違いを終了codeへ反映しない。
