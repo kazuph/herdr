@@ -18,19 +18,37 @@ export class FakeSlack {
     this.socketUrls = 0;
     this.wsUrl = "";
     this.botId = "UBOT";
+    this.uploadMeta = new Map(); // file_id -> {filename, length}
+    this.uploadBodies = new Map(); // file_id -> Buffer
+    this.completedUploads = [];
+    this._uploadSeq = 0;
   }
 
   async start() {
     this.server = http.createServer((req, res) => {
-      let body = "";
-      req.on("data", (c) => (body += c));
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
       req.on("end", () => {
-        const method = req.url.replace(/^\//, "").split("?")[0];
+        const pathname = req.url.split("?")[0];
+        if (req.method === "POST" && pathname.startsWith("/upload/")) {
+          const fileId = decodeURIComponent(pathname.slice("/upload/".length));
+          this.uploadBodies.set(fileId, Buffer.concat(chunks));
+          res.statusCode = 200;
+          res.end("OK");
+          return;
+        }
+        const body = Buffer.concat(chunks).toString("utf8");
+        const method = pathname.replace(/^\//, "");
         let params = {};
         if (req.method === "POST" && body) {
-          try {
-            params = JSON.parse(body);
-          } catch {}
+          const contentType = req.headers["content-type"] || "";
+          if (contentType.includes("x-www-form-urlencoded")) {
+            for (const [k, v] of new URLSearchParams(body)) params[k] = v;
+          } else {
+            try {
+              params = JSON.parse(body);
+            } catch {}
+          }
         }
         const query = new URL(req.url, "http://x").searchParams;
         for (const [k, v] of query) params[k] = v;
@@ -109,6 +127,29 @@ export class FakeSlack {
         const post = this.posts.find((p) => p.ts === ts);
         const replies = this.threadReplies.get(ts) || [];
         return { ok: true, messages: post ? [post, ...replies] : replies };
+      }
+      case "files.getUploadURLExternal": {
+        const fileId = `FAKE${String((this._uploadSeq += 1)).padStart(4, "0")}`;
+        this.uploadMeta.set(fileId, {
+          filename: params.filename,
+          length: Number(params.length),
+        });
+        return {
+          ok: true,
+          upload_url: `${this.base}/upload/${fileId}`,
+          file_id: fileId,
+        };
+      }
+      case "files.completeUploadExternal": {
+        this.completedUploads.push(params);
+        return {
+          ok: true,
+          files: (params.files || []).map((f) => ({
+            id: f.id,
+            title: f.title,
+            channel: params.channel_id,
+          })),
+        };
       }
       default:
         return { ok: true };
@@ -234,29 +275,91 @@ export class FakeWsServer {
   }
 }
 
+// Fake saberante hub: sends {"type":"link"} on connect (and on hello/status),
+// records every client frame, and answers notify requests with {"type":"queued"}.
 export async function startFakeSabera({ glasses = "connected", sockPath } = {}) {
   try {
     fs.unlinkSync(sockPath);
   } catch {}
+  const received = [];
   const server = net.createServer((socket) => {
     let handshake = Buffer.alloc(0);
+    let frames = Buffer.alloc(0);
     let upgraded = false;
-    const send = () => {
-      const payload = Buffer.from(
-        JSON.stringify({
-          type: "link",
-          version: 1,
-          viewer_url: null,
-          landline_host: null,
-          glasses,
-        }),
-      );
-      const header = Buffer.from([0x81, payload.length]);
-      socket.write(Buffer.concat([header, payload]));
+    const sendObj = (obj) => {
+      const payload = Buffer.from(JSON.stringify(obj), "utf8");
+      const header =
+        payload.length < 126
+          ? Buffer.from([0x81, payload.length])
+          : (() => {
+              const h = Buffer.alloc(4);
+              h[0] = 0x81;
+              h[1] = 126;
+              h.writeUInt16BE(payload.length, 2);
+              return h;
+            })();
+      try {
+        socket.write(Buffer.concat([header, payload]));
+      } catch {}
+    };
+    const sendLink = () =>
+      sendObj({
+        type: "link",
+        version: 1,
+        viewer_url: null,
+        landline_host: null,
+        glasses,
+      });
+    const onFrame = (text) => {
+      let message;
+      try {
+        message = JSON.parse(text);
+      } catch {
+        return;
+      }
+      received.push(message);
+      if (message?.type === "notify") sendObj({ type: "queued" });
+      else if (message?.type === "hello" || message?.type === "status") {
+        sendLink();
+      }
+    };
+    const drain = () => {
+      for (;;) {
+        const b = frames;
+        if (b.length < 2) return;
+        let len = b[1] & 0x7f;
+        let offset = 2;
+        if (len === 126) {
+          if (b.length < 4) return;
+          len = b.readUInt16BE(2);
+          offset = 4;
+        } else if (len === 127) {
+          if (b.length < 10) return;
+          len = Number(b.readBigUInt64BE(2));
+          offset = 10;
+        }
+        const masked = (b[1] & 0x80) !== 0;
+        const maskLen = masked ? 4 : 0;
+        if (b.length < offset + maskLen + len) return;
+        let payload = b.subarray(offset + maskLen, offset + maskLen + len);
+        if (masked) {
+          const mask = b.subarray(offset, offset + 4);
+          const out = Buffer.alloc(payload.length);
+          for (let i = 0; i < payload.length; i += 1) {
+            out[i] = payload[i] ^ mask[i % 4];
+          }
+          payload = out;
+        }
+        frames = b.subarray(offset + maskLen + len);
+        const opcode = b[0] & 0x0f;
+        if (opcode === 0x1) onFrame(payload.toString("utf8"));
+        if (opcode === 0x8) socket.end();
+      }
     };
     socket.on("data", (chunk) => {
       if (upgraded) {
-        send();
+        frames = Buffer.concat([frames, chunk]);
+        drain();
         return;
       }
       handshake = Buffer.concat([handshake, chunk]);
@@ -269,14 +372,20 @@ export async function startFakeSabera({ glasses = "connected", sockPath } = {}) 
           "Connection: Upgrade\r\n" +
           "Sec-WebSocket-Accept: dummy\r\n\r\n",
       );
+      sendLink();
       const rest = handshake.subarray(marker + 4);
-      if (rest.length > 0) send(); // client frame arrived with the handshake
+      if (rest.length > 0) {
+        frames = rest;
+        drain();
+      }
     });
     socket.on("error", () => {});
   });
   await new Promise((resolve) => server.listen(sockPath, resolve));
   return {
     sockPath,
+    received,
+    notifies: () => received.filter((m) => m?.type === "notify"),
     stop() {
       server.close();
       try {

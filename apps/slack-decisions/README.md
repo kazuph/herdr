@@ -17,9 +17,25 @@ Herdr の判断待ち（`herdr decision ask` など）を Slack へ転送し、S
 - `machine_down` 中のマシンの pending は投稿せず、投稿済みのものは「マシン切断」表示に更新します。
 - Socket Mode のイベントは1接続のみ。別のコンシューマ（ai_guard など）にイベントが流れた場合に備え、チャンネル履歴のポーリングでも回答を回収します。
 
+## 成果物を Slack に送る（deliver）
+
+デーモンの判断待ち転送とは別に、ファイルをそのまま Slack チャンネルへ送る口があります。
+
+```bash
+node apps/slack-decisions/slack-decisions.mjs deliver <ファイル> [--title T] [--comment C]
+```
+
+- slack-ask（`slack-send.mjs`）と同じ資格情報・チャンネルを使います（`files.getUploadURLExternal` → バイナリ upload → `files.completeUploadExternal`）。`--comment` を付けるとファイルの前に本文を投稿します。`--title` は省略するとファイル名になります。
+- 送信が終わると Sabera の hub（`~/.sabera-relay.sock` のローカル依頼）へ `{"type":"notify"}` で「「<題名>」を Slack に送りました」を出します。hub ソケットが無いときは通知を飛ばします（結果 JSON の `notified` が `false`）。
+- 結果は stdout に JSON で返します（`{ ok, file_id, channel, path, message_ts, notified }`）。
+
+### プラグイン action `deliver`
+
+`herdr plugin action invoke deliver --plugin kazuph.slack-decisions`（ペインでテキストを選択しているときに現れます）でも同じ送付を呼べます。プラグイン action は固定 argv なので、ファイルパスは `HERDR_PLUGIN_CONTEXT_JSON.selected_text`（ペインで選択した文字列）から取ります。相対パスはそのペインの cwd から解決します。つまり、成果物のパスをペイン上で選択してから action を呼ぶとそのファイルが送られます。
+
 ## 送信は kazuph のマシンのみ
 
-`whoami`（OS ユーザー名）が `kazuph` でないマシン、または Slack 資格情報を解決できない場合は、理由をログに出して安全に終了します。Slack へは一切送信しません。
+`whoami`（OS ユーザー名）が `kazuph` でないマシン、または Slack 資格情報を解決できない場合は、理由をログに出して安全に終了します。Slack へは一切送信しません。`deliver` / `deliver-context` も同じゲートを通ります。
 
 ## インストール
 
@@ -66,8 +82,9 @@ herdr plugin link <repo>/apps/slack-decisions
 
 ```bash
 cd apps/slack-decisions
-node --test test/daemon.test.mjs   # ユニット/統合（フェイク Slack・フェイク Sabera）
-node test/e2e.mjs                  # 隔離 herdr サーバー + 実デーモン + フェイク Slack
+node --test test/daemon.test.mjs    # ユニット/統合（フェイク Slack・フェイク Sabera）
+node --test test/deliver.test.mjs   # deliver CLI（実プロセス + フェイク Slack/Sabera）
+node test/e2e.mjs                   # 隔離 herdr サーバー + 実デーモン + フェイク Slack
 ```
 
 いずれも実 Slack には接続しません。

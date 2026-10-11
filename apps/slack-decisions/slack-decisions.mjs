@@ -230,7 +230,7 @@ class SlackClient {
     this.mention = "";
   }
 
-  async api(method, params = {}) {
+  async api(method, params = {}, { form = false } = {}) {
     const url = new URL(`${this.apiBase}/${method}`);
     const headers = { Authorization: `Bearer ${this.token}` };
     const init = { signal: AbortSignal.timeout(30_000) };
@@ -240,6 +240,11 @@ class SlackClient {
       }
       init.method = "GET";
       init.headers = headers;
+    } else if (form) {
+      init.method = "POST";
+      headers["Content-Type"] = "application/x-www-form-urlencoded";
+      init.headers = headers;
+      init.body = new URLSearchParams(params).toString();
     } else {
       init.method = "POST";
       headers["Content-Type"] = "application/json; charset=utf-8";
@@ -321,6 +326,51 @@ class SlackClient {
       throw new Error(json.error || "socket_mode_open_failed");
     }
     return json.url;
+  }
+
+  // Same flow as slack-ask's slack-send.mjs: optional comment message, then
+  // files.getUploadURLExternal -> raw upload -> files.completeUploadExternal.
+  async uploadFile({ filePath, title = "", comment = "" }) {
+    const resolved = path.resolve(filePath);
+    if (!fs.existsSync(resolved)) {
+      throw new Error(`file not found: ${resolved}`);
+    }
+    const data = fs.readFileSync(resolved);
+    const fileName = path.basename(resolved);
+    const fileTitle = title || fileName;
+
+    let messageTs = "";
+    if (comment.trim()) {
+      const posted = await this.postMessage({ text: comment });
+      messageTs = posted.ts || "";
+    }
+
+    const meta = await this.api(
+      "files.getUploadURLExternal",
+      { filename: fileName, length: String(data.length) },
+      { form: true },
+    );
+    const upload = await fetch(meta.upload_url, {
+      method: "POST",
+      body: data,
+      signal: AbortSignal.timeout(300_000),
+    });
+    if (!upload.ok) {
+      throw new Error(`binary upload failed: ${upload.status}`);
+    }
+    const completed = await this.api("files.completeUploadExternal", {
+      files: [{ id: meta.file_id, title: fileTitle }],
+      channel_id: this.channel,
+    });
+    return {
+      ok: true,
+      type: "file",
+      channel: this.channel,
+      file_id: meta.file_id,
+      message_ts: messageTs,
+      path: resolved,
+      file: completed.files?.[0] || null,
+    };
   }
 }
 
@@ -473,6 +523,87 @@ async function saberaGlassesState(sockPath, timeoutMs = SABERA_TIMEOUT_MS) {
   const reply = await wsUnixRequest(sockPath, { type: "hello" }, timeoutMs);
   if (!reply || typeof reply !== "object") return null;
   return typeof reply.glasses === "string" ? reply.glasses : null;
+}
+
+// Local notify request (saberante relay-protocol): hello -> link -> notify ->
+// queued. Returns false when the hub socket is missing or does not answer;
+// delivery callers skip the notification in that case rather than failing.
+function saberaNotify(sockPath, { text, from }, timeoutMs = SABERA_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    try {
+      fs.statSync(sockPath);
+    } catch {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const socket = net.connect({ path: sockPath });
+    const timer = setTimeout(() => done(false), timeoutMs);
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(value);
+    };
+    let handshakeDone = false;
+    let notifySent = false;
+    let handshake = Buffer.alloc(0);
+    const parser = createWsParser(
+      (raw) => {
+        let message;
+        try {
+          message = JSON.parse(raw);
+        } catch {
+          return;
+        }
+        if (message?.type === "link" && !notifySent) {
+          notifySent = true;
+          try {
+            socket.write(
+              wsFrameText(JSON.stringify({ type: "notify", text, from })),
+            );
+          } catch {
+            done(false);
+          }
+          return;
+        }
+        if (message?.type === "queued" && notifySent) done(true);
+      },
+      () => done(false),
+    );
+    socket.on("connect", () => {
+      const key = crypto.randomBytes(16).toString("base64");
+      socket.write(
+        "GET / HTTP/1.1\r\n" +
+          "Host: localhost\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          `Sec-WebSocket-Key: ${key}\r\n` +
+          "Sec-WebSocket-Version: 13\r\n\r\n",
+      );
+    });
+    socket.on("data", (chunk) => {
+      if (!handshakeDone) {
+        handshake = Buffer.concat([handshake, chunk]);
+        const marker = handshake.indexOf("\r\n\r\n");
+        if (marker === -1) return;
+        const head = handshake.subarray(0, marker).toString("utf8");
+        if (!/^HTTP\/1\.1 101/i.test(head)) {
+          done(false);
+          return;
+        }
+        handshakeDone = true;
+        socket.write(wsFrameText(JSON.stringify({ type: "hello" })));
+        const rest = handshake.subarray(marker + 4);
+        if (rest.length > 0) parser(rest);
+        return;
+      }
+      parser(chunk);
+    });
+    socket.on("error", () => done(false));
+    socket.on("close", () => done(false));
+  });
 }
 
 // --- Slack message rendering -------------------------------------------------
@@ -1443,6 +1574,120 @@ async function ensureDaemon(config, env) {
   }
 }
 
+// --- artifact delivery ----------------------------------------------------------
+
+function usage() {
+  process.stderr.write(
+    [
+      "usage:",
+      "  slack-decisions.mjs [run|ensure|check-sabera]",
+      "  slack-decisions.mjs deliver <file> [--title T] [--comment C]",
+      "  slack-decisions.mjs deliver-context   (plugin action: path from",
+      "                                       HERDR_PLUGIN_CONTEXT_JSON.selected_text)",
+    ].join("\n") + "\n",
+  );
+}
+
+// Uploads the file to the configured Slack channel, then notifies the Sabera
+// hub ("「<題名>」を Slack に送りました"). The notify is skipped silently when
+// the hub socket is absent.
+async function deliverFile(
+  config,
+  creds,
+  { filePath, title = "", comment = "" },
+) {
+  const slack = new SlackClient({
+    token: creds.token,
+    channel: creds.channel,
+    apiBase: config.apiBase,
+  });
+  const result = await slack.uploadFile({ filePath, title, comment });
+  const display = title || path.basename(result.path);
+  const notified = await saberaNotify(config.saberaSocket, {
+    text: `「${display}」を Slack に送りました`,
+    from: "slack-decisions",
+  });
+  return { ...result, notified };
+}
+
+async function deliverMain(config, args) {
+  let filePath = "";
+  let title = "";
+  let comment = "";
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--title") {
+      title = args[i + 1] ?? "";
+      i += 1;
+    } else if (arg.startsWith("--title=")) {
+      title = arg.slice("--title=".length);
+    } else if (arg === "--comment") {
+      comment = args[i + 1] ?? "";
+      i += 1;
+    } else if (arg.startsWith("--comment=")) {
+      comment = arg.slice("--comment=".length);
+    } else if (arg.startsWith("--")) {
+      process.stderr.write(`unknown option: ${arg}\n`);
+      return 2;
+    } else if (!filePath) {
+      filePath = arg;
+    } else {
+      process.stderr.write(`unexpected argument: ${arg}\n`);
+      return 2;
+    }
+  }
+  if (!filePath) {
+    usage();
+    return 2;
+  }
+  const creds = loadCredentials(config);
+  if (!creds.token || !creds.channel) {
+    process.stderr.write(
+      "Slack 資格情報が読めません（トークンまたはチャンネルなし）。\n",
+    );
+    return 1;
+  }
+  try {
+    const result = await deliverFile(config, creds, {
+      filePath,
+      title,
+      comment,
+    });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  } catch (error) {
+    process.stderr.write(`deliver に失敗: ${error?.message || error}\n`);
+    return 1;
+  }
+}
+
+// Plugin actions run a fixed argv, so the file path travels in
+// HERDR_PLUGIN_CONTEXT_JSON.selected_text — the selection the user invoked the
+// "deliver" action on. Relative paths resolve against the pane's cwd.
+async function deliverContextMain(config) {
+  let context = {};
+  try {
+    context = JSON.parse(process.env.HERDR_PLUGIN_CONTEXT_JSON || "{}");
+  } catch {
+    context = {};
+  }
+  const selected = String(context.selected_text || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!selected) {
+    process.stderr.write(
+      "deliver: ペインでファイルパスを選択してから呼んでください " +
+        "(HERDR_PLUGIN_CONTEXT_JSON.selected_text が空です)\n",
+    );
+    return 1;
+  }
+  const base = context.focused_pane_cwd || context.workspace_cwd;
+  const filePath =
+    path.isAbsolute(selected) || !base ? selected : path.resolve(base, selected);
+  return deliverMain(config, [filePath]);
+}
+
 // --- entry point -----------------------------------------------------------------
 
 async function gateCheck(config) {
@@ -1479,8 +1724,20 @@ async function main() {
     return;
   }
 
+  if (mode === "deliver") {
+    const code = await deliverMain(config, process.argv.slice(3));
+    if (code) process.exit(code);
+    return;
+  }
+
+  if (mode === "deliver-context") {
+    const code = await deliverContextMain(config);
+    if (code) process.exit(code);
+    return;
+  }
+
   if (mode !== "run") {
-    process.stderr.write("usage: slack-decisions.mjs [run|ensure|check-sabera]\n");
+    usage();
     process.exit(2);
   }
 
@@ -1556,12 +1813,14 @@ if (invokedAsScript) {
 export {
   buildDecisionBlocks,
   decisionKey,
+  deliverFile,
   fallbackText,
   fmtDeadline,
   loadConfig,
   loadCredentials,
   parseEnvFile,
   saberaGlassesState,
+  saberaNotify,
   SlackClient,
   wsUnixRequest,
 };

@@ -15,3 +15,10 @@ title = "Start the Slack decisions daemon"
 description = "Start the background daemon that mirrors decisions to Slack"
 contexts = ["global"]
 command = ["./ensure-daemon"]
+
+[[actions]]
+id = "deliver"
+title = "Deliver selected file to Slack"
+description = "Upload the file whose path is selected in the pane to the configured Slack channel, then notify the Sabera hub"
+contexts = ["selection"]
+command = ["./deliver-selected"]

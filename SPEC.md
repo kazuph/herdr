@@ -1911,18 +1911,18 @@
 - **挙動**:
   - serverは接続中の各endpoint clientへ、pending判断待ちの全件リストをboot_id・projection revision付きのEndpointControl projectionとしてpushする。判断待ちの作成・回答・取消・期限切れイベントでprojectionを更新し、非active（surfaceをpresentしていない）clientにも届ける。clientはこのprojectionだけをpendingの根拠とし、自前で判断待ち状態を合成しない。
   - endpoint client shellは接続中の全endpointのprojectionを束ね、`created_unix_ms`の古い順に並べて1件ずつdialogへ出す。dialogはtitle・body・マシン表示名・origin情報（存在する分）・選択肢・`N/M`形式のキュー位置・`expires_unix_ms`がある場合の残り時間を表示し、本文・commandが長い場合は枠内で折返しまたはscrollする。見た目・Esc・閉じる操作は既存のmodal/dialogパターンに従う。
-  - 選択肢のクリックはその判断待ちを所有するendpointへ`decision.answer`を送り、`responder`にはUI由来を示す値（`client`）を入れる。`allow_text`の判断待ちはtext入力欄を表示し、入力したtextを回答へ添える。回答対象のendpointはpresenting endpointでなくてもよい。
+  - 選択肢のクリックはその選択肢を選ぶだけに留め（選択中の選択肢はaccentの強調表示で分かる）、`↵ confirm`ボタンまたはEnterがその判断待ちを所有するendpointへ`decision.answer`を送る。`responder`にはUI由来を示す値（`client`）を入れる。`allow_text`の判断待ちはtext入力欄を表示し、入力したtextを回答へ添える。回答対象のendpointはpresenting endpointでなくてもよい。
   - dialogが開いていても、dialog内をクリックするまではキーボード入力はpaneへそのまま届き、Enter一発で誤回答しない既定動作はない。dialog内のクリックでキーボードがdialogへ移り、上下キーの選択・Enterの確定・text入力が有効になる。Escまたはcloseボタンで回答せず閉じる。
   - 回答せず閉じた判断待ちが残る間は`! N`形式の目印をアクションバーへ出し、クリックで同じ判断待ちのdialogを再表示する。
   - 別のclient・CLI・pluginなど他の受け口で回答・取消・期限切れになった判断待ちは、次のprojectionでdialogと目印から自動で消える。endpointが切断されたマシンの判断待ちはqueueから外れ、再接続ではserverのprojectionから復帰する。
 - **受け入れ条件**:
   - localを含む接続中マシンで作ったpending判断待ちがdialogへ出て、title・body・マシン名・origin・選択肢・残り時間・`N/M`カウントを表示し、最古が先に出る。
-  - 選択肢クリックが所有マシンへ`decision.answer`を送り、store上の回答が`responder="client"`と選んだoption_idになる。`allow_text`では入力textが届く。
+  - 選択肢クリックは回答を送らずその選択肢の選択（強調表示）だけを行い、決定ボタンまたはEnterが所有マシンへ`decision.answer`を送り、store上の回答が`responder="client"`と選んだoption_idになる。`allow_text`では入力textが届く。
   - dialogをクリックするまでキーボードはpaneへ届き、クリック後はキー操作だけで選択・確定・text入力できる。
   - 閉じたあとも件数目印が残り、クリックでdialogが再表示される。
   - `decision.answer`/取消/期限切れを別経路で行うとdialogと目印が消え、endpoint切断でそのマシン分がqueueから外れ、再接続で復帰する。
-- **検証契約**: Rust unit testsでqueueの対象・順序・カウント・close/reopen・外部解決・切断除去を固定し、実socket経由のactual-process testでクリック→`decision.answer`送信→store反映→外部解決での消去を固定する。隔離server上の`herdr decision ask`とANSI/画面証拠で実地確認する。
-- **デグレ判定**: clientがprojection以外の根拠でpending判断待ちを作る、dialog外クリックやEnterで誤回答できる、閉じた判断待ちを二度と開けない、他マシンへの回答がactive endpoint以外へ届かない。
+- **検証契約**: Rust unit testsでqueueの対象・順序・カウント・選択と確定の分離・close/reopen・外部解決・切断除去を固定し、実socket経由のactual-process testで選択クリック→決定ボタン→`decision.answer`送信→store反映→外部解決での消去を固定する。隔離server上の`herdr decision ask`とANSI/画面証拠で実地確認する。
+- **デグレ判定**: clientがprojection以外の根拠でpending判断待ちを作る、選択肢の1クリックだけやdialog外クリック・未focusのEnterで誤回答できる、閉じた判断待ちを二度と開けない、他マシンへの回答がactive endpoint以外へ届かない。
 
 ### 判断待ちの配信とマシン横断回答（decision watch、工程3A）
 - **該当コミット**: feat/decision-watchの実装
@@ -1931,8 +1931,9 @@
 - **目的**: 判断待ちの監視・回答をHerdr画面の外から一つの契約で行えるようにし、consumerがマシンごとの接続管理やpending初期同期を自前で実装しなくて済むようにする。
 - **挙動**:
   - `herdr decision watch`は1行1JSON objectをstdoutへflushしながら出し続ける長時間コマンドで、親processに止められるまで終わらない。行の形は`{"event":"created","machine":{"id":...,"label":...},"decision":{...}}`、`{"event":"resolved","machine":{...},"decision":{...}}`、`{"event":"machine_down","machine":{...},"reason":"..."}`、`{"event":"machine_up","machine":{...}}`の4種で、`created`のdecisionは`status:"pending"`、`resolved`のdecisionは`answered`/`expired`/`cancelled`の全体を載せる。
-  - 既定ではlocal serverだけを見る。起動直後に`machine_up`（machineは`{"id":"local","label":"Local"}`）を出し、その時点のpending全件を`created`として出し、その後`decision.created`→`created`、`decision.resolved`→`resolved`を流す。接続が切れたら`machine_down`を出して接続し直し、再接続のたびに`machine_up`とその時点のpending全件の`created`を出し直す。`created`は重複しうるため、consumerは`(machine.id, decision.decision_id)`で重複を潰す。
+  - 既定ではlocal serverだけを見る。起動直後に`machine_up`（machineは`{"id":"local","label":"Local"}`）を出し、その時点のpending全件を`created`として出し、その後`decision.created`→`created`、`decision.resolved`→`resolved`を流す。decision購読は接続時点以降のイベントだけを見るため、serverが保持する購読前の履歴（すでに決定済みの判断待ちを`created`→`resolved`で流し直すような過去イベント）や、その回のwatchで`created`を出していない判断待ちの`resolved`は流さない。接続が切れたら`machine_down`を出して接続し直し、再接続のたびに`machine_up`とその時点のpending全件の`created`を出し直す。`created`は重複しうるため、consumerは`(machine.id, decision.decision_id)`で重複を潰す。
   - `--all-machines`ではlocalに加えて`machines.json`のenabledな保存マシンごとにsshで`herdr --session <session> decision watch`を起動し、出てくる行の`machine`を保存マシンのidと表示名へ置き換えて流す。1台の失敗はそのマシンのstreamだけに留め、sshが切れたら`machine_down`（reason付き）を出して間隔を空けてつなぎ直し、繰り返し失敗では間隔を伸ばす。
+  - 保存マシンのherdrが`decision`コマンドを知らない（`unknown command: decision`等）場合、そのマシンを未対応と分類し、reasonに未対応と書いた`machine_down`を1回だけ出し、そのマシンの再試行は30分おきにだけ行う（実際のwatch行が来たら未対応扱いを解除する）。他マシンの再試行間隔・Tailscale認証待ちには影響しない。
   - sshの出力にTailscale SSHの`To authenticate, visit: <URL>`が含まれる場合、watchはブラウザを開かず、そのマシンを`machine_down`にしてreasonへ認証が要ることとURLを入れ、10分待ってからリトライする。画面側のsaved endpoint接続の認証URLをブラウザで開く挙動は変えない。
   - `herdr decision answer`は`--machine <label-or-id>`を受け付け、省略時と`--machine local`は手元のserverへ、保存マシンのlabelまたはidはそのマシンのserverへ回答を送る。回答の結果JSON・終了code・`decision_already_resolved`などのエラーは変更しない。
 - **受け入れ条件**:
@@ -1943,9 +1944,11 @@
   - `--all-machines`が保存マシンの判断待ちをそのマシンのid・表示名の`machine`で流し、1台の失敗が他マシン・localのstreamを止めない。
   - sshでTailscale認証の行を見たらブラウザを開かず`machine_down`（認証が要ることとURL入りのreason）にし、そのマシンは10分後にリトライする。
   - `decision answer --machine <保存マシン>`がそのマシンのserverへ回答を届け、`--machine`省略・`--machine local`は手元のserverを使い、結果と終了codeは従来どおりで2回目の回答は`decision_already_resolved`になる。
+  - watch起動直後に、すでに決定済みの判断待ちを`created`→`resolved`で流し直さず、その回のwatchで`created`を出していない判断待ちの`resolved`も流さない。
+  - 保存マシンのherdrが`decision`を知らない場合、そのマシンは未対応と書いたreason付きの`machine_down`を1回だけ出し、30分おきにだけ再試行し、他マシンの再試行間隔は変えない。
   - 既存のdecision API・event・CLI・UI・socket protocol・画面側saved endpointの認証挙動を変えない。
-- **検証契約**: Rust unit testsで行の形・再接続・machine置換・1台失敗の隔離・Tailscale認証のmachine_down化と10分待機・`answer --machine`の振り分けを固定する。隔離sessionの実serverと検証用の保存マシン経路（偽sshまたは実機）でend-to-endを実地確認する。
-- **デグレ判定**: JSON以外の行や未改行の出力を混ぜる、パイプ切断で落ちる、再接続時にpendingの`created`を出し直さない、失敗したマシンが他streamを巻き込む、Tailscale認証でブラウザを開く、保存マシンへの回答がlocalへ届く、`machine`のid/labelを保存profileの値にしない。
+- **検証契約**: Rust unit testsで行の形・再接続・machine置換・1台失敗の隔離・Tailscale認証のmachine_down化と10分待機・`answer --machine`の振り分け・起動時のdecision購読が履歴を再生しないこと・未告知decisionのresolved抑止・未対応マシンのmachine_downと30分待機を固定する。隔離sessionの実serverと検証用の保存マシン経路（偽sshまたは実機）でend-to-endを実地確認する。
+- **デグレ判定**: JSON以外の行や未改行の出力を混ぜる、パイプ切断で落ちる、起動直後に購読前の履歴や未告知decisionのresolvedを流し直す、再接続時にpendingの`created`を出し直さない、失敗したマシンが他streamを巻き込む、未対応マシンを短い間隔で繰り返し`machine_down`し続ける、Tailscale認証でブラウザを開く、保存マシンへの回答がlocalへ届く、`machine`のid/labelを保存profileの値にしない。
 
 ## G10. 本家最新リリース v0.8.0 と現状fork版の差分・段階取込契約
 
