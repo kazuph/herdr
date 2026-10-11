@@ -1135,13 +1135,29 @@
     },
     {
       "id": "guard",
-      "title": "Command guard (record-only)",
+      "title": "Command guard",
       "keys": [
         {
           "key": "guard.enabled",
           "type": "boolean",
           "default": "true",
-          "description": "Enable the record-only command guard injection (PATH shims plus zsh/bash hooks) for agent panes."
+          "description": "Enable the command guard injection (PATH shims plus zsh/bash hooks) for agent panes."
+        },
+        {
+          "key": "guard.mode",
+          "type": "string",
+          "default": "\"enforce\"",
+          "description": "record: judge and log every target command but always run it. enforce: run allow verdicts, refuse block verdicts, and create a command_guard decision for ask verdicts and wait for its answer.",
+          "values": [
+            "record",
+            "enforce"
+          ]
+        },
+        {
+          "key": "guard.ask_timeout_seconds",
+          "type": "integer",
+          "default": "300",
+          "description": "Seconds an ask decision stays pending in enforce mode before the command is refused."
         },
         {
           "key": "guard.log_path",

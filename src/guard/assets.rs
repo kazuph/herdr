@@ -12,8 +12,8 @@
 //!                 target that runs `herdr guard exec`.
 //!   zdotdir/      injected ZDOTDIR holding only .zshenv: restores the
 //!                 original ZDOTDIR, chain-loads the user's .zshenv, then
-//!                 installs record-only wrappers without shadowing
-//!                 functions the user already defined (e.g. ai_guard).
+//!                 installs wrappers without shadowing functions
+//!                 the user already defined (e.g. ai_guard).
 //!   guard.bash    injected BASH_ENV: chain-loads the original BASH_ENV and
 //!                 installs the same non-shadowing wrappers.
 //!   agent-panes/  per-pane agent markers (see marker.rs)
@@ -243,7 +243,7 @@ fn shell_quote(value: &str) -> String {
 fn shim_script(target: &str) -> String {
     format!(
         r#"#!/bin/sh
-# herdr command guard shim for `{target}` (record-only). Generated; do not edit.
+# herdr command guard shim for `{target}`. Generated; do not edit.
 exec "${{{HERDR_EXE_ENV_VAR}:-herdr}}" guard exec -- {} "$@"
 "#,
         shell_quote(target),
@@ -261,7 +261,7 @@ exec "${{{HERDR_EXE_ENV_VAR}:-herdr}}" guard exec -- {} "$@"
 /// reads `.zprofile`/`.zshrc`/`.zlogin` from the restored directory on its
 /// own, so no chain files are needed for those.
 ///
-/// After sourcing the user's `.zshenv` it defines record-only wrappers for
+/// After sourcing the user's `.zshenv` it defines wrappers for
 /// target commands, but only for names that are not already a function or
 /// alias: existing wrappers such as ai_guard's must keep their behavior —
 /// they still end up calling the real binary through `command`, which
@@ -274,7 +274,7 @@ fn zshenv_script(targets: &[String]) -> String {
     let herdr = r#""${HERDR_GUARD_HERDR:-herdr}""#;
     let target_words = targets.join(" ");
     format!(
-        r#"# herdr command guard .zshenv (record-only). Generated; do not edit.
+        r#"# herdr command guard .zshenv. Generated; do not edit.
 
 typeset -g _hg_orig_zdot="${{{ZDOTDIR_ORIG_ENV_VAR}:-}}"
 if [[ -n "$_hg_orig_zdot" ]]; then
@@ -346,7 +346,7 @@ fn bash_env_script(herdr_exe: &Path, targets: &[String]) -> String {
     let herdr = shell_quote(&herdr_exe.to_string_lossy());
     let target_words = targets.join(" ");
     format!(
-        r#"# herdr command guard BASH_ENV (record-only). Generated; do not edit.
+        r#"# herdr command guard BASH_ENV. Generated; do not edit.
 if [ -n "${{{BASH_ENV_ORIG_ENV_VAR}:-}}" ] && [ -f "${{{BASH_ENV_ORIG_ENV_VAR}}}" ]; then
   . "${{{BASH_ENV_ORIG_ENV_VAR}}}"
 fi
