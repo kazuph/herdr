@@ -11,7 +11,8 @@
       "drift": "python3 scripts/spec_formal_drift_check.py",
       "alloy": "verified: Alloy 6.2.0 SAT4J; 4 assertions UNSAT and OwnershipWitness SAT; see formal/formal-verification-results.json",
       "quint": "verified: Quint 0.32.0; 6 invariants GREEN at 20000 samples x 25 steps and 2 non-vacuity RED witnesses; see formal/formal-verification-results.json"
-    }
+    },
+    "updated": "2026-10-11"
   },
   "contracts": [
     {
@@ -12134,89 +12135,6 @@
       ]
     },
     {
-      "contract_id": "G12-53945f888b",
-      "dimensions": [
-        "shim path stripping",
-        "marker gate",
-        "exec passthrough"
-      ],
-      "verification_methods": [
-        "rust_test_target:shim_script_strips_own_dir_and_execs_without_marker",
-        "drift_source_anchor:src/guard/assets.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:2240",
-        "src/guard/assets.rs:167"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "The generated shim text is unit-covered; the e2e run proved real execution in an isolated session, which remains manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G12-8159dcbc27",
-      "dimensions": [
-        "zsh chain loading",
-        "bash chain loading",
-        "user rc preservation"
-      ],
-      "verification_methods": [
-        "rust_test_target:zshenv_chains_user_file_and_defines_functions",
-        "rust_test_target:bash_env_exports_chain_load",
-        "drift_source_anchor:src/guard/assets.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:2241",
-        "src/guard/assets.rs:226",
-        "src/guard/assets.rs:302"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Chain-load ordering is unit-covered by script assertions and was verified live in the isolated zsh pane; interactive bash panes rely on the PATH shims because BASH_ENV is ignored there"
-      ]
-    },
-    {
-      "contract_id": "G12-04d8d2e474",
-      "dimensions": [
-        "call-time marker gate",
-        "command passthrough",
-        "accept-line record"
-      ],
-      "verification_methods": [
-        "rust_test_target:zshenv_chains_user_file_and_defines_functions",
-        "rust_test_target:bash_env_exports_chain_load",
-        "rust_test_target:judge_line_mirrors_accept_line_rules",
-        "drift_source_anchor:src/guard/assets.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:2242",
-        "src/guard/assets.rs:231",
-        "src/guard/assets.rs:306"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Function definitions and the marker-gated call path are asserted in script text; the human-pane zero-record behavior is e2e evidence"
-      ]
-    },
-    {
       "contract_id": "G12-2bcd7c47f2",
       "dimensions": [
         "disable switch",
@@ -12279,7 +12197,7 @@
       ],
       "verification_methods": [
         "rust_test_target:marker_roundtrip",
-        "rust_test_target:shim_script_strips_own_dir_and_execs_without_marker",
+        "rust_test_target:armed_shim_forwards_to_guard_exec",
         "drift_source_anchor:src/app/guard.rs",
         "drift_source_anchor:src/guard/marker.rs",
         "platform_live_acceptance:unverified"
@@ -12457,6 +12375,96 @@
       ],
       "unrepresented_dimensions": [
         "Timestamp and TSV parsing are unit-covered; counting of unparseable lines is exercised in the e2e compare run"
+      ]
+    },
+    {
+      "contract_id": "G12-819af10e3d",
+      "dimensions": [
+        "per-pane shim dir",
+        "empty-until-marked fast path",
+        "marker-armed forwarders"
+      ],
+      "verification_methods": [
+        "rust_test_target:armed_shim_forwards_to_guard_exec",
+        "rust_test_target:arm_and_disarm_pane_shims",
+        "drift_source_anchor:src/guard/assets.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2240",
+        "src/guard/assets.rs:160",
+        "src/guard/assets.rs:244",
+        "src/cli/guard.rs:97"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The 1ms unmarked budget is covered by the measured dogfood run in RESULT.md, not by an automated bench"
+      ]
+    },
+    {
+      "contract_id": "G12-deb9fbea7a",
+      "dimensions": [
+        "zdotdir restore",
+        "user zshenv chain",
+        "histfile preservation",
+        "bash env chain"
+      ],
+      "verification_methods": [
+        "rust_test_target:zshenv_restores_zdotdir_and_does_not_shadow",
+        "rust_test_target:bash_env_chain_loads_and_does_not_shadow",
+        "drift_source_anchor:src/guard/assets.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2241",
+        "src/guard/assets.rs:256",
+        "src/guard/assets.rs:331",
+        "src/guard/assets.rs:92"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Restore semantics are unit-covered by script assertions and verified live in a real-HOME isolated session; interactive bash still relies on PATH shims"
+      ]
+    },
+    {
+      "contract_id": "G12-a67c442a9e",
+      "dimensions": [
+        "call-time marker gate",
+        "non-shadowing defs",
+        "command passthrough",
+        "accept-line record"
+      ],
+      "verification_methods": [
+        "rust_test_target:zshenv_restores_zdotdir_and_does_not_shadow",
+        "rust_test_target:bash_env_chain_loads_and_does_not_shadow",
+        "rust_test_target:judge_line_mirrors_accept_line_rules",
+        "drift_source_anchor:src/guard/assets.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2242",
+        "src/guard/assets.rs:269",
+        "src/guard/assets.rs:288",
+        "src/guard/assets.rs:337"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Non-shadowing is asserted in script text and verified live against the real ai_guard functions; ai_guard-rejected commands never reach the shim, matching upstream behavior"
       ]
     }
   ]
