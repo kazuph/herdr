@@ -394,6 +394,24 @@ impl Default for GuardConfig {
     }
 }
 
+/// `[decisions]` configures server-owned pending decisions.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DecisionsConfig {
+    /// When true (default), numbered selection and permission prompts visible
+    /// on a blocked agent pane's screen become pending `agent_prompt` /
+    /// `tool_permission` decisions that answer by sending keys to the pane.
+    pub screen_prompts: bool,
+}
+
+impl Default for DecisionsConfig {
+    fn default() -> Self {
+        Self {
+            screen_prompts: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigReloadStatus {
@@ -438,6 +456,7 @@ pub struct Config {
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
+    pub decisions: DecisionsConfig,
 }
 
 #[derive(Debug)]

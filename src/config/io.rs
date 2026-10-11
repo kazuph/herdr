@@ -10,6 +10,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "advanced",
     "agent_restore",
     "agent_start",
+    "decisions",
     "experimental",
     "guard",
     "keys",
@@ -417,6 +418,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut diagnostics,
         &mut invalid_sections,
         |section| config.agent_start = section,
+    );
+    load_live_section(
+        table,
+        "decisions",
+        "decisions config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.decisions = section,
     );
 
     Ok(LoadedConfig {

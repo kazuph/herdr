@@ -1789,6 +1789,9 @@ pub struct AppState {
     pub agent_start_config: crate::config::AgentStartConfig,
     /// `[guard]` config: command watcher for agent panes.
     pub guard_config: crate::config::GuardConfig,
+    /// `[decisions] screen_prompts`: blocked agent panes' numbered
+    /// selection/permission prompts become pending decisions.
+    pub decisions_screen_prompts: bool,
     pub prefix_code: KeyCode,
     pub prefix_mods: KeyModifiers,
     pub default_sidebar_width: u16,
@@ -2474,6 +2477,7 @@ impl AppState {
             outer_terminal_focus: None,
             agent_start_config: crate::config::AgentStartConfig::default(),
             guard_config: crate::config::GuardConfig::default(),
+            decisions_screen_prompts: true,
             prefix_code: KeyCode::Char('b'),
             prefix_mods: KeyModifiers::CONTROL,
             default_sidebar_width: 26,

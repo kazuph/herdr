@@ -351,6 +351,10 @@ impl TerminalRuntime {
         self.0.detection_text()
     }
 
+    pub fn detection_text_unwrapped(&self) -> String {
+        self.0.detection_text_unwrapped()
+    }
+
     pub fn terminal_title(&self) -> Option<String> {
         self.0.terminal_title()
     }

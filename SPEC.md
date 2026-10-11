@@ -1950,6 +1950,30 @@
 - **検証契約**: Rust unit testsで行の形・再接続・machine置換・1台失敗の隔離・Tailscale認証のmachine_down化と10分待機・`answer --machine`の振り分け・起動時のdecision購読が履歴を再生しないこと・未告知decisionのresolved抑止・未対応マシンのmachine_downと30分待機を固定する。隔離sessionの実serverと検証用の保存マシン経路（偽sshまたは実機）でend-to-endを実地確認する。
 - **デグレ判定**: JSON以外の行や未改行の出力を混ぜる、パイプ切断で落ちる、起動直後に購読前の履歴や未告知decisionのresolvedを流し直す、再接続時にpendingの`created`を出し直さない、失敗したマシンが他streamを巻き込む、未対応マシンを短い間隔で繰り返し`machine_down`し続ける、Tailscale認証でブラウザを開く、保存マシンへの回答がlocalへ届く、`machine`のid/labelを保存profileの値にしない。
 
+### エージェント画面の質問と許可確認の判断待ち化（screen prompt decisions、工程6）
+- **該当コミット**: feat/screen-prompt-decisionsの実装
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — Claude Code・Codex・Devinが画面に出す番号付きの質問とツール許可確認を、工程1の判断待ちへ変換し、既存の全受け口（TUI dialog・SABERA・Android・Slack・CLI）で答えられるようにする。
+- **目的**: blockedなagent paneが待つ画面の選択肢を、各受け口が個別に画面を読むのではなく、server側の判断待ちとして一元化する。
+- **挙動**:
+  - `[decisions] screen_prompts`（既定true）が有効な時、serverはblockedなagent paneのdetection画面（soft wrapを戻した論理行。利用者がスクロールする表示ではない）を定期走査し、saberanteの`parse_prompt`/`_parse_mq_tabs`と同じ規則で番号付き選択肢ブロックを読み取る。質問はkind `agent_prompt`、許可・信頼確認はkind `tool_permission`の判断待ちになり、titleは質問文、optionsは画面の番号と文、`origin`にpane_id・agent・cwd・machine="local"・reason="screen_prompt"が入る。自由入力の選択肢（`Type something`/`Chat about this`）はoptionsから外して`allow_text`にする。
+  - 回答はペインへキーとして届く。選択肢が画面で示すショートカット（Codexの`(y)`/`(a)`/`(esc)`など）があればそのキー（`(esc)`はEscキー）、無ければ番号キーを送る。`allow_text`へのtext回答は自由入力選択肢の番号→文→Enterを順に遅延書き込みする。複数タブの質問はタブを含む画面署名で区別し、回答で画面が進むたび次のタブの判断待ちを作る。
+  - paneごとに画面署名とdecision_idを持ち、署名と2回連続で一致しない読み取りで判断待ちをcancelする（プロンプトが消えた・別の質問へ変わった・利用者が直接答えた場合）。画面署名はheader・質問文・選択肢で決まるため、選択肢が同じでも質問文が違う確認（許可対象のコマンド違い等）は別の質問として新しい判断待ちになる。1回の読み取り異常ではcancelしない。同一内容のpending判断待ちは再利用し、再起動やhandoff後に同じ質問を二重に作らない。answer/cancel/expiredが別経路で着た場合はwatchをresolvedにして同じ質問を再提示しない。blockedが一瞬揺れてもwatch中のpaneは走査を続ける。
+  - 画面の質問由来の判断待ち（origin.reason=screen_prompt）への回答は、確定する前にそのpaneの画面を読み直して確認する。画面の質問がwatchの署名と一致する時（または読み取りが崩れて解析できず、直前のスキャンが一致していた時）だけanswerを確定してキーを送る。一致しない・paneが無い・watchが無い場合はanswerを確定せず判断待ちをcancelし、エラーコード`decision_stale`で返す。
+  - 走査の期限はwatch中またはblocked paneがある時だけloopを起こし、idleでは起こさない。`[decisions] screen_prompts=false`へlive reloadした時点で全watchを止め、pendingのscreen prompt判断待ちをcancelする。
+  - `ping`応答と`herdr status --json`のserver capabilitiesへ`screen_prompt_decisions: true`を返し、saberante等のconsumerはこの印で自前の画面読み取り提供を抑止できる。
+- **受け入れ条件**:
+  - Claude CodeのAskUserQuestion（単一・複数タブ）、Claude Codeの許可確認、Codexの許可確認、Devinの確認画面を、`agent_prompt`/`tool_permission`の判断待ちとして正しいtitle・options・allow_text・originで作る。
+  - 判断待ちへのoption回答は画面が示すショートカットがあればそのキー、無ければ番号キーがpaneへ届き、text回答は自由入力選択肢の番号→text→Enterの順に届く。
+  - 質問が画面から消えた・別の質問に変わった時は連続2回の不一致読み取りで判断待ちがcancelされ、1回の読み取り異常ではcancelされない。
+  - 同じ質問の画面が続く限り同じ判断待ちを再提示せず、別経路でcancel・expiredされた判断待ちも再作成しない。再起動後にpendingな同一判断待ちは再利用する。選択肢が同じで質問文だけ違う確認が続いた時は、2つ目が新しい判断待ちになる。
+  - 判断待ち作成後に画面が別の質問へ変わった、または質問が消えた状態でanswerすると、キーは送られずその判断待ちはcancelされて`decision_stale`が返る。同じ質問が出ている間のanswerは従来どおりキーを送る。
+  - `[decisions] screen_prompts`の既定はtrueで、falseへのlive切替で全watchとpending判断待ちを止める。
+  - server capabilitiesの`screen_prompt_decisions`が`status --json`とping応答で読める。
+  - 既存のdecision API・`decision watch`・dialog・Slack・pane状態manifests・agent状態判定を変えない。
+- **検証契約**: Rust unit testsで画面固定例のparse・キー/ショートカット/text+Enter送信・複数タブ遷移・消失2読取消・質問文を含む同一判定・answer時の画面確認（decision_stale）・二重防止・feature flag切替・capabilities値を固定する。隔離sessionの実agentでblocked→判断待ち作成→`decision answer`→pane前進を実地確認する。
+- **デグレ判定**: detection画面ではなくuser viewportを読む、saberanteと同じ画面を二重に判断待ち化する、1回の読み取り異常でcancelする、idleでloopを定期起こし続ける、agent状態判定manifestsの結果を変える。
+
 ## G10. 本家最新リリース v0.8.0 と現状fork版の差分・段階取込契約
 
 ### 比較基準と差分範囲

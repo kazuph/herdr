@@ -381,6 +381,7 @@ impl App {
 
         changed |= self.reconcile_due_managed_agents(now);
         changed |= self.expire_due_metadata(now);
+        changed |= self.screen_prompt_tasks(now);
 
         if geometry_dirty || resized {
             self.pending_agent_resume_deadline = None;
@@ -784,6 +785,7 @@ impl App {
             self.next_agent_manifest_update_check,
             self.agent_metadata_deadline,
             self.decision_expiry_deadline,
+            self.screen_prompt_deadline(),
             self.pending_agent_resume_deadline,
             self.session_save_deadline,
             self.selection_autoscroll_deadline,

@@ -274,6 +274,7 @@ struct ServerCapabilitiesJson {
     detached_server_daemon: bool,
     endpoint_protocol_generation: Option<u32>,
     endpoint_protocol_min_generation: Option<u32>,
+    screen_prompt_decisions: bool,
 }
 
 #[derive(Serialize)]
@@ -310,6 +311,7 @@ fn server_status_json(server: &ServerRuntimeStatus) -> ServerStatusJson {
                     detached_server_daemon: capabilities.detached_server_daemon,
                     endpoint_protocol_generation: capabilities.endpoint_protocol_generation,
                     endpoint_protocol_min_generation: capabilities.endpoint_protocol_min_generation,
+                    screen_prompt_decisions: capabilities.screen_prompt_decisions,
                 }),
             compatible: protocol.map(|value| {
                 value == crate::protocol::PROTOCOL_VERSION
@@ -392,6 +394,7 @@ mod endpoint_status_tests {
             detached_server_daemon: true,
             endpoint_protocol_generation: None,
             endpoint_protocol_min_generation: None,
+            screen_prompt_decisions: true,
         };
         let old = ServerRuntimeStatus::Running {
             version: Some(crate::build_info::version()),
