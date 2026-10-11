@@ -30,7 +30,7 @@ use std::path::Path;
 use portable_pty::CommandBuilder;
 
 use crate::guard::{
-    BASH_ENV_ORIG_ENV_VAR, HERDR_EXE_ENV_VAR, MARKER_ENV_VAR, SHIM_DIR_ENV_VAR,
+    BASH_ENV_ORIG_ENV_VAR, ENFORCING_ENV_VAR, HERDR_EXE_ENV_VAR, MARKER_ENV_VAR, SHIM_DIR_ENV_VAR,
     ZDOTDIR_ORIG_ENV_VAR,
 };
 
@@ -88,6 +88,13 @@ pub(crate) fn apply_guard_env(cmd: &mut CommandBuilder, pane_env_id: Option<&str
             .to_string_lossy()
             .as_ref(),
     );
+
+    // While the guard enforces, mark the pane so the dotfiles ai_guard
+    // loader can skip itself: without the marker, both confirmation systems
+    // would prompt for the same command.
+    if guard.mode == crate::config::GuardModeConfig::Enforce {
+        cmd.env(ENFORCING_ENV_VAR, "1");
+    }
 
     // zsh: point ZDOTDIR at our .zshenv. The original ZDOTDIR (if any) is
     // recorded so the injected file can restore it before the user's
@@ -446,5 +453,51 @@ mod tests {
         assert!(dir.join("git").is_file());
         disarm_pane_shims(&pane_id);
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn apply_guard_env_marks_enforcing_panes_for_ai_guard_skip() {
+        let _lock = crate::config::lock_test_config_env();
+        let root = std::env::temp_dir().join(format!("hga-env-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::env::set_var("XDG_STATE_HOME", root.join("state"));
+        let config_path = root.join("config.toml");
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &config_path);
+
+        // CommandBuilder::new inherits this process's environment; drop the
+        // guard vars so only what apply_guard_env sets is measured.
+        let builder = || {
+            let mut builder = CommandBuilder::new("sh");
+            builder.env_remove(ENFORCING_ENV_VAR);
+            builder.env_remove(MARKER_ENV_VAR);
+            builder
+        };
+
+        // Enforce (the default): panes get HERDR_GUARD_ENFORCING=1 so the
+        // dotfiles ai_guard loader can skip itself.
+        std::fs::write(&config_path, "[guard]\n").unwrap();
+        let mut enforcing = builder();
+        apply_guard_env(&mut enforcing, Some("p_envtest"));
+        assert_eq!(
+            enforcing.get_env(ENFORCING_ENV_VAR).and_then(OsStr::to_str),
+            Some("1")
+        );
+
+        // Record mode: no marker — the pane's ai_guard (if any) keeps
+        // handling confirmations itself.
+        std::fs::write(&config_path, "[guard]\nmode = \"record\"\n").unwrap();
+        let mut recording = builder();
+        apply_guard_env(&mut recording, Some("p_envtest"));
+        assert!(recording.get_env(ENFORCING_ENV_VAR).is_none());
+
+        // Disabled guard: no injection at all.
+        std::fs::write(&config_path, "[guard]\nenabled = false\n").unwrap();
+        let mut disabled = builder();
+        apply_guard_env(&mut disabled, Some("p_envtest"));
+        assert!(disabled.get_env(ENFORCING_ENV_VAR).is_none());
+        assert!(disabled.get_env(MARKER_ENV_VAR).is_none());
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(crate::guard::pane_shim_dir("p_envtest"));
     }
 }
