@@ -3341,6 +3341,15 @@ impl AppState {
     fn handle_pane_died(&mut self, pane_id: PaneId) {
         self.pending_agent_notifications.remove(&pane_id);
         self.remove_plugin_pane_records([pane_id]);
+        if self.guard_config.enabled {
+            let public_pane_id = format!("p{}", pane_id.raw());
+            crate::guard::marker::sync(
+                &crate::workspace::pane_env_id_from_public(&public_pane_id),
+                None,
+                None,
+                None,
+            );
+        }
         let ws_idx = self
             .workspaces
             .iter()
