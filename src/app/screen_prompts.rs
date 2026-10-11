@@ -465,6 +465,7 @@ impl App {
                 agent: pane.as_ref().and_then(|pane| pane.agent.clone()),
                 cwd: pane.as_ref().and_then(|pane| pane.cwd.clone()),
                 reason: Some(SCREEN_PROMPT_REASON.to_string()),
+                machine: Some("local".to_string()),
                 ..DecisionOrigin::default()
             }),
             created_unix_ms: unix_ms_now(),

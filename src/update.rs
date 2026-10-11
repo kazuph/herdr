@@ -2695,6 +2695,7 @@ mod tests {
                     detached_server_daemon: true,
                     endpoint_protocol_generation: None,
                     endpoint_protocol_min_generation: None,
+                    screen_prompt_decisions: true,
                 }),
             },
         };

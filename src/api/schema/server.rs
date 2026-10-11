@@ -23,6 +23,10 @@ pub struct ServerCapabilities {
     pub endpoint_protocol_generation: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endpoint_protocol_min_generation: Option<u32>,
+    /// The server scans blocked agent panes for numbered screen prompts and
+    /// raises them as pending decisions. Older servers lack the field.
+    #[serde(default)]
+    pub screen_prompt_decisions: bool,
 }
 
 impl ServerCapabilities {

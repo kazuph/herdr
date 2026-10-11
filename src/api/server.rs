@@ -72,6 +72,7 @@ pub fn start_server(
             endpoint_protocol_min_generation: Some(
                 crate::protocol::endpoint::ENDPOINT_PROTOCOL_MIN_GENERATION,
             ),
+            screen_prompt_decisions: true,
         }),
     )
 }
@@ -1160,6 +1161,7 @@ mod tests {
                 detached_server_daemon: true,
                 endpoint_protocol_generation: None,
                 endpoint_protocol_min_generation: None,
+                screen_prompt_decisions: true,
             }),
             None,
         );
