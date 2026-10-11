@@ -1537,12 +1537,17 @@ exit 0
                 &profile("mold", "Old", "old"),
                 &sink,
                 &pump_stop,
-                test_timings(),
+                // A wide unsupported cadence keeps the spacing check clear of
+                // fake-ssh startup jitter on loaded CI runners.
+                WatchTimings {
+                    unsupported_retry: Duration::from_millis(200),
+                    ..test_timings()
+                },
             );
         });
 
         // Record when each ssh attempt becomes visible; the spacing between
-        // attempts is the unsupported cadence (40ms in tests, 30min in prod),
+        // attempts is the unsupported cadence (200ms here, 30min in prod),
         // not the fast doubling backoff.
         let mut attempt_times: Vec<Instant> = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -1562,7 +1567,7 @@ exit 0
             attempts(&dir)
         );
         assert!(
-            attempt_times[2].duration_since(attempt_times[1]) >= Duration::from_millis(30),
+            attempt_times[2].duration_since(attempt_times[1]) >= Duration::from_millis(100),
             "the retry respected the slow cadence: {attempt_times:?}"
         );
 
