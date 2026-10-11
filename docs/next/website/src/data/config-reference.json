@@ -1188,6 +1188,18 @@
       ]
     },
     {
+      "id": "decisions",
+      "title": "Decisions",
+      "keys": [
+        {
+          "key": "decisions.screen_prompts",
+          "type": "boolean",
+          "default": "true",
+          "description": "Scan blocked agent panes for numbered question and permission prompts and raise them as pending decisions (agent_prompt/tool_permission) answerable from every decision surface."
+        }
+      ]
+    },
+    {
       "id": "worktrees",
       "title": "Worktrees",
       "keys": [
