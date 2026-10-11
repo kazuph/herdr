@@ -174,6 +174,74 @@ impl ApprovalStore for FileApprovalStore {
     }
 }
 
+/// Write one approval entry (`key<TAB>expiry_epoch`) to the ai_guard-format
+/// file, mirroring `_ai_guard_temp_approval_set`: expired entries and entries
+/// for the same key are dropped, the new entry is appended, and the file is
+/// kept mode 600 so approvals do not leak to other users.
+pub(crate) fn write_approval_entry(
+    path: &Path,
+    key: &str,
+    expiry_epoch: i64,
+    now: i64,
+) -> std::io::Result<()> {
+    let mut kept = Vec::new();
+    if let Ok(content) = std::fs::read_to_string(path) {
+        for line in content.lines() {
+            let mut parts = line.split('\t');
+            let (Some(entry_key), Some(entry_expiry)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            let Ok(expiry) = entry_expiry.trim().parse::<i64>() else {
+                continue;
+            };
+            if expiry > now && entry_key != key {
+                kept.push(format!("{entry_key}\t{expiry}"));
+            }
+        }
+    }
+    kept.push(format!("{key}\t{expiry_epoch}"));
+    let mut output = kept.join("\n");
+    output.push('\n');
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, output)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+/// Seconds from `now` to the end of the local day (`86400 - now % 86400` in
+/// local time), used for the `1日許可` expiry. Mirrors ai_guard's
+/// `$(($(date -j $(date +%Y-%m-%d) -v+1d +%s) - $(date +%s)))` behaviour; on
+/// non-Unix hosts where `localtime` is unavailable it falls back to a full
+/// day so a granted approval never outlives the day it was meant for.
+pub(crate) fn seconds_until_end_of_local_day(now: i64) -> i64 {
+    #[cfg(unix)]
+    {
+        // SAFETY: single-threaded read of localtime for a valid epoch; the
+        // returned pointer is only read within this call.
+        unsafe {
+            let mut tm: libc::tm = std::mem::zeroed();
+            if !libc::localtime_r(&now as *const libc::time_t, &mut tm).is_null() {
+                let remaining =
+                    (24_i64 - tm.tm_hour as i64) * 3600 - tm.tm_min as i64 * 60 - tm.tm_sec as i64;
+                return remaining.max(1);
+            }
+        }
+    }
+    let _ = now;
+    86_400
+}
+
+/// `_ai_guard_day_approval_key` for an explicit cwd (`day:<cwd>`).
+pub(crate) fn day_approval_key_for(cwd: &Path) -> String {
+    format!("day:{}", cwd.to_string_lossy())
+}
+
 /// Everything the judgement needs for one command.
 pub struct JudgeInput<'a> {
     /// Full argv, `argv[0]` is the command name.
@@ -1531,7 +1599,7 @@ fn temp_approval_scope(input: &JudgeInput<'_>) -> String {
 
 /// `_ai_guard_day_approval_key`.
 fn day_approval_key(input: &JudgeInput<'_>) -> String {
-    format!("day:{}", input.cwd.to_string_lossy())
+    day_approval_key_for(input.cwd)
 }
 
 /// `_ai_guard_is_always_prompt_cmd`.

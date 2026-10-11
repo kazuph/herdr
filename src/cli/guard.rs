@@ -1,11 +1,12 @@
-//! `herdr guard` — record-only command guard CLI.
+//! `herdr guard` — command guard CLI.
 //!
 //! Subcommands:
 //!
 //! - `herdr guard exec -- <argv...>`: entry point used by the PATH shims and
 //!   shell functions. Judges the command when the pane marker exists, appends
-//!   a JSONL record, then always executes the real command and propagates its
-//!   exit status.
+//!   a JSONL record, then applies `[guard] mode`: `record` always runs the
+//!   real command; `enforce` stops `block` verdicts and waits on a
+//!   `command_guard` decision for `ask` verdicts before running or refusing.
 //! - `herdr guard line -- <line>`: called by the zsh accept-line hook with the
 //!   typed buffer. Records line-level judgements (protected patterns,
 //!   `git wt list`, danger words) without touching execution.
@@ -17,7 +18,12 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::guard::judge::{self, JudgeInput};
+use crate::api::schema::{
+    Decision, DecisionCreateParams, DecisionKind, DecisionOrigin, DecisionStatus, Method, Request,
+};
+use crate::config::GuardModeConfig;
+use crate::guard::enforce;
+use crate::guard::judge::{self, CommandRunner, JudgeInput};
 use crate::guard::marker::{self, AgentMarker};
 use crate::guard::record::{self, DecisionRecord, Via};
 
@@ -203,9 +209,276 @@ fn guard_exec(args: &[String]) -> std::io::Result<i32> {
             input.now,
         );
         record::append(&crate::guard::log_path(&ctx.config), &record);
+        if ctx.config.enabled && ctx.config.mode == GuardModeConfig::Enforce {
+            match judgment.verdict {
+                judge::Verdict::Block => {
+                    eprint!(
+                        "{}",
+                        enforce::block_message(judgment.rule, &judgment.reason, &argv.join(" "),)
+                    );
+                    return Ok(1);
+                }
+                judge::Verdict::Ask => {
+                    return enforce_ask(&ctx, marker, argv, &judgment);
+                }
+                judge::Verdict::Allow => {}
+            }
+        }
     }
-    // The guard never stops a command in this phase: always run the real one.
     exec_real_command(argv, &ctx.sanitized_path)
+}
+
+/// Enforce path for an `ask` verdict: validate the ai_guard request reason,
+/// create a `command_guard` decision on this pane's server, wait for the
+/// answer, then run or refuse the command exactly like ai_guard does.
+///
+/// Exit behaviour mirrors ai_guard: approval (or day approval) runs the
+/// command and propagates its status; rejection, expiry, cancellation, a
+/// missing/invalid request reason, or an unreachable server refuse the
+/// command with exit code 1 and the ai_guard-style stderr wording.
+fn enforce_ask(
+    ctx: &GuardContext,
+    marker: &AgentMarker,
+    argv: &[String],
+    judgment: &judge::Judgment,
+) -> std::io::Result<i32> {
+    let cmd_line = argv.join(" ");
+
+    // ai_guard reads the request reason from `AI_GUARD_REQUEST_REASON`, or
+    // from the variable named by `AI_GUARD_REQUEST_ENV_NAME`; it must exist
+    // and contain Japanese text before any confirmation is created.
+    let reason_env = enforce::request_reason_env_name();
+    let raw_reason = std::env::var(&reason_env).unwrap_or_default();
+    let Some(request_reason) = enforce::validated_request_reason(&raw_reason) else {
+        eprint!(
+            "{}",
+            enforce::missing_reason_message(&cmd_line, &reason_env)
+        );
+        return Ok(1);
+    };
+    if !enforce::contains_japanese(&request_reason) {
+        eprint!(
+            "{}",
+            enforce::non_japanese_reason_message(&cmd_line, &reason_env)
+        );
+        return Ok(1);
+    }
+
+    let (pane_id, _, _) = env_context_ids();
+    let runner = judge::SystemCommandRunner {
+        sanitized_path: ctx.sanitized_path.clone(),
+    };
+    let branch = runner
+        .output(
+            &["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+            &ctx.cwd,
+        )
+        .filter(|value| !value.is_empty());
+    let (home, _) = env_paths();
+    let title = enforce::decision_title(&argv[0], &ctx.cwd, home.as_deref());
+    let body = enforce::decision_body(
+        &request_reason,
+        &cmd_line,
+        &ctx.cwd,
+        branch.as_deref(),
+        &marker.agent,
+    );
+    let response = match super::send_request(&Request {
+        id: "cli:guard:decision:create".into(),
+        method: Method::DecisionCreate(DecisionCreateParams {
+            kind: DecisionKind::CommandGuard,
+            title,
+            body: Some(body),
+            options: enforce::decision_options(),
+            allow_text: true,
+            timeout_ms: Some(ctx.config.ask_timeout_seconds.saturating_mul(1000)),
+            origin: Some(DecisionOrigin {
+                pane_id: pane_id
+                    .map(|value| super::normalize_pane_id(&value))
+                    .or_else(|| marker.public_pane_id.clone()),
+                agent: Some(marker.agent.clone()),
+                cwd: Some(ctx.cwd.to_string_lossy().to_string()),
+                branch: branch.clone(),
+                command: Some(cmd_line.clone()),
+                reason: Some(request_reason),
+                ..DecisionOrigin::default()
+            }),
+        }),
+    }) {
+        Ok(response) => response,
+        Err(err) if super::protocol_mismatch_was_reported(&err) => return Err(err),
+        Err(err) => {
+            eprint!(
+                "{}",
+                enforce::deny_message(&cmd_line, &format!("判断待ちを作成できませんでした: {err}"))
+            );
+            return Ok(1);
+        }
+    };
+    if response.get("error").is_some() {
+        eprint!(
+            "{}",
+            enforce::deny_message(
+                &cmd_line,
+                &format!("判断待ちを作成できませんでした: {}", response["error"])
+            )
+        );
+        return Ok(1);
+    }
+    let Some(decision_id) = response["result"]["decision"]["decision_id"]
+        .as_str()
+        .map(str::to_string)
+    else {
+        eprint!(
+            "{}",
+            enforce::deny_message(
+                &cmd_line,
+                "判断待ちの応答に decision_id が含まれていませんでした"
+            )
+        );
+        return Ok(1);
+    };
+
+    let response = match super::decision::wait_for_decision(&decision_id) {
+        Ok(response) => response,
+        Err(err) if super::protocol_mismatch_was_reported(&err) => return Err(err),
+        Err(err) => {
+            eprint!(
+                "{}",
+                enforce::deny_message(
+                    &cmd_line,
+                    &format!("判断待ちの回答を受け取れませんでした: {err}")
+                )
+            );
+            return Ok(1);
+        }
+    };
+    if response.get("error").is_some() {
+        eprint!(
+            "{}",
+            enforce::deny_message(
+                &cmd_line,
+                &format!("判断待ちがエラーになりました: {}", response["error"])
+            )
+        );
+        return Ok(1);
+    }
+    let Ok(decision) = serde_json::from_value::<Decision>(response["result"]["decision"].clone())
+    else {
+        eprint!(
+            "{}",
+            enforce::deny_message(&cmd_line, "判断待ちの応答を解釈できませんでした")
+        );
+        return Ok(1);
+    };
+
+    match decision.status {
+        DecisionStatus::Answered => match decision
+            .answer
+            .as_ref()
+            .and_then(|answer| answer.option_id.as_deref())
+        {
+            Some(enforce::OPTION_APPROVE) | Some(enforce::OPTION_APPROVE_DAY) => {
+                grant_approval(ctx, judgment, &decision);
+                eprint!(
+                    "{}",
+                    enforce::approved_message(&cmd_line, &approval_note(&decision))
+                );
+                exec_real_command(argv, &ctx.sanitized_path)
+            }
+            _ => {
+                let detail = decision
+                    .answer
+                    .as_ref()
+                    .and_then(|answer| answer.text.clone())
+                    .filter(|text| !text.trim().is_empty())
+                    .unwrap_or_else(|| "却下されました".to_string());
+                eprint!("{}", enforce::deny_message(&cmd_line, &detail));
+                Ok(1)
+            }
+        },
+        DecisionStatus::Expired => {
+            eprint!(
+                "{}",
+                enforce::deny_message(
+                    &cmd_line,
+                    &format!(
+                        "承認の判断待ちが {} 秒の期限切れで自動却下されました",
+                        ctx.config.ask_timeout_seconds
+                    ),
+                )
+            );
+            Ok(1)
+        }
+        DecisionStatus::Cancelled => {
+            eprint!(
+                "{}",
+                enforce::deny_message(&cmd_line, "承認の判断待ちが取り消されました")
+            );
+            Ok(1)
+        }
+        DecisionStatus::Pending => {
+            eprint!(
+                "{}",
+                enforce::deny_message(&cmd_line, "承認の判断待ちが解決せずに終わりました")
+            );
+            Ok(1)
+        }
+    }
+}
+
+/// Label for the `✅ 承認` line: the ai_guard choice label plus the optional
+/// free-text the responder typed.
+fn approval_note(decision: &Decision) -> String {
+    let Some(answer) = decision.answer.as_ref() else {
+        return "承認".to_string();
+    };
+    let label = match answer.option_id.as_deref() {
+        Some(enforce::OPTION_APPROVE_DAY) => "1日許可",
+        _ => "承認",
+    };
+    match answer
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        Some(text) => format!("{label}: {text}"),
+        None => label.to_string(),
+    }
+}
+
+/// Persist the granted approval in the ai_guard-compatible file so an
+/// equivalent command does not prompt again:
+///
+/// - `承認` writes the per-command temp key for
+///   `AI_GUARD_TEMP_APPROVAL_SECONDS` (default 180s).
+/// - `1日許可` writes `day:<cwd>` until the end of the local day.
+///
+/// Commands whose judgement carries no temp key (wildcard sends,
+/// disk-destructive commands) get nothing cached, matching ai_guard.
+fn grant_approval(ctx: &GuardContext, judgment: &judge::Judgment, decision: &Decision) {
+    let Some(temp_key) = judgment.approval_key.clone() else {
+        return;
+    };
+    let now = record::now_epoch();
+    let path = crate::guard::approval_file_path(&ctx.config);
+    let is_day = decision
+        .answer
+        .as_ref()
+        .is_some_and(|answer| answer.option_id.as_deref() == Some(enforce::OPTION_APPROVE_DAY));
+    let (key, expiry) = if is_day {
+        (
+            judge::day_approval_key_for(&ctx.cwd),
+            now.saturating_add(judge::seconds_until_end_of_local_day(now)),
+        )
+    } else {
+        (
+            temp_key,
+            now.saturating_add(enforce::temp_approval_seconds()),
+        )
+    };
+    let _ = judge::write_approval_entry(&path, &key, expiry, now);
 }
 
 /// Run the wrapped command with the shim dir stripped from PATH, propagating
@@ -491,6 +764,8 @@ fn guard_status(args: &[String]) -> std::io::Result<i32> {
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
             "enabled": config.enabled,
+            "mode": config.mode,
+            "ask_timeout_seconds": config.ask_timeout_seconds,
             "log_path": log,
             "log_records": std::fs::read_to_string(&log)
                 .map(|c| c.lines().count())

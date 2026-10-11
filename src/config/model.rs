@@ -323,16 +323,35 @@ pub struct AgentStartConfig {
     pub commands: std::collections::BTreeMap<String, Vec<String>>,
 }
 
-/// `[guard]` configures the record-only command guard that watches commands
-/// executed inside panes running an agent. The guard is a port of the dotfiles
-/// `ai_guard` judgement; in this phase it only records verdicts and never
-/// blocks a command or creates a decision.
+/// How the command guard acts on its verdicts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GuardModeConfig {
+    /// Judge and record every wrapped command but never stop it.
+    Record,
+    /// Judge and record; `block` verdicts stop the command and `ask`
+    /// verdicts create a `command_guard` decision wait for the user.
+    #[default]
+    Enforce,
+}
+
+/// `[guard]` configures the command guard that watches commands executed
+/// inside panes running an agent. The guard is a port of the dotfiles
+/// `ai_guard` judgement; `[guard].mode` chooses between recording verdicts
+/// only (`record`) and enforcing them (`enforce`, the default).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct GuardConfig {
     /// Master switch. When false, panes get no PATH/zsh/bash injection at all.
-    /// Default: true (record-only mode active).
+    /// Default: true.
     pub enabled: bool,
+    /// `record` only judges and writes JSONL records; `enforce` also stops
+    /// `block` verdicts and waits on a decision for `ask` verdicts.
+    /// Default: enforce.
+    pub mode: GuardModeConfig,
+    /// Seconds an `ask` decision wait stays pending before expiring
+    /// (ai_guard `AI_GUARD_DIALOG_TIMEOUT_SECONDS`). Default: 300.
+    pub ask_timeout_seconds: u64,
     /// JSONL file receiving one record per judged command.
     /// Default: `<state dir>/guard/decisions.jsonl`.
     pub log_path: Option<String>,
@@ -362,6 +381,8 @@ impl Default for GuardConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            mode: GuardModeConfig::Enforce,
+            ask_timeout_seconds: 300,
             log_path: None,
             approval_file: None,
             ai_guard_log_path: None,

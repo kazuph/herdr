@@ -1,4 +1,4 @@
-//! Marker sync between herdr's agent state and the record-only command
+//! Marker sync between herdr's agent state and the command
 //! guard's per-pane marker files (`<state>/guard/agent-panes/`).
 //!
 //! A marker file exists while herdr believes an agent runs in the pane;
