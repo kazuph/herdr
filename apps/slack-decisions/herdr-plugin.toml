@@ -1,0 +1,17 @@
+id = "kazuph.slack-decisions"
+name = "Slack Decisions"
+version = "0.1.0"
+min_herdr_version = "0.7.4"
+description = "Post pending herdr decisions to Slack when the Sabera glasses are not reachable; answers (number reactions or thread replies) become `herdr decision answer`."
+platforms = ["macos"]
+
+[[events]]
+on = "decision.created"
+command = ["./ensure-daemon"]
+
+[[actions]]
+id = "start"
+title = "Start the Slack decisions daemon"
+description = "Start the background daemon that mirrors decisions to Slack"
+contexts = ["global"]
+command = ["./ensure-daemon"]
