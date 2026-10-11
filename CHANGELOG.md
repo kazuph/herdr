@@ -2,11 +2,6 @@
 
 ## Unreleased
 
-### Added
-- The command guard now enforces by default: `[guard].mode = "enforce"` (the default) refuses `block` verdicts, and `ask` verdicts create a `command_guard` decision with 承認/1日許可/却下 choices and wait for its answer instead of running the command. The ai_guard-style request reason is required (`AI_GUARD_REQUEST_REASON` or the variable named by `AI_GUARD_REQUEST_ENV_NAME`), and the pending timeout is configurable via `[guard].ask_timeout_seconds` (default 300). Set `[guard].mode = "record"` to keep the previous record-only behavior.
-- Enforced agent panes now receive `HERDR_GUARD_ENFORCING=1` so a dotfiles ai_guard loader can skip itself and avoid double confirmation prompts.
-- `herdr guard status` now reports the configured mode and ask timeout.
-
 ## [0.7.4] - 2026-07-15
 
 ### Added
