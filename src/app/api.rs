@@ -655,6 +655,7 @@ impl App {
             {
                 self.flush_msg_nudges_for_available_pane(update.ws_idx, update.pane_id);
             }
+            self.arm_screen_prompt_scan();
         }
     }
 

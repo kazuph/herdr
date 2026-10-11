@@ -29,6 +29,7 @@ mod popup;
 pub(crate) use popup::{PopupGeometry, PopupOwner};
 mod runtime;
 mod runtime_mutations;
+mod screen_prompts;
 mod session;
 pub mod state;
 mod terminal_targets;
@@ -166,6 +167,16 @@ pub struct App {
     /// Set whenever the pending-decision set may have changed; the headless
     /// loop turns it into a fresh endpoint decisions projection.
     pub(crate) decisions_projection_dirty: bool,
+    /// Next screen-prompt scan. `Some(now)` when an event armed an immediate
+    /// scan; the scan reschedules itself on an interval while blocked panes
+    /// or live watches exist.
+    pub(crate) screen_prompt_scan_at: Option<Instant>,
+    /// Screen prompts currently tracked against the decision they created.
+    pub(crate) screen_prompt_watches:
+        HashMap<crate::layout::PaneId, screen_prompts::ScreenPromptWatch>,
+    /// Pane writes waiting on a delay (free-text answers type text and Enter
+    /// in timed steps so the agent TUI redraws between keys).
+    pub(crate) deferred_pane_writes: Vec<screen_prompts::DeferredPaneWrite>,
     pub(crate) pending_agent_resume_deadline: Option<Instant>,
     pub(crate) pending_agent_resume_wait: Duration,
     pub(crate) headless_agent_restore_enabled: bool,
@@ -705,6 +716,7 @@ impl App {
             outer_terminal_focus: None,
             agent_start_config: config.agent_start.clone(),
             guard_config: config.guard.clone(),
+            decisions_screen_prompts: config.decisions.screen_prompts,
             prefix_code,
             prefix_mods,
             default_sidebar_width: config.ui.sidebar_width,
@@ -869,6 +881,9 @@ impl App {
             agent_metadata_deadline: None,
             decision_expiry_deadline: Some(Instant::now()),
             decisions_projection_dirty: true,
+            screen_prompt_scan_at: config.decisions.screen_prompts.then_some(Instant::now()),
+            screen_prompt_watches: HashMap::new(),
+            deferred_pane_writes: Vec::new(),
             pending_agent_resume_deadline: None,
             pending_agent_resume_wait: Duration::from_millis(config.agent_restore.restore_delay_ms)
                 .max(PENDING_AGENT_RESUME_THEME_WAIT),
@@ -1661,6 +1676,14 @@ impl App {
 
         if !invalid_section("guard") {
             self.state.guard_config = config.guard.clone();
+        }
+
+        if !invalid_section("decisions") {
+            let enabled = config.decisions.screen_prompts;
+            if self.state.decisions_screen_prompts && !enabled {
+                self.cancel_all_screen_prompt_watches();
+            }
+            self.state.decisions_screen_prompts = enabled;
         }
 
         if !invalid_section("worktrees") {

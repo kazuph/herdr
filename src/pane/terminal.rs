@@ -500,6 +500,12 @@ impl PaneTerminal {
         self.ghostty.detection_text()
     }
 
+    /// Same region as `detection_text` with soft-wrapped rows joined back
+    /// into whole logical lines — screen prompt parsing needs both.
+    pub fn detection_text_unwrapped(&self) -> String {
+        self.ghostty.detection_text_unwrapped()
+    }
+
     pub fn recent_text(&self, lines: usize) -> String {
         self.ghostty.recent_text(lines)
     }
@@ -2017,6 +2023,14 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
+    pub fn detection_text_unwrapped(&self) -> String {
+        self.core
+            .lock()
+            .ok()
+            .and_then(|core| ghostty_detection_text_unwrapped(&core).ok())
+            .unwrap_or_default()
+    }
+
     pub fn recent_text(&self, lines: usize) -> String {
         self.core
             .lock()
@@ -2538,6 +2552,18 @@ fn ghostty_detection_text(core: &GhosttyPaneCore) -> Result<String, crate::ghost
         .map(|rows| usize::from(rows).max(1))
         .unwrap_or(DEFAULT_DETECTION_ROWS);
     ghostty_recent_text(core, lines)
+}
+
+fn ghostty_detection_text_unwrapped(
+    core: &GhosttyPaneCore,
+) -> Result<String, crate::ghostty::Error> {
+    let lines = core
+        .terminal
+        .rows()
+        .ok()
+        .map(|rows| usize::from(rows).max(1))
+        .unwrap_or(DEFAULT_DETECTION_ROWS);
+    ghostty_recent_text_unwrapped(core, lines)
 }
 
 #[cfg(windows)]

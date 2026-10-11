@@ -4233,6 +4233,7 @@ impl HeadlessServer {
 
         changed |= self.app.clear_due_selection_highlight(now);
         changed |= self.app.reconcile_due_managed_agents(now);
+        changed |= self.app.screen_prompt_tasks(now);
 
         if self.has_app_client() {
             self.app.start_git_status_refresh_if_due(now);

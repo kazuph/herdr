@@ -113,6 +113,7 @@ impl App {
             Ok(AnswerOutcome::Answered(decision)) => {
                 let decision = *decision;
                 self.emit_decision_resolved(decision.clone());
+                self.screen_prompt_answer(&decision);
                 responses::encode_success(id, ResponseResult::Decision { decision })
             }
             Ok(AnswerOutcome::NotFound) => responses::encode_error(
@@ -157,6 +158,7 @@ impl App {
             Ok(ResolveOutcome::Resolved(decision)) => {
                 let decision = *decision;
                 self.emit_decision_resolved(decision.clone());
+                self.screen_prompt_resolved(&decision);
                 responses::encode_success(id, ResponseResult::Decision { decision })
             }
             Ok(ResolveOutcome::NotFound) => responses::encode_error(
@@ -203,6 +205,7 @@ impl App {
         };
         let expired_any = !expired.is_empty();
         for decision in expired {
+            self.screen_prompt_resolved(&decision);
             self.emit_decision_resolved(decision);
         }
         self.sync_decision_expiry_deadline(now);
@@ -231,7 +234,7 @@ impl App {
         }
     }
 
-    fn emit_decision_resolved(&mut self, decision: Decision) {
+    pub(crate) fn emit_decision_resolved(&mut self, decision: Decision) {
         self.emit_event(EventEnvelope {
             event: EventKind::DecisionResolved,
             data: EventData::DecisionResolved { decision },

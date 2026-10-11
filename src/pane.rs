@@ -2921,6 +2921,10 @@ impl PaneRuntime {
         self.terminal.detection_text()
     }
 
+    pub fn detection_text_unwrapped(&self) -> String {
+        self.terminal.detection_text_unwrapped()
+    }
+
     pub fn terminal_title(&self) -> Option<String> {
         self.terminal.terminal_title()
     }
