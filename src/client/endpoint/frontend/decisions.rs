@@ -899,7 +899,29 @@ mod tests {
                 .chunks(100)
                 .map(|row| row.iter().map(|cell| cell.symbol()).collect())
                 .collect();
-            let _ = std::fs::write(path, rows.join("\n"));
+            let _ = std::fs::write(&path, rows.join("\n"));
+            let rgb = |color: ratatui::style::Color, fallback: (u8, u8, u8)| match color {
+                ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+                _ => fallback,
+            };
+            let ansi_rows: Vec<String> = buffer
+                .content()
+                .chunks(100)
+                .map(|row| {
+                    let mut line = String::new();
+                    for cell in row {
+                        let (fr, fg, fb) = rgb(cell.fg, (205, 214, 244));
+                        let (br, bg, bb) = rgb(cell.bg, (24, 24, 37));
+                        line.push_str(&format!(
+                            "\x1b[38;2;{fr};{fg};{fb}m\x1b[48;2;{br};{bg};{bb}m{}",
+                            cell.symbol()
+                        ));
+                    }
+                    line.push_str("\x1b[0m");
+                    line
+                })
+                .collect();
+            let _ = std::fs::write(format!("{path}.ansi"), ansi_rows.join("\n"));
         }
     }
 
