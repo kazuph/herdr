@@ -384,10 +384,16 @@ fn pump_local(
             return;
         }
 
+        // Decisions this connection announced as `created` (snapshot or live
+        // event). A `resolved` for anything else — a decision that resolved
+        // between the subscribe and the pending list, or one resolved before
+        // the watch started — would name a decision the consumer never saw.
+        let mut announced: std::collections::HashSet<String> = std::collections::HashSet::new();
         match connection.pending() {
             Ok(decisions) => {
                 let mut failed = false;
                 for decision in &decisions {
+                    announced.insert(decision.decision_id.clone());
                     if !emit_or_stop(sink, stop, &decision_line("created", &machine, decision)) {
                         failed = true;
                         break;
@@ -416,6 +422,17 @@ fn pump_local(
             }
             match connection.next_event() {
                 Ok(Some(envelope)) => {
+                    match &envelope.data {
+                        EventData::DecisionCreated { decision } => {
+                            announced.insert(decision.decision_id.clone());
+                        }
+                        EventData::DecisionResolved { decision }
+                            if !announced.contains(&decision.decision_id) =>
+                        {
+                            continue;
+                        }
+                        _ => {}
+                    }
                     if let Some(line) = event_line(&envelope, &machine) {
                         if !emit_or_stop(sink, stop, &line) {
                             return;
@@ -1025,6 +1042,39 @@ mod tests {
         for line in lines.iter() {
             assert_eq!(line["machine"], json!({"id": "local", "label": "Local"}));
         }
+    }
+
+    #[test]
+    fn local_pump_drops_resolved_for_decisions_it_never_announced() {
+        // dec-stale resolved before this connection saw it pending (or before
+        // the watch even started): the consumer was never told it exists, so
+        // a resolved line for it must not be forwarded. dec-live was in the
+        // startup snapshot, so its live resolution is still forwarded.
+        let first = conn(
+            vec![decision("dec-live", DecisionStatus::Pending)],
+            vec![
+                resolved_envelope("dec-stale"),
+                resolved_envelope("dec-live"),
+                Ok(None),
+            ],
+        );
+        let source = FakeSource {
+            steps: Mutex::new(VecDeque::from([first])),
+        };
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let sink = recording_sink(Arc::clone(&lines), 4, Arc::clone(&stop));
+        let mut source = source;
+        pump_local(&mut source, &sink, &stop, test_timings());
+
+        let lines = lines.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(
+            event_names(&lines),
+            vec!["machine_up", "created", "resolved", "machine_down"]
+        );
+        assert_eq!(lines[1]["decision"]["decision_id"], "dec-live");
+        assert_eq!(lines[2]["decision"]["decision_id"], "dec-live");
+        assert_eq!(lines[2]["decision"]["status"], "answered");
     }
 
     #[test]
