@@ -3348,6 +3348,7 @@ impl AppState {
                 None,
                 None,
                 None,
+                &[],
             );
         }
         let ws_idx = self

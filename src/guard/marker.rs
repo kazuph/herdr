@@ -44,26 +44,36 @@ pub(crate) fn read(path: &Path) -> Option<AgentMarker> {
 }
 
 /// Write the marker for `pane_env_id` when `agent` is `Some`, remove it when
-/// `None`. Errors are logged at debug level and otherwise ignored: a failed
-/// marker update only ever makes the guard quieter, never breaks the pane.
+/// `None`. The pane's shim directory is armed before the marker is written
+/// and disarmed after it is removed, so the PATH shims only exist while a
+/// command in the pane would be judged. Errors are logged at debug level
+/// and otherwise ignored: a failed marker update only ever makes the guard
+/// quieter, never breaks the pane.
 pub(crate) fn sync(
     pane_env_id: &str,
     agent: Option<&str>,
     cwd: Option<&Path>,
     public_pane_id: Option<&str>,
+    targets: &[String],
 ) {
     let path = crate::guard::marker_path(pane_env_id);
     match agent {
-        Some(agent) => write_marker(
-            &path,
-            &AgentMarker {
-                agent: agent.to_string(),
-                cwd: cwd.map(|p| p.to_string_lossy().to_string()),
-                public_pane_id: public_pane_id.map(str::to_string),
-                updated_epoch: now_epoch(),
-            },
-        ),
-        None => remove_path(&path),
+        Some(agent) => {
+            crate::guard::assets::arm_pane_shims(pane_env_id, targets);
+            write_marker(
+                &path,
+                &AgentMarker {
+                    agent: agent.to_string(),
+                    cwd: cwd.map(|p| p.to_string_lossy().to_string()),
+                    public_pane_id: public_pane_id.map(str::to_string),
+                    updated_epoch: now_epoch(),
+                },
+            );
+        }
+        None => {
+            remove_path(&path);
+            crate::guard::assets::disarm_pane_shims(pane_env_id);
+        }
     }
 }
 
@@ -98,16 +108,17 @@ fn remove_path(path: &Path) {
     }
 }
 
-/// Remove every marker. Called at app startup so markers from a dead server
-/// cannot mislabel fresh panes.
+/// Remove every marker and disarm every pane shim directory. Called at app
+/// startup so markers and forwarders from a dead server cannot mislabel
+/// fresh panes.
 pub(crate) fn clear_all() {
     let dir = crate::guard::marker_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let _ = std::fs::remove_file(entry.path());
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
+    crate::guard::assets::disarm_all_pane_shims();
 }
 
 fn tmp_path_for(path: &Path) -> PathBuf {

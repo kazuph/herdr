@@ -84,15 +84,17 @@ fn load_context() -> GuardContext {
     }
 }
 
-/// Current `PATH` with the guard shim directory removed so helper commands
-/// (`git`, `gh`) and the wrapped command resolve to real binaries.
+/// Current `PATH` with this pane's guard shim directory removed so helper
+/// commands (`git`, `gh`) and the wrapped command resolve to real binaries.
+/// The directory is per-pane and named by `HERDR_GUARD_SHIM_DIR`, which the
+/// pane launch env always sets alongside the PATH prepend.
 fn sanitize_path() -> String {
-    let shim = crate::guard::shim_dir();
-    let shim_str = shim.to_string_lossy();
+    let shim = std::env::var(crate::guard::SHIM_DIR_ENV_VAR)
+        .unwrap_or_else(|_| crate::guard::shim_dir().to_string_lossy().to_string());
     std::env::var("PATH")
         .unwrap_or_default()
         .split(':')
-        .filter(|component| *component != shim_str)
+        .filter(|component| *component != shim)
         .collect::<Vec<_>>()
         .join(":")
 }

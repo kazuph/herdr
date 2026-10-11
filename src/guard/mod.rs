@@ -106,9 +106,16 @@ pub(crate) fn guard_root() -> PathBuf {
     crate::config::state_dir().join("guard")
 }
 
-/// Directory holding per-command shim executables prepended to `PATH`.
+/// Root directory holding per-pane shim directories prepended to `PATH`.
 pub(crate) fn shim_dir() -> PathBuf {
     guard_root().join("bin")
+}
+
+/// Per-pane shim directory (`bin/<env pane id>`). Prepended to that pane's
+/// `PATH`; empty while the pane has no agent marker so unmarked commands
+/// cost nothing, and populated with forwarders while the marker exists.
+pub(crate) fn pane_shim_dir(pane_env_id: &str) -> PathBuf {
+    shim_dir().join(pane_env_id)
 }
 
 /// Injected `ZDOTDIR` holding the guard `.zshenv` that restores the

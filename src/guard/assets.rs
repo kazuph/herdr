@@ -5,17 +5,23 @@
 //!
 //! ```text
 //! <state>/guard/
-//!   bin/            one POSIX shim per target command, prepended to PATH
-//!   zdotdir/        injected ZDOTDIR: .zshenv/.zshrc/.zprofile/.zlogin that
-//!                   chain-load the user's real startup files
-//!   guard.bash      injected BASH_ENV: chain-loads the original BASH_ENV and
-//!                   defines the same wrappers for interactive bash
-//!   agent-panes/    per-pane agent markers (see marker.rs)
+//!   bin/<p_N>/    per-pane shim directory, prepended to that pane's PATH.
+//!                 Empty while the pane has no agent marker, so unmarked
+//!                 commands resolve through PATH with no extra process.
+//!                 While a marker exists it holds one forwarder script per
+//!                 target that runs `herdr guard exec`.
+//!   zdotdir/      injected ZDOTDIR holding only .zshenv: restores the
+//!                 original ZDOTDIR, chain-loads the user's .zshenv, then
+//!                 installs record-only wrappers without shadowing
+//!                 functions the user already defined (e.g. ai_guard).
+//!   guard.bash    injected BASH_ENV: chain-loads the original BASH_ENV and
+//!                 installs the same non-shadowing wrappers.
+//!   agent-panes/  per-pane agent markers (see marker.rs)
 //! ```
 //!
-//! Everything in `bin/`/`zdotdir/`/`guard.bash` is regenerated when stale, so
+//! Everything generated is rewritten only when its content changes, so
 //! upgrading herdr or changing `[guard].targets` refreshes the assets on the
-//! next pane spawn.
+//! next pane spawn or marker transition.
 
 use std::ffi::OsStr;
 use std::io::Write;
@@ -57,8 +63,15 @@ pub(crate) fn apply_guard_env(cmd: &mut CommandBuilder, pane_env_id: Option<&str
         return;
     }
 
-    // Guard shims go to the front of PATH.
-    let shim = crate::guard::shim_dir();
+    // Each pane gets its own shim directory at the front of PATH. It stays
+    // empty until the pane is marked as running an agent, so unmarked
+    // command lookups fall straight through to the real PATH entries with
+    // no extra process spawn.
+    let shim = crate::guard::pane_shim_dir(pane_env_id);
+    if let Err(error) = std::fs::create_dir_all(&shim) {
+        tracing::warn!(%error, "guard: failed to create pane shim dir; guard disabled for this pane");
+        return;
+    }
     let base_path = cmd
         .get_env("PATH")
         .and_then(OsStr::to_str)
@@ -107,14 +120,11 @@ pub(crate) fn apply_guard_env(_cmd: &mut CommandBuilder, _pane_env_id: Option<&s
     // POSIX-only feature (sh/zsh/bash); a no-op elsewhere.
 }
 
-/// Materialize all guard assets, rewriting only files whose content changed.
+/// Materialize the shared guard assets, rewriting only files whose content
+/// changed. Per-pane shim directories are handled separately by
+/// `arm_pane_shims`/`disarm_pane_shims`.
 pub(crate) fn ensure_assets(herdr_exe: &Path, targets: &[String]) -> std::io::Result<()> {
-    let shim = crate::guard::shim_dir();
-    std::fs::create_dir_all(&shim)?;
-    for target in targets {
-        write_if_changed(&shim.join(target), shim_script(target).as_bytes(), 0o755)?;
-    }
-    remove_stale_shims(&shim, targets)?;
+    std::fs::create_dir_all(crate::guard::shim_dir())?;
 
     let zdotdir = crate::guard::zdotdir();
     std::fs::create_dir_all(&zdotdir)?;
@@ -138,21 +148,60 @@ pub(crate) fn ensure_assets(herdr_exe: &Path, targets: &[String]) -> std::io::Re
     Ok(())
 }
 
-/// Remove shims for commands no longer in `targets` (renamed config, stale
-/// binary from an older build) so PATH lookups stay predictable.
-fn remove_stale_shims(shim_dir: &Path, targets: &[String]) -> std::io::Result<()> {
-    let target_names: std::collections::BTreeSet<&str> =
-        targets.iter().map(String::as_str).collect();
-    for entry in std::fs::read_dir(shim_dir)?.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        if !target_names.contains(name) {
-            let _ = std::fs::remove_file(entry.path());
+/// Populate the pane's shim directory with one forwarder per target command.
+/// Called when the pane gains an agent marker, before the marker file is
+/// written, so a command racing the transition is judged (guard exec also
+/// checks the marker itself).
+pub(crate) fn arm_pane_shims(pane_env_id: &str, targets: &[String]) {
+    let dir = crate::guard::pane_shim_dir(pane_env_id);
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        tracing::debug!(%error, "guard: failed to create pane shim dir");
+        return;
+    }
+    for target in targets {
+        if let Err(error) =
+            write_if_changed(&dir.join(target), shim_script(target).as_bytes(), 0o755)
+        {
+            tracing::debug!(%error, "guard: failed to write shim");
         }
     }
-    Ok(())
+}
+
+/// Remove every forwarder from the pane's shim directory so unmarked
+/// commands fall through PATH again. Called when the pane loses its marker,
+/// after the marker file is removed.
+pub(crate) fn disarm_pane_shims(pane_env_id: &str) {
+    let dir = crate::guard::pane_shim_dir(pane_env_id);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let _ = std::fs::remove_file(entry.path());
+    }
+    let _ = std::fs::remove_dir(&dir);
+}
+
+/// Disarm every pane shim directory. Called alongside `marker::clear_all`
+/// at server startup so a dead server cannot leave active forwarders.
+pub(crate) fn disarm_all_pane_shims() {
+    let Ok(entries) = std::fs::read_dir(crate::guard::shim_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let Ok(children) = std::fs::read_dir(&path) else {
+                continue;
+            };
+            for child in children.flatten() {
+                let _ = std::fs::remove_file(child.path());
+            }
+            let _ = std::fs::remove_dir(&path);
+        } else {
+            // Remove pre-per-pane-era flat shim files if any remain.
+            let _ = std::fs::remove_file(&path);
+        }
+    }
 }
 
 fn write_if_changed(path: &Path, content: &[u8], mode: u32) -> std::io::Result<()> {
@@ -179,48 +228,46 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-/// POSIX shim prepended to `PATH` for each target command. When the pane's
-/// marker exists the shim hands the command to `herdr guard exec` (which
-/// judges + records and then runs the real command); without a marker it
-/// strips its own directory from `PATH` and execs the real binary directly.
+/// Forwarder placed in the pane's shim directory while its agent marker
+/// exists. It simply hands the command to `herdr guard exec`, which judges
+/// and records (when the marker is still present) and always runs the real
+/// command. Resolution of the real binary happens inside `guard exec` on
+/// the sanitized PATH, so the shim carries no path logic at all.
 fn shim_script(target: &str) -> String {
-    let shim_dir = crate::guard::shim_dir();
     format!(
         r#"#!/bin/sh
 # herdr command guard shim for `{target}` (record-only). Generated; do not edit.
-if [ -n "${{{MARKER_ENV_VAR}:-}}" ] && [ -f "${{{MARKER_ENV_VAR}}}" ]; then
-  exec "${{{HERDR_EXE_ENV_VAR}:-herdr}}" guard exec -- {} "$@"
-fi
-PATH="$(printf '%s' "$PATH" | awk -v dir='{shim_dir}' 'BEGIN {{RS=":"}} $0 != dir {{printf "%s%s", sep, $0; sep=":"}}')"
-exec {target} "$@"
+exec "${{{HERDR_EXE_ENV_VAR}:-herdr}}" guard exec -- {} "$@"
 "#,
         shell_quote(target),
         target = target,
-        shim_dir = shim_dir.to_string_lossy(),
-        MARKER_ENV_VAR = MARKER_ENV_VAR,
         HERDR_EXE_ENV_VAR = HERDR_EXE_ENV_VAR,
     )
 }
 
-/// Injected `.zshenv` for the guard ZDOTDIR. First restores `ZDOTDIR` to
-/// its original value (or unsets it), then chain-loads the user's real
-/// `.zshenv`, defines record-only wrappers for target commands that are not
-/// already a function or alias (ai_guard's wrappers are left untouched and
-/// still get recorded through the PATH shims), and defers the `accept-line`
-/// recorder to `precmd` so it wraps whatever widget the user's `.zshrc`
-/// installed. The functions check the pane's marker file at call time;
-/// without it commands resolve through the PATH shims, which make the same
-/// check per invocation.
+/// Injected `.zshenv` for the guard ZDOTDIR.
+///
+/// Order matters: the file first restores `ZDOTDIR` to its original value
+/// (or unsets it), so the user's `.zshenv` and every path derived from
+/// `ZDOTDIR` (e.g. `HISTFILE`) behave exactly as without injection — the
+/// same technique terminal emulators use for shell integration. zsh then
+/// reads `.zprofile`/`.zshrc`/`.zlogin` from the restored directory on its
+/// own, so no chain files are needed for those.
+///
+/// After sourcing the user's `.zshenv` it defines record-only wrappers for
+/// target commands, but only for names that are not already a function or
+/// alias: existing wrappers such as ai_guard's must keep their behavior —
+/// they still end up calling the real binary through `command`, which
+/// resolves through the PATH shims and gets recorded there.
+///
+/// The `accept-line` recorder is installed from `precmd` so it runs after
+/// the user's `.zshrc` and wraps whatever `accept-line` widget exists then
+/// (including one installed by ai_guard), instead of replacing it.
 fn zshenv_script(targets: &[String]) -> String {
     let herdr = r#""${HERDR_GUARD_HERDR:-herdr}""#;
     let target_words = targets.join(" ");
     format!(
         r#"# herdr command guard .zshenv (record-only). Generated; do not edit.
-# Restores ZDOTDIR to its original value (or unsets it) before chain-loading
-# the user's real .zshenv — the same technique terminal emulators use for
-# shell integration — so ZDOTDIR-derived paths like HISTFILE stay unchanged.
-# zsh then reads .zprofile/.zshrc/.zlogin from the restored directory on its
-# own. Active only while this pane's marker file exists.
 
 typeset -g _hg_orig_zdot="${{{ZDOTDIR_ORIG_ENV_VAR}:-}}"
 if [[ -n "$_hg_orig_zdot" ]]; then
@@ -336,12 +383,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shim_script_strips_own_dir_and_execs_without_marker() {
+    fn armed_shim_forwards_to_guard_exec() {
         let script = shim_script("rm");
         assert!(script.contains("guard exec -- 'rm'"));
-        let shim = crate::guard::shim_dir().to_string_lossy().to_string();
-        assert!(script.contains(&shim));
-        assert!(script.contains("exec rm"));
+        assert!(script.contains("HERDR_GUARD_HERDR"));
+        // No PATH manipulation and no marker check: the shim exists only
+        // while the pane is marked, and guard exec re-checks the marker.
+        assert!(!script.contains("awk"));
+        assert!(!script.contains(MARKER_ENV_VAR));
     }
 
     #[test]
@@ -385,5 +434,17 @@ mod tests {
         write_if_changed(&file, b"#!/bin/sh\n", 0o755).unwrap();
         assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), mtime);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn arm_and_disarm_pane_shims() {
+        let pane_id = format!("p_test_{}", std::process::id());
+        let dir = crate::guard::pane_shim_dir(&pane_id);
+        let targets = vec!["rm".to_string(), "git".to_string()];
+        arm_pane_shims(&pane_id, &targets);
+        assert!(dir.join("rm").is_file());
+        assert!(dir.join("git").is_file());
+        disarm_pane_shims(&pane_id);
+        assert!(!dir.exists());
     }
 }

@@ -19,11 +19,11 @@ impl App {
         let pane_env_id = crate::workspace::pane_env_id_from_public(&public_pane_id);
 
         let Some(ws) = self.state.workspaces.get(ws_idx) else {
-            crate::guard::marker::sync(&pane_env_id, None, None, None);
+            crate::guard::marker::sync(&pane_env_id, None, None, None, &[]);
             return;
         };
         let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) else {
-            crate::guard::marker::sync(&pane_env_id, None, None, None);
+            crate::guard::marker::sync(&pane_env_id, None, None, None, &[]);
             return;
         };
         let tab = &ws.tabs[tab_idx];
@@ -39,6 +39,13 @@ impl App {
                     .or(terminal.agent_name.as_deref())
             });
         let cwd = tab.cwd_for_pane(pane_id, &self.state.terminals, &self.terminal_runtimes);
-        crate::guard::marker::sync(&pane_env_id, agent, cwd.as_deref(), Some(&public_pane_id));
+        let targets = crate::guard::targets(&self.state.guard_config);
+        crate::guard::marker::sync(
+            &pane_env_id,
+            agent,
+            cwd.as_deref(),
+            Some(&public_pane_id),
+            &targets,
+        );
     }
 }
