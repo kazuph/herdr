@@ -1134,6 +1134,60 @@
       ]
     },
     {
+      "id": "guard",
+      "title": "Command guard (record-only)",
+      "keys": [
+        {
+          "key": "guard.enabled",
+          "type": "boolean",
+          "default": "true",
+          "description": "Enable the record-only command guard injection (PATH shims plus zsh/bash hooks) for agent panes."
+        },
+        {
+          "key": "guard.log_path",
+          "type": "string",
+          "default": "<state dir>/guard/decisions.jsonl",
+          "description": "JSONL file receiving one record per judged command."
+        },
+        {
+          "key": "guard.approval_file",
+          "type": "string",
+          "default": "~/.ai_guard_temp_approval",
+          "description": "ai_guard-compatible temporary/day approval file used to suppress ask verdicts."
+        },
+        {
+          "key": "guard.ai_guard_log_path",
+          "type": "string",
+          "default": "~/.ai_extreme_confirm.log",
+          "description": "ai_guard confirmation log read by herdr guard compare."
+        },
+        {
+          "key": "guard.targets",
+          "type": "array of strings",
+          "default": "built-in ai_guard target list",
+          "description": "Commands wrapped by the guard. Unset uses the built-in list."
+        },
+        {
+          "key": "guard.danger_words",
+          "type": "array of strings",
+          "default": "[\"publish\", \"deploy\"]",
+          "description": "Words that escalate a command to an ask verdict."
+        },
+        {
+          "key": "guard.protected_patterns",
+          "type": "array of strings",
+          "default": "[\".allow-main\", \".allow_main\", \"allow-main\", \"allow_main\"]",
+          "description": "Substrings that immediately produce a block verdict for agents."
+        },
+        {
+          "key": "guard.wrangler_allow",
+          "type": "array of strings",
+          "default": "[\"r2 put\"]",
+          "description": "wrangler subcommand pairs allowed without asking."
+        }
+      ]
+    },
+    {
       "id": "worktrees",
       "title": "Worktrees",
       "keys": [

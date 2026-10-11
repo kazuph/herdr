@@ -323,6 +323,56 @@ pub struct AgentStartConfig {
     pub commands: std::collections::BTreeMap<String, Vec<String>>,
 }
 
+/// `[guard]` configures the record-only command guard that watches commands
+/// executed inside panes running an agent. The guard is a port of the dotfiles
+/// `ai_guard` judgement; in this phase it only records verdicts and never
+/// blocks a command or creates a decision.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct GuardConfig {
+    /// Master switch. When false, panes get no PATH/zsh/bash injection at all.
+    /// Default: true (record-only mode active).
+    pub enabled: bool,
+    /// JSONL file receiving one record per judged command.
+    /// Default: `<state dir>/guard/decisions.jsonl`.
+    pub log_path: Option<String>,
+    /// ai_guard-compatible temporary/day approval file used to suppress `ask`
+    /// verdicts. Default: `~/.ai_guard_temp_approval`.
+    pub approval_file: Option<String>,
+    /// ai_guard confirmation log read by `herdr guard compare`.
+    /// Default: `~/.ai_extreme_confirm.log`.
+    pub ai_guard_log_path: Option<String>,
+    /// Commands wrapped by the guard (ai_guard `_AI_GUARD_TARGETS`).
+    /// `None` uses the built-in list.
+    pub targets: Option<Vec<String>>,
+    /// Words that escalate a command to `ask` (ai_guard `_AI_GUARD_DANGER_WORDS`).
+    /// `None` uses `["publish", "deploy"]`.
+    pub danger_words: Option<Vec<String>>,
+    /// Substrings that immediately `block` a command line for agents
+    /// (ai_guard `_AI_GUARD_PROTECTED_PATTERNS`).
+    /// `None` uses `[".allow-main", ".allow_main", "allow-main", "allow_main"]`.
+    pub protected_patterns: Option<Vec<String>>,
+    /// `wrangler` subcommand pairs allowed without asking
+    /// (ai_guard `_AI_GUARD_WRANGLER_ALLOW` from `.ai_guard_config.zsh`).
+    /// `None` uses `["r2 put"]`.
+    pub wrangler_allow: Option<Vec<String>>,
+}
+
+impl Default for GuardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            log_path: None,
+            approval_file: None,
+            ai_guard_log_path: None,
+            targets: None,
+            danger_words: None,
+            protected_patterns: None,
+            wrangler_allow: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigReloadStatus {
@@ -359,6 +409,7 @@ pub struct Config {
     pub session: SessionConfig,
     pub agent_restore: AgentRestoreConfig,
     pub agent_start: AgentStartConfig,
+    pub guard: GuardConfig,
     pub update: UpdateConfig,
     pub keys: KeysConfig,
     pub ui: UiConfig,

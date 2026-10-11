@@ -15,6 +15,7 @@ mod api;
 mod comms;
 mod completion;
 mod decision;
+mod guard;
 mod integration;
 mod machine;
 mod notification;
@@ -88,6 +89,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "terminal" => run_terminal_command(&args[2..])?,
         "pane" => pane::run_pane_command(&args[2..])?,
         "plugin" => plugin::run_plugin_command(&args[2..])?,
+        "guard" => guard::run_guard_command(&args[2..])?,
         "send" => comms::msg_send(&args[2..])?,
         "run" => comms::herdr_run(&args[2..])?,
         "log" => comms::herdr_log(&args[2..])?,
