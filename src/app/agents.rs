@@ -300,6 +300,9 @@ impl App {
         }
         terminal.set_manual_label(name);
         self.state.mark_session_dirty();
+        // Agent starts bypass update_terminal_state, so the state-update
+        // event path never sees the label change; sync the guard marker here.
+        self.sync_guard_marker_for_pane(ws_idx, pane_id);
 
         let agent = self
             .agent_info(ws_idx, pane_id)

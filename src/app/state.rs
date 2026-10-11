@@ -1787,6 +1787,8 @@ pub struct AppState {
     pub outer_terminal_focus: Option<bool>,
     // Config
     pub agent_start_config: crate::config::AgentStartConfig,
+    /// `[guard]` config: record-only command watcher for agent panes.
+    pub guard_config: crate::config::GuardConfig,
     pub prefix_code: KeyCode,
     pub prefix_mods: KeyModifiers,
     pub default_sidebar_width: u16,
@@ -2471,6 +2473,7 @@ impl AppState {
             copy_feedback: None,
             outer_terminal_focus: None,
             agent_start_config: crate::config::AgentStartConfig::default(),
+            guard_config: crate::config::GuardConfig::default(),
             prefix_code: KeyCode::Char('b'),
             prefix_mods: KeyModifiers::CONTROL,
             default_sidebar_width: 26,

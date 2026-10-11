@@ -616,6 +616,9 @@ impl App {
                         .then(|| pane_agent_status(update.state, update.seen)),
                 },
             });
+            // Guard markers track the effective agent label: the record-only
+            // command watcher only judges commands in panes whose marker exists.
+            self.sync_guard_marker_for_pane(update.ws_idx, update.pane_id);
         }
 
         let previous_agent_status = pane_agent_status(update.previous_state, update.previous_seen);

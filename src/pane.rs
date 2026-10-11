@@ -118,8 +118,8 @@ fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
     }
     cmd.env(crate::HERDR_ENV_VAR, crate::HERDR_ENV_VALUE);
     crate::integration::apply_pane_base_env(cmd);
-    match &launch_env.identity {
-        PaneLaunchIdentity::Inherit => {}
+    let pane_env_id = match &launch_env.identity {
+        PaneLaunchIdentity::Inherit => None,
         PaneLaunchIdentity::Managed {
             workspace_id,
             tab_id,
@@ -128,11 +128,14 @@ fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
             cmd.env(crate::integration::HERDR_WORKSPACE_ID_ENV_VAR, workspace_id);
             cmd.env(crate::integration::HERDR_TAB_ID_ENV_VAR, tab_id);
             cmd.env(crate::integration::HERDR_PANE_ID_ENV_VAR, pane_id);
+            Some(pane_id.as_str())
         }
         PaneLaunchIdentity::OmitPane => {
             cmd.env_remove(crate::integration::HERDR_PANE_ID_ENV_VAR);
+            None
         }
-    }
+    };
+    crate::guard::apply_guard_env(cmd, pane_env_id);
 }
 
 #[derive(Debug, Clone, Copy)]

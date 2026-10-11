@@ -12,6 +12,7 @@ mod api;
 mod api_helpers;
 mod config_io;
 mod creation;
+mod guard;
 mod ids;
 mod input;
 pub(crate) use actions::{launch_label, state_label_text};
@@ -429,6 +430,9 @@ impl App {
     ) -> Self {
         let (prefix_code, prefix_mods) = config.prefix_key();
         crate::kitty_graphics::set_enabled(config.experimental.kitty_graphics);
+        // Drop stale guard markers left by a previous server so they cannot
+        // mislabel fresh panes as agent panes.
+        crate::guard::marker::clear_all();
         let (event_tx, event_rx) = mpsc::channel::<AppEvent>(APP_EVENT_CHANNEL_CAPACITY);
         let (mailbox_write_tx, mailbox_write_rx) = mpsc::unbounded_channel();
         let render_notify = Arc::new(Notify::new());
@@ -700,6 +704,7 @@ impl App {
             copy_feedback: None,
             outer_terminal_focus: None,
             agent_start_config: config.agent_start.clone(),
+            guard_config: config.guard.clone(),
             prefix_code,
             prefix_mods,
             default_sidebar_width: config.ui.sidebar_width,
@@ -1652,6 +1657,10 @@ impl App {
 
         if !invalid_section("agent_start") {
             self.state.agent_start_config = config.agent_start.clone();
+        }
+
+        if !invalid_section("guard") {
+            self.state.guard_config = config.guard.clone();
         }
 
         if !invalid_section("worktrees") {

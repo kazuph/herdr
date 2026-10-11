@@ -2212,3 +2212,55 @@
 ### 親判断事項（記録）
 - ID名前空間（複合ID vs machine修飾子）は未決定。P1/P2はlabel-or-id完全一致＋曖昧拒否で進め、pane解決・mailbox・`herdr run`への波及はP3着手時に親が決定する。
 - 単発`--remote`と保存machineの責務分界は現状維持（畳み込みなし）。machine側からのattach再利用は将来packetで検討する。
+
+## G12. 危険コマンドの見張り（command guard、工程4A・記録のみ）
+
+### 判定部品（src/guard）
+- **該当コミット**: feat/command-guardの実装
+- **分類**: CORE-RUNTIME
+- **status: fork独自・保持 (C)** — dotfiles の ai_guard の判定を herdr へ移植した、記録のみ段階の見張り部品。
+- **目的**: herdr が起動したペインの中でエージェントが実行する危険コマンドを ai_guard と同じ判定で分類し、次の工程で判断待ち（decision）へ繋ぐための判定部品と比較用の記録を得る。
+- **挙動**: `herdr guard check`・`herdr guard exec` がコマンド名・引数・作業ディレクトリ・起動ディレクトリを受けて `allow`（通す）・`block`（承認では解除しない）・`ask`（将来の判断待ち対象）と理由を返す。判定規則は ai_guard の移植で、対象コマンド一覧・`rm` の安全なパス・git/gh・HTTP 書き込み・aws・wrangler・危険語・herdr ワイルドカード送信・保護パターン・1日許可と一時許可キーを含む。
+- **受け入れ条件**:
+  - 判定部品はコマンド名・引数配列・作業ディレクトリ・起動ディレクトリ・環境を入力に `allow`/`block`/`ask` と理由を返し、`herdr guard check` が同じ判定を JSON で出す。
+  - `rm` は tmp 配下・`.artifacts` 配下・管理対象の起動ディレクトリ配下だけを許し、起動ディレクトリそのもの・`..` を含むパス・管理外ディレクトリへの削除は `ask` にする。
+  - git の履歴書き換え（`commit --amend`、`push --force`/`--force-with-lease`/`-f`、`reset`、`wt list`）は `block`、カレントまたは宛先が `main`/`master` の push はリポジトリ直下の `.allow-main` が無ければ `block`、通常の push はリモート・所有者を確認できないとき `ask` にする。
+  - `gh` の読み取り系コマンドと PR review の返信・コメント本文更新の API は許し、それ以外の書き込み API・他人のリポジトリへの操作は `ask` にする。
+  - `herdr` へのワイルドカード宛先送信（`herdr send *` など）を `block`、名前付き宛先を許し、`git`/`gh`/`herdr` には汎用の危険語ルールを適用しない。
+  - HTTP の書き込み・aws・wrangler の許可ペア外・D1 の書き込み SQL・`deploy`/`publish` などの危険語を含むコマンドを `ask` にし、D1 の読み取り SQL と `--local` 実行・SQL のコメント行・`AI_GUARD_DANGER_WORD_ACK=1` を ai_guard と同じ扱いにする。
+  - 1日許可と一時許可は ai_guard と同じキー（コマンド種別ごとの日付キー・対象別の一時キー）で、ワイルドカード送信など一時キーを持たない判定は許可済みでも毎回 `block`/`ask` になる。
+  - `[guard]` 設定の `targets`・`danger_words`・`protected_patterns`・`wrangler_allow` で判定の調整できる部分を変更でき、保護パターンを含むコマンド行はどのコマンドでも `block` になる。
+
+### ペインへの差し込み（src/guard/assets.rs・src/pane.rs）
+- **該当コミット**: feat/command-guardの実装
+- **分類**: CORE-RUNTIME
+- **status: fork独自・保持 (C)** — ペイン起動時にだけ PATH と shell 起動設定へ見張りを差し込む。
+- **挙動**: ペインごとの `<state>/guard/bin/<p_N>` を PATH 先頭へ置く。ディレクトリは marker が無い間は空のままで PATH の解決に介入せず、marker が立つと対象コマンドごとの転送スクリプトが置かれて `herdr guard exec` へ回り、marker が外れると取り除かれる。zsh は生成した ZDOTDIR の `.zshenv` で元の ZDOTDIR を戻してから利用者の実 `.zshenv` を読み、残りの起動ファイルは元の ZDOTDIR から zsh が読む。bash は BASH_ENV を同じく連鎖させる。いずれの wrapper もそのペインの marker ファイルがある時だけ `herdr guard exec` へ回し、無い時はそのまま本物を呼ぶ。
+- **受け入れ条件**:
+  - shim はペインごとの `bin/<p_N>` にあり、marker が無い間は空で余分なプロセスを起こさず（1回の呼び出しあたりの差は 1ms 以下）、marker がある間だけ転送スクリプトが置かれて `herdr guard exec` へ回る。`herdr guard exec` は自身の shim ディレクトリを PATH から外して本物を解決する。
+  - 生成した `.zshenv` は先に `ZDOTDIR` を `HERDR_GUARD_ZDOTDIR_ORIG`（無ければ unset）へ戻してから利用者の実 `.zshenv` を読み、`HISTFILE` など ZDOTDIR 由来のパスを差し込み前と同じ場所に保つ。`.bashrc` 系は `HERDR_GUARD_BASH_ENV_ORIG` を先に source する。
+  - zsh の対象コマンド関数・`command` 通過 wrapper・accept-line の記録、bash の対象コマンド関数・`command` 通過 wrapper は、呼び出し時にそのペインの marker ファイルが存在するときだけ `herdr guard exec` へ回る。利用者の設定で同名の関数やエイリアスが定義済みの名前（ai_guard の wrapper など）は上書きせず、本物の実行が PATH の shim を通ることで記録だけは残る。
+  - `[guard].enabled = false` のとき shim・ZDOTDIR・BASH_ENV・marker の環境変数を一切差し込まない。
+  - ペイン識別を持たない spawn（popup・overlay の `without_pane_identity` など）には差し込まず、通常のペイン spawn の既存環境変数を壊さない。
+
+### エージェントペインだけの判定と記録のみモード
+- **該当コミット**: feat/command-guardの実装
+- **分類**: CORE-RUNTIME
+- **status: fork独自・保持 (C)** — herdr が把握するペインのエージェント情報だけで判定対象を決め、今回の工程では記録しかしない。
+- **挙動**: `<state>/guard/agent-panes/<p_N>.json` の marker は herdr のペインのエージェント状態（`agent start`・検出・解除・ペイン終了・ペイン close）に同期する。`herdr guard exec` は marker が存在するときだけ判定して `<state>/guard/decisions.jsonl` に1行1JSONで追記し、その後は判定に関係なく必ず本物のコマンドを実行する。判断待ち（decision）は作らない。
+- **受け入れ条件**:
+  - エージェント情報を持つペインでは対象コマンドが判定・記録され、エージェント情報を持たないペイン（人が使うペイン）では同じコマンドを打っても判定・記録が起きず、コマンドはそのまま実行される。
+  - marker はエージェントの開始・解除・ペインの終了・close で同期され、残ったままの marker が無いペインを後からエージェント扱いしない。
+  - `herdr guard exec` は `block` を含むどの判定でもコマンドを止めず、判定部品の終了code ではなく実行したコマンドの終了codeをそのまま返し、decision を作成しない。
+  - `decisions.jsonl` の各行は時刻・判定・理由（rule）・コマンド行・cwd・起動cwd・ペイン/ workspace / tab・エージェント・経由（`shim`/`shell-func`/`line`）・承認の抑制情報を含む JSON object である。
+
+### ai_guard との突合（herdr guard compare）
+- **該当コミット**: feat/command-guardの実装
+- **分類**: CORE-CLI
+- **status: fork独自・保持 (C)** — herdr の記録と ai_guard のログを並べて判定の食い違いを見る道具。
+- **挙動**: `herdr guard compare` が `decisions.jsonl` と ai_guard の `~/.ai_extreme_confirm.log`（タブ区切りの ISO8601 時刻・アクション・コマンド行）を時刻窓で突き合わせ、一致・食い違い・片方だけの記録を一覧する。判定の写像は `ALLOW`→`allow`、`REJECT`/`DAY_ALLOW`/`PROMPT_SHOWN`→`ask`、`BLOCK`系→`block`。
+- **受け入れ条件**:
+  - 同じ時刻窓の同じコマンド行に対し、写像後の判定が一致すれば `AGREE`、食い違えば `DIVERGE`、片方にしか無ければ `HERDR-ONLY`/`AI-GUARD-ONLY`、窓の外は `OUT-OF-WINDOW` として行を出す。
+  - `DIVERGE` が1件でもあれば終了code 1、無ければ 0 を返す。
+  - ai_guard ログの ISO8601（オフセット付き）時刻とタブ区切り行を解釈し、解釈できない行を集計から落とさないよう数える。
+- **デグレ判定**: 記録のみ段階でコマンドや判断待ちを止める経路を足す、人のペインで記録を残す、本番の state ディレクトリ以外に書く、`compare` が食い違いを終了codeへ反映しない。

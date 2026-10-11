@@ -72,6 +72,7 @@ mod detect;
 mod dispatch;
 mod events;
 mod ghostty;
+mod guard;
 mod handoff_runtime;
 mod input;
 #[allow(dead_code)]

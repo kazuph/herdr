@@ -11,6 +11,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "agent_restore",
     "agent_start",
     "experimental",
+    "guard",
     "keys",
     "onboarding",
     "remote",
