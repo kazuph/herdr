@@ -204,31 +204,16 @@ exec {target} "$@"
 
 /// Injected `.zshenv` for the guard ZDOTDIR. First restores `ZDOTDIR` to
 /// its original value (or unsets it), then chain-loads the user's real
-/// `.zshenv`, defines target-command functions and a `command` passthrough,
-/// and defers the `accept-line` recorder to `precmd` so it wraps whatever
-/// widget the user's `.zshrc` installed. The functions check the pane's
-/// marker file at call time; without it commands resolve through the PATH
-/// shims, which make the same check per invocation.
+/// `.zshenv`, defines record-only wrappers for target commands that are not
+/// already a function or alias (ai_guard's wrappers are left untouched and
+/// still get recorded through the PATH shims), and defers the `accept-line`
+/// recorder to `precmd` so it wraps whatever widget the user's `.zshrc`
+/// installed. The functions check the pane's marker file at call time;
+/// without it commands resolve through the PATH shims, which make the same
+/// check per invocation.
 fn zshenv_script(targets: &[String]) -> String {
     let herdr = r#""${HERDR_GUARD_HERDR:-herdr}""#;
     let target_words = targets.join(" ");
-    let function_defs = targets
-        .iter()
-        .map(|target| {
-            format!(
-                concat!(
-                    "{target}() {{ if [[ -f \"${{{marker_var}:-}}\" ]]; then ",
-                    "HERDR_GUARD_VIA=shell-func {herdr} guard exec -- {q} \"$@\"; ",
-                    "else builtin command {target} \"$@\"; fi }}"
-                ),
-                target = target,
-                marker_var = MARKER_ENV_VAR,
-                herdr = herdr,
-                q = shell_quote(target),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
     format!(
         r#"# herdr command guard .zshenv (record-only). Generated; do not edit.
 # Restores ZDOTDIR to its original value (or unsets it) before chain-loading
@@ -249,21 +234,30 @@ fi
 unset _hg_orig_zdot
 
 if [[ -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]]; then
-{function_defs}
-command() {{
-  local _hg_cmd="$1"
-  case " {target_words} " in
-    *" $_hg_cmd "*)
-      shift
-      if [[ -f "${{{MARKER_ENV_VAR}:-}}" ]]; then
-        HERDR_GUARD_VIA=shell-func {herdr} guard exec -- "$_hg_cmd" "$@"
-      else
-        builtin command "$_hg_cmd" "$@"
-      fi
-      ;;
-    *) builtin command "$@" ;;
-  esac
-}}
+  _herdr_guard_wrap() {{
+    local _hg_t="$1"
+    (( $+functions[$_hg_t] || $+aliases[$_hg_t] )) && return 0
+    functions[$_hg_t]='if [[ -f "${{{MARKER_ENV_VAR}:-}}" ]]; then HERDR_GUARD_VIA=shell-func '"${{HERDR_GUARD_HERDR:-herdr}}"' guard exec -- '"$_hg_t"' "$@"; else builtin command '"$_hg_t"' "$@"; fi'
+  }}
+  for _hg_t in {target_words}; do
+    _herdr_guard_wrap "$_hg_t"
+  done
+  unfunction _herdr_guard_wrap
+  unset _hg_t
+  (( $+functions[command] || $+aliases[command] )) || command() {{
+    local _hg_cmd="$1"
+    case " {target_words} " in
+      *" $_hg_cmd "*)
+        shift
+        if [[ -f "${{{MARKER_ENV_VAR}:-}}" ]]; then
+          HERDR_GUARD_VIA=shell-func {herdr} guard exec -- "$_hg_cmd" "$@"
+        else
+          builtin command "$_hg_cmd" "$@"
+        fi
+        ;;
+      *) builtin command "$@" ;;
+    esac
+  }}
 fi
 
 if [[ -o interactive && -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]]; then
@@ -284,62 +278,54 @@ fi
         ZDOTDIR_ORIG_ENV_VAR = ZDOTDIR_ORIG_ENV_VAR,
         HERDR_EXE_ENV_VAR = HERDR_EXE_ENV_VAR,
         MARKER_ENV_VAR = MARKER_ENV_VAR,
-        function_defs = function_defs,
         target_words = target_words,
         herdr = herdr,
     )
 }
 
-/// `BASH_ENV` content: chain-loads the original BASH_ENV, then defines the
-/// same wrappers as zsh for non-interactive bash. Like `.zshenv`, functions
-/// are only defined when the pane's marker file exists.
+/// `BASH_ENV` content: chain-loads the original BASH_ENV, then installs the
+/// same wrappers as zsh for non-interactive bash. Names that already exist
+/// as a function or alias (e.g. ai_guard's wrappers loaded via the original
+/// BASH_ENV) are left untouched; the PATH shims still record the command
+/// when the original wrapper runs the real binary.
 fn bash_env_script(herdr_exe: &Path, targets: &[String]) -> String {
     let herdr = shell_quote(&herdr_exe.to_string_lossy());
     let target_words = targets.join(" ");
-    let function_defs = targets
-        .iter()
-        .map(|target| {
-            format!(
-                concat!(
-                    "{target}() {{ if [ -f \"${{{marker_var}:-}}\" ]; then ",
-                    "HERDR_GUARD_VIA=shell-func {herdr} guard exec -- {q} \"$@\"; ",
-                    "else builtin command {target} \"$@\"; fi; }}"
-                ),
-                target = target,
-                marker_var = MARKER_ENV_VAR,
-                herdr = herdr,
-                q = shell_quote(target),
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
     format!(
         r#"# herdr command guard BASH_ENV (record-only). Generated; do not edit.
 if [ -n "${{{BASH_ENV_ORIG_ENV_VAR}:-}}" ] && [ -f "${{{BASH_ENV_ORIG_ENV_VAR}}}" ]; then
   . "${{{BASH_ENV_ORIG_ENV_VAR}}}"
 fi
 if [ -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]; then
-{function_defs}
-command() {{
-  local _hg_cmd="$1"
-  case " {target_words} " in
-    *" $_hg_cmd "*)
-      shift
-      if [ -f "${{{MARKER_ENV_VAR}:-}}" ]; then
-        HERDR_GUARD_VIA=shell-func {herdr} guard exec -- "$_hg_cmd" "$@"
-      else
-        builtin command "$_hg_cmd" "$@"
-      fi
-      ;;
-    *) builtin command "$@" ;;
-  esac
-}}
+  _herdr_guard_wrap() {{
+    declare -F "$1" >/dev/null 2>&1 && return 0
+    alias "$1" >/dev/null 2>&1 && return 0
+    eval "$1() {{ if [ -f \"\${{{MARKER_ENV_VAR}:-}}\" ]; then HERDR_GUARD_VIA=shell-func \"\${{{HERDR_EXE_ENV_VAR}:-herdr}}\" guard exec -- '$1' \"\$@\"; else builtin command $1 \"\$@\"; fi; }}"
+  }}
+  for _hg_t in {target_words}; do
+    _herdr_guard_wrap "$_hg_t"
+  done
+  unset -f _herdr_guard_wrap
+  unset _hg_t
+  declare -F command >/dev/null 2>&1 || command() {{
+    local _hg_cmd="$1"
+    case " {target_words} " in
+      *" $_hg_cmd "*)
+        shift
+        if [ -f "${{{MARKER_ENV_VAR}:-}}" ]; then
+          HERDR_GUARD_VIA=shell-func {herdr} guard exec -- "$_hg_cmd" "$@"
+        else
+          builtin command "$_hg_cmd" "$@"
+        fi
+        ;;
+      *) builtin command "$@" ;;
+    esac
+  }}
 fi
 "#,
         BASH_ENV_ORIG_ENV_VAR = BASH_ENV_ORIG_ENV_VAR,
         HERDR_EXE_ENV_VAR = HERDR_EXE_ENV_VAR,
         MARKER_ENV_VAR = MARKER_ENV_VAR,
-        function_defs = function_defs,
         target_words = target_words,
         herdr = herdr,
     )
@@ -359,26 +345,26 @@ mod tests {
     }
 
     #[test]
-    fn zshenv_restores_zdotdir_and_defines_functions() {
+    fn zshenv_restores_zdotdir_and_does_not_shadow() {
         let targets = vec!["rm".to_string(), "git".to_string()];
         let script = zshenv_script(&targets);
         assert!(script.contains("export ZDOTDIR=\"$_hg_orig_zdot\""));
         assert!(script.contains("unset ZDOTDIR"));
         assert!(script.contains("source \"${_hg_orig_zdot:-$HOME}/.zshenv\""));
-        assert!(script.contains("rm() {"));
-        assert!(script.contains("git() {"));
-        assert!(script.contains("command()"));
+        assert!(script.contains("$+functions[$_hg_t]"));
+        assert!(script.contains("$+aliases[$_hg_t]"));
+        assert!(script.contains("$+functions[command]"));
         assert!(script.contains("_herdr_guard_precmd"));
+        assert!(script.contains(MARKER_ENV_VAR));
     }
 
     #[test]
-    fn bash_env_exports_chain_load() {
+    fn bash_env_chain_loads_and_does_not_shadow() {
         let script = bash_env_script(Path::new("/usr/local/bin/herdr"), &["rm".to_string()]);
         assert!(script.contains("HERDR_GUARD_BASH_ENV_ORIG"));
+        assert!(script.contains("declare -F \"$1\""));
+        assert!(script.contains("declare -F command"));
         assert!(script.contains("HERDR_GUARD_MARKER"));
-        assert!(script.contains(
-            "rm() { if [ -f \"${HERDR_GUARD_MARKER:-}\" ]; then HERDR_GUARD_VIA=shell-func '/usr/local/bin/herdr' guard exec"
-        ));
     }
 
     #[test]
