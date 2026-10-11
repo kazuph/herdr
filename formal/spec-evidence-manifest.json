@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 468,
+    "active_contract_count": 488,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -11898,6 +11898,565 @@
       ],
       "unrepresented_dimensions": [
         "Preservation is covered by the unchanged decision API/event/CLI tests and the untouched src/remote/saved.rs browser-open path; no new test needed"
+      ]
+    },
+    {
+      "contract_id": "G12-1c4535491c",
+      "dimensions": [
+        "judge inputs",
+        "verdict and reason output",
+        "cli surface"
+      ],
+      "verification_methods": [
+        "rust_test_target:danger_word_escalates_to_ask",
+        "drift_source_anchor:src/guard/judge.rs",
+        "drift_source_anchor:src/cli/guard.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2225",
+        "src/guard/judge.rs:200",
+        "src/cli/guard.rs:36"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The argv-level verdicts are unit-covered; the `guard check` JSON envelope itself is exercised by the isolated-session e2e evidence, not a committed test"
+      ]
+    },
+    {
+      "contract_id": "G12-7f6af759ec",
+      "dimensions": [
+        "rm path safety",
+        "launch-dir containment",
+        "traversal rejection"
+      ],
+      "verification_methods": [
+        "rust_test_target:rm_tmp_and_artifacts_paths_are_allowed",
+        "rust_test_target:rm_launch_dir_itself_and_outside_paths_ask",
+        "rust_test_target:rm_in_unmanaged_launch_dir_asks",
+        "rust_test_target:rm_path_traversal_asks",
+        "drift_source_anchor:src/guard/judge.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2226",
+        "src/guard/judge.rs:507",
+        "src/guard/judge.rs:586"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "All four rm path classes are unit-covered; the real-filesystem canonicalization of exotic paths (symlinks into managed dirs) is manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G12-feb885645d",
+      "dimensions": [
+        "history rewrite blocks",
+        "main push protection",
+        "push remote checks"
+      ],
+      "verification_methods": [
+        "rust_test_target:git_history_rewrites_are_blocked",
+        "rust_test_target:git_push_main_is_blocked_without_allow_main",
+        "drift_source_anchor:src/guard/judge.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2227",
+        "src/guard/judge.rs:672",
+        "src/guard/judge.rs:740"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Rewrite and main-push verdicts are unit-covered with faked git output; live `gh api user` login lookup in the owner check is exercised only in the e2e session"
+      ]
+    },
+    {
+      "contract_id": "G12-2ccf10b389",
+      "dimensions": [
+        "gh read exemptions",
+        "gh api risk tiers",
+        "foreign-repo prompts"
+      ],
+      "verification_methods": [
+        "rust_test_target:gh_api_pr_reply_post_is_exempt",
+        "rust_test_target:gh_api_pr_reply_patch_delete_is_high_risk",
+        "rust_test_target:gh_api_generic_mutations_are_high_risk",
+        "rust_test_target:gh_api_comment_body_updates_are_exempt",
+        "drift_source_anchor:src/guard/judge.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2228",
+        "src/guard/judge.rs:865",
+        "src/guard/judge.rs:1158"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The api endpoint tiers are unit-covered; the repo-owner resolution via `gh repo view` in `pr create` paths is manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G12-346a4b1437",
+      "dimensions": [
+        "wildcard send block",
+        "named send allow",
+        "danger-word exemption"
+      ],
+      "verification_methods": [
+        "rust_test_target:herdr_wildcard_sends_are_blocked",
+        "rust_test_target:herdr_named_sends_and_other_commands_are_allowed",
+        "drift_source_anchor:src/guard/judge.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2229",
+        "src/guard/judge.rs:367",
+        "src/guard/judge.rs:430"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Wildcard detection and the git/gh/herdr exemption are unit-covered; option-value edge cases beyond the ported test table remain manual"
+      ]
+    },
+    {
+      "contract_id": "G12-3c81d5112f",
+      "dimensions": [
+        "write-risk commands",
+        "wrangler allow pairs",
+        "d1 sql classification",
+        "danger words"
+      ],
+      "verification_methods": [
+        "rust_test_target:danger_word_escalates_to_ask",
+        "rust_test_target:wrangler_allow_pair_bypasses_prompt",
+        "rust_test_target:wrangler_d1_mutating_sql_asks",
+        "rust_test_target:wrangler_d1_readonly_sql_is_allowed",
+        "rust_test_target:wrangler_local_execution_is_allowed",
+        "rust_test_target:wrangler_d1_sql_comments",
+        "rust_test_target:danger_word_ack_skips_prompts",
+        "drift_source_anchor:src/guard/judge.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2230",
+        "src/guard/judge.rs:1202",
+        "src/guard/judge.rs:1643"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The ported rule table is unit-covered; HTTP/AWS method extraction on unusual flag spellings remains manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G12-c0d62be4f2",
+      "dimensions": [
+        "day approval key",
+        "temp approval key",
+        "uncached verdicts"
+      ],
+      "verification_methods": [
+        "rust_test_target:day_and_temp_approvals_suppress_ask",
+        "rust_test_target:herdr_wildcard_send_has_no_temp_approval_key",
+        "drift_source_anchor:src/guard/judge.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2231",
+        "src/guard/judge.rs:265",
+        "src/guard/judge.rs:1524"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Day/temp suppression and the wildcard no-cache path are unit-covered; the approval file layout consumed by is_valid is shared with ai_guard and covered by marker/record tests only"
+      ]
+    },
+    {
+      "contract_id": "G12-f5c9cae769",
+      "dimensions": [
+        "config knobs",
+        "protected pattern block"
+      ],
+      "verification_methods": [
+        "rust_test_target:protected_patterns_block_any_command",
+        "drift_source_anchor:src/config/model.rs",
+        "drift_source_anchor:src/guard/judge.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2232",
+        "src/config/model.rs:332",
+        "src/guard/judge.rs:359"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Protected-pattern blocking is unit-covered; the [guard] section parsing is exercised through the default-config path in every guard test, not a dedicated config round-trip test"
+      ]
+    },
+    {
+      "contract_id": "G12-53945f888b",
+      "dimensions": [
+        "shim path stripping",
+        "marker gate",
+        "exec passthrough"
+      ],
+      "verification_methods": [
+        "rust_test_target:shim_script_strips_own_dir_and_execs_without_marker",
+        "drift_source_anchor:src/guard/assets.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2240",
+        "src/guard/assets.rs:167"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The generated shim text is unit-covered; the e2e run proved real execution in an isolated session, which remains manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G12-8159dcbc27",
+      "dimensions": [
+        "zsh chain loading",
+        "bash chain loading",
+        "user rc preservation"
+      ],
+      "verification_methods": [
+        "rust_test_target:zshenv_chains_user_file_and_defines_functions",
+        "rust_test_target:bash_env_exports_chain_load",
+        "drift_source_anchor:src/guard/assets.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2241",
+        "src/guard/assets.rs:226",
+        "src/guard/assets.rs:302"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Chain-load ordering is unit-covered by script assertions and was verified live in the isolated zsh pane; interactive bash panes rely on the PATH shims because BASH_ENV is ignored there"
+      ]
+    },
+    {
+      "contract_id": "G12-04d8d2e474",
+      "dimensions": [
+        "call-time marker gate",
+        "command passthrough",
+        "accept-line record"
+      ],
+      "verification_methods": [
+        "rust_test_target:zshenv_chains_user_file_and_defines_functions",
+        "rust_test_target:bash_env_exports_chain_load",
+        "rust_test_target:judge_line_mirrors_accept_line_rules",
+        "drift_source_anchor:src/guard/assets.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2242",
+        "src/guard/assets.rs:231",
+        "src/guard/assets.rs:306"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Function definitions and the marker-gated call path are asserted in script text; the human-pane zero-record behavior is e2e evidence"
+      ]
+    },
+    {
+      "contract_id": "G12-2bcd7c47f2",
+      "dimensions": [
+        "disable switch",
+        "no injection when off"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/guard/assets.rs",
+        "drift_source_anchor:src/config/model.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2243",
+        "src/guard/assets.rs:42"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The enabled=false early return is a one-line guard in apply_guard_env; no dedicated unit test flips a loaded config, e2e default-on path is covered"
+      ]
+    },
+    {
+      "contract_id": "G12-f2416b8075",
+      "dimensions": [
+        "identityless spawns skipped",
+        "overlay spawn unaffected",
+        "existing env preserved"
+      ],
+      "verification_methods": [
+        "rust_test_target:edit_scrollback_key_opens_focused_runtime_scrollback_in_editor_pane",
+        "rust_test_target:terminal_direct_edit_scrollback_opens_editor_pane",
+        "drift_source_anchor:src/pane.rs",
+        "drift_source_anchor:src/guard/assets.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2244",
+        "src/pane.rs:1920",
+        "src/guard/assets.rs:42"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The scrollback-editor tests prove non-managed and marker-less spawns run untouched; every existing pane-env test suite remains green as regression evidence"
+      ]
+    },
+    {
+      "contract_id": "G12-6c068a3a21",
+      "dimensions": [
+        "agent-only judging",
+        "human pane inert",
+        "record on marked panes"
+      ],
+      "verification_methods": [
+        "rust_test_target:marker_roundtrip",
+        "rust_test_target:shim_script_strips_own_dir_and_execs_without_marker",
+        "drift_source_anchor:src/app/guard.rs",
+        "drift_source_anchor:src/guard/marker.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2252",
+        "src/guard/marker.rs:49",
+        "src/cli/guard.rs:36"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Marker serialization and the shim gate are unit-covered; the live agent-vs-human pane contrast is isolated-session e2e evidence"
+      ]
+    },
+    {
+      "contract_id": "G12-b41ea573ab",
+      "dimensions": [
+        "marker lifecycle",
+        "pane close cleanup",
+        "no stale markers"
+      ],
+      "verification_methods": [
+        "rust_test_target:marker_roundtrip",
+        "drift_source_anchor:src/app/guard.rs",
+        "drift_source_anchor:src/guard/marker.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2253",
+        "src/app/guard.rs:14",
+        "src/guard/marker.rs:93"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Marker sync is wired through agent start/release and pane death/close paths; each transition is drift-anchored rather than unit-tested at the app level"
+      ]
+    },
+    {
+      "contract_id": "G12-88ffcceb5c",
+      "dimensions": [
+        "never-block execution",
+        "exit code passthrough",
+        "no decision creation"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/cli/guard.rs",
+        "drift_source_anchor:src/guard/record.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2254",
+        "src/cli/guard.rs:36"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The exec-always path is a straight Command::status after recording; block-verdict execution was proven in the e2e session, not a committed test"
+      ]
+    },
+    {
+      "contract_id": "G12-ebf61649ae",
+      "dimensions": [
+        "jsonl schema",
+        "timestamp format",
+        "via field"
+      ],
+      "verification_methods": [
+        "rust_test_target:rfc3339_formats_utc",
+        "rust_test_target:ai_guard_action_mapping",
+        "drift_source_anchor:src/guard/record.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2255",
+        "src/guard/record.rs:142"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Record fields are asserted by serde round-trip and timestamp tests; the full schema of every emitted row is shown in the e2e decisions.jsonl artifact"
+      ]
+    },
+    {
+      "contract_id": "G12-922c4a20ab",
+      "dimensions": [
+        "match statuses",
+        "window pairing",
+        "report rows"
+      ],
+      "verification_methods": [
+        "rust_test_target:parses_ai_guard_log_line",
+        "rust_test_target:ai_guard_action_mapping",
+        "drift_source_anchor:src/guard/compare.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2263",
+        "src/guard/compare.rs:49"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Row classification is covered by parser tests plus the e2e compare run showing AGREE/DIVERGE/HERDR-ONLY/AI-GUARD-ONLY/OUT-OF-WINDOW"
+      ]
+    },
+    {
+      "contract_id": "G12-35ca4e40b6",
+      "dimensions": [
+        "exit code on divergence"
+      ],
+      "verification_methods": [
+        "rust_test_target:print_report_exits_nonzero_only_on_divergence",
+        "drift_source_anchor:src/guard/compare.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2264",
+        "src/guard/compare.rs:173"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Exit-code behavior is unit-covered; live CLI exit was also observed in the e2e run"
+      ]
+    },
+    {
+      "contract_id": "G12-df4e35f160",
+      "dimensions": [
+        "ai_guard log parsing",
+        "iso8601 offsets",
+        "unparsed counting"
+      ],
+      "verification_methods": [
+        "rust_test_target:parses_ai_guard_timestamp_with_offset",
+        "rust_test_target:parses_ai_guard_log_line",
+        "drift_source_anchor:src/guard/record.rs",
+        "drift_source_anchor:src/guard/compare.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2265",
+        "src/guard/record.rs:299"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Timestamp and TSV parsing are unit-covered; counting of unparseable lines is exercised in the e2e compare run"
       ]
     }
   ]
