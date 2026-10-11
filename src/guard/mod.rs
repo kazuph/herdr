@@ -111,7 +111,8 @@ pub(crate) fn shim_dir() -> PathBuf {
     guard_root().join("bin")
 }
 
-/// Injected `ZDOTDIR` holding the chain-loading zsh startup files.
+/// Injected `ZDOTDIR` holding the guard `.zshenv` that restores the
+/// original `ZDOTDIR` and chain-loads the user's startup file.
 pub(crate) fn zdotdir() -> PathBuf {
     guard_root().join("zdotdir")
 }

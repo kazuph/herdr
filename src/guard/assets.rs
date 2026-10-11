@@ -19,7 +19,7 @@
 
 use std::ffi::OsStr;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use portable_pty::CommandBuilder;
 
@@ -76,12 +76,11 @@ pub(crate) fn apply_guard_env(cmd: &mut CommandBuilder, pane_env_id: Option<&str
             .as_ref(),
     );
 
-    // zsh: point ZDOTDIR at our chain-loading files, remembering the original.
-    let zdot_orig = std::env::var_os("ZDOTDIR")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(PathBuf::from));
-    if let Some(zdot_orig) = zdot_orig {
+    // zsh: point ZDOTDIR at our .zshenv. The original ZDOTDIR (if any) is
+    // recorded so the injected file can restore it before the user's
+    // startup files run, keeping ZDOTDIR-derived paths like HISTFILE
+    // unchanged.
+    if let Some(zdot_orig) = std::env::var_os("ZDOTDIR").filter(|value| !value.is_empty()) {
         cmd.env(ZDOTDIR_ORIG_ENV_VAR, zdot_orig.to_string_lossy().as_ref());
     }
     cmd.env(
@@ -124,9 +123,12 @@ pub(crate) fn ensure_assets(herdr_exe: &Path, targets: &[String]) -> std::io::Re
         zshenv_script(targets).as_bytes(),
         0o644,
     )?;
-    write_if_changed(&zdotdir.join(".zshrc"), ZSHRC_SCRIPT.as_bytes(), 0o644)?;
-    write_if_changed(&zdotdir.join(".zprofile"), CHAIN_ZPROFILE.as_bytes(), 0o644)?;
-    write_if_changed(&zdotdir.join(".zlogin"), CHAIN_ZLOGIN.as_bytes(), 0o644)?;
+    // Earlier guard builds injected chain-loading .zshrc/.zprofile/.zlogin
+    // files. They are obsolete now that .zshenv restores ZDOTDIR before the
+    // user's files run; remove leftovers so they cannot shadow anything.
+    for name in [".zshrc", ".zprofile", ".zlogin"] {
+        let _ = std::fs::remove_file(zdotdir.join(name));
+    }
 
     write_if_changed(
         &crate::guard::bash_env_file(),
@@ -200,12 +202,13 @@ exec {target} "$@"
     )
 }
 
-/// Injected `.zshenv` for the guard ZDOTDIR. Chain-loads the user's real
-/// `.zshenv`, then defines target-command functions and a `command`
-/// passthrough so both plain invocations and `command <target>` are judged.
-/// The functions are only defined when this pane's marker file exists at
-/// shell start; without it (human panes, overlay spawns) commands resolve
-/// through the PATH shims, which make the same check per invocation.
+/// Injected `.zshenv` for the guard ZDOTDIR. First restores `ZDOTDIR` to
+/// its original value (or unsets it), then chain-loads the user's real
+/// `.zshenv`, defines target-command functions and a `command` passthrough,
+/// and defers the `accept-line` recorder to `precmd` so it wraps whatever
+/// widget the user's `.zshrc` installed. The functions check the pane's
+/// marker file at call time; without it commands resolve through the PATH
+/// shims, which make the same check per invocation.
 fn zshenv_script(targets: &[String]) -> String {
     let herdr = r#""${HERDR_GUARD_HERDR:-herdr}""#;
     let target_words = targets.join(" ");
@@ -228,13 +231,22 @@ fn zshenv_script(targets: &[String]) -> String {
         .join("\n");
     format!(
         r#"# herdr command guard .zshenv (record-only). Generated; do not edit.
-# Chain-loads the user's real startup files, then installs record-only
-# command wrappers. Active only while this pane's marker file exists.
+# Restores ZDOTDIR to its original value (or unsets it) before chain-loading
+# the user's real .zshenv — the same technique terminal emulators use for
+# shell integration — so ZDOTDIR-derived paths like HISTFILE stay unchanged.
+# zsh then reads .zprofile/.zshrc/.zlogin from the restored directory on its
+# own. Active only while this pane's marker file exists.
 
-typeset -g _hg_orig_zdot="${{{ZDOTDIR_ORIG_ENV_VAR}:-$HOME}}"
-if [[ -r "$_hg_orig_zdot/.zshenv" ]]; then
-  source "$_hg_orig_zdot/.zshenv"
+typeset -g _hg_orig_zdot="${{{ZDOTDIR_ORIG_ENV_VAR}:-}}"
+if [[ -n "$_hg_orig_zdot" ]]; then
+  export ZDOTDIR="$_hg_orig_zdot"
+else
+  unset ZDOTDIR
 fi
+if [[ -r "${{_hg_orig_zdot:-$HOME}}/.zshenv" ]]; then
+  source "${{_hg_orig_zdot:-$HOME}}/.zshenv"
+fi
+unset _hg_orig_zdot
 
 if [[ -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]]; then
 {function_defs}
@@ -253,6 +265,21 @@ command() {{
   esac
 }}
 fi
+
+if [[ -o interactive && -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]]; then
+  _herdr_guard_precmd() {{
+    zle -A accept-line herdr-guard-orig-accept-line 2>/dev/null
+    herdr-guard-accept-line() {{
+      if [[ -f "${{{MARKER_ENV_VAR}:-}}" ]]; then
+        "${{HERDR_GUARD_HERDR:-herdr}}" guard line -- "$BUFFER" >/dev/null 2>&1 &!
+      fi
+      zle herdr-guard-orig-accept-line
+    }}
+    zle -N accept-line herdr-guard-accept-line
+    precmd_functions=(${{precmd_functions:#_herdr_guard_precmd}})
+  }}
+  precmd_functions+=(_herdr_guard_precmd)
+fi
 "#,
         ZDOTDIR_ORIG_ENV_VAR = ZDOTDIR_ORIG_ENV_VAR,
         HERDR_EXE_ENV_VAR = HERDR_EXE_ENV_VAR,
@@ -262,38 +289,6 @@ fi
         herdr = herdr,
     )
 }
-
-/// Injected `.zshrc`: chain-load the user's rc, then install the accept-line
-/// wrapper that records line-level judgements (`git wt list`, protected
-/// patterns, danger words) for typed input.
-const ZSHRC_SCRIPT: &str = r#"# herdr command guard .zshrc (record-only). Generated; do not edit.
-
-typeset -g _hg_orig_zdot="${HERDR_GUARD_ZDOTDIR_ORIG:-$HOME}"
-if [[ -r "$_hg_orig_zdot/.zshrc" ]]; then
-  source "$_hg_orig_zdot/.zshrc"
-fi
-
-if [[ -o interactive && -n "${HERDR_GUARD_HERDR:-}" ]]; then
-  zle -A accept-line herdr-guard-orig-accept-line 2>/dev/null
-  herdr-guard-accept-line() {
-    if [[ -n "${HERDR_GUARD_MARKER:-}" && -f "${HERDR_GUARD_MARKER}" ]]; then
-      "${HERDR_GUARD_HERDR:-herdr}" guard line -- "$BUFFER" >/dev/null 2>&1 &!
-    fi
-    zle herdr-guard-orig-accept-line
-  }
-  zle -N accept-line herdr-guard-accept-line
-fi
-"#;
-
-const CHAIN_ZPROFILE: &str = r#"# herdr command guard .zprofile (record-only). Generated; do not edit.
-typeset -g _hg_orig_zdot="${HERDR_GUARD_ZDOTDIR_ORIG:-$HOME}"
-[[ -r "$_hg_orig_zdot/.zprofile" ]] && source "$_hg_orig_zdot/.zprofile"
-"#;
-
-const CHAIN_ZLOGIN: &str = r#"# herdr command guard .zlogin (record-only). Generated; do not edit.
-typeset -g _hg_orig_zdot="${HERDR_GUARD_ZDOTDIR_ORIG:-$HOME}"
-[[ -r "$_hg_orig_zdot/.zlogin" ]] && source "$_hg_orig_zdot/.zlogin"
-"#;
 
 /// `BASH_ENV` content: chain-loads the original BASH_ENV, then defines the
 /// same wrappers as zsh for non-interactive bash. Like `.zshenv`, functions
@@ -364,13 +359,16 @@ mod tests {
     }
 
     #[test]
-    fn zshenv_chains_user_file_and_defines_functions() {
+    fn zshenv_restores_zdotdir_and_defines_functions() {
         let targets = vec!["rm".to_string(), "git".to_string()];
         let script = zshenv_script(&targets);
-        assert!(script.contains("source \"$_hg_orig_zdot/.zshenv\""));
+        assert!(script.contains("export ZDOTDIR=\"$_hg_orig_zdot\""));
+        assert!(script.contains("unset ZDOTDIR"));
+        assert!(script.contains("source \"${_hg_orig_zdot:-$HOME}/.zshenv\""));
         assert!(script.contains("rm() {"));
         assert!(script.contains("git() {"));
         assert!(script.contains("command()"));
+        assert!(script.contains("_herdr_guard_precmd"));
     }
 
     #[test]
