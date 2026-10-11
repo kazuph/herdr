@@ -11801,6 +11801,11 @@
             },
             "live_handoff": {
               "type": "boolean"
+            },
+            "screen_prompt_decisions": {
+              "default": false,
+              "description": "The server scans blocked agent panes for numbered screen prompts and\nraises them as pending decisions. Older servers lack the field.",
+              "type": "boolean"
             }
           },
           "required": [
