@@ -1170,6 +1170,11 @@ mod tests {
         dir
     }
 
+    /// Serializes tests that swap the process-global `FAKE_WATCH_SSH_DIR`,
+    /// `TEST_SSH_PROGRAM` and `PATH`: without it parallel tests point each
+    /// other's fake ssh at the wrong fixture dir.
+    static FAKE_SSH_LOCK: Mutex<()> = Mutex::new(());
+
     /// A per-target scriptable `ssh`. Behaviour files live in
     /// `FAKE_WATCH_SSH_DIR`:
     ///   <target>.banner   → print `To authenticate, visit: <contents>` on
@@ -1179,7 +1184,12 @@ mod tests {
     ///   <target>.stdout   → write contents to stdout
     ///   <target>.linger   → sleep the contained seconds, then exit
     /// Every invocation appends the target to `attempts.log`.
-    fn install_fake_ssh(dir: &std::path::Path) {
+    /// The returned guard serializes the whole test against other fake-ssh
+    /// users; keep it bound until the pump threads have stopped.
+    fn install_fake_ssh(dir: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
+        let guard = FAKE_SSH_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let script = r#"#!/usr/bin/env bash
 dir="$FAKE_WATCH_SSH_DIR"
 target=""
@@ -1211,6 +1221,7 @@ exit 0
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(path.into_os_string());
         std::env::set_var("FAKE_WATCH_SSH_DIR", dir);
+        guard
     }
 
     fn profile(id: &str, label: &str, target: &str) -> MachineProfile {
@@ -1256,7 +1267,7 @@ exit 0
     #[test]
     fn remote_pump_forwards_rewritten_lines_then_machine_down() {
         let dir = temp_dir("rewrites");
-        install_fake_ssh(&dir);
+        let _ssh_guard = install_fake_ssh(&dir);
         std::fs::write(dir.join("good.stdout"), remote_contract_lines("dec-a"))
             .expect("stdout fixture");
 
@@ -1289,7 +1300,7 @@ exit 0
     #[test]
     fn one_machine_failure_does_not_stop_other_streams() {
         let dir = temp_dir("isolation");
-        install_fake_ssh(&dir);
+        let _ssh_guard = install_fake_ssh(&dir);
         std::fs::write(
             dir.join("dead.stderr"),
             "ssh: connect to host dead: refused\n",
@@ -1369,7 +1380,7 @@ exit 0
     #[test]
     fn tailscale_banner_downs_machine_with_url_and_retries_without_browser() {
         let dir = temp_dir("tailscale");
-        install_fake_ssh(&dir);
+        let _ssh_guard = install_fake_ssh(&dir);
         std::fs::write(
             dir.join("tailscale.banner"),
             "https://login.tailscale.com/a/watch-test",
@@ -1440,7 +1451,7 @@ exit 0
     #[test]
     fn tailscale_retry_waits_before_attempting_again() {
         let dir = temp_dir("tailscale-retry");
-        install_fake_ssh(&dir);
+        let _ssh_guard = install_fake_ssh(&dir);
         std::fs::write(
             dir.join("ts.banner"),
             "https://login.tailscale.com/a/retry-check",
@@ -1508,7 +1519,7 @@ exit 0
     #[test]
     fn unsupported_remote_downs_once_and_retries_on_the_slow_cadence() {
         let dir = temp_dir("unsupported");
-        install_fake_ssh(&dir);
+        let _ssh_guard = install_fake_ssh(&dir);
         std::fs::write(
             dir.join("old.stderr"),
             "unknown command: decision\nrun 'herdr --help' for usage\n",
@@ -1576,7 +1587,7 @@ exit 0
     #[test]
     fn remote_pump_retries_after_fast_failure() {
         let dir = temp_dir("retry");
-        install_fake_ssh(&dir);
+        let _ssh_guard = install_fake_ssh(&dir);
         std::fs::write(dir.join("flap.stderr"), "connection reset\n").expect("stderr");
         std::fs::write(dir.join("flap.exit"), "1").expect("exit");
 
