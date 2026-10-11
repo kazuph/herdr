@@ -1,0 +1,6 @@
+#!/bin/sh
+# herdr plugin entry point (decision.created hook / "start" action).
+# Ensures the slack-decisions daemon is running as a `herdr run` job, then exits.
+cd "$(dirname "$0")" || exit 1
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+exec node ./slack-decisions.mjs ensure
