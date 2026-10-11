@@ -4754,17 +4754,32 @@ async fn endpoint_frontend_decision_dialog_click_answers_and_external_resolves_a
         assert!(text.contains(marker), "missing {marker:?}\n{text}");
     }
 
-    // 2. Clicking the option sends decision.answer to the owning machine.
+    // 2. Clicking the option only selects it; the confirm button sends
+    //    decision.answer for the selected option to the owning machine.
     let pending = frontend.decisions.current().cloned().unwrap();
     let rects = super::decisions::dialog_rects(&frontend, &pending).unwrap();
-    frontend
-        .dispatch_input(RawInputEvent::Mouse(crossterm::event::MouseEvent {
-            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: rects.options[0].x,
-            row: rects.options[0].y,
-            modifiers: crossterm::event::KeyModifiers::NONE,
-        }))
-        .unwrap();
+    let click = |frontend: &mut ClientFrontend, x: u16, y: u16| {
+        frontend
+            .dispatch_input(RawInputEvent::Mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+                column: x,
+                row: y,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            }))
+            .unwrap();
+    };
+    click(&mut frontend, rects.options[0].x, rects.options[0].y);
+    let still_pending = api(
+        &server.socket,
+        "decision.get",
+        json!({"decision_id": decision_id}),
+    );
+    assert_eq!(
+        still_pending["decision"]["status"], "pending",
+        "a click on the option must not send the answer"
+    );
+    assert!(frontend.decisions.dialog.is_some());
+    click(&mut frontend, rects.confirm.x, rects.confirm.y);
     pump(&mut frontend, |f| {
         f.decisions.dialog.is_none() && f.decisions.pending.is_empty()
     })
