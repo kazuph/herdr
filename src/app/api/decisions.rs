@@ -103,6 +103,30 @@ impl App {
             Err(response) => return response,
             Ok(store) => store,
         };
+        // Screen-prompt decisions carry a freshness gate: answering a stale
+        // one would type its keys into whatever prompt (or input line) the
+        // pane shows now, so cancel the decision instead of committing the
+        // answer.
+        if let Ok(Some(decision)) = store.get(&params.decision_id) {
+            if decision.status == DecisionStatus::Pending
+                && Self::is_screen_prompt_decision(&decision)
+                && !self.screen_prompt_answer_is_fresh(&decision)
+            {
+                if let Ok(ResolveOutcome::Resolved(cancelled)) = store.cancel(&params.decision_id) {
+                    let cancelled = *cancelled;
+                    self.screen_prompt_resolved(&cancelled);
+                    self.emit_decision_resolved(cancelled);
+                }
+                return responses::encode_error(
+                    id,
+                    "decision_stale",
+                    format!(
+                        "screen prompt for decision {} changed or disappeared",
+                        params.decision_id
+                    ),
+                );
+            }
+        }
         match store.answer(
             &params.decision_id,
             params.option_id,

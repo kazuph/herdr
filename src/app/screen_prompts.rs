@@ -143,11 +143,37 @@ impl App {
     }
 
     /// True when the decision originated from a pane screen prompt.
-    fn is_screen_prompt_decision(decision: &Decision) -> bool {
+    pub(super) fn is_screen_prompt_decision(decision: &Decision) -> bool {
         decision
             .origin
             .as_ref()
             .is_some_and(|origin| origin.reason.as_deref() == Some(SCREEN_PROMPT_REASON))
+    }
+
+    /// Freshness gate for `decision.answer` on screen-prompt decisions,
+    /// checked before the answer commits. True only when the pane's live
+    /// screen still parses to the watched prompt's signature, or when the
+    /// read is torn (no prompt parses) while the last scan still matched
+    /// (`mismatches == 0`). A different prompt, a gone pane, or a missing
+    /// watch means the keys would answer a different question or type into
+    /// the agent's input line.
+    pub(super) fn screen_prompt_answer_is_fresh(&self, decision: &Decision) -> bool {
+        let Some((ws_idx, pane_id)) = self.screen_prompt_pane_ref(decision) else {
+            return false;
+        };
+        let Some(watch) = self.screen_prompt_watches.get(&pane_id) else {
+            return false;
+        };
+        if watch.decision_id != decision.decision_id {
+            return false;
+        }
+        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+            return false;
+        };
+        match parse_screen_prompt(&runtime.detection_text_unwrapped()) {
+            Some(prompt) => prompt.signature() == watch.signature,
+            None => watch.mismatches == 0,
+        }
     }
 
     /// The internal pane reference for a screen-prompt decision's origin.
@@ -518,6 +544,28 @@ impl App {
         let screen = runtime.detection_text_unwrapped();
         let prompt = parse_screen_prompt(&screen);
 
+        // Same freshness rule as the answer-side gate, kept at the
+        // key-sending layer too: never type into a prompt that is not the
+        // one this decision was raised for. A torn read is tolerated while
+        // the watch's last scan still matched.
+        let watch = self
+            .screen_prompt_watches
+            .get(&pane_id)
+            .filter(|watch| watch.decision_id == decision.decision_id);
+        let fresh = match (&prompt, watch) {
+            (Some(prompt), Some(watch)) => prompt.signature() == watch.signature,
+            (None, Some(watch)) => watch.mismatches == 0,
+            _ => false,
+        };
+        if !fresh {
+            warn!(
+                pane_id = ?pane_id,
+                decision_id = %decision.decision_id,
+                "screen prompt changed before answer delivery; skipping keys"
+            );
+            return;
+        }
+
         // An explicit option wins over any accompanying text: free-text
         // answers arrive without an option id and take the typing path.
         let Some(number) = answer
@@ -725,6 +773,29 @@ Esc to cancel
 Press enter to confirm or esc to cancel
 ";
 
+    const PERM_LS: &str = "\
+Bash(ls -la)
+
+Do you want to proceed?
+
+❯ 1. Yes
+  2. No (esc)
+
+Esc to cancel
+";
+
+    // Identical options to PERM_LS; only the asked command differs.
+    const PERM_RM: &str = "\
+Bash(rm -rf /tmp/x)
+
+Do you want to proceed?
+
+❯ 1. Yes
+  2. No (esc)
+
+Esc to cancel
+";
+
     const IDLE_SCREEN: &str = "compiling half the world\nthis may take a while\n";
 
     fn test_app(
@@ -772,17 +843,23 @@ Press enter to confirm or esc to cancel
         (app, pane_id, receiver)
     }
 
-    fn replace_screen(app: &mut App, pane_id: PaneId, screen: &str) {
-        let (runtime, _) = crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
-            100,
-            30,
-            0,
-            screen.as_bytes(),
-            16,
-        );
+    fn replace_screen(
+        app: &mut App,
+        pane_id: PaneId,
+        screen: &str,
+    ) -> tokio::sync::mpsc::Receiver<Bytes> {
+        let (runtime, receiver) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                100,
+                30,
+                0,
+                screen.as_bytes(),
+                16,
+            );
         app.state.workspaces[0].tabs[0]
             .runtimes
             .insert(pane_id, runtime);
+        receiver
     }
 
     fn pending_decisions() -> Vec<Decision> {
@@ -799,8 +876,13 @@ Press enter to confirm or esc to cancel
             .expect("list")
     }
 
-    fn answer(app: &mut App, decision_id: &str, option_id: Option<&str>, text: Option<&str>) {
-        let response = app.handle_decision_answer(
+    fn answer_response(
+        app: &mut App,
+        decision_id: &str,
+        option_id: Option<&str>,
+        text: Option<&str>,
+    ) -> String {
+        app.handle_decision_answer(
             "test".to_string(),
             DecisionAnswerParams {
                 decision_id: decision_id.to_string(),
@@ -808,7 +890,11 @@ Press enter to confirm or esc to cancel
                 text: text.map(str::to_string),
                 responder: None,
             },
-        );
+        )
+    }
+
+    fn answer(app: &mut App, decision_id: &str, option_id: Option<&str>, text: Option<&str>) {
+        let response = answer_response(app, decision_id, option_id, text);
         assert!(
             response.contains("\"decision\""),
             "answer failed: {response}"
@@ -892,7 +978,7 @@ Press enter to confirm or esc to cancel
         assert_eq!(pending_decisions().len(), 1);
 
         // A single torn/blank read must not cancel.
-        replace_screen(&mut app, pane_id, IDLE_SCREEN);
+        let _ = replace_screen(&mut app, pane_id, IDLE_SCREEN);
         app.scan_screen_prompts(Instant::now());
         assert_eq!(pending_decisions().len(), 1);
         assert!(app.screen_prompt_watches.contains_key(&pane_id));
@@ -913,7 +999,7 @@ Press enter to confirm or esc to cancel
         app.scan_screen_prompts(Instant::now());
         let first = pending_decisions()[0].decision_id.clone();
 
-        replace_screen(&mut app, pane_id, CC_PERMISSION);
+        let _ = replace_screen(&mut app, pane_id, CC_PERMISSION);
         app.scan_screen_prompts(Instant::now());
         // First mismatched read: old decision still pending.
         assert_eq!(pending_decisions()[0].decision_id, first);
@@ -926,6 +1012,81 @@ Press enter to confirm or esc to cancel
         assert_eq!(old.status, DecisionStatus::Cancelled);
         assert_eq!(new.status, DecisionStatus::Pending);
         assert_eq!(new.kind, DecisionKind::ToolPermission);
+    }
+
+    #[tokio::test]
+    async fn same_options_different_question_creates_new_decision() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("sameopts", PERM_LS, true);
+        app.scan_screen_prompts(Instant::now());
+        let first = pending_decisions()[0].clone();
+
+        // Same options, different asked command: a different prompt must not
+        // be deduplicated into the first decision's watch.
+        let _ = replace_screen(&mut app, pane_id, PERM_RM);
+        app.scan_screen_prompts(Instant::now());
+        app.scan_screen_prompts(Instant::now());
+
+        let decisions = all_decisions();
+        assert_eq!(decisions.len(), 2);
+        assert_eq!(decisions[0].decision_id, first.decision_id);
+        assert_eq!(decisions[0].status, DecisionStatus::Cancelled);
+        assert_eq!(decisions[1].status, DecisionStatus::Pending);
+        assert_ne!(decisions[1].title, first.title);
+        assert!(decisions[1].title.contains("rm -rf"));
+        assert_eq!(
+            app.screen_prompt_watches[&pane_id].decision_id,
+            decisions[1].decision_id
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_answer_after_prompt_change_is_rejected() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("stale", CC_PERMISSION, true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+
+        // The pane moved on to a different prompt before the answer arrived.
+        let mut rx = replace_screen(&mut app, pane_id, PERM_LS);
+        let response = answer_response(&mut app, &decision_id, Some("1"), None);
+        assert!(response.contains("decision_stale"), "{response}");
+        assert!(
+            rx.try_recv().is_err(),
+            "no keys may be sent for a stale screen prompt"
+        );
+        assert_eq!(all_decisions()[0].status, DecisionStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn stale_answer_after_prompt_disappears_is_rejected() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("gone-stale", CC_PERMISSION, true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+
+        // The prompt left the screen; one mismatching scan already ran.
+        let mut rx = replace_screen(&mut app, pane_id, IDLE_SCREEN);
+        app.scan_screen_prompts(Instant::now());
+        let response = answer_response(&mut app, &decision_id, Some("1"), None);
+        assert!(response.contains("decision_stale"), "{response}");
+        assert!(rx.try_recv().is_err());
+        assert_eq!(all_decisions()[0].status, DecisionStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn torn_read_still_allows_answer() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("torn", CC_PERMISSION, true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+
+        // A torn read (no parseable prompt) while the last scan still
+        // matched is not stale — the same one-read tolerance scans use.
+        let mut rx = replace_screen(&mut app, pane_id, IDLE_SCREEN);
+        let response = answer_response(&mut app, &decision_id, Some("1"), None);
+        assert!(response.contains("\"decision\""), "{response}");
+        assert_eq!(rx.try_recv().expect("bytes").as_ref(), b"1");
     }
 
     #[tokio::test]

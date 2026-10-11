@@ -87,9 +87,17 @@ impl ScreenPrompt {
 
     /// saberante's `prompt_key`: identity of the visible prompt so the same
     /// screen does not produce a second decision and tab moves are detected.
+    /// The question text is part of the identity: permission prompts that
+    /// share options ("Yes / don't ask again / No") are still different
+    /// prompts when they ask about different commands.
     pub fn signature(&self) -> String {
-        serde_json::to_string(&(self.header.as_str(), &self.choices, self.free_text))
-            .unwrap_or_default()
+        serde_json::to_string(&(
+            self.header.as_str(),
+            self.question.as_str(),
+            &self.choices,
+            self.free_text,
+        ))
+        .unwrap_or_default()
     }
 
     /// Decision title: the question text, or the header stripped of checkbox
