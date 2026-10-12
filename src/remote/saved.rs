@@ -264,6 +264,11 @@ fn discover_socket(
 /// readiness signal the Tailscale-ssh-safe transport has.
 const SAVED_BRIDGE_READY_LINE: &[u8] = b"herdr-saved-ssh-bridge-ready";
 const SAVED_BRIDGE_READY_TEXT: &str = "herdr-saved-ssh-bridge-ready";
+/// Lines a chatty remote login shell may print before the ready line; past
+/// this many discarded bytes the output is not preamble noise anymore.
+const SAVED_BRIDGE_PRELUDE_LIMIT: usize = 64 * 1024;
+/// How much of the discarded preamble is kept for the failure message.
+const SAVED_BRIDGE_PRELUDE_TAIL: usize = 4 * 1024;
 
 struct SavedSshBridge {
     child: Option<Child>,
@@ -294,11 +299,14 @@ impl Drop for SavedSshBridge {
     }
 }
 
-/// Read the bridge's stdout until the ready line arrives. Bytes already
-/// received past its newline belong to the bridge stream and are returned so
-/// nothing between the ready line and the first relay chunk is lost.
+/// Read the bridge's stdout until the ready line arrives. Lines before it are
+/// remote login-shell noise (profile echoes, motd) and are discarded; bytes
+/// already received past the ready line's newline belong to the bridge stream
+/// and are returned so nothing is lost.
 fn read_ready_line(stdout: &mut impl io::Read) -> io::Result<Vec<u8>> {
     let mut line = Vec::new();
+    let mut skipped = 0_usize;
+    let mut tail: Vec<u8> = Vec::new();
     let mut chunk = [0_u8; 8192];
     loop {
         let count = match stdout.read(&mut chunk) {
@@ -312,18 +320,43 @@ fn read_ready_line(stdout: &mut impl io::Read) -> io::Result<Vec<u8>> {
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(error),
         };
-        if let Some(end) = chunk[..count].iter().position(|byte| *byte == b'\n') {
-            line.extend_from_slice(&chunk[..end]);
+        let mut rest = &chunk[..count];
+        while let Some(end) = rest.iter().position(|byte| *byte == b'\n') {
+            line.extend_from_slice(&rest[..end]);
             if line == SAVED_BRIDGE_READY_LINE {
-                return Ok(chunk[end + 1..count].to_vec());
+                return Ok(rest[end + 1..].to_vec());
             }
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "saved SSH bridge sent an unexpected greeting",
-            ));
+            skipped += line.len() + 1;
+            line.push(b'\n');
+            tail.extend_from_slice(&line);
+            line.clear();
+            rest = &rest[end + 1..];
+            if tail.len() > SAVED_BRIDGE_PRELUDE_TAIL {
+                tail.drain(..tail.len() - SAVED_BRIDGE_PRELUDE_TAIL);
+            }
+            if skipped > SAVED_BRIDGE_PRELUDE_LIMIT {
+                return Err(prelude_overflow(&tail));
+            }
         }
-        line.extend_from_slice(&chunk[..count]);
+        line.extend_from_slice(rest);
+        if skipped + line.len() > SAVED_BRIDGE_PRELUDE_LIMIT {
+            tail.extend_from_slice(&line);
+            if tail.len() > SAVED_BRIDGE_PRELUDE_TAIL {
+                tail.drain(..tail.len() - SAVED_BRIDGE_PRELUDE_TAIL);
+            }
+            return Err(prelude_overflow(&tail));
+        }
     }
+}
+
+fn prelude_overflow(tail: &[u8]) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "saved SSH bridge never became ready; last preamble bytes: {}",
+            String::from_utf8_lossy(tail).trim()
+        ),
+    )
 }
 
 fn forward_stream(
@@ -635,6 +668,15 @@ if is_bridge:
         sys.stderr.write(failure + "\n")
         sys.stderr.flush()
         sys.exit(3)
+    if env("FAKE_SSH_BRIDGE_FLOOD"):
+        # More than 64KiB of login-shell-style noise and no ready line. Stay
+        # alive so the overflow, not the exit status, fails the connect.
+        os.write(1, b"profile noise, not the bridge ready line\n" * 4096)
+        while True:
+            time.sleep(1)
+    prelude = env("FAKE_SSH_BRIDGE_PRELUDE")
+    if prelude:
+        os.write(1, prelude.encode() + b"\n")
     os.write(1, b"herdr-saved-ssh-bridge-ready\n")
     greeting = env("FAKE_SSH_BRIDGE_GREETING")
     if greeting:
@@ -792,6 +834,8 @@ sys.exit(0)
                 "FAKE_SSH_COMMAND_LOG",
                 "FAKE_SSH_BRIDGE_FAIL",
                 "FAKE_SSH_BRIDGE_GREETING",
+                "FAKE_SSH_BRIDGE_PRELUDE",
+                "FAKE_SSH_BRIDGE_FLOOD",
             ] {
                 std::env::remove_var(name);
             }
@@ -1273,6 +1317,74 @@ mod tests {
         drop(stream);
         drop(bridge);
         assert!(fake.all_dead(Duration::from_secs(5)), "ssh child survived");
+    }
+
+    /// Login-shell noise printed before the ready line (profile echoes, motd)
+    /// is skipped; the bridge still connects and post-ready bytes are intact.
+    #[test]
+    fn saved_ssh_bridge_skips_prelude_lines_before_the_ready_marker() {
+        let fake = FakeSsh::new("prelude")
+            .with_env_text(
+                "FAKE_SSH_BRIDGE_PRELUDE",
+                "kazuph custom motd\necho from .bashrc\nherdr-saved-ssh-bridge-ready-ish",
+            )
+            .with_env_text("FAKE_SSH_BRIDGE_GREETING", "greeting-after-noise");
+        let cancel = AtomicBool::new(false);
+        let (_messages, sink) = status_recorder();
+        let (mut stream, bridge) = connect_saved_ssh(
+            "fake-host",
+            "saved",
+            &crate::remote::SavedSshHooks {
+                cancel: &cancel,
+                status: &sink,
+            },
+        )
+        .unwrap_or_else(|error| panic!("prelude noise should not fail the bridge: {error}"));
+
+        let expected = b"greeting-after-noise";
+        let mut greeting = vec![0_u8; expected.len()];
+        stream
+            .read_exact(&mut greeting)
+            .unwrap_or_else(|error| panic!("post-ready bytes never arrived: {error}"));
+        assert_eq!(greeting, expected);
+        drop(stream);
+        drop(bridge);
+        assert!(fake.all_dead(Duration::from_secs(5)), "ssh child survived");
+    }
+
+    /// Without a ready line, preamble past 64KiB fails with InvalidData that
+    /// carries the last preamble lines instead of waiting forever.
+    #[test]
+    fn saved_ssh_bridge_prelude_over_limit_is_invalid_data() {
+        let _fake = FakeSsh::new("flood").with_env_text("FAKE_SSH_BRIDGE_FLOOD", "1");
+        let cancel = AtomicBool::new(false);
+        let (_messages, sink) = status_recorder();
+        let error = match connect_saved_ssh(
+            "fake-host",
+            "saved",
+            &crate::remote::SavedSshHooks {
+                cancel: &cancel,
+                status: &sink,
+            },
+        ) {
+            Ok(_) => panic!("an endless noise preamble should not connect"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            error.to_string().contains("never became ready"),
+            "the overflow error should explain the missing ready line: {error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("profile noise, not the bridge ready line"),
+            "the error should carry the last preamble lines: {error}"
+        );
+        assert!(
+            _fake.all_dead(Duration::from_secs(5)),
+            "a flooded bridge left an ssh child behind"
+        );
     }
 
     /// A remote `remote-client-bridge` that fails before the ready line fails
