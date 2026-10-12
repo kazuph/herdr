@@ -10,9 +10,6 @@ pub(crate) use unix::*;
 // Only the Unix saved-SSH path reads the fields; Windows rejects saved SSH.
 #[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct SavedSshHooks<'a> {
-    /// Identifies the saved machine; the private bridge socket path is derived
-    /// from it so concurrent machines never share a forwarding socket.
-    pub(crate) profile_id: &'a str,
     /// Set when the endpoint is retired or the client is shutting down; the
     /// attempt kills its ssh child and returns instead of waiting on.
     pub(crate) cancel: &'a std::sync::atomic::AtomicBool,

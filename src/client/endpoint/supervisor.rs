@@ -380,7 +380,6 @@ fn connect_once(
                 &profile.target,
                 &profile.session,
                 &crate::remote::SavedSshHooks {
-                    profile_id: profile.id.as_str(),
                     cancel,
                     status: &status,
                 },

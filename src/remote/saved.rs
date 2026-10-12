@@ -1,17 +1,19 @@
 //! Saved endpoints attach to an existing session socket; they never launch Herdr.
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
-use std::io;
+use std::io::{self, Write as _};
 use std::os::unix::fs::OpenOptionsExt as _;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 #[cfg(test)]
 use std::sync::Mutex;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use sha2::{Digest as _, Sha256};
 
 use super::{RemoteHerdr, RemotePlatform};
 
@@ -193,7 +195,7 @@ fn discover_socket(
     target: &str,
     session: &str,
     hooks: &crate::remote::SavedSshHooks<'_>,
-) -> io::Result<String> {
+) -> io::Result<RemoteHerdr> {
     let output = read_remote(target, "uname -s\nuname -m\n", hooks)?;
     if !output.status.success() {
         return Err(super::command_failed(
@@ -250,30 +252,27 @@ fn discover_socket(
             continue;
         }
         match existing_session_socket(&output.stdout, session) {
-            Ok(path) => return Ok(path),
+            Ok(_client_socket) => return Ok(candidate),
             Err(error) => last_error = error,
         }
     }
     Err(last_error)
 }
 
-/// OpenSSH expands ${ENV} before parsing forwarding fields. Escape the brace before that
-/// pass and backslash/colon for parse_fwd_field, so paths stay literal on both passes.
-fn forwarding_path(path: &str) -> String {
-    let mut escaped = String::new();
-    let mut previous = None;
-    for ch in path.chars() {
-        if matches!(ch, ':' | '\\') || (ch == '{' && previous == Some('$')) {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-        previous = Some(ch);
-    }
-    escaped
-}
+/// First line the remote shell prints right before `exec`ing the client
+/// bridge; reaching it proves the exec channel came up, which is the only
+/// readiness signal the Tailscale-ssh-safe transport has.
+const SAVED_BRIDGE_READY_LINE: &[u8] = b"herdr-saved-ssh-bridge-ready";
+const SAVED_BRIDGE_READY_TEXT: &str = "herdr-saved-ssh-bridge-ready";
+/// Lines a chatty remote login shell may print before the ready line; past
+/// this many discarded bytes the output is not preamble noise anymore.
+const SAVED_BRIDGE_PRELUDE_LIMIT: usize = 64 * 1024;
+/// How much of the discarded preamble is kept for the failure message.
+const SAVED_BRIDGE_PRELUDE_TAIL: usize = 4 * 1024;
 
 struct SavedSshBridge {
     child: Option<Child>,
+    workers: Vec<JoinHandle<()>>,
     directory: Option<PathBuf>,
 }
 
@@ -284,10 +283,14 @@ impl Drop for SavedSshBridge {
             child
         });
         let directory = self.directory.take();
+        let workers = std::mem::take(&mut self.workers);
         // Transport cancellation cannot join a bridge worker on the client UI thread.
         std::thread::spawn(move || {
             if let Some(mut child) = child {
                 let _ = child.wait();
+            }
+            for worker in workers {
+                let _ = worker.join();
             }
             if let Some(directory) = directory {
                 let _ = fs::remove_dir_all(directory);
@@ -296,73 +299,135 @@ impl Drop for SavedSshBridge {
     }
 }
 
+/// Read the bridge's stdout until the ready line arrives. Lines before it are
+/// remote login-shell noise (profile echoes, motd) and are discarded; bytes
+/// already received past the ready line's newline belong to the bridge stream
+/// and are returned so nothing is lost.
+fn read_ready_line(stdout: &mut impl io::Read) -> io::Result<Vec<u8>> {
+    let mut line = Vec::new();
+    let mut skipped = 0_usize;
+    let mut tail: Vec<u8> = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let count = match stdout.read(&mut chunk) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "saved SSH bridge closed before it was ready",
+                ))
+            }
+            Ok(count) => count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        let mut rest = &chunk[..count];
+        while let Some(end) = rest.iter().position(|byte| *byte == b'\n') {
+            line.extend_from_slice(&rest[..end]);
+            if line == SAVED_BRIDGE_READY_LINE {
+                return Ok(rest[end + 1..].to_vec());
+            }
+            skipped += line.len() + 1;
+            line.push(b'\n');
+            tail.extend_from_slice(&line);
+            line.clear();
+            rest = &rest[end + 1..];
+            if tail.len() > SAVED_BRIDGE_PRELUDE_TAIL {
+                tail.drain(..tail.len() - SAVED_BRIDGE_PRELUDE_TAIL);
+            }
+            if skipped > SAVED_BRIDGE_PRELUDE_LIMIT {
+                return Err(prelude_overflow(&tail));
+            }
+        }
+        line.extend_from_slice(rest);
+        if skipped + line.len() > SAVED_BRIDGE_PRELUDE_LIMIT {
+            tail.extend_from_slice(&line);
+            if tail.len() > SAVED_BRIDGE_PRELUDE_TAIL {
+                tail.drain(..tail.len() - SAVED_BRIDGE_PRELUDE_TAIL);
+            }
+            return Err(prelude_overflow(&tail));
+        }
+    }
+}
+
+fn prelude_overflow(tail: &[u8]) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "saved SSH bridge never became ready; last preamble bytes: {}",
+            String::from_utf8_lossy(tail).trim()
+        ),
+    )
+}
+
 fn forward_stream(
     target: &str,
-    remote_path: &str,
+    remote_herdr: &RemoteHerdr,
+    session: &str,
     hooks: &crate::remote::SavedSshHooks<'_>,
 ) -> io::Result<(crate::ipc::LocalStream, Box<dyn Send>)> {
     let directory = super::private_ssh_config_dir()?;
     let mut bridge = SavedSshBridge {
         child: None,
+        workers: Vec::new(),
         directory: Some(directory.clone()),
     };
-    let digest = format!("{:x}", Sha256::digest(hooks.profile_id.as_bytes()));
-    // The private directory itself is unique. Keep the readable digest as long as the
-    // existing portable Unix socket byte limit permits, without rewriting profile IDs.
-    let mut prefix = digest.as_str();
-    let path = loop {
-        let path = directory.join(format!("{prefix}.s"));
-        if super::fits_unix_socket_path(&path) {
-            break path;
-        }
-        prefix = prefix
-            .get(..prefix.len().saturating_sub(1))
-            .filter(|prefix| !prefix.is_empty())
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "private bridge socket path is too long",
-                )
-            })?;
-    };
-    let path_text = path
-        .to_str()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "bridge path is not UTF-8"))?;
     let stderr_path = directory.join("stderr");
     let stderr = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(&stderr_path)?;
+    // The bridge rides the ssh exec channel's stdio instead of a forwarded
+    // Unix socket: Tailscale SSH refuses streamlocal forwarding channels but
+    // runs remote commands like any other sshd.
+    let script = format!(
+        "printf '%s\\n' {}\n{}",
+        SAVED_BRIDGE_READY_TEXT,
+        super::remote_bridge_command(remote_herdr, session)
+    );
     let mut command = ssh_command(target);
-    // Move the destination behind forwarding options; no remote command or Herdr bootstrap runs.
-    let mut args = command
-        .get_args()
-        .map(|arg| arg.to_os_string())
-        .collect::<Vec<_>>();
-    args.truncate(args.len().saturating_sub(2));
-    command = Command::new(ssh_program());
     command
-        .args(args)
-        .arg("-N")
-        .arg("-o")
-        .arg("ExitOnForwardFailure=yes")
-        .arg("-o")
-        .arg("StreamLocalBindMask=0177")
-        .arg("-o")
-        .arg("StreamLocalBindUnlink=no")
-        .arg("-L")
-        .arg(format!(
-            "{}:{}",
-            forwarding_path(path_text),
-            forwarding_path(remote_path)
-        ))
-        .arg("--")
-        .arg(target)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .arg(format!("/bin/sh -c {}", super::shell_quote(&script)))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
         .stderr(stderr);
-    bridge.child = Some(command.spawn()?);
+    let mut child = command.spawn()?;
+    let mut child_stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "ssh bridge stdin missing"))?;
+    let mut child_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "ssh bridge stdout missing"))?;
+    bridge.child = Some(child);
+
+    let (client, relay) = UnixStream::pair()?;
+    let client = crate::ipc::LocalStream::UdSocket(client.into());
+    let (ready, ready_rx) = mpsc::channel::<io::Result<()>>();
+    let mut upload_source = relay.try_clone()?;
+    bridge.workers.push(thread::spawn(move || {
+        // Dropping child_stdin closes the remote bridge's stdin, which makes it
+        // exit on its own once the local stream is gone.
+        let _ = super::copy_flush(&mut upload_source, &mut child_stdin);
+    }));
+    bridge.workers.push(thread::spawn(move || {
+        let mut sink = relay;
+        match read_ready_line(&mut child_stdout) {
+            Ok(pending) => {
+                let _ = ready.send(Ok(()));
+                let _ = sink.write_all(&pending);
+                let _ = super::copy_flush(&mut child_stdout, &mut sink);
+            }
+            Err(error) => {
+                let _ = ready.send(Err(error));
+            }
+        }
+        // Wake the upload direction too when the remote side is done so the
+        // bridge does not linger on a live client stream.
+        let _ = sink.shutdown(std::net::Shutdown::Both);
+    }));
+
     let mut deadline = Instant::now() + timeout();
     let mut auth_wait_url: Option<String> = None;
     loop {
@@ -372,10 +437,34 @@ fn forward_stream(
             .ok_or_else(|| io::Error::other("owned SSH bridge process missing"))?;
         if let Some(status) = child.try_wait()? {
             let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
+            // A preamble overflow makes the reader drop stdout, which can kill
+            // the ssh child before this loop sees the reader's verdict; report
+            // the overflow rather than the exit it caused.
+            if let Ok(Err(error)) = ready_rx.recv_timeout(Duration::from_secs(1)) {
+                if error.kind() == io::ErrorKind::InvalidData {
+                    return Err(error);
+                }
+            }
             return Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
                 format!("saved SSH bridge exited {status}: {}", stderr.trim()),
             ));
+        }
+        match ready_rx.try_recv() {
+            Ok(Ok(())) => return Ok((client, Box::new(bridge))),
+            Ok(Err(error)) => {
+                let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
+                let stderr = stderr.trim();
+                return Err(if stderr.is_empty() {
+                    error
+                } else {
+                    io::Error::new(error.kind(), format!("{error}: {stderr}"))
+                });
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                return Err(io::Error::other("saved SSH bridge worker stopped"));
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
         }
         if hooks.cancel.load(Ordering::Acquire) {
             return Err(connect_cancelled());
@@ -392,28 +481,13 @@ fn forward_stream(
                 auth_wait_url = Some(url);
             }
         }
-        match crate::ipc::connect_local_stream(&path) {
-            Ok(stream) => return Ok((stream, Box::new(bridge))),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
-                ) => {}
-            Err(error) => return Err(error),
-        }
         if Instant::now() >= deadline {
             return Err(match &auth_wait_url {
                 Some(url) => io::Error::new(
                     io::ErrorKind::TimedOut,
-                    crate::remote::TailscaleApprovalTimeout::new(
-                        "saved SSH socket forwarding timed out",
-                        url,
-                    ),
+                    crate::remote::TailscaleApprovalTimeout::new("saved SSH bridge timed out", url),
                 ),
-                None => io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "saved SSH socket forwarding timed out",
-                ),
+                None => io::Error::new(io::ErrorKind::TimedOut, "saved SSH bridge timed out"),
             });
         }
         std::thread::sleep(
@@ -435,8 +509,8 @@ pub(crate) fn connect_saved_ssh(
             "invalid saved SSH target",
         ));
     }
-    let remote_path = discover_socket(target, session, hooks)?;
-    forward_stream(target, &remote_path, hooks)
+    let remote_herdr = discover_socket(target, session, hooks)?;
+    forward_stream(target, &remote_herdr, session, hooks)
 }
 
 #[cfg(test)]
@@ -544,9 +618,7 @@ pub(crate) mod test_fakes {
 
     const FAKE_SSH: &str = r##"#!/usr/bin/env python3
 import os
-import socket
 import sys
-import threading
 import time
 
 def env(name):
@@ -570,9 +642,13 @@ if env("FAKE_SSH_FAIL_TARGET") and env("FAKE_SSH_FAIL_TARGET") == target:
     sys.stderr.write("ssh: connect to host %s port 22: refused\n" % target)
     sys.exit(255)
 
+# The saved-ssh transport runs `herdr remote-client-bridge` over the exec
+# channel's stdio; the fake reproduces the ready line and echoes stdin back
+# like the real bridge relaying the remote client socket.
+is_bridge = "remote-client-bridge" in command
 banner = env("FAKE_SSH_BANNER_URL")
 gate = env("FAKE_SSH_APPROVE_FILE")
-if env("FAKE_SSH_BANNER_FORWARD_ONLY") and "-N" not in args:
+if env("FAKE_SSH_BANNER_FORWARD_ONLY") and not is_bridge:
     banner = ""
 if banner and not (gate and os.path.exists(gate)):
     sys.stderr.write("# Tailscale SSH requires an additional check.\n")
@@ -588,33 +664,37 @@ if banner and not (gate and os.path.exists(gate)):
         sys.stderr.write("# Authentication checked with Tailscale SSH.\n")
         sys.stderr.flush()
 
-if "-N" in args:
-    spec = args[args.index("-L") + 1]
-    local = spec.split(":", 1)[0]
-    local = local.replace("\\:", ":").replace("\\{", "{").replace("\\\\", "\\")
-    try:
-        os.unlink(local)
-    except OSError:
-        pass
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(local)
-    server.listen(4)
-
-    def accept():
-        while True:
-            try:
-                connection, _ = server.accept()
-            except OSError:
-                return
-            connection.close()
-
-    threading.Thread(target=accept, daemon=True).start()
-    while True:
-        time.sleep(1)
-
 remote_socket = env("FAKE_SSH_SESSION_SOCKET") or "/tmp/fake-remote/herdr.sock"
 session = env("FAKE_SSH_SESSION") or "saved"
-if "session list" in command:
+if is_bridge:
+    command_log = env("FAKE_SSH_COMMAND_LOG")
+    if command_log:
+        with open(command_log, "a") as handle:
+            handle.write(command + "\n")
+    failure = env("FAKE_SSH_BRIDGE_FAIL")
+    if failure:
+        sys.stderr.write(failure + "\n")
+        sys.stderr.flush()
+        sys.exit(3)
+    if env("FAKE_SSH_BRIDGE_FLOOD"):
+        # More than 64KiB of login-shell-style noise and no ready line. Stay
+        # alive so the overflow, not the exit status, fails the connect.
+        os.write(1, b"profile noise, not the bridge ready line\n" * 4096)
+        while True:
+            time.sleep(1)
+    prelude = env("FAKE_SSH_BRIDGE_PRELUDE")
+    if prelude:
+        os.write(1, prelude.encode() + b"\n")
+    os.write(1, b"herdr-saved-ssh-bridge-ready\n")
+    greeting = env("FAKE_SSH_BRIDGE_GREETING")
+    if greeting:
+        os.write(1, greeting.encode())
+    while True:
+        chunk = os.read(0, 65536)
+        if not chunk:
+            break
+        os.write(1, chunk)
+elif "session list" in command:
     sys.stdout.write(
         '{"sessions":[{"name":"%s","running":true,"socket_path":"%s"}]}\n'
         % (session, remote_socket)
@@ -680,9 +760,9 @@ sys.exit(0)
             self.with_env_text("FAKE_SSH_BANNER_URL", url)
         }
 
-        /// Only the `-N` socket-forwarding ssh prints the check banner; the
-        /// discovery commands answer immediately, so the approval wait lands in
-        /// the forwarding path instead of a remote probe.
+        /// Only the `remote-client-bridge` exec ssh prints the check banner;
+        /// the discovery commands answer immediately, so the approval wait
+        /// lands in the bridge path instead of a remote probe.
         pub(crate) fn with_forward_only_banner(self, url: &str) -> Self {
             self.with_banner(url)
                 .with_env_text("FAKE_SSH_BANNER_FORWARD_ONLY", "1")
@@ -702,6 +782,12 @@ sys.exit(0)
         /// connections skip the banner, like tailssh's cached check state.
         pub(crate) fn approve(&self) {
             fs::write(&self.approve_file, b"approved\n").unwrap();
+        }
+
+        /// A path inside the test directory where the fake appends the bridge
+        /// command it was exec'd with, for `FAKE_SSH_COMMAND_LOG`.
+        pub(crate) fn command_log(&self) -> PathBuf {
+            self.directory.join("commands")
         }
 
         pub(crate) fn pids(&self) -> Vec<i32> {
@@ -753,6 +839,11 @@ sys.exit(0)
                 "FAKE_SSH_FAIL_TARGET",
                 "FAKE_SSH_SESSION_SOCKET",
                 "FAKE_SSH_SESSION",
+                "FAKE_SSH_COMMAND_LOG",
+                "FAKE_SSH_BRIDGE_FAIL",
+                "FAKE_SSH_BRIDGE_GREETING",
+                "FAKE_SSH_BRIDGE_PRELUDE",
+                "FAKE_SSH_BRIDGE_FLOOD",
             ] {
                 std::env::remove_var(name);
             }
@@ -766,6 +857,7 @@ mod tests {
     use super::test_fakes::FakeSsh;
     use super::test_hooks;
     use super::*;
+    use std::io::Read as _;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
 
@@ -917,7 +1009,6 @@ mod tests {
                     "fake-host",
                     "saved",
                     &crate::remote::SavedSshHooks {
-                        profile_id: "test-machine",
                         cancel: &cancel,
                         status: &sink,
                     },
@@ -981,7 +1072,6 @@ mod tests {
                 "fake-host",
                 "saved",
                 &crate::remote::SavedSshHooks {
-                    profile_id: "test-machine",
                     cancel,
                     status: &sink,
                 },
@@ -1054,7 +1144,6 @@ mod tests {
             "fake-host",
             "saved",
             &crate::remote::SavedSshHooks {
-                profile_id: "test-machine",
                 cancel: &cancel,
                 status: &sink,
             },
@@ -1063,9 +1152,7 @@ mod tests {
             Err(error) => error,
         };
         assert!(crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(&error));
-        assert!(error
-            .to_string()
-            .contains("saved SSH socket forwarding timed out"));
+        assert!(error.to_string().contains("saved SSH bridge timed out"));
         assert!(error
             .to_string()
             .contains("https://login.tailscale.com/a/forward"));
@@ -1094,7 +1181,6 @@ mod tests {
                     "fake-host",
                     "saved",
                     &crate::remote::SavedSshHooks {
-                        profile_id: "test-machine",
                         cancel: &cancel,
                         status: &sink,
                     },
@@ -1157,7 +1243,6 @@ mod tests {
             "denied-host",
             "saved",
             &crate::remote::SavedSshHooks {
-                profile_id: "test-machine",
                 cancel: &cancel,
                 status: &sink,
             },
@@ -1184,7 +1269,6 @@ mod tests {
                     "fake-host",
                     "saved",
                     &crate::remote::SavedSshHooks {
-                        profile_id: "test-machine",
                         cancel: &cancel,
                         status: &sink,
                     },
@@ -1200,5 +1284,201 @@ mod tests {
                 "cancelled auth wait left an ssh child behind: {pids:?}"
             );
         });
+    }
+
+    /// Bytes the remote bridge emits right after the ready line reach the
+    /// caller untouched, and bytes written to the returned stream reach the
+    /// remote and echo back: the exec-channel relay is lossless both ways.
+    #[test]
+    fn saved_ssh_bridge_relays_post_ready_bytes_in_both_directions() {
+        let fake = FakeSsh::new("relay")
+            .with_env_text("FAKE_SSH_BRIDGE_GREETING", "greeting-from-remote\n");
+        let cancel = AtomicBool::new(false);
+        let (_messages, sink) = status_recorder();
+        let (mut stream, bridge) = connect_saved_ssh(
+            "fake-host",
+            "saved",
+            &crate::remote::SavedSshHooks {
+                cancel: &cancel,
+                status: &sink,
+            },
+        )
+        .unwrap_or_else(|error| panic!("bridge should connect: {error}"));
+
+        let expected = b"greeting-from-remote\n";
+        let mut greeting = vec![0_u8; expected.len()];
+        stream
+            .read_exact(&mut greeting)
+            .unwrap_or_else(|error| panic!("post-ready bytes never arrived: {error}"));
+        assert_eq!(greeting, expected);
+
+        let payload = b"client-input-bytes\x00\x01\xff";
+        stream
+            .write_all(payload)
+            .unwrap_or_else(|error| panic!("client bytes were not accepted: {error}"));
+        let mut echoed = vec![0_u8; payload.len()];
+        stream
+            .read_exact(&mut echoed)
+            .unwrap_or_else(|error| panic!("echo never arrived: {error}"));
+        assert_eq!(echoed, payload);
+
+        drop(stream);
+        drop(bridge);
+        assert!(fake.all_dead(Duration::from_secs(5)), "ssh child survived");
+    }
+
+    /// Login-shell noise printed before the ready line (profile echoes, motd)
+    /// is skipped; the bridge still connects and post-ready bytes are intact.
+    #[test]
+    fn saved_ssh_bridge_skips_prelude_lines_before_the_ready_marker() {
+        let fake = FakeSsh::new("prelude")
+            .with_env_text(
+                "FAKE_SSH_BRIDGE_PRELUDE",
+                "kazuph custom motd\necho from .bashrc\nherdr-saved-ssh-bridge-ready-ish",
+            )
+            .with_env_text("FAKE_SSH_BRIDGE_GREETING", "greeting-after-noise");
+        let cancel = AtomicBool::new(false);
+        let (_messages, sink) = status_recorder();
+        let (mut stream, bridge) = connect_saved_ssh(
+            "fake-host",
+            "saved",
+            &crate::remote::SavedSshHooks {
+                cancel: &cancel,
+                status: &sink,
+            },
+        )
+        .unwrap_or_else(|error| panic!("prelude noise should not fail the bridge: {error}"));
+
+        let expected = b"greeting-after-noise";
+        let mut greeting = vec![0_u8; expected.len()];
+        stream
+            .read_exact(&mut greeting)
+            .unwrap_or_else(|error| panic!("post-ready bytes never arrived: {error}"));
+        assert_eq!(greeting, expected);
+        drop(stream);
+        drop(bridge);
+        assert!(fake.all_dead(Duration::from_secs(5)), "ssh child survived");
+    }
+
+    /// Without a ready line, preamble past 64KiB fails with InvalidData that
+    /// carries the last preamble lines instead of waiting forever.
+    #[test]
+    fn saved_ssh_bridge_prelude_over_limit_is_invalid_data() {
+        let _fake = FakeSsh::new("flood").with_env_text("FAKE_SSH_BRIDGE_FLOOD", "1");
+        let cancel = AtomicBool::new(false);
+        let (_messages, sink) = status_recorder();
+        let error = match connect_saved_ssh(
+            "fake-host",
+            "saved",
+            &crate::remote::SavedSshHooks {
+                cancel: &cancel,
+                status: &sink,
+            },
+        ) {
+            Ok(_) => panic!("an endless noise preamble should not connect"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            error.to_string().contains("never became ready"),
+            "the overflow error should explain the missing ready line: {error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("profile noise, not the bridge ready line"),
+            "the error should carry the last preamble lines: {error}"
+        );
+        assert!(
+            _fake.all_dead(Duration::from_secs(5)),
+            "a flooded bridge left an ssh child behind"
+        );
+    }
+
+    /// A remote `remote-client-bridge` that fails before the ready line fails
+    /// the connect, and the error carries the remote's stderr text.
+    #[test]
+    fn saved_ssh_bridge_remote_failure_surfaces_remote_stderr() {
+        let _fake = FakeSsh::new("bridgefail").with_env_text(
+            "FAKE_SSH_BRIDGE_FAIL",
+            "herdr remote-client-bridge: no such session",
+        );
+        let cancel = AtomicBool::new(false);
+        let (_messages, sink) = status_recorder();
+        let error = match connect_saved_ssh(
+            "fake-host",
+            "saved",
+            &crate::remote::SavedSshHooks {
+                cancel: &cancel,
+                status: &sink,
+            },
+        ) {
+            Ok(_) => panic!("a failing remote bridge should not connect"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("herdr remote-client-bridge: no such session"),
+            "remote stderr is missing from the error: {error}"
+        );
+        assert!(
+            _fake.all_dead(Duration::from_secs(5)),
+            "a failed bridge left an ssh child behind"
+        );
+    }
+
+    /// Dropping the returned stream and its lifetime guard kills the bridge's
+    /// ssh child; no relay worker keeps it alive.
+    #[test]
+    fn dropping_the_bridge_stops_the_ssh_child() {
+        let fake = FakeSsh::new("dropkill");
+        let cancel = AtomicBool::new(false);
+        let (_messages, sink) = status_recorder();
+        let (stream, bridge) = connect_saved_ssh(
+            "fake-host",
+            "saved",
+            &crate::remote::SavedSshHooks {
+                cancel: &cancel,
+                status: &sink,
+            },
+        )
+        .unwrap_or_else(|error| panic!("bridge should connect: {error}"));
+        drop(stream);
+        drop(bridge);
+        assert!(
+            fake.all_dead(Duration::from_secs(5)),
+            "dropping the returned values left an ssh child behind: {:?}",
+            fake.pids()
+        );
+    }
+
+    /// A non-default saved session reaches the remote bridge as
+    /// `--session <name>`, the same shape `remote_bridge_command` produces for
+    /// the interactive `--remote` path.
+    #[test]
+    fn saved_ssh_bridge_execs_remote_bridge_with_the_saved_session() {
+        let fake = FakeSsh::new("sessionflag").with_env_text("FAKE_SSH_SESSION", "fork");
+        let log = fake.command_log();
+        let _fake = fake.with_env("FAKE_SSH_COMMAND_LOG", &log);
+        let cancel = AtomicBool::new(false);
+        let (_messages, sink) = status_recorder();
+        let (stream, bridge) = connect_saved_ssh(
+            "fake-host",
+            "fork",
+            &crate::remote::SavedSshHooks {
+                cancel: &cancel,
+                status: &sink,
+            },
+        )
+        .unwrap_or_else(|error| panic!("bridge should connect: {error}"));
+        drop(stream);
+        drop(bridge);
+        let commands = fs::read_to_string(&log).unwrap_or_default();
+        assert!(
+            commands.contains("--session fork") && commands.contains("remote-client-bridge"),
+            "the bridge was not exec'd with the saved session: {commands}"
+        );
+        assert!(_fake.all_dead(Duration::from_secs(5)), "ssh child survived");
     }
 }
