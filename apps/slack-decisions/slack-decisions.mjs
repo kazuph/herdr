@@ -643,6 +643,57 @@ const STATUS_TEXT = {
   machine_down: ":warning: マシン切断",
 };
 
+// Slack caps a section's mrkdwn text around 3000 characters; keep a margin.
+const SLACK_SECTION_TEXT_LIMIT = 2800;
+
+function optionDescription(option) {
+  return typeof option?.description === "string" ? option.description.trim() : "";
+}
+
+function optionEntryText(option, index) {
+  const emoji = NUMBER_EMOJIS[index] || `${index + 1}番`;
+  const label = `:${emoji}: ${option.label || option.id}`;
+  const description = optionDescription(option);
+  return description ? `${label}\n> ${description.replace(/\n+/g, "\n> ")}` : label;
+}
+
+// Split text into pieces that each fit the section limit — newline cut when
+// possible, code-point-safe hard cut otherwise. Nothing is ever truncated.
+function splitOptionText(text, limit) {
+  const parts = [];
+  let rest = text;
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf("\n", limit);
+    if (cut <= 0) {
+      cut = Array.from(rest).slice(0, limit).join("").length;
+    }
+    parts.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n/, "");
+  }
+  parts.push(rest);
+  return parts;
+}
+
+function optionBlockChunks(options) {
+  const pieces = options
+    .map((option, index) => optionEntryText(option, index))
+    .flatMap((entry) => splitOptionText(entry, SLACK_SECTION_TEXT_LIMIT));
+  const chunks = [];
+  let current = "";
+  for (const piece of pieces) {
+    if (current && current.length + 1 + piece.length > SLACK_SECTION_TEXT_LIMIT) {
+      chunks.push(current);
+      current = piece;
+    } else {
+      current = current ? `${current}\n${piece}` : piece;
+    }
+  }
+  if (current) {
+    chunks.push(current);
+  }
+  return chunks;
+}
+
 function buildDecisionBlocks({
   decision,
   machine,
@@ -680,13 +731,9 @@ function buildDecisionBlocks({
     const options = Array.isArray(decision.options) ? decision.options : [];
     if (options.length > 0) {
       blocks.push({ type: "divider" });
-      const lines = options
-        .map((option, index) => {
-          const emoji = NUMBER_EMOJIS[index] || `${index + 1}番`;
-          return `:${emoji}: ${option.label || option.id}`;
-        })
-        .join("\n");
-      blocks.push({ type: "section", text: { type: "mrkdwn", text: lines } });
+      for (const chunk of optionBlockChunks(options)) {
+        blocks.push({ type: "section", text: { type: "mrkdwn", text: chunk } });
+      }
       const hint = decision.allow_text
         ? "数字リアクションで選択 or スレッド返信（文も答えに付きます）"
         : "数字リアクションで選択 or スレッドに番号で返信";
@@ -736,7 +783,11 @@ function buildDecisionBlocks({
 
 function fallbackText({ decision, machine }) {
   const options = (decision.options || [])
-    .map((option, index) => `${index + 1}. ${option.label || option.id}`)
+    .map((option, index) => {
+      const line = `${index + 1}. ${option.label || option.id}`;
+      const description = optionDescription(option);
+      return description ? `${line}\n   ${description}` : line;
+    })
     .join("\n");
   return [
     `[${machine?.label || "local"}] ${decision.title || decision.decision_id}`,
@@ -1812,6 +1863,7 @@ if (invokedAsScript) {
 
 export {
   buildDecisionBlocks,
+  optionBlockChunks,
   decisionKey,
   deliverFile,
   fallbackText,
