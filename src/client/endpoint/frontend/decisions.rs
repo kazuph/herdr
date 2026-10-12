@@ -645,11 +645,13 @@ mod tests {
                     id: "yes".into(),
                     label: "Yes".into(),
                     role: schema::DecisionOptionRole::Approve,
+                    description: None,
                 },
                 schema::DecisionOption {
                     id: "no".into(),
                     label: "No".into(),
                     role: schema::DecisionOptionRole::Reject,
+                    description: None,
                 },
             ],
             allow_text: false,
