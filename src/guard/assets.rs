@@ -423,6 +423,39 @@ mod tests {
         assert!(script.contains("HERDR_GUARD_MARKER"));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn login_zsh_reproduces_startup_path_reordering() {
+        let root = std::env::temp_dir().join(format!("hga-startup-{}", std::process::id()));
+        let user = root.join("user");
+        let injected = root.join("injected");
+        let shim = root.join("shim");
+        for dir in [&user, &injected, &shim] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(injected.join(".zshenv"), zshenv_script(&["rm".into()])).unwrap();
+        for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
+            std::fs::write(user.join(name), "export PATH=/usr/bin:/bin:$PATH\n").unwrap();
+        }
+        let output = std::process::Command::new("/bin/zsh")
+            .env_clear()
+            .env("HOME", &user)
+            .env("ZDOTDIR", &injected)
+            .env(ZDOTDIR_ORIG_ENV_VAR, &user)
+            .env(SHIM_DIR_ENV_VAR, &shim)
+            .env(HERDR_EXE_ENV_VAR, "/usr/bin/true")
+            .env("PATH", format!("{}:/usr/bin:/bin", shim.display()))
+            .args(["-lic", "print -r -- $PATH"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        let path = String::from_utf8(output.stdout).unwrap();
+        // Characterize the reproduced hole before changing startup chaining.
+        assert!(path.starts_with("/usr/bin:/bin:"), "{path}");
+        assert!(path.contains(&shim.to_string_lossy().to_string()), "{path}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn write_if_changed_sets_mode_and_skips_unchanged() {
         let root = std::env::temp_dir().join(format!("herdr-guard-assets-{}", std::process::id()));
