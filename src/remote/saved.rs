@@ -437,6 +437,14 @@ fn forward_stream(
             .ok_or_else(|| io::Error::other("owned SSH bridge process missing"))?;
         if let Some(status) = child.try_wait()? {
             let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
+            // A preamble overflow makes the reader drop stdout, which can kill
+            // the ssh child before this loop sees the reader's verdict; report
+            // the overflow rather than the exit it caused.
+            if let Ok(Err(error)) = ready_rx.recv_timeout(Duration::from_secs(1)) {
+                if error.kind() == io::ErrorKind::InvalidData {
+                    return Err(error);
+                }
+            }
             return Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
                 format!("saved SSH bridge exited {status}: {}", stderr.trim()),
