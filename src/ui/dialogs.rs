@@ -946,6 +946,15 @@ pub(crate) fn confirm_danger_button_rects(inner: Rect) -> (Rect, Rect) {
 
 const DECISION_DIALOG_WIDTH: u16 = 64;
 const DECISION_DIALOG_MAX_HEIGHT: u16 = 22;
+/// Description rows are inset this many columns under the option label.
+const DECISION_OPTION_DESC_INDENT: u16 = 3;
+
+/// One selectable option: its label plus the optional detail text shown
+/// wrapped below it (Claude Code AskUserQuestion descriptions).
+pub(crate) struct DecisionDialogOption {
+    pub label: String,
+    pub description: Option<String>,
+}
 
 /// Render facts for one pending decision, already resolved for display by the
 /// caller (machine label, queue position, remaining time).
@@ -958,7 +967,7 @@ pub(crate) struct DecisionDialogFacts {
     pub body: Option<String>,
     /// `(label, value)` origin rows such as `("pane", "p1")`.
     pub origin: Vec<(String, String)>,
-    pub options: Vec<String>,
+    pub options: Vec<DecisionDialogOption>,
     /// Option highlighted for keyboard activation; only used when
     /// `keyboard_active` is set.
     pub selected: usize,
@@ -968,6 +977,8 @@ pub(crate) struct DecisionDialogFacts {
     pub remaining: Option<String>,
     /// Scroll offset of the content band (title/body/origin).
     pub scroll: u16,
+    /// Scroll offset of the options band when options outgrow it.
+    pub option_scroll: u16,
     /// False while keyboard input is still going to the pane (before the first
     /// click inside the dialog).
     pub keyboard_active: bool,
@@ -975,14 +986,78 @@ pub(crate) struct DecisionDialogFacts {
 
 /// Geometry shared by the renderer and the mouse hit-test. The content band is
 /// a scroll region; option rows sit at the bottom so long bodies never push
-/// the answers off screen.
+/// the answers off screen. When options (labels + descriptions) outgrow the
+/// band the band itself scrolls while staying pinned above the footer.
 pub(crate) struct DecisionDialogRects {
     pub popup: Rect,
     pub content: Rect,
     pub text: Option<Rect>,
+    /// Pinned band holding the option blocks; scrolls via `option_scroll`.
+    pub options_band: Rect,
+    /// Visible portion of each option's block inside the band (a rect of
+    /// height 0 marks an option scrolled fully out of view).
     pub options: Vec<Rect>,
+    /// Largest usable `option_scroll` at the current band size.
+    pub options_scroll_max: u16,
     pub confirm: Rect,
     pub close: Rect,
+}
+
+/// Rows each option occupies at `width`: one label row plus the wrapped
+/// description rows.
+pub(crate) fn decision_dialog_option_rows(facts: &DecisionDialogFacts, width: u16) -> Vec<u16> {
+    facts
+        .options
+        .iter()
+        .map(|option| {
+            option
+                .description
+                .as_deref()
+                .filter(|description| !description.trim().is_empty())
+                .map_or(1, |description| {
+                    1 + Paragraph::new(description.to_string())
+                        .wrap(Wrap { trim: false })
+                        .line_count(width.saturating_sub(DECISION_OPTION_DESC_INDENT).max(1))
+                        as u16
+                })
+        })
+        .collect()
+}
+
+/// `option_scroll` adjusted so the whole block of `selected` is visible (or,
+/// for a block taller than the band, so its label row stays on top).
+pub(crate) fn decision_dialog_reveal_option_scroll(facts: &DecisionDialogFacts, band: Rect) -> u16 {
+    let scroll = facts
+        .option_scroll
+        .min(decision_dialog_options_scroll_max(facts, band));
+    let rows = decision_dialog_option_rows(facts, band.width);
+    let Some(index) = facts
+        .options
+        .len()
+        .checked_sub(1)
+        .map(|last| facts.selected.min(last))
+    else {
+        return scroll;
+    };
+    let top: u16 = rows.iter().take(index).sum();
+    let bottom = top + rows[index];
+    if top < scroll {
+        top
+    } else if bottom > scroll + band.height {
+        if rows[index] >= band.height {
+            top
+        } else {
+            bottom - band.height
+        }
+    } else {
+        scroll
+    }
+}
+
+/// Largest usable `option_scroll` for the options band.
+pub(crate) fn decision_dialog_options_scroll_max(facts: &DecisionDialogFacts, band: Rect) -> u16 {
+    let total: u16 = decision_dialog_option_rows(facts, band.width).iter().sum();
+    total.saturating_sub(band.height)
 }
 
 pub(crate) fn decision_dialog_rects(
@@ -1001,10 +1076,12 @@ pub(crate) fn decision_dialog_rects(
     let content_lines = Paragraph::new(decision_dialog_content_lines(facts, palette))
         .wrap(Wrap { trim: false })
         .line_count(content_width) as u16;
+    let option_rows = decision_dialog_option_rows(facts, content_width);
+    let total_option_rows: u16 = option_rows.iter().sum();
     let inner_needed = 1u16
         .saturating_add(content_lines.max(1))
         .saturating_add(u16::from(facts.allow_text))
-        .saturating_add(facts.options.len().max(1) as u16)
+        .saturating_add(total_option_rows.max(1))
         .saturating_add(1);
     let popup_h = inner_needed
         .saturating_add(2)
@@ -1016,11 +1093,17 @@ pub(crate) fn decision_dialog_rects(
         popup.width.saturating_sub(2),
         popup.height.saturating_sub(2),
     );
+    // The band keeps at most what is left after header, a minimal content
+    // row, the text row, and the footer; overflow scrolls.
+    let band_height = total_option_rows
+        .max(1)
+        .min(inner.height.saturating_sub(3 + u16::from(facts.allow_text)))
+        .max(1);
     let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
     if facts.allow_text {
         constraints.push(Constraint::Length(1));
     }
-    constraints.push(Constraint::Length(facts.options.len().max(1) as u16));
+    constraints.push(Constraint::Length(band_height));
     constraints.push(Constraint::Length(1));
     let slots = Layout::vertical(constraints).split(inner);
     let mut cursor = 2usize;
@@ -1030,14 +1113,22 @@ pub(crate) fn decision_dialog_rects(
         rect
     });
     let options_band = slots[cursor];
-    let options = (0..facts.options.len())
-        .map(|index| {
-            Rect::new(
+    let options_scroll_max = total_option_rows.saturating_sub(options_band.height);
+    let option_scroll = facts.option_scroll.min(options_scroll_max);
+    let options = option_rows
+        .iter()
+        .scan(0u16, |top, rows| {
+            let option_top = *top;
+            *top += *rows;
+            let visible_top = option_top.max(option_scroll);
+            let visible_bottom = (*top).min(option_scroll + options_band.height);
+            let height = visible_bottom.saturating_sub(visible_top);
+            Some(Rect::new(
                 options_band.x,
-                options_band.y + index as u16,
+                options_band.y + visible_top.saturating_sub(option_scroll),
                 options_band.width,
-                1,
-            )
+                height,
+            ))
         })
         .collect();
     let footer = slots[cursor + 1];
@@ -1058,7 +1149,9 @@ pub(crate) fn decision_dialog_rects(
         popup,
         content: slots[1],
         text,
+        options_band,
         options,
+        options_scroll_max,
         confirm,
         close,
     })
@@ -1157,22 +1250,62 @@ pub(crate) fn render_decision_dialog(
         );
     }
 
-    for (index, (label, rect)) in facts.options.iter().zip(rects.options.iter()).enumerate() {
-        let selected = facts.keyboard_active && index == facts.selected;
-        let style = if selected {
-            Style::default()
-                .fg(panel_contrast_fg(palette))
-                .bg(palette.accent)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(palette.text).bg(palette.surface0)
-        };
-        frame.render_widget(
-            Paragraph::new(format!(" {} ", truncate_end(label, rect.width as usize)))
+    let band = rects.options_band;
+    let option_scroll = facts.option_scroll.min(rects.options_scroll_max);
+    let mut top = 0u16;
+    for (index, (option, rows)) in facts
+        .options
+        .iter()
+        .zip(decision_dialog_option_rows(facts, band.width).iter())
+        .enumerate()
+    {
+        let option_top = top;
+        top += *rows;
+        if option_top >= option_scroll && option_top < option_scroll + band.height {
+            let selected = facts.keyboard_active && index == facts.selected;
+            let style = if selected {
+                Style::default()
+                    .fg(panel_contrast_fg(palette))
+                    .bg(palette.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.text).bg(palette.surface0)
+            };
+            frame.render_widget(
+                Paragraph::new(format!(
+                    " {} ",
+                    truncate_end(&option.label, band.width as usize)
+                ))
                 .style(style)
                 .alignment(ratatui::layout::Alignment::Center),
-            *rect,
-        );
+                Rect::new(band.x, band.y + option_top - option_scroll, band.width, 1),
+            );
+        }
+        let Some(description) = option
+            .description
+            .as_deref()
+            .filter(|description| !description.trim().is_empty())
+        else {
+            continue;
+        };
+        let desc_top = option_top + 1;
+        let desc_end = option_top + *rows;
+        let visible_top = desc_top.max(option_scroll);
+        let visible_bottom = desc_end.min(option_scroll + band.height);
+        if visible_bottom > visible_top {
+            frame.render_widget(
+                Paragraph::new(description.to_string())
+                    .style(Style::default().fg(palette.subtext0).bg(palette.surface0))
+                    .wrap(Wrap { trim: false })
+                    .scroll((visible_top - desc_top, 0)),
+                Rect::new(
+                    band.x + DECISION_OPTION_DESC_INDENT.min(band.width),
+                    band.y + visible_top - option_scroll,
+                    band.width.saturating_sub(DECISION_OPTION_DESC_INDENT),
+                    visible_bottom - visible_top,
+                ),
+            );
+        }
     }
 
     if !facts.keyboard_active {
@@ -1300,6 +1433,7 @@ mod tests {
 #[cfg(test)]
 mod shared_dialog_tests {
     use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
 
     #[test]
     fn shared_rename_renderer_keeps_fork_cells_for_tiny_unicode_and_all_titles() {
@@ -1348,12 +1482,18 @@ mod shared_dialog_tests {
             title: "title".into(),
             body: body.map(|body| body.to_owned()),
             origin: Vec::new(),
-            options: (0..options).map(|index| format!("opt{index}")).collect(),
+            options: (0..options)
+                .map(|index| DecisionDialogOption {
+                    label: format!("opt{index}"),
+                    description: None,
+                })
+                .collect(),
             selected: 0,
             allow_text,
             text: String::new(),
             remaining: Some("42s".into()),
             scroll: 0,
+            option_scroll: 0,
             keyboard_active: false,
         }
     }
@@ -1388,5 +1528,142 @@ mod shared_dialog_tests {
         let small =
             decision_dialog_rects(Rect::new(0, 0, 140, 12), &facts, &palette).expect("rects");
         assert_eq!(small.popup.height, 10);
+    }
+
+    fn decision_facts_with_descriptions(descriptions: &[Option<&str>]) -> DecisionDialogFacts {
+        let mut facts = decision_facts(None, false, descriptions.len());
+        for (option, description) in facts.options.iter_mut().zip(descriptions.iter().copied()) {
+            option.description = description.map(str::to_string);
+        }
+        facts
+    }
+
+    #[test]
+    fn decision_dialog_renders_wrapped_option_descriptions() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let mut facts = decision_facts_with_descriptions(&[
+            Some(
+                "main にそのまま続けて取り込んで（fast-forward）、店長の Mac の gtx を入れ直す。\
+                 店長が動かしてる gtx のサーバーは止めない。",
+            ),
+            Some("取り込むだけで gtx は入れ直さない"),
+            None,
+        ]);
+        facts.options[0].label = "取り込んで入れ直す".into();
+        facts.options[1].label = "取り込むだけ".into();
+        facts.options[2].label = "まだ取り込まない".into();
+
+        let area = Rect::new(0, 0, 140, 40);
+        let rects = decision_dialog_rects(area, &facts, &palette).expect("rects");
+        // Each described option takes its label row plus wrapped desc rows.
+        let rows = decision_dialog_option_rows(&facts, rects.options_band.width);
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0] >= 2, "long description must wrap: {rows:?}");
+        assert_eq!(rows[1], 2);
+        assert_eq!(rows[2], 1);
+        // Options still sit directly above the footer.
+        assert_eq!(rects.options[2].y + rows[2], rects.close.y);
+        assert_eq!(rects.options_scroll_max, 0);
+
+        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_decision_dialog(frame, area, &facts, &palette);
+            })
+            .unwrap();
+        // Wide chars leave a spacer cell after them; drop spaces so marker
+        // comparison is cell-layout independent.
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect();
+        for marker in [
+            "取り込んで入れ直す",
+            "入れ直す。",
+            "取り込むだけ",
+            "gtx は入れ直さない",
+            "まだ取り込まない",
+        ] {
+            let marker: String = marker.chars().filter(|ch| !ch.is_whitespace()).collect();
+            assert!(text.contains(&marker), "missing {marker:?}\n{text}");
+        }
+    }
+
+    #[test]
+    fn decision_dialog_option_band_scrolls_to_reach_every_description() {
+        let palette = crate::app::state::Palette::catppuccin();
+        // Short tokens that never split mid-word when the band wraps them;
+        // enough of them to overflow the capped dialog.
+        let long = (0..400)
+            .map(|index| format!("d{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut facts = decision_facts_with_descriptions(&[
+            Some(long.as_str()),
+            Some("short"),
+            Some("tailmarkerXYZ"),
+        ]);
+        let area = Rect::new(0, 0, 140, 30);
+        let rects = decision_dialog_rects(area, &facts, &palette).expect("rects");
+        let total: u16 = decision_dialog_option_rows(&facts, rects.options_band.width)
+            .iter()
+            .sum();
+        assert!(total > rects.options_band.height);
+        assert_eq!(rects.options_scroll_max, total - rects.options_band.height);
+        // Option 0's label is visible; option 2's block is clipped by the band.
+        assert!(rects.options[0].height >= 1);
+        assert!(
+            rects.options[2].height
+                < decision_dialog_option_rows(&facts, rects.options_band.width)[2]
+        );
+
+        // Scrolling to the bottom reveals the last option's whole block.
+        facts.option_scroll = rects.options_scroll_max;
+        let rects = decision_dialog_rects(area, &facts, &palette).expect("rects");
+        let last_rows = decision_dialog_option_rows(&facts, rects.options_band.width)[2];
+        assert_eq!(rects.options[2].height, last_rows);
+        assert_eq!(rects.options[2].y + last_rows, rects.close.y);
+
+        // Keyboard selection reveal pulls the band so the option stays visible.
+        facts.option_scroll = 0;
+        facts.selected = 2;
+        assert_eq!(
+            decision_dialog_reveal_option_scroll(&facts, rects.options_band),
+            rects.options_scroll_max
+        );
+        facts.selected = 0;
+        assert_eq!(
+            decision_dialog_reveal_option_scroll(&facts, rects.options_band),
+            0
+        );
+
+        // Every description token is reachable through the scroll.
+        let mut seen = String::new();
+        for offset in 0..=rects.options_scroll_max {
+            facts.option_scroll = offset;
+            let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_decision_dialog(frame, area, &facts, &palette);
+                })
+                .unwrap();
+            for cell in terminal.backend().buffer().content() {
+                for ch in cell.symbol().chars() {
+                    if !ch.is_whitespace() {
+                        seen.push(ch);
+                    }
+                }
+            }
+        }
+        for index in 0..400 {
+            assert!(seen.contains(&format!("d{index}")), "missing d{index}");
+        }
+        assert!(seen.contains("tailmarkerXYZ"));
     }
 }
