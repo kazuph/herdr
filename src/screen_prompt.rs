@@ -70,6 +70,10 @@ pub(crate) struct ScreenPrompt {
     pub question: String,
     /// Numbered options minus the free-text pseudo options.
     pub choices: BTreeMap<u32, String>,
+    /// Per-option detail text drawn on indented rows below an option
+    /// (Claude Code AskUserQuestion option descriptions). Soft-wrapped rows
+    /// are joined back into a single sentence.
+    pub descriptions: BTreeMap<u32, String>,
     /// Option number of the "Type something" free-text slot, when present.
     pub free_text: Option<u32>,
     /// Per-option shortcut hints (Codex `(y)`/`(a)`/`(esc)` suffixes).
@@ -95,6 +99,7 @@ impl ScreenPrompt {
             self.header.as_str(),
             self.question.as_str(),
             &self.choices,
+            &self.descriptions,
             self.free_text,
         ))
         .unwrap_or_default()
@@ -156,6 +161,7 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     // scrollback cannot shadow the active one.
     let end = lines.iter().rposition(|line| PROMPT_END_RE.is_match(line));
     let mut options: BTreeMap<u32, String> = BTreeMap::new();
+    let mut descriptions: BTreeMap<u32, String> = BTreeMap::new();
     let mut shortcuts: BTreeMap<u32, OptionShortcut> = BTreeMap::new();
     let mut first: Option<usize> = None;
     let mq: Option<MqInfo>;
@@ -163,7 +169,10 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     if let Some(end) = end {
         // Footer present: collect numbered rows walking upward; a non-option,
         // non-blank, non-continuation, non-rule line stops the block.
-        let mut last_option: Option<u32> = None;
+        // Indented continuation rows under an option (Claude Code's
+        // AskUserQuestion descriptions, Codex's wrapped option tail carrying
+        // the `(p)` hint) buffer until the option row above them is found.
+        let mut pending_lines: Vec<String> = Vec::new();
         let mut i = end;
         while i > 0 {
             i -= 1;
@@ -174,22 +183,22 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
                 } else {
                     shortcuts.remove(&number);
                 }
+                attach_option_continuations(
+                    &mut pending_lines,
+                    number,
+                    &mut descriptions,
+                    &mut shortcuts,
+                );
                 options.insert(number, label);
                 first = Some(i);
-                last_option = Some(number);
             } else if first.is_some()
                 && !line.trim().is_empty()
                 && !line.starts_with("     ")
                 && !RULE_RE.is_match(line)
             {
                 break;
-            } else if first.is_some() && line.starts_with("     ") {
-                // Wrapped option text (e.g. Codex's second line carrying the
-                // `(p)` hint) belongs to the option above it.
-                if let (Some(number), Some(shortcut)) = (last_option, shortcut_for(line.trim_end()))
-                {
-                    shortcuts.entry(number).or_insert(shortcut);
-                }
+            } else if first.is_some() && line.starts_with("     ") && !line.trim().is_empty() {
+                pending_lines.push(line.to_string());
             }
         }
         mq = parse_mq_tabs(&lines, first.unwrap_or(end));
@@ -202,6 +211,7 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         // prompt has neither, so the scan also proceeds for screens that end
         // in a bare numbered option block — any content below the options
         // (other than blank/rule lines) rejects the parse.
+        let mut pending_lines: Vec<String> = Vec::new();
         let mut i = lines.len();
         while i > 0 {
             i -= 1;
@@ -212,10 +222,18 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
                 } else {
                     shortcuts.remove(&number);
                 }
+                attach_option_continuations(
+                    &mut pending_lines,
+                    number,
+                    &mut descriptions,
+                    &mut shortcuts,
+                );
                 options.insert(number, label);
                 first = Some(i);
             } else if first.is_some() {
-                if !line.trim().is_empty() {
+                if line.starts_with("     ") && !line.trim().is_empty() {
+                    pending_lines.push(line.to_string());
+                } else if !line.trim().is_empty() {
                     break;
                 }
             } else if !line.trim().is_empty() && !RULE_RE.is_match(line) {
@@ -275,6 +293,7 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         header,
         question,
         choices,
+        descriptions,
         free_text: free,
         shortcuts,
         mq: None,
@@ -287,6 +306,51 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         prompt.mq = Some(mq);
     }
     Some(prompt)
+}
+
+/// Continuation rows buffered while walking upward belong to the option row
+/// directly above them. They become that option's description — joined back
+/// into one sentence — and a shortcut hint riding on a wrapped row (Codex's
+/// `(p)` tail) attaches to the same option.
+fn attach_option_continuations(
+    pending: &mut Vec<String>,
+    number: u32,
+    descriptions: &mut BTreeMap<u32, String>,
+    shortcuts: &mut BTreeMap<u32, OptionShortcut>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    for line in pending.iter() {
+        if let Some(shortcut) = shortcut_for(line.trim_end()) {
+            shortcuts.entry(number).or_insert(shortcut);
+        }
+    }
+    // `pending` collects bottom-up; reverse to restore screen order.
+    let description = join_description_lines(pending.drain(..).rev());
+    if !description.is_empty() {
+        descriptions.insert(number, description);
+    }
+}
+
+/// Join description rows into one sentence. A break inside CJK text rejoins
+/// without inserting a space; ASCII-to-ASCII boundaries get one.
+fn join_description_lines(lines: impl Iterator<Item = String>) -> String {
+    let mut out = String::new();
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if !out.is_empty()
+            && out.chars().last().is_some_and(|c| c.is_ascii())
+            && line.chars().next().is_some_and(|c| c.is_ascii())
+        {
+            out.push(' ');
+        }
+        out.push_str(line);
+    }
+    out
 }
 
 fn mq_progress(mq: &MqInfo) -> String {
@@ -541,12 +605,122 @@ with untrusted content.
     }
 
     #[test]
+    fn parses_option_description_rows() {
+        let prompt = parse_screen_prompt(CC_ASK_SINGLE).expect("prompt");
+        assert_eq!(
+            prompt.descriptions.get(&1).map(String::as_str),
+            Some(
+                "main にそのまま続けて取り込んで（fast-forward）、店長のMac の gtx \
+                 を入れ直す。店長が動かしてる gtxのサーバーは止めない。"
+            )
+        );
+        assert_eq!(
+            prompt.descriptions.get(&2).map(String::as_str),
+            Some("main に取り込むだけ。店長の Mac の gtxは今のままにしておく。")
+        );
+        assert_eq!(
+            prompt.descriptions.get(&3).map(String::as_str),
+            Some("店長が自分で触って確かめてから決める。確かめ方は続きで案内する。")
+        );
+        // Options without description rows keep none.
+        assert!(!prompt.descriptions.contains_key(&4));
+    }
+
+    #[test]
+    fn option_descriptions_join_soft_wrapped_ascii_with_space() {
+        let screen = "\
+Do you want to proceed?
+
+❯ 1. Yes
+     Proceed and write the
+     changes to disk
+  2. No
+
+Esc to cancel
+";
+        let prompt = parse_screen_prompt(screen).expect("prompt");
+        assert_eq!(
+            prompt.descriptions.get(&1).map(String::as_str),
+            Some("Proceed and write the changes to disk")
+        );
+        assert!(!prompt.descriptions.contains_key(&2));
+    }
+
+    #[test]
+    fn permission_prompt_option_descriptions_parse() {
+        let screen = "\
+⏺ Bash(git push origin main)
+  ⎿  Waiting…
+
+❯ 1. Yes
+     Run the push once
+  2. Yes, and don't ask again for git commands
+     Push is always fine on this machine
+  3. No, and tell Claude what to do differently (esc)
+
+Esc to cancel · ↑/↓ to navigate · Tab to add context
+";
+        let prompt = parse_screen_prompt(screen).expect("prompt");
+        assert!(!prompt.is_question());
+        assert_eq!(
+            prompt.descriptions.get(&1).map(String::as_str),
+            Some("Run the push once")
+        );
+        assert_eq!(
+            prompt.descriptions.get(&2).map(String::as_str),
+            Some("Push is always fine on this machine")
+        );
+        assert!(!prompt.descriptions.contains_key(&3));
+        assert_eq!(prompt.shortcuts.get(&3), Some(&OptionShortcut::Escape));
+    }
+
+    #[test]
+    fn description_only_change_updates_signature() {
+        let prompt = parse_screen_prompt(CC_ASK_SINGLE).expect("prompt");
+        let changed = CC_ASK_SINGLE.replacen("店長の\n     Mac", "別の\n     Mac", 1);
+        let moved = parse_screen_prompt(&changed).expect("changed");
+        assert_ne!(prompt.signature(), moved.signature());
+        // A moved cursor keeps the same signature even with descriptions.
+        let cursor = CC_ASK_SINGLE
+            .replacen("❯ 1.", "  1.", 1)
+            .replacen("  2.", "❯ 2.", 1);
+        assert_eq!(
+            parse_screen_prompt(&cursor).unwrap().signature(),
+            prompt.signature()
+        );
+    }
+
+    #[test]
+    fn wrapped_option_shortcut_attaches_to_the_option_above() {
+        let screen = "\
+  Would you like to run the following command?
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for `rm`
+     commands (p)
+  3. No, and tell Codex what to do differently (esc)
+
+Press enter to confirm or esc to cancel
+";
+        let prompt = parse_screen_prompt(screen).expect("prompt");
+        assert_eq!(prompt.shortcuts.get(&1), Some(&OptionShortcut::Char('y')));
+        // The `(p)` hint on option 2's wrapped second line belongs to option 2.
+        assert_eq!(prompt.shortcuts.get(&2), Some(&OptionShortcut::Char('p')));
+        assert_eq!(prompt.shortcuts.get(&3), Some(&OptionShortcut::Escape));
+        assert_eq!(
+            prompt.descriptions.get(&2).map(String::as_str),
+            Some("commands (p)")
+        );
+    }
+
+    #[test]
     fn parses_claude_code_checkbox_question() {
         let prompt = parse_screen_prompt(CC_ASK_CHECKBOX).expect("prompt");
         assert_eq!(prompt.header, "☐ これでいい？");
         assert!(prompt.is_question());
         assert_eq!(prompt.title(), "これでいい？");
         assert_eq!(prompt.choices.len(), 2);
+        assert!(prompt.descriptions.is_empty());
     }
 
     #[test]
