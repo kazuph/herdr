@@ -37,6 +37,12 @@ static SHORTCUT_RE: LazyLock<Regex> =
 const FREE_TEXT_LABELS: [&str; 2] = ["Type something", "Chat about this"];
 /// saberante stops collecting question lines after 60 rows of prompt context.
 const MAX_QUESTION_LINES: usize = 60;
+/// Minimum space run treated as a wrap-glue boundary. Claude Code highlights
+/// the selected option's rows to the full terminal width; those rows carry
+/// the wrap flag, so `detection_text_unwrapped` glues the next physical row
+/// onto them — an option label absorbs its first description row, or a
+/// description row swallows the following numbered option.
+const GLUE_GAP_MIN: usize = 4;
 
 /// A single-character shortcut a prompt advertises for an option.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +159,54 @@ fn shortcut_for(text: &str) -> Option<OptionShortcut> {
     hint.chars().next().map(OptionShortcut::Char)
 }
 
+/// Split a logical line from the unwrapped detection view back into physical
+/// rows. A wrap-glued row keeps its end-of-line padding, so the join shows up
+/// as a run of `GLUE_GAP_MIN` or more spaces between two content spans: the
+/// upper row's padding plus the lower row's own indent, which cannot be told
+/// apart. Returns segments in screen order; segment 0 keeps its leading
+/// whitespace while later segments have theirs absorbed into the gap.
+fn split_glued_rows(line: &str) -> Vec<&str> {
+    let bytes = line.as_bytes();
+    let mut segments = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b' ' && !line[..i].trim().is_empty() {
+            let run_end = (i..bytes.len())
+                .find(|&j| bytes[j] != b' ')
+                .unwrap_or(bytes.len());
+            if run_end - i >= GLUE_GAP_MIN && run_end < bytes.len() {
+                segments.push(&line[start..i]);
+                start = run_end;
+            }
+            i = run_end;
+        } else {
+            i += 1;
+        }
+    }
+    segments.push(&line[start..]);
+    segments
+}
+
+/// Register a numbered option and attach the continuation rows that were
+/// buffered below it while walking upward.
+fn collect_option(
+    options: &mut BTreeMap<u32, String>,
+    descriptions: &mut BTreeMap<u32, String>,
+    shortcuts: &mut BTreeMap<u32, OptionShortcut>,
+    pending_lines: &mut Vec<String>,
+    number: u32,
+    label: String,
+) {
+    if let Some(shortcut) = shortcut_for(&label) {
+        shortcuts.insert(number, shortcut);
+    } else {
+        shortcuts.remove(&number);
+    }
+    attach_option_continuations(pending_lines, number, descriptions, shortcuts);
+    options.insert(number, label);
+}
+
 /// Port of saberante's `parse_prompt`. Returns `None` when the screen holds no
 /// numbered option block anchored by a prompt footer or by the screen bottom.
 pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
@@ -174,31 +228,31 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         // the `(p)` hint) buffer until the option row above them is found.
         let mut pending_lines: Vec<String> = Vec::new();
         let mut i = end;
-        while i > 0 {
+        'walk: while i > 0 {
             i -= 1;
-            let line = lines[i];
-            if let Some((number, label)) = option_match(line) {
-                if let Some(shortcut) = shortcut_for(&label) {
-                    shortcuts.insert(number, shortcut);
-                } else {
-                    shortcuts.remove(&number);
+            // A wrap-glued logical line holds several physical rows; walk the
+            // segments bottom-up so the lowest row is classified first, the
+            // same order as unglued lines.
+            let segments = split_glued_rows(lines[i]);
+            for (segment_index, segment) in segments.iter().enumerate().rev() {
+                let glued = segment_index > 0;
+                if let Some((number, label)) = option_match(segment) {
+                    collect_option(
+                        &mut options,
+                        &mut descriptions,
+                        &mut shortcuts,
+                        &mut pending_lines,
+                        number,
+                        label,
+                    );
+                    first = Some(i);
+                } else if segment.trim().is_empty() || RULE_RE.is_match(segment) {
+                    continue;
+                } else if first.is_some() && (segment.starts_with("     ") || glued) {
+                    pending_lines.push(segment.to_string());
+                } else if first.is_some() {
+                    break 'walk;
                 }
-                attach_option_continuations(
-                    &mut pending_lines,
-                    number,
-                    &mut descriptions,
-                    &mut shortcuts,
-                );
-                options.insert(number, label);
-                first = Some(i);
-            } else if first.is_some()
-                && !line.trim().is_empty()
-                && !line.starts_with("     ")
-                && !RULE_RE.is_match(line)
-            {
-                break;
-            } else if first.is_some() && line.starts_with("     ") && !line.trim().is_empty() {
-                pending_lines.push(line.to_string());
             }
         }
         mq = parse_mq_tabs(&lines, first.unwrap_or(end));
@@ -213,31 +267,30 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         // (other than blank/rule lines) rejects the parse.
         let mut pending_lines: Vec<String> = Vec::new();
         let mut i = lines.len();
-        while i > 0 {
+        'walk: while i > 0 {
             i -= 1;
-            let line = lines[i];
-            if let Some((number, label)) = option_match(line) {
-                if let Some(shortcut) = shortcut_for(&label) {
-                    shortcuts.insert(number, shortcut);
-                } else {
-                    shortcuts.remove(&number);
+            let segments = split_glued_rows(lines[i]);
+            for (segment_index, segment) in segments.iter().enumerate().rev() {
+                let glued = segment_index > 0;
+                if let Some((number, label)) = option_match(segment) {
+                    collect_option(
+                        &mut options,
+                        &mut descriptions,
+                        &mut shortcuts,
+                        &mut pending_lines,
+                        number,
+                        label,
+                    );
+                    first = Some(i);
+                } else if first.is_some() {
+                    if (segment.starts_with("     ") || glued) && !segment.trim().is_empty() {
+                        pending_lines.push(segment.to_string());
+                    } else if !segment.trim().is_empty() && !RULE_RE.is_match(segment) {
+                        break 'walk;
+                    }
+                } else if !segment.trim().is_empty() && !RULE_RE.is_match(segment) {
+                    return None;
                 }
-                attach_option_continuations(
-                    &mut pending_lines,
-                    number,
-                    &mut descriptions,
-                    &mut shortcuts,
-                );
-                options.insert(number, label);
-                first = Some(i);
-            } else if first.is_some() {
-                if line.starts_with("     ") && !line.trim().is_empty() {
-                    pending_lines.push(line.to_string());
-                } else if !line.trim().is_empty() {
-                    break;
-                }
-            } else if !line.trim().is_empty() && !RULE_RE.is_match(line) {
-                return None;
             }
         }
         if options.is_empty() || first.is_none() {
@@ -687,6 +740,56 @@ Esc to cancel · ↑/↓ to navigate · Tab to add context
         assert_eq!(
             parse_screen_prompt(&cursor).unwrap().signature(),
             prompt.signature()
+        );
+    }
+
+    #[test]
+    fn wrap_glued_option_rows_split_back_into_physical_rows() {
+        // Claude Code highlights the selected option's rows to the full
+        // terminal width; the unwrapped detection view then glues the next
+        // physical row on after the padding. Without the split, the label
+        // absorbs its first description row and option 2 disappears into
+        // option 1's description.
+        let screen = "\
+ ☐ デプロイ先
+
+どの環境にデプロイしますか？
+
+❯ 1. 本番環境                                                        本番環境へ直ちにデプロイし、すべての監視アラートを有効化し
+     たうえで、問題が起きたときにすぐ前の版へ戻せるようロールバ
+     ック手順も事前に準備しておきます                           ❯ 2. ステージング環境
+     本番相当の設定で動作確認するためにステージングへデプロイし
+     ます
+  3. 開発環境
+     開発者向けの検証用環境へデプロイします
+  4. Type something.                                            ────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+        let prompt = parse_screen_prompt(screen).expect("prompt");
+        assert_eq!(
+            prompt.choices,
+            BTreeMap::from([
+                (1, "本番環境".to_string()),
+                (2, "ステージング環境".to_string()),
+                (3, "開発環境".to_string()),
+            ])
+        );
+        assert_eq!(prompt.free_text, Some(4));
+        assert_eq!(
+            prompt.descriptions.get(&1).map(String::as_str),
+            Some(
+                "本番環境へ直ちにデプロイし、すべての監視アラートを有効化したうえで、問題が起きたときにすぐ前の版へ戻せるようロールバック手順も事前に準備しておきます"
+            )
+        );
+        assert_eq!(
+            prompt.descriptions.get(&2).map(String::as_str),
+            Some("本番相当の設定で動作確認するためにステージングへデプロイします")
+        );
+        assert_eq!(
+            prompt.descriptions.get(&3).map(String::as_str),
+            Some("開発者向けの検証用環境へデプロイします")
         );
     }
 

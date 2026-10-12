@@ -13074,6 +13074,7 @@
         "rust_test_target:permission_prompt_option_descriptions_parse",
         "rust_test_target:description_only_change_updates_signature",
         "rust_test_target:wrapped_option_shortcut_attaches_to_the_option_above",
+        "rust_test_target:wrap_glued_option_rows_split_back_into_physical_rows",
         "rust_test_target:same_options_different_description_replaces_decision",
         "drift_source_anchor:src/screen_prompt.rs",
         "drift_source_anchor:src/app/screen_prompts.rs",
