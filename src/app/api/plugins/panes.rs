@@ -256,11 +256,8 @@ impl App {
             entrypoint.to_string(),
         ));
         env.push(("HERDR_PLUGIN_CONTEXT_JSON".to_string(), context_json));
-        if let Ok(current_exe) = std::env::current_exe() {
-            env.push((
-                "HERDR_BIN_PATH".to_string(),
-                current_exe.display().to_string(),
-            ));
+        if let Some(bin_path) = crate::api::herdr_bin_path() {
+            env.push(("HERDR_BIN_PATH".to_string(), bin_path));
         }
         Ok(env)
     }

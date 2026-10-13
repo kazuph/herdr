@@ -98,3 +98,88 @@ pub type ApiRequestSender = mpsc::UnboundedSender<ApiRequestMessage>;
 pub fn socket_path() -> PathBuf {
     crate::session::active_api_socket_path()
 }
+
+/// The binary path handed to plugins as `HERDR_BIN_PATH`. A Homebrew
+/// install runs from a versioned Cellar path (`…/Cellar/herdr/<ver>/bin/herdr`)
+/// that `brew upgrade` deletes, which would break every plugin still
+/// spawning the recorded path — the version-agnostic `opt` symlink (then
+/// the `bin` symlink) is substituted instead.
+pub fn herdr_bin_path() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    Some(stable_herdr_bin_path(&exe).display().to_string())
+}
+
+fn stable_herdr_bin_path(exe: &std::path::Path) -> PathBuf {
+    let mut parts = exe.iter();
+    let mut prefix = PathBuf::new();
+    while let Some(part) = parts.next() {
+        if part == "Cellar" {
+            // <prefix>/Cellar/<name>/<version>/bin/<bin>
+            let name = parts.next();
+            let bin = exe.file_name();
+            if let (Some(name), Some(bin)) = (name, bin) {
+                for candidate in [
+                    prefix.join("opt").join(name).join("bin").join(bin),
+                    prefix.join("bin").join(bin),
+                ] {
+                    if candidate.is_file() {
+                        return candidate;
+                    }
+                }
+            }
+            break;
+        }
+        prefix.push(part);
+    }
+    exe.to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stable_herdr_bin_path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn cellar_path_prefers_opt_symlink() {
+        let root = std::env::temp_dir().join(format!("herdr-brew-{}", std::process::id()));
+        let cellar = root.join("Cellar/herdr/0.2.35/bin");
+        std::fs::create_dir_all(&cellar).unwrap();
+        let exe = cellar.join("herdr");
+        std::fs::write(&exe, b"bin").unwrap();
+        let opt = root.join("opt/herdr/bin");
+        std::fs::create_dir_all(&opt).unwrap();
+        std::fs::write(opt.join("herdr"), b"opt").unwrap();
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::write(root.join("bin/herdr"), b"bin").unwrap();
+        assert_eq!(
+            stable_herdr_bin_path(&exe),
+            root.join("opt/herdr/bin/herdr")
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn cellar_path_falls_back_to_prefix_bin_then_self() {
+        let root = std::env::temp_dir().join(format!("herdr-brew2-{}", std::process::id()));
+        let cellar = root.join("Cellar/herdr/0.2.35/bin");
+        std::fs::create_dir_all(&cellar).unwrap();
+        let exe = cellar.join("herdr");
+        std::fs::write(&exe, b"bin").unwrap();
+        // No opt symlink: the unversioned <prefix>/bin/herdr wins.
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::write(root.join("bin/herdr"), b"bin").unwrap();
+        assert_eq!(stable_herdr_bin_path(&exe), root.join("bin/herdr"));
+        std::fs::remove_file(root.join("bin/herdr")).unwrap();
+        // Neither exists: keep the original executable path.
+        assert_eq!(stable_herdr_bin_path(&exe), exe);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn non_cellar_path_is_unchanged() {
+        let exe = PathBuf::from("/Users/x/.local/bin/herdr");
+        assert_eq!(stable_herdr_bin_path(&exe), exe);
+        let exe = Path::new("/opt/homebrew/bin/herdr").to_path_buf();
+        assert_eq!(stable_herdr_bin_path(&exe), exe);
+    }
+}

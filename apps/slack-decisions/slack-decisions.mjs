@@ -201,6 +201,36 @@ function loadCredentials(config, env = process.env) {
   return { token, channel, appToken, mention };
 }
 
+// The daemon outlives the server that launched it: a Homebrew install
+// records HERDR_BIN_PATH as a versioned Cellar path that `brew upgrade`
+// deletes, so every herdr invocation resolves the binary afresh — the
+// configured path while it exists, then PATH, then the usual prefixes.
+function resolveHerdrBin(config, logFn = () => {}) {
+  const configured = config.herdrBin;
+  if (configured && configured !== "herdr" && fs.existsSync(configured)) {
+    return configured;
+  }
+  const candidates = [
+    ...(process.env.PATH || "")
+      .split(path.delimiter)
+      .filter(Boolean)
+      .map((dir) => path.join(dir, "herdr")),
+    "/opt/homebrew/bin/herdr",
+    path.join(os.homedir(), ".local", "bin", "herdr"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      if (configured && configured !== "herdr" && !fs.existsSync(configured)) {
+        logFn(
+          `HERDR_BIN_PATH (${configured}) が存在しないため ${candidate} を使います`,
+        );
+      }
+      return candidate;
+    }
+  }
+  return null;
+}
+
 function execFileText(file, args, options = {}) {
   return new Promise((resolve) => {
     execFile(
@@ -1529,8 +1559,20 @@ export class SlackDecisionsDaemon {
 // --- process plumbing -----------------------------------------------------------
 
 function spawnDecisionWatch(config, logFn) {
+  const bin = resolveHerdrBin(config, logFn);
+  if (!bin) {
+    return {
+      lines: (async function* () {
+        throw new Error(
+          `herdr 実行ファイルが見つかりません (HERDR_BIN_PATH=${config.herdrBin})。` +
+            "PATH・/opt/homebrew/bin・~/.local/bin を確認してください",
+        );
+      })(),
+      close() {},
+    };
+  }
   const child = spawn(
-    config.herdrBin,
+    bin,
     ["decision", "watch", "--all-machines"],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -1575,14 +1617,33 @@ function spawnDecisionWatch(config, logFn) {
   };
 }
 
-function createRunAnswer(config) {
-  return (args) => execFileText(config.herdrBin, args, { timeoutMs: 60_000 });
+function createRunAnswer(config, logFn = () => {}) {
+  return (args) => {
+    const bin = resolveHerdrBin(config, logFn);
+    if (!bin) {
+      return Promise.resolve({
+        code: 127,
+        stdout: "",
+        stderr:
+          `herdr 実行ファイルが見つかりません (HERDR_BIN_PATH=${config.herdrBin})。` +
+          "PATH・/opt/homebrew/bin・~/.local/bin を確認してください",
+      });
+    }
+    return execFileText(bin, args, { timeoutMs: 60_000 });
+  };
 }
 
-function createGetDecision(config) {
+function createGetDecision(config, logFn = () => {}) {
   return async (machineId, decisionId) => {
+    const bin = resolveHerdrBin(config, logFn);
+    if (!bin) {
+      throw new Error(
+        `herdr 実行ファイルが見つかりません (HERDR_BIN_PATH=${config.herdrBin})。` +
+          "PATH・/opt/homebrew/bin・~/.local/bin を確認してください",
+      );
+    }
     const result = await execFileText(
-      config.herdrBin,
+      bin,
       ["decision", "get", decisionId, "--machine", machineId],
       { timeoutMs: 60_000 },
     );
@@ -1683,15 +1744,23 @@ async function ensureDaemon(config, env) {
       ["HERDR_PLUGIN_CONFIG_DIR", config.configDir],
       ["HERDR_PLUGIN_STATE_DIR", config.stateDir],
       ["HERDR_SOCKET_PATH", env.HERDR_SOCKET_PATH || ""],
-      ["HERDR_BIN_PATH", config.herdrBin],
+      ["HERDR_BIN_PATH", resolveHerdrBin(config, log) || config.herdrBin],
       ["PATH", env.PATH || ""],
     ]
       .filter(([, value]) => value)
       .map(([key, value]) => `${key}=${shellQuote(value)}`)
       .join(" ");
     const inner = `export ${exportsList}; exec node ${shellQuote(path.join(pluginRoot, "slack-decisions.mjs"))} run`;
+    const daemonBin = resolveHerdrBin(config, log);
+    if (!daemonBin) {
+      log(
+        `herdr 実行ファイルが見つかりません (HERDR_BIN_PATH=${config.herdrBin})。` +
+          "デーモンを起動できません",
+      );
+      return;
+    }
     const result = await execFileText(
-      config.herdrBin,
+      daemonBin,
       [
         "run",
         "--label",
@@ -1925,8 +1994,8 @@ async function main() {
     slack,
     botUserId,
     spawnWatch: () => Promise.resolve(spawnDecisionWatch(config, log)),
-    runAnswer: createRunAnswer(config),
-    getDecision: createGetDecision(config),
+    runAnswer: createRunAnswer(config, log),
+    getDecision: createGetDecision(config, log),
     glassesState: () => saberaGlassesState(config.saberaSocket),
     log,
     postsFilePath: path.join(config.stateDir, POSTS_FILE),
@@ -1960,6 +2029,8 @@ if (invokedAsScript) {
 
 export {
   buildDecisionBlocks,
+  createRunAnswer,
+  resolveHerdrBin,
   optionBlockChunks,
   decisionKey,
   deliverFile,
