@@ -49,6 +49,10 @@ struct ReconnectState {
     /// Tailscale SSH approval wait) when the endpoint retires or the client
     /// shuts down, so no ssh child is left behind.
     cancel: Option<Arc<AtomicBool>>,
+    /// Set by a user-clicked retry of a parked endpoint: the next spawned
+    /// attempt may rotate the shared approval record so its wait opens the
+    /// approval page once more. Automatic attempts carry false.
+    retry_open: bool,
 }
 
 impl ReconnectState {
@@ -61,6 +65,7 @@ impl ReconnectState {
             generation: None,
             online_since: None,
             cancel: None,
+            retry_open: false,
         }
     }
 }
@@ -156,6 +161,7 @@ impl EndpointSupervisors {
             let shutdown = self.shutdown.clone();
             let cancel = Arc::new(AtomicBool::new(false));
             state.cancel = Some(Arc::clone(&cancel));
+            let retry_open = std::mem::take(&mut state.retry_open);
             tokio::spawn(async move {
                 if shutdown.load(Ordering::Acquire) {
                     return;
@@ -170,6 +176,7 @@ impl EndpointSupervisors {
                         generation,
                         &cancel,
                         &progress_tx,
+                        retry_open,
                     )
                 })
                 .await;
@@ -278,14 +285,23 @@ impl EndpointSupervisors {
 
     /// Schedules an immediate new attempt for a parked endpoint (a machine
     /// whose Tailscale approval wait ended unapproved and the user asked to
-    /// retry). Returns false when an attempt is already running or the
-    /// endpoint is unknown.
+    /// retry). When an attempt is already running — for example still inside
+    /// its approval wait — the attempt is cancelled so a fresh one can claim
+    /// the rotated approval record promptly instead of the page opening only
+    /// after the remote side drops the ssh on its own schedule. Returns false
+    /// only for an unknown endpoint.
     pub(crate) fn retry(&mut self, endpoint_id: &ClientEndpointId, now: Instant) -> bool {
         let Some(state) = self.endpoints.get_mut(endpoint_id) else {
             return false;
         };
+        // The click is the user's explicit ask to revisit the approval page:
+        // let the next attempt rotate the shared record and open it again.
+        state.retry_open = true;
         if state.in_flight {
-            return false;
+            if let Some(cancel) = &state.cancel {
+                cancel.store(true, Ordering::Release);
+            }
+            return true;
         }
         state.attempts = 0;
         state.next_attempt = Some(now);
@@ -347,6 +363,7 @@ fn connect_once(
     generation: u64,
     cancel: &AtomicBool,
     progress: &tokio::sync::mpsc::Sender<EndpointSupervisorEvent>,
+    retry_open: bool,
 ) -> Result<EndpointSupervisorEvent, std::io::Error> {
     let (mut stream, lifetime): (_, Box<dyn Send>) = match target {
         ConnectTarget::Local(path) => {
@@ -382,6 +399,8 @@ fn connect_once(
                 &crate::remote::SavedSshHooks {
                     cancel,
                     status: &status,
+                    machine: &profile.id,
+                    retry_open,
                 },
             )?
         }
@@ -746,5 +765,116 @@ mod tests {
             "shutdown left an ssh child behind: {pids:?}"
         );
         drop(rx);
+    }
+
+    /// Waits for one endpoint's final (non-interim) status on a supervisor
+    /// event channel.
+    #[cfg(unix)]
+    async fn final_status(
+        rx: &mut tokio::sync::mpsc::Receiver<EndpointSupervisorEvent>,
+        endpoint_id: &ClientEndpointId,
+    ) -> (u64, ClientEndpointStatus) {
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                match rx.recv().await {
+                    Some(EndpointSupervisorEvent::Status {
+                        endpoint_id: id,
+                        generation,
+                        status,
+                        interim: false,
+                        ..
+                    }) if id == *endpoint_id => return (generation, status),
+                    Some(_) => {}
+                    None => panic!("event channel closed before the final status"),
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("no final status arrived"))
+    }
+
+    /// Two clients — two supervisors for the same saved machine — reconnect
+    /// into the same approval wait. The remote drops each waiting ssh like the
+    /// real tailssh does (the attempt ends as an ordinary reconnect, so both
+    /// clients keep retrying automatically), yet the shared approval record
+    /// keeps the browser opens at one in total. A user-clicked retry opens the
+    /// page once more; automatic reconnects afterwards stay silent.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tailscale_approval_opens_once_across_clients_until_a_manual_retry() {
+        let _fake = crate::remote::test_fakes::FakeSsh::new("two-clients")
+            .with_banner("https://login.tailscale.com/a/shared")
+            .with_approve_gate()
+            // The remote side drops the waiting ssh quickly, so each attempt
+            // ends as an ordinary reconnect instead of our approval timeout.
+            .with_env_text("FAKE_SSH_APPROVE_WAIT_MS", "250");
+        let opened: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        crate::remote::test_hooks::set_open_url_hook(Some(std::sync::Arc::new({
+            let opened = std::sync::Arc::clone(&opened);
+            move |url: &str| {
+                opened
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(url.to_owned());
+                Ok(())
+            }
+        })));
+        let opened_count = || {
+            opened
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len()
+        };
+        let now = Instant::now();
+        let mut waiting = profile("waiting");
+        waiting.target = "gate-host".into();
+        let waiting_id = ClientEndpointId::Ssh("waiting".into());
+        let mut client_a = EndpointSupervisors::new(std::slice::from_ref(&waiting), now);
+        let mut client_b = EndpointSupervisors::new(&[waiting], now);
+        let (tx_a, mut rx_a) = tokio::sync::mpsc::channel(16);
+        let (tx_b, mut rx_b) = tokio::sync::mpsc::channel(16);
+
+        // Several rounds of automatic reconnects from both clients — the
+        // compressed stand-in for the repeating approval waits — still open
+        // the page once in total.
+        let mut current = now;
+        for _ in 0..4 {
+            client_a.spawn_due(current, options(), &tx_a);
+            client_b.spawn_due(current, options(), &tx_b);
+            let (generation_a, status_a) = final_status(&mut rx_a, &waiting_id).await;
+            let (generation_b, status_b) = final_status(&mut rx_b, &waiting_id).await;
+            assert_eq!(status_a, ClientEndpointStatus::Reconnecting);
+            assert_eq!(status_b, ClientEndpointStatus::Reconnecting);
+            assert!(client_a.record_status(&waiting_id, generation_a, status_a, current));
+            assert!(client_b.record_status(&waiting_id, generation_b, status_b, current));
+            current += Duration::from_secs(600);
+        }
+        assert_eq!(
+            opened_count(),
+            1,
+            "two clients must open the approval page once in total"
+        );
+
+        // The user-clicked retry rotates the record and opens the page once
+        // more; the other client's next automatic reconnect stays silent.
+        assert!(client_a.retry(&waiting_id, current));
+        client_a.spawn_due(current, options(), &tx_a);
+        client_b.spawn_due(current, options(), &tx_b);
+        let (generation_a, status_a) = final_status(&mut rx_a, &waiting_id).await;
+        let (generation_b, status_b) = final_status(&mut rx_b, &waiting_id).await;
+        client_a.record_status(&waiting_id, generation_a, status_a, current);
+        client_b.record_status(&waiting_id, generation_b, status_b, current);
+        assert_eq!(
+            opened_count(),
+            2,
+            "a user-clicked retry opens the approval page once more"
+        );
+        assert!(
+            _fake.all_dead(Duration::from_secs(5)),
+            "reconnect churn left an ssh child behind"
+        );
+        drop(rx_a);
+        drop(rx_b);
     }
 }
