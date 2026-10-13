@@ -2309,3 +2309,7 @@
   - `DIVERGE` が1件でもあれば終了code 1、無ければ 0 を返す。
   - ai_guard ログの ISO8601（オフセット付き）時刻とタブ区切り行を解釈し、解釈できない行を集計から落とさないよう数える。
 - **デグレ判定**: record モードでコマンドや判断待ちを止める経路を足す、enforce で marker の無いペインや `enabled = false` のペインへ差し込む、人のペインで記録を残す、本番の state ディレクトリ以外に書く、`compare` が食い違いを終了codeへ反映しない。
+
+### 起動差し込みの検証記録（2026-10-13）
+
+macOS の本物の Claude Code を default 権限、検証用 rm 一つの許可、一時 HOME・XDG・名前付き session で確認した。手動起動、同じ pane の再起動、判断待ち中の live handoff、server 冷再起動後の実 session 復元、対話 bash は herdr の判断待ちへ届き、ai_guard のログは増えなかった。起動時に未適用の既存 pane は stderr と実 TUI に pane・理由・回復方法を表示し、新しい pane での起動後は判断待ちへ届いた。人の pane は判定・記録なし、record は ask を記録して実行を止めない。未印 pane の実 rm の交互比較で追加時間の中央値は 0.0291ms/回（契約上限 1ms）。詳細・保存出力・途中の失敗と修正はローカルの `.local/prd/RESULT-guard-coverage.md` に記録する。record の実証は ai_guard を読み込まない検証専用起動設定で行い、別系統の ai_guard を無効化する製品機能は追加していない。

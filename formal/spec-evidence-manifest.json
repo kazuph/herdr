@@ -12701,7 +12701,7 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "The 1ms unmarked budget is covered by the measured dogfood run in RESULT.md, not by an automated bench"
+        "Unmarked real rm interleaved benchmark: seven samples of 500 commands, median added 0.0291ms below the 1ms contract; local performance.json is referenced by RESULT-guard-coverage.md. Other machines remain unmeasured."
       ]
     },
     {
@@ -12716,7 +12716,8 @@
         "rust_test_target:zshenv_restores_zdotdir_and_does_not_shadow",
         "rust_test_target:bash_env_chain_loads_and_does_not_shadow",
         "drift_source_anchor:src/guard/assets.rs",
-        "platform_live_acceptance:unverified"
+        "platform_live_acceptance:unverified",
+        "rust_test_target:login_zsh_keeps_shim_first_after_startup"
       ],
       "source_anchors": [
         "SPEC.md:2268",
@@ -12731,7 +12732,7 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "Restore semantics are unit-covered by script assertions and verified live in a real-HOME isolated session; interactive bash still relies on PATH shims"
+        "Real zsh startup verifies user ZDOTDIR and HISTFILE preservation. Real interactive bash verifies delayed enforcing and shim-first first prompt; macOS Claude snapshot acceptance is recorded in RESULT-guard-coverage.md. Other POSIX live acceptance remains unverified."
       ]
     },
     {
@@ -13009,7 +13010,7 @@
       "verification_methods": [
         "rust_test_target:login_zsh_keeps_shim_first_after_startup",
         "rust_test_target:coverage_requires_supported_matching_launch_and_bash_prompt",
-        "platform_live_acceptance:unverified"
+        "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
       ],
       "source_anchors": [
         "SPEC.md:2270",
@@ -13019,13 +13020,13 @@
         "src/app/agent_resume.rs:317"
       ],
       "test_status": [
-        "unverified"
+        "static_verified"
       ],
       "live_status": [
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "Real Claude retest and TUI acceptance are pending; see local RESULT-guard-coverage.md"
+        "macOS real Claude default-mode evidence, exact tool commands, pending IDs, shim-first dispatch environment, ai_guard counts and real TUI assertions are saved in .local/prd/RESULT-guard-coverage.md. Linux live acceptance remains unverified; unsupported shell suppression is covered by the launch environment test."
       ]
     },
     {
@@ -13038,9 +13039,9 @@
       "verification_methods": [
         "rust_test_target:login_zsh_keeps_shim_first_after_startup",
         "rust_test_target:coverage_requires_supported_matching_launch_and_bash_prompt",
-        "platform_live_acceptance:unverified",
         "rust_test_target:interactive_bash_acknowledges_path_only_after_user_startup",
-        "rust_test_target:unsupported_pane_shell_never_suppresses_ai_guard"
+        "rust_test_target:unsupported_pane_shell_never_suppresses_ai_guard",
+        "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
       ],
       "source_anchors": [
         "SPEC.md:2271",
@@ -13049,13 +13050,13 @@
         "src/app/guard.rs:30"
       ],
       "test_status": [
-        "unverified"
+        "static_verified"
       ],
       "live_status": [
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "Real Claude retest and TUI acceptance are pending; see local RESULT-guard-coverage.md"
+        "macOS real Claude default-mode evidence, exact tool commands, pending IDs, shim-first dispatch environment, ai_guard counts and real TUI assertions are saved in .local/prd/RESULT-guard-coverage.md. Linux live acceptance remains unverified; unsupported shell suppression is covered by the launch environment test."
       ]
     },
     {
@@ -13068,7 +13069,7 @@
       "verification_methods": [
         "rust_test_target:login_zsh_keeps_shim_first_after_startup",
         "rust_test_target:coverage_requires_supported_matching_launch_and_bash_prompt",
-        "platform_live_acceptance:unverified"
+        "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
       ],
       "source_anchors": [
         "SPEC.md:2272",
@@ -13078,13 +13079,13 @@
         "src/client/endpoint/frontend/notice.rs:67"
       ],
       "test_status": [
-        "unverified"
+        "static_verified"
       ],
       "live_status": [
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "Real Claude retest and TUI acceptance are pending; see local RESULT-guard-coverage.md"
+        "macOS real Claude default-mode evidence, exact tool commands, pending IDs, shim-first dispatch environment, ai_guard counts and real TUI assertions are saved in .local/prd/RESULT-guard-coverage.md. Linux live acceptance remains unverified; unsupported shell suppression is covered by the launch environment test."
       ]
     }
   ]
