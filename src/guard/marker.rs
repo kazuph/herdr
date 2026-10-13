@@ -112,6 +112,7 @@ fn remove_path(path: &Path) {
 /// startup so markers and forwarders from a dead server cannot mislabel
 /// fresh panes.
 pub(crate) fn clear_all() {
+    crate::guard::coverage::clear_all();
     let dir = crate::guard::marker_dir();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {

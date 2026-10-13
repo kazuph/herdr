@@ -11,6 +11,7 @@
 
 pub(crate) mod assets;
 pub(crate) mod compare;
+pub(crate) mod coverage;
 pub(crate) mod enforce;
 pub(crate) mod judge;
 pub(crate) mod marker;

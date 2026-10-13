@@ -15,6 +15,9 @@ use crate::layout::PaneId;
 pub struct TerminalRuntime(crate::pane::PaneRuntime);
 
 impl TerminalRuntime {
+    pub(crate) fn guard_launch(&self) -> Option<&crate::guard::coverage::GuardLaunch> {
+        self.0.guard_launch.as_ref()
+    }
     pub fn shutdown(self) {
         self.0.shutdown();
     }

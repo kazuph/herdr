@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct HandoffRuntimeState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_launch: Option<crate::guard::coverage::GuardLaunch>,
     pub pane_id: u32,
     pub child_pid: u32,
     pub rows: u16,
