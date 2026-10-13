@@ -944,10 +944,32 @@ pub(crate) fn confirm_danger_button_rects(inner: Rect) -> (Rect, Rect) {
     (rects[0], rects[1])
 }
 
-const DECISION_DIALOG_WIDTH: u16 = 64;
+const DECISION_DIALOG_WIDTH: u16 = 80;
 const DECISION_DIALOG_MAX_HEIGHT: u16 = 22;
 /// Description rows are inset this many columns under the option label.
 const DECISION_OPTION_DESC_INDENT: u16 = 3;
+/// Uniform left/right margin inside the border; every row of the dialog
+/// (header, content, options, footer) shares it.
+const DECISION_DIALOG_PAD: u16 = 1;
+/// Header context shown when a decision carries no resolvable origin.
+const DECISION_ORIGIN_UNKNOWN: &str = "出どころ不明";
+
+/// Fit the `workspace › tab › pane (agent)` context into the header by first
+/// dropping leading segments (the tail — pane and agent — identifies the
+/// decision best) and only then truncating the text itself.
+fn elide_header_summary(summary: &str, budget: u16) -> String {
+    if display_width_u16(summary) <= budget {
+        return summary.to_string();
+    }
+    let segments: Vec<&str> = summary.split(" › ").collect();
+    for drop in 1..segments.len() {
+        let candidate = format!("… › {}", segments[drop..].join(" › "));
+        if display_width_u16(&candidate) <= budget {
+            return candidate;
+        }
+    }
+    truncate_end(summary, budget as usize)
+}
 
 /// One selectable option: its label plus the optional detail text shown
 /// wrapped below it (Claude Code AskUserQuestion descriptions).
@@ -960,6 +982,10 @@ pub(crate) struct DecisionDialogOption {
 /// caller (machine label, queue position, remaining time).
 pub(crate) struct DecisionDialogFacts {
     pub machine: String,
+    /// Where the decision came from, resolved by the caller for the header
+    /// (workspace/tab/pane/agent names). `None` renders an explicit
+    /// unknown-origin marker instead of a blank.
+    pub origin_summary: Option<String>,
     /// 1-based position inside the pending queue.
     pub position: usize,
     pub total: usize,
@@ -1069,7 +1095,7 @@ pub(crate) fn decision_dialog_rects(
     // options + footer); only when the content outgrows the cap does the
     // middle band scroll.
     let popup_w = DECISION_DIALOG_WIDTH.min(area.width.saturating_sub(4));
-    let content_width = popup_w.saturating_sub(2);
+    let content_width = popup_w.saturating_sub(2 + 2 * DECISION_DIALOG_PAD);
     if content_width == 0 {
         return None;
     }
@@ -1093,11 +1119,21 @@ pub(crate) fn decision_dialog_rects(
         popup.width.saturating_sub(2),
         popup.height.saturating_sub(2),
     );
+    let padded = Rect::new(
+        inner.x + DECISION_DIALOG_PAD.min(inner.width / 2),
+        inner.y,
+        inner.width.saturating_sub(2 * DECISION_DIALOG_PAD),
+        inner.height,
+    );
     // The band keeps at most what is left after header, a minimal content
     // row, the text row, and the footer; overflow scrolls.
     let band_height = total_option_rows
         .max(1)
-        .min(inner.height.saturating_sub(3 + u16::from(facts.allow_text)))
+        .min(
+            padded
+                .height
+                .saturating_sub(3 + u16::from(facts.allow_text)),
+        )
         .max(1);
     let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
     if facts.allow_text {
@@ -1105,7 +1141,7 @@ pub(crate) fn decision_dialog_rects(
     }
     constraints.push(Constraint::Length(band_height));
     constraints.push(Constraint::Length(1));
-    let slots = Layout::vertical(constraints).split(inner);
+    let slots = Layout::vertical(constraints).split(padded);
     let mut cursor = 2usize;
     let text = facts.allow_text.then(|| {
         let rect = slots[cursor];
@@ -1182,7 +1218,7 @@ pub(crate) fn decision_dialog_content_lines(
         lines.push(Line::default());
         for (label, value) in &facts.origin {
             lines.push(Line::from(vec![
-                Span::styled(format!(" {label}: "), Style::default().fg(palette.overlay0)),
+                Span::styled(format!("{label}: "), Style::default().fg(palette.overlay0)),
                 Span::styled(value.clone(), Style::default().fg(palette.subtext0)),
             ]));
         }
@@ -1190,7 +1226,7 @@ pub(crate) fn decision_dialog_content_lines(
     if let Some(remaining) = &facts.remaining {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
-            format!(" expires in {remaining}"),
+            format!("expires in {remaining}"),
             Style::default().fg(palette.peach),
         )));
     }
@@ -1222,16 +1258,30 @@ pub(crate) fn render_decision_dialog(
         return None;
     }
 
-    let header = Rect::new(inner.x, inner.y, inner.width, 1);
-    render_modal_header(frame, header, " decision", palette);
-    let machine = format!(" {} · {}/{}", facts.machine, facts.position, facts.total);
-    let machine_x = header
+    let header = Rect::new(rects.options_band.x, inner.y, rects.options_band.width, 1);
+    render_modal_header(frame, header, "decision", palette);
+    let summary = facts
+        .origin_summary
+        .as_deref()
+        .filter(|summary| !summary.trim().is_empty())
+        .unwrap_or(DECISION_ORIGIN_UNKNOWN);
+    let tail = format!(" · {}/{}", facts.position, facts.total);
+    let prefix = format!(" {} · ", facts.machine);
+    let context_x = header
         .x
-        .saturating_add(display_width_u16(" decision "))
+        .saturating_add(display_width_u16("decision "))
         .min(header.right());
+    let context_width = header.right().saturating_sub(context_x);
+    let summary_width = context_width
+        .saturating_sub(display_width_u16(&tail))
+        .saturating_sub(display_width_u16(&prefix));
+    let context = format!(
+        "{prefix}{}{tail}",
+        elide_header_summary(summary, summary_width)
+    );
     frame.render_widget(
-        Paragraph::new(Span::styled(machine, Style::default().fg(palette.overlay0))),
-        Rect::new(machine_x, header.y, header.right() - machine_x, 1),
+        Paragraph::new(Span::styled(context, Style::default().fg(palette.overlay0))),
+        Rect::new(context_x, header.y, context_width, 1),
     );
 
     frame.render_widget(
@@ -1243,11 +1293,18 @@ pub(crate) fn render_decision_dialog(
     );
 
     if let Some(text) = rects.text {
-        let style = Style::default().fg(palette.text).bg(palette.surface0);
-        frame.render_widget(
-            Paragraph::new(format!(" {}", facts.text)).style(style),
-            text,
-        );
+        let (value, style) = if facts.text.is_empty() {
+            (
+                " type a response (optional)".to_string(),
+                Style::default().fg(palette.overlay0).bg(palette.surface0),
+            )
+        } else {
+            (
+                format!(" {}", facts.text),
+                Style::default().fg(palette.text).bg(palette.surface0),
+            )
+        };
+        frame.render_widget(Paragraph::new(value).style(style), text);
     }
 
     let band = rects.options_band;
@@ -1272,12 +1329,7 @@ pub(crate) fn render_decision_dialog(
                 Style::default().fg(palette.text).bg(palette.surface0)
             };
             frame.render_widget(
-                Paragraph::new(format!(
-                    " {} ",
-                    truncate_end(&option.label, band.width as usize)
-                ))
-                .style(style)
-                .alignment(ratatui::layout::Alignment::Center),
+                Paragraph::new(truncate_end(&option.label, band.width as usize)).style(style),
                 Rect::new(band.x, band.y + option_top - option_scroll, band.width, 1),
             );
         }
@@ -1310,12 +1362,12 @@ pub(crate) fn render_decision_dialog(
 
     if !facts.keyboard_active {
         frame.render_widget(
-            Paragraph::new(" click the dialog to use the keyboard")
+            Paragraph::new("click the dialog to use the keyboard")
                 .style(Style::default().fg(palette.overlay0)),
             Rect::new(
-                inner.x,
+                header.x,
                 rects.close.y,
-                rects.confirm.x.saturating_sub(inner.x),
+                rects.confirm.x.saturating_sub(header.x),
                 1,
             ),
         );
@@ -1477,6 +1529,7 @@ mod shared_dialog_tests {
     fn decision_facts(body: Option<&str>, allow_text: bool, options: usize) -> DecisionDialogFacts {
         DecisionDialogFacts {
             machine: "Local".into(),
+            origin_summary: Some("ws › tab › pane (agent)".into()),
             position: 1,
             total: 1,
             title: "title".into(),
@@ -1665,5 +1718,137 @@ mod shared_dialog_tests {
             assert!(seen.contains(&format!("d{index}")), "missing d{index}");
         }
         assert!(seen.contains("tailmarkerXYZ"));
+    }
+
+    fn decision_buffer(
+        facts: &DecisionDialogFacts,
+        palette: &Palette,
+        width: u16,
+        height: u16,
+    ) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_decision_dialog(frame, Rect::new(0, 0, width, height), facts, palette);
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn buffer_row_text(buffer: &ratatui::buffer::Buffer, y: u16, x: u16, width: u16) -> String {
+        (x..x + width)
+            .map(|x| buffer.cell((x, y)).map(|cell| cell.symbol()).unwrap_or(" "))
+            .collect()
+    }
+
+    #[test]
+    fn decision_dialog_header_shows_resolved_origin_context() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let mut facts = decision_facts(None, false, 2);
+        facts.origin_summary = Some("herdr › main › claude (claude)".into());
+        let rects =
+            decision_dialog_rects(Rect::new(0, 0, 140, 40), &facts, &palette).expect("rects");
+
+        let buffer = decision_buffer(&facts, &palette, 140, 40);
+        let header = buffer_row_text(&buffer, rects.popup.y + 1, rects.popup.x, rects.popup.width);
+        assert!(
+            header.contains("herdr › main › claude (claude)"),
+            "{header:?}"
+        );
+        assert!(header.contains("Local"), "{header:?}");
+        assert!(header.contains("1/1"), "{header:?}");
+    }
+
+    #[test]
+    fn decision_dialog_header_marks_unknown_origin_and_truncates_long_context() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let mut facts = decision_facts(None, false, 2);
+        facts.origin_summary = None;
+        let rects =
+            decision_dialog_rects(Rect::new(0, 0, 140, 40), &facts, &palette).expect("rects");
+        let buffer = decision_buffer(&facts, &palette, 140, 40);
+        let header = buffer_row_text(&buffer, rects.popup.y + 1, rects.popup.x, rects.popup.width);
+        // Wide characters occupy a reset cell after them, so compare without spaces.
+        let compact: String = header.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(compact.contains("出どころ不明"), "{header:?}");
+
+        // A very long context keeps the identifying tail (pane and agent)
+        // while the queue position survives.
+        facts.origin_summary = Some(format!("{} › tab › pane (agent)", "w".repeat(120)));
+        let buffer = decision_buffer(&facts, &palette, 140, 40);
+        let header = buffer_row_text(&buffer, rects.popup.y + 1, rects.popup.x, rects.popup.width);
+        assert!(header.contains("pane (agent)"), "{header:?}");
+        assert!(header.contains('…'), "{header:?}");
+        assert!(header.contains("1/1"), "{header:?}");
+    }
+
+    #[test]
+    fn decision_dialog_pads_every_row_and_shows_no_empty_band() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let mut facts = decision_facts(Some("body line"), true, 2);
+        facts.origin = vec![
+            ("pane".into(), "p2293".into()),
+            ("agent".into(), "claude".into()),
+            ("cwd".into(), "/repo/herdr".into()),
+            ("reason".into(), "screen_prompt".into()),
+        ];
+        let rects =
+            decision_dialog_rects(Rect::new(0, 0, 140, 40), &facts, &palette).expect("rects");
+        let buffer = decision_buffer(&facts, &palette, 140, 40);
+
+        // Every row inside the popup keeps one blank column of margin next to
+        // the border on both sides.
+        for y in (rects.popup.y + 1)..(rects.popup.y + rects.popup.height - 1) {
+            for x in [rects.popup.x + 1, rects.popup.x + rects.popup.width - 2] {
+                let cell = buffer.cell((x, y)).expect("cell");
+                assert_eq!(cell.symbol(), " ", "expected margin at ({x},{y})");
+            }
+        }
+
+        // No row is a meaningless empty band: each painted surface row holds
+        // text (option labels or the empty-text placeholder).
+        for y in (rects.popup.y + 1)..(rects.popup.y + rects.popup.height - 1) {
+            let mut surface_cells = 0usize;
+            let mut surface_text = String::new();
+            for x in (rects.popup.x + 2)..(rects.popup.x + rects.popup.width - 2) {
+                let cell = buffer.cell((x, y)).expect("cell");
+                if cell.bg == palette.surface0 {
+                    surface_cells += 1;
+                    surface_text.push_str(cell.symbol());
+                }
+            }
+            if surface_cells > 0 {
+                assert!(
+                    !surface_text.trim().is_empty(),
+                    "row {y} is an empty surface band"
+                );
+            }
+        }
+
+        let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(text.contains("type a response (optional)"), "{text}");
+        assert!(text.contains("pane: p2293"), "{text}");
+    }
+
+    #[test]
+    fn decision_dialog_options_are_left_aligned_with_content() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let mut facts = decision_facts(None, false, 2);
+        facts.options[0].label = "short".into();
+        facts.options[1].label = "also short".into();
+        let rects =
+            decision_dialog_rects(Rect::new(0, 0, 140, 40), &facts, &palette).expect("rects");
+        let buffer = decision_buffer(&facts, &palette, 140, 40);
+
+        // Option labels start at the same column as the content text, not
+        // centered inside the band.
+        let first = buffer_row_text(
+            &buffer,
+            rects.options[0].y,
+            rects.options_band.x,
+            rects.options_band.width,
+        );
+        assert!(first.starts_with("short"), "{first:?}");
+        assert_eq!(rects.options_band.x, rects.popup.x + 2);
     }
 }

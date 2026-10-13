@@ -265,6 +265,95 @@ pub(super) fn hides_terminal_cursor(frontend: &ClientFrontend) -> bool {
         .is_some_and(|dialog| dialog.keyboard)
 }
 
+/// Header context for the dialog: "workspace › tab › pane (agent)" resolved
+/// from the owning endpoint's snapshot so the user can see which space and
+/// pane asked without reading the body. Returns `None` when nothing is
+/// resolvable (the dialog then shows an explicit unknown-origin marker).
+fn origin_summary(frontend: &ClientFrontend, pending: &PendingDecision) -> Option<String> {
+    let origin = pending.decision.origin.as_ref()?;
+    let pane_id = origin
+        .pane_id
+        .as_deref()
+        .filter(|pane_id| !pane_id.is_empty());
+    let endpoint = frontend.runtime.shell.endpoint(&pending.key.endpoint);
+    let snapshot =
+        endpoint.and_then(|endpoint| endpoint.cache.live_snapshot(pending.key.generation));
+    let pane = pane_id.and_then(|pane_id| {
+        snapshot.and_then(|snapshot| snapshot.panes.iter().find(|pane| pane.pane_id == pane_id))
+    });
+    let pane_facts = pane_id.and_then(|pane_id| endpoint?.cache.displayed_pane_facts(pane_id));
+    let agent_entry = pane_id.and_then(|pane_id| {
+        snapshot.and_then(|snapshot| {
+            snapshot
+                .agents
+                .iter()
+                .find(|agent| agent.pane_id == pane_id)
+        })
+    });
+
+    let mut path = Vec::new();
+    if let (Some(snapshot), Some(pane)) = (snapshot, pane) {
+        if let Some(workspace) = snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == pane.workspace_id)
+        {
+            if !workspace.label.is_empty() {
+                path.push(workspace.label.clone());
+            }
+        }
+        if let Some(tab) = snapshot.tabs.iter().find(|tab| tab.tab_id == pane.tab_id) {
+            if !tab.label.is_empty() {
+                path.push(tab.label.clone());
+            }
+        }
+    }
+    let pane_name = pane
+        .and_then(|pane| pane.label.clone())
+        .or_else(|| pane_facts.and_then(|facts| facts.effective_title.clone()))
+        .or_else(|| {
+            agent_entry.and_then(|agent| {
+                agent
+                    .terminal_title_stripped
+                    .clone()
+                    .or_else(|| agent.terminal_title.clone())
+                    .or_else(|| agent.title.clone())
+            })
+        })
+        .filter(|name| !name.is_empty());
+    if let Some(pane_name) = pane_name {
+        path.push(pane_name);
+    }
+    let agent = pane_facts
+        .and_then(|facts| {
+            facts
+                .display_agent
+                .clone()
+                .or_else(|| facts.agent_label.clone())
+                .or_else(|| facts.agent_name.clone())
+        })
+        .or_else(|| {
+            agent_entry.and_then(|agent| {
+                agent
+                    .display_agent
+                    .clone()
+                    .or_else(|| agent.agent.clone())
+                    .or_else(|| agent.name.clone())
+            })
+        })
+        .or_else(|| origin.agent.clone())
+        .filter(|agent| !agent.is_empty());
+    let mut summary = path.join(" › ");
+    if let Some(agent) = agent.filter(|agent| Some(agent) != path.last()) {
+        summary = if summary.is_empty() {
+            agent
+        } else {
+            format!("{summary} ({agent})")
+        };
+    }
+    (!summary.is_empty()).then_some(summary)
+}
+
 fn origin_rows(origin: &DecisionOrigin) -> Vec<(String, String)> {
     let mut rows = Vec::new();
     let mut push = |label: &str, value: &Option<String>| {
@@ -309,6 +398,7 @@ fn facts(
         .map_or(1, |index| index + 1);
     Some(crate::ui::DecisionDialogFacts {
         machine: pending.machine.clone(),
+        origin_summary: origin_summary(frontend, pending),
         position,
         total,
         title: pending.decision.title.clone(),

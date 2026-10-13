@@ -1912,18 +1912,20 @@
 - **挙動**:
   - serverは接続中の各endpoint clientへ、pending判断待ちの全件リストをboot_id・projection revision付きのEndpointControl projectionとしてpushする。判断待ちの作成・回答・取消・期限切れイベントでprojectionを更新し、非active（surfaceをpresentしていない）clientにも届ける。clientはこのprojectionだけをpendingの根拠とし、自前で判断待ち状態を合成しない。
   - endpoint client shellは接続中の全endpointのprojectionを束ね、`created_unix_ms`の古い順に並べて1件ずつdialogへ出す。dialogはtitle・body・マシン表示名・origin情報（存在する分）・選択肢・`N/M`形式のキュー位置・`expires_unix_ms`がある場合の残り時間を表示し、本文・commandが長い場合は枠内で折返しまたはscrollする。`description`を持つ選択肢はlabelの下に説明文を折り返して全文表示し、dialogへ収まらない時は選択肢帯のscrollと選択中選択肢への追従で全行へたどり着ける。見た目・Esc・閉じる操作は既存のmodal/dialogパターンに従う。
+  - dialogの見出しはマシン表示名と`N/M`に加えて、出どころのpaneを所有endpointのsnapshot（workspace/tab/pane/agent情報）から解決したスペース名・タブ・ペイン名（labelか端末の題名）・エージェント名を`workspace › tab › pane (agent)`形で出し、解決できる出どころが1つも無い判断待ちは「出どころ不明」と明示する（黙って空にしない。長い場合は省略記号で切り、全文は従来のorigin行に残る）。dialog内の全行は左右同じ余白（少なくとも1文字）を持ち、意味の無い空行・帯を出さず、選択肢は既存の選択リストと同じく左寄せで、`allow_text`の空のtext入力は内容が分かるplaceholderを出す。
   - 選択肢のクリックはその選択肢を選ぶだけに留め（選択中の選択肢はaccentの強調表示で分かる）、`↵ confirm`ボタンまたはEnterがその判断待ちを所有するendpointへ`decision.answer`を送る。`responder`にはUI由来を示す値（`client`）を入れる。`allow_text`の判断待ちはtext入力欄を表示し、入力したtextを回答へ添える。回答対象のendpointはpresenting endpointでなくてもよい。
   - dialogが開いていても、dialog内をクリックするまではキーボード入力はpaneへそのまま届き、Enter一発で誤回答しない既定動作はない。dialog内のクリックでキーボードがdialogへ移り、上下キーの選択・Enterの確定・text入力が有効になる。Escまたはcloseボタンで回答せず閉じる。
   - 回答せず閉じた判断待ちが残る間は`! N`形式の目印をアクションバーへ出し、クリックで同じ判断待ちのdialogを再表示する。
   - 別のclient・CLI・pluginなど他の受け口で回答・取消・期限切れになった判断待ちは、次のprojectionでdialogと目印から自動で消える。endpointが切断されたマシンの判断待ちはqueueから外れ、再接続ではserverのprojectionから復帰する。
 - **受け入れ条件**:
   - localを含む接続中マシンで作ったpending判断待ちがdialogへ出て、title・body・マシン名・origin・選択肢・残り時間・`N/M`カウントを表示し、最古が先に出る。
+  - dialogの見出しが出どころのスペース名・タブ・ペイン名・エージェント名を含み、出どころを解決できない判断待ちは「出どころ不明」と出る。全行が左右同じ余白で揃い、空の帯が無く、選択肢は左寄せになる。
   - 選択肢クリックは回答を送らずその選択肢の選択（強調表示）だけを行い、決定ボタンまたはEnterが所有マシンへ`decision.answer`を送り、store上の回答が`responder="client"`と選んだoption_idになる。`allow_text`では入力textが届く。
   - dialogをクリックするまでキーボードはpaneへ届き、クリック後はキー操作だけで選択・確定・text入力できる。
   - 閉じたあとも件数目印が残り、クリックでdialogが再表示される。
   - `decision.answer`/取消/期限切れを別経路で行うとdialogと目印が消え、endpoint切断でそのマシン分がqueueから外れ、再接続で復帰する。
   - 選択肢の`description`がその選択肢labelの下に欠けず表示され、dialogへ収まらない時もscroll・選択追従で全文へたどり着ける。クリック選択・決定ボタン/Enterの回答経路は従来どおり。
-- **検証契約**: Rust unit testsでqueueの対象・順序・カウント・選択と確定の分離・close/reopen・外部解決・切断除去・選択肢説明文の折返し表示と選択肢帯scrollを固定し、実socket経由のactual-process testで選択クリック→決定ボタン→`decision.answer`送信→store反映→外部解決での消去を固定する。隔離server上の`herdr decision ask`とANSI/画面証拠で実地確認する。
+- **検証契約**: Rust unit testsでqueueの対象・順序・カウント・選択と確定の分離・close/reopen・外部解決・切断除去・選択肢説明文の折返し表示と選択肢帯scroll・見出しの出どころ表示（解決済み・出どころ不明・長い場合の省略）・全行の余白と空の帯が無いことを固定し、実socket経由のactual-process testで選択クリック→決定ボタン→`decision.answer`送信→store反映→外部解決での消去を固定する。隔離server上の`herdr decision ask`とANSI/画面証拠で実地確認する。
 - **デグレ判定**: clientがprojection以外の根拠でpending判断待ちを作る、選択肢の1クリックだけやdialog外クリック・未focusのEnterで誤回答できる、閉じた判断待ちを二度と開けない、他マシンへの回答がactive endpoint以外へ届かない。
 
 ### 判断待ちの配信とマシン横断回答（decision watch、工程3A）
