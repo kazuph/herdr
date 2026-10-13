@@ -1887,12 +1887,13 @@
 - **status: fork独自・保持 (C)** — 危険commandの承認、agentからの質問、tool許可など人の判断を要する場面をserver側の共有状態として保持し、複数の受け口が同じ判断へ答えられる基盤を保持する。
 - **目的**: 判断待ちをTUI内の状態ではなくserverが所有する永続recordにし、どのclientが先に答えても最初の1件だけが採用される構造を作る。
 - **挙動**:
-  - 判断待ちは`dec-`で始まるID、`kind`（`command_guard`/`tool_permission`/`agent_prompt`/`ask`のいずれか）、必須の`title`、任意の`body`、1個以上の`options`（`id`・`label`・`role`・任意の`description`（選択肢ごとの説明文。無ければJSONへ出さない）、roleは`approve`/`reject`/`other`、idの重複はエラー）、既定falseの`allow_text`、任意の`origin`（`pane_id`/`agent`/`cwd`/`branch`/`command`/`reason`/`machine`）、`created_unix_ms`、`expires_unix_ms`（`timeout_ms`から計算、省略時は期限なし）、`status`（`pending`/`answered`/`expired`/`cancelled`）、`answer`（`option_id`/`text`/`responder`/`answered_unix_ms`）を持ち、dispatch DBの`decisions`表へ永続化する。
+  - 判断待ちは`dec-`で始まるID、`kind`（`command_guard`/`tool_permission`/`agent_prompt`/`ask`のいずれか）、必須の`title`、任意の`body`、1個以上の`options`（`id`・`label`・`role`・任意の`description`（選択肢ごとの説明文。無ければJSONへ出さない）・任意の`preview`（選択肢ごとの等幅プレビュー）・`preview_unavailable`（プレビューがあるのに未取得の時true）、roleは`approve`/`reject`/`other`、idの重複はエラー）、既定falseの`allow_text`、既定falseの`multi_select`、任意の`question_label`（質問の短いラベルと`質問 N/M`の進み具合）、任意の`origin`（`pane_id`/`agent`/`cwd`/`branch`/`command`/`reason`/`machine`/`workspace_label`/`tab_label`/`pane_label`）、`created_unix_ms`、`expires_unix_ms`（`timeout_ms`から計算、省略時は期限なし）、`status`（`pending`/`answered`/`expired`/`cancelled`）、`answer`（`option_id`/`option_ids`/`text`/`responder`/`answered_unix_ms`）を持ち、dispatch DBの`decisions`表へ永続化する。
   - ソケットAPIは`decision.create`/`decision.get`/`decision.list`（`status`で絞り込み可）/`decision.wait`/`decision.answer`/`decision.cancel`を提供する。`decision.wait`はpendingでなくなった時点の判断待ちを返し、待ち時間切れではpendingのままの判断待ちを返す。
   - `decision.answer`は`status='pending'`を条件とするUPDATEで最初の有効な回答だけを受け付ける。決定済みへの回答・取消は`decision_already_resolved`、存在しないoptionはエラー、`allow_text=false`へのtextはエラー、option_idとtextの両方が無い回答はエラーとする。
   - serverは起動時・request処理時・loop待ち時に最も早いpending期限を追跡し、期限を過ぎたpending判断待ちを`expired`へ遷移させる。再起動やlive handoff後もpendingの判断待ちは消えず、期限切れの判定も継続する。
   - `decision.created`と`decision.resolved`（answered/expired/cancelled共通、payloadは判断待ち全体）をevent hubへ発行し、`events.subscribe`とplugin manifestの`[[events]] on = "decision.created"`フックの両方へ届く。
-  - `herdr decision ask`は判断待ちを作って決着まで待ち、判断待ちのJSONを出力する。`--option-desc <id:text>`（繰り返し可、未知のidはエラー）で選択肢ごとの説明文をその選択肢の`description`へ入れられる。終了codeはanswered=0、expired=3、cancelled=4。Herdr pane内で実行された時は`herdr pane current`と同じ解決で`origin.pane_id`へ自分のpaneを入れ、待ち中にserverとの接続が切れても同じ`decision_id`で接続し直して待ち続ける。`herdr decision answer <id> <option_id>`、`list [--status]`、`get <id>`、`cancel <id>`を提供する。
+  - serverは判断待ちの作成時（`decision.create`・screen prompt decisions）に`origin.pane_id`を所有workspaceへ解決し、`origin.workspace_label`（スペース名）・`origin.tab_label`（タブ名）・`origin.pane_label`（paneのlabelか端末の題名）を補完する。callerが指定した値は保持し、解決できないpaneではラベルを付けない。
+  - `herdr decision ask`は判断待ちを作って決着まで待ち、判断待ちのJSONを出力する。`--option-desc <id:text>`（繰り返し可、未知のidはエラー）で選択肢ごとの説明文をその選択肢の`description`へ入れられる。終了codeはanswered=0、expired=3、cancelled=4。Herdr pane内で実行された時は`herdr pane current`と同じ解決で`origin.pane_id`へ自分のpaneを入れ、待ち中にserverとの接続が切れても同じ`decision_id`で接続し直して待ち続ける。`herdr decision answer <id> <option_id> [<option_id>...] [--text <text>]`（`option_ids`で複数選択肢を送れる。1件だけの書き方は変わらない）、`list [--status]`、`get <id>`、`cancel <id>`を提供する。
 - **受け入れ条件**:
   - `decision.create`で作った判断待ちが`decision.get`/`decision.list`から同じrecordとして読め、`dec-`で始まる一意なIDを持つ。
   - 同じ判断待ちへの2件目のanswerは`decision_already_resolved`になり、最初の回答が上書きされない。存在しないoption、`allow_text=false`へのtext、回答なしはエラーになる。
@@ -1901,7 +1902,9 @@
   - `decision.created`と`decision.resolved`が`events.subscribe`とpluginイベントフックへ届き、payloadは判断待ち全体を含む。
   - `herdr decision ask`が回答まで待ってstatusに対応する終了code（answered=0、expired=3、cancelled=4）を返し、`answer`/`list`/`get`/`cancel`がsocket API経由で同じrecordを操作する。
   - `options[]`の`description`は省略可能で、`description`を持たない古いpayloadも読め、未指定の選択肢はJSONへ`description`を出さない。`decision watch`の`created`/`resolved`行はrecord全体を載せるため、説明文もconsumerへ届く。
-- **検証契約**: Rust unit testsでrecord保存・first-answer-wins・期限切れ・wait終了・plugin event名・`description`の旧形式互換と`--option-desc`の適用を固定する。複数client同時応答と隔離sessionでのCLI end-to-endは実地検証で扱う。
+  - `origin.pane_id`がlocalのpaneへ解決できる判断待ちは、作成時に`origin.workspace_label`・`origin.tab_label`・`origin.pane_label`を持ち、`decision watch`/`decision get`のJSONへ出る。解決できないoriginでは3ラベルを出さず、`workspace_label`を持たない古いpayloadも読める。
+  - Slackの判断待ち投稿は出どころ（マシン・スペース・タブ・ペイン・エージェント）・前提（body）・`question_label`・全選択肢の題名・説明文・プレビュー（長い時は分割して全文、未取得は「プレビューあり（画面で確認）」）を含む。`multi_select`は番号リアクションで選んで:white_check_mark:で確定、またはスレッドの「1,3」返信で答えられ、案内文に確定の仕方を書く。自由入力はスレッド返信の文で答える。
+- **検証契約**: Rust unit testsでrecord保存・first-answer-wins・期限切れ・wait終了・plugin event名・`description`の旧形式互換と`--option-desc`の適用・originラベル補完を固定し、slack-decisionsのnode:testでblock生成（originラベル・`question_label`・説明文・プレビュー・multi_select案内）とmulti_selectのリアクション蓄積→:white_check_mark:確定・「1,3」返信を固定する。複数client同時応答と隔離sessionでのCLI end-to-endは実地検証で扱う。
 - **デグレ判定**: 判断待ちをTUI専用stateにする、2件目の回答で上書きする、再起動でpendingが消える、plugin hookがdecision eventを受け取れない。
 
 ### 判断待ちのマシン横断UI（decision dialog、工程2）

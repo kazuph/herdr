@@ -647,13 +647,17 @@ impl App {
             allow_text,
             multi_select: prompt.multi_select,
             question_label,
-            origin: Some(DecisionOrigin {
-                pane_id: public_id,
-                agent: pane.as_ref().and_then(|pane| pane.agent.clone()),
-                cwd: pane.as_ref().and_then(|pane| pane.cwd.clone()),
-                reason: Some(SCREEN_PROMPT_REASON.to_string()),
-                machine: Some("local".to_string()),
-                ..DecisionOrigin::default()
+            origin: Some({
+                let mut origin = DecisionOrigin {
+                    pane_id: public_id,
+                    agent: pane.as_ref().and_then(|pane| pane.agent.clone()),
+                    cwd: pane.as_ref().and_then(|pane| pane.cwd.clone()),
+                    reason: Some(SCREEN_PROMPT_REASON.to_string()),
+                    machine: Some("local".to_string()),
+                    ..DecisionOrigin::default()
+                };
+                self.enrich_decision_origin(&mut origin);
+                origin
             }),
             created_unix_ms: unix_ms_now(),
             expires_unix_ms: None,
@@ -1028,9 +1032,9 @@ impl App {
         // Freshness: a different or unparsable screen ends the walk. The
         // resting cursor is only chased while the watched prompt is still
         // up — arrows on a different screen could move some other widget.
-        if !live
+        if live
             .as_ref()
-            .is_some_and(|prompt| prompt.signature() == signature)
+            .is_none_or(|prompt| prompt.signature() != signature)
         {
             let abort = {
                 let scan = self.preview_scans.get_mut(&pane_id).expect("scan checked");

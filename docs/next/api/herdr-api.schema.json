@@ -298,7 +298,28 @@
                 "null"
               ]
             },
+            "pane_label": {
+              "description": "Pane label or terminal title identifying the pane.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tab_label": {
+              "description": "Display name of the tab owning the pane.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace_label": {
+              "description": "Display name of the workspace (space) owning the pane, resolved by the\nserver when the decision is created. Absent on older wire payloads.",
               "type": [
                 "string",
                 "null"
@@ -2183,7 +2204,28 @@
                 "null"
               ]
             },
+            "pane_label": {
+              "description": "Pane label or terminal title identifying the pane.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tab_label": {
+              "description": "Display name of the tab owning the pane.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace_label": {
+              "description": "Display name of the workspace (space) owning the pane, resolved by the\nserver when the decision is created. Absent on older wire payloads.",
               "type": [
                 "string",
                 "null"
@@ -8048,7 +8090,28 @@
                 "null"
               ]
             },
+            "pane_label": {
+              "description": "Pane label or terminal title identifying the pane.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tab_label": {
+              "description": "Display name of the tab owning the pane.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace_label": {
+              "description": "Display name of the workspace (space) owning the pane, resolved by the\nserver when the decision is created. Absent on older wire payloads.",
               "type": [
                 "string",
                 "null"
