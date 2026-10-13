@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.44] - 2026-10-14
+
+### Fixed
+- Claude Code question panes now remain blocked when narrow terminal widths wrap the Enter, navigation, or Esc-to-cancel footer controls. Multi-tab and multi-select questions therefore create screen-prompt decisions and advance through decision answers; existing wide-pane and idle detection are preserved.
+
 ## [0.2.39] - 2026-10-13
 
 ### Fixed

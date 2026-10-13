@@ -1,7 +1,7 @@
 id = "claude"
-version = "2026.09.11.1"
+version = "2026.10.14.1"
 min_engine_version = 2
-updated_at = "2026-09-11T00:00:00Z"
+updated_at = "2026-10-14T00:00:00Z"
 aliases = ["claude-code"]
 
 [[rules]]
@@ -82,16 +82,23 @@ state = "blocked"
 priority = 980
 region = "after_last_horizontal_rule"
 visible_blocker = true
-contains = ["esc to cancel"]
+# Keep the existing unwrapped controls; the anchored alternative accepts only
+# the same complete footer with whitespace wrapping, never unrelated prose.
 any = [
-  { contains = ["enter to confirm"] },
-  { contains = ["enter to select"], any = [
-    { contains = ["tab/arrow keys to navigate"] },
-    { contains = ["arrow keys to navigate"] },
-    { contains = ["arrows to navigate"] },
-    { contains = ["↑/↓ to navigate"] },
-    { contains = ["↑↓ to navigate"] },
+  { all = [
+    { contains = ["esc to cancel"] },
+    { any = [
+      { contains = ["enter to confirm"] },
+      { contains = ["enter to select"], any = [
+        { contains = ["tab/arrow keys to navigate"] },
+        { contains = ["arrow keys to navigate"] },
+        { contains = ["arrows to navigate"] },
+        { contains = ["↑/↓ to navigate"] },
+        { contains = ["↑↓ to navigate"] },
+      ] },
+    ] },
   ] },
+  { regex = ['(?im)^[ \t]*enter\s+to\s+(?:confirm|select\s*·\s*(?:(?:tab/arrow|arrow)\s+keys|arrows|↑/↓|↑↓)\s+to\s+navigate)\s*·\s*esc\s+to\s+cancel[ \t]*$'] },
 ]
 
 [[rules]]

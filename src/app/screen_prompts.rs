@@ -1773,6 +1773,48 @@ Esc to cancel
     }
 
     #[tokio::test]
+    async fn claude_narrow_detected_question_creates_multiselect_decision() {
+        let _guard = crate::config::lock_test_config_env();
+        let screen = include_str!("../detect/fixtures/claude-narrow-multi-question.txt");
+        let (mut app, pane_id, _rx) = test_app("narrow-question", &crlf(screen), false);
+        let result = crate::detect::manifest::explain(crate::detect::Agent::Claude, screen);
+        assert_eq!(result.state, AgentState::Blocked);
+        let terminal_id = app.state.workspaces[0]
+            .pane_state(pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.state = result.state;
+        terminal.detected_agent = Some(crate::detect::Agent::Claude);
+        app.scan_screen_prompts(Instant::now());
+        let decisions = pending_decisions();
+        assert_eq!(decisions.len(), 1);
+        let decision = &decisions[0];
+        assert_eq!(decision.kind, DecisionKind::AgentPrompt);
+        assert_eq!(decision.title, "Which sections should the report include?");
+        assert!(decision.multi_select);
+        assert!(decision.allow_text);
+        assert!(decision
+            .question_label
+            .as_deref()
+            .unwrap()
+            .contains("Sections"));
+        assert_eq!(
+            decision
+                .options
+                .iter()
+                .map(|o| o.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Summary", "Evidence"]
+        );
+        assert_eq!(
+            decision.options[0].description.as_deref(),
+            Some("A concise overview.")
+        );
+    }
+
+    #[tokio::test]
     async fn unblocked_pane_creates_no_decision() {
         let _guard = crate::config::lock_test_config_env();
         let (mut app, _pane_id, _rx) = test_app("idle", CC_QUESTION, false);
