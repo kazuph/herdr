@@ -317,6 +317,7 @@ mod tests {
             id: id.into(),
             label: format!("label {id}"),
             role: DecisionOptionRole::Other,
+            description: None,
         }
     }
 

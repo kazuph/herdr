@@ -845,6 +845,7 @@ mod tests {
                 id: "yes".to_string(),
                 label: "Yes".to_string(),
                 role: DecisionOptionRole::Approve,
+                description: None,
             }],
             allow_text: false,
             origin: None,

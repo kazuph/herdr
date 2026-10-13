@@ -893,6 +893,7 @@ mod tests {
                 id: "yes".into(),
                 label: "Yes".into(),
                 role: crate::api::schema::DecisionOptionRole::Approve,
+                description: None,
             }],
             allow_text: false,
             origin: None,

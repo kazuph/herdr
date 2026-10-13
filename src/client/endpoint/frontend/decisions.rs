@@ -40,6 +40,8 @@ pub(super) struct Dialog {
     selected: usize,
     /// Content-band scroll offset.
     scroll: u16,
+    /// Options-band scroll offset for when labels + descriptions outgrow it.
+    option_scroll: u16,
     /// False until the user clicks inside the dialog; keyboard input keeps
     /// going to the pane while this is false (acceptance condition 3).
     keyboard: bool,
@@ -140,6 +142,7 @@ pub(super) fn observe(frontend: &mut ClientFrontend) {
                     replace_on_type: false,
                     selected: 0,
                     scroll: 0,
+                    option_scroll: 0,
                     keyboard: false,
                     answering: None,
                 });
@@ -150,6 +153,18 @@ pub(super) fn observe(frontend: &mut ClientFrontend) {
 fn close(frontend: &mut ClientFrontend) {
     if let Some(dialog) = frontend.decisions.dialog.take() {
         frontend.decisions.snoozed.insert(dialog.key);
+    }
+}
+
+/// Keep the selected option's block fully visible inside the options band.
+fn reveal_selected_option(frontend: &mut ClientFrontend, pending: &PendingDecision) {
+    let (Some(rects), Some(facts)) = (dialog_rects(frontend, pending), facts(frontend, pending))
+    else {
+        return;
+    };
+    let scroll = crate::ui::decision_dialog_reveal_option_scroll(&facts, rects.options_band);
+    if let Some(dialog) = frontend.decisions.dialog.as_mut() {
+        dialog.option_scroll = scroll;
     }
 }
 
@@ -308,13 +323,17 @@ fn facts(
             .decision
             .options
             .iter()
-            .map(|option| option.label.clone())
+            .map(|option| crate::ui::DecisionDialogOption {
+                label: option.label.clone(),
+                description: option.description.clone(),
+            })
             .collect(),
         selected: dialog.selected,
         allow_text: pending.decision.allow_text,
         text: dialog.text.clone(),
         remaining: remaining(&pending.decision),
         scroll: dialog.scroll,
+        option_scroll: dialog.option_scroll,
         keyboard_active: dialog.keyboard,
     })
 }
@@ -442,6 +461,7 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                     if let Some(dialog) = frontend.decisions.dialog.as_mut() {
                         dialog.selected = index;
                     }
+                    reveal_selected_option(frontend, &pending);
                 }
                 Ok(true)
             }
@@ -454,6 +474,24 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                     return Ok(false);
                 }
                 let palette = frontend.chrome.settings.palette.clone();
+                // Wheels over the pinned options band scroll the options
+                // (labels + descriptions) themselves when they overflow;
+                // everywhere else scrolls the content band as before.
+                let options_max = facts(frontend, &pending)
+                    .map(|facts| {
+                        crate::ui::decision_dialog_options_scroll_max(&facts, rects.options_band)
+                    })
+                    .unwrap_or(0);
+                if rects.options_band.contains(position) && options_max > 0 {
+                    if let Some(dialog) = frontend.decisions.dialog.as_mut() {
+                        dialog.option_scroll = if mouse.kind == MouseEventKind::ScrollUp {
+                            dialog.option_scroll.saturating_sub(1)
+                        } else {
+                            (dialog.option_scroll + 1).min(options_max)
+                        };
+                    }
+                    return Ok(true);
+                }
                 let max = facts(frontend, &pending)
                     .map(|facts| {
                         crate::ui::decision_dialog_scroll_max(&facts, rects.content, &palette)
@@ -491,12 +529,14 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                             if let Some(dialog) = frontend.decisions.dialog.as_mut() {
                                 dialog.selected = (dialog.selected + options - 1) % options;
                             }
+                            reveal_selected_option(frontend, &pending);
                         }
                         KeyCode::Down => {
                             let options = pending.decision.options.len().max(1);
                             if let Some(dialog) = frontend.decisions.dialog.as_mut() {
                                 dialog.selected = (dialog.selected + 1) % options;
                             }
+                            reveal_selected_option(frontend, &pending);
                         }
                         KeyCode::Enter => {
                             let Some(selected) = frontend
@@ -645,11 +685,13 @@ mod tests {
                     id: "yes".into(),
                     label: "Yes".into(),
                     role: schema::DecisionOptionRole::Approve,
+                    description: None,
                 },
                 schema::DecisionOption {
                     id: "no".into(),
                     label: "No".into(),
                     role: schema::DecisionOptionRole::Reject,
+                    description: None,
                 },
             ],
             allow_text: false,
@@ -1054,6 +1096,7 @@ mod tests {
             text: String::new(),
             selected: 0,
             scroll: 0,
+            option_scroll: 0,
             keyboard: true,
             replace_on_type: false,
             answering: None,
