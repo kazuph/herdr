@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 512,
+    "active_contract_count": 513,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -12206,7 +12206,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2276",
+        "SPEC.md:2277",
         "src/guard/assets.rs:42"
       ],
       "test_status": [
@@ -12234,7 +12234,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2277",
+        "SPEC.md:2278",
         "src/pane.rs:1920",
         "src/guard/assets.rs:42"
       ],
@@ -12263,7 +12263,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2285",
+        "SPEC.md:2286",
         "src/guard/marker.rs:49",
         "src/cli/guard.rs:36"
       ],
@@ -12291,7 +12291,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2286",
+        "SPEC.md:2287",
         "src/app/guard.rs:14",
         "src/guard/marker.rs:93"
       ],
@@ -12318,7 +12318,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2287",
+        "SPEC.md:2288",
         "src/cli/guard.rs:36"
       ],
       "test_status": [
@@ -12345,7 +12345,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2288",
+        "SPEC.md:2289",
         "src/guard/record.rs:142"
       ],
       "test_status": [
@@ -12374,7 +12374,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2296",
+        "SPEC.md:2297",
         "src/config/model.rs:332",
         "src/guard/assets.rs:47",
         "src/cli/guard.rs:150"
@@ -12402,7 +12402,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2297",
+        "SPEC.md:2298",
         "src/cli/guard.rs:188"
       ],
       "test_status": [
@@ -12430,7 +12430,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2298",
+        "SPEC.md:2299",
         "src/guard/enforce.rs:150",
         "src/cli/guard.rs:211"
       ],
@@ -12461,7 +12461,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2299",
+        "SPEC.md:2300",
         "src/guard/enforce.rs:60",
         "src/cli/guard.rs:228"
       ],
@@ -12493,7 +12493,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2300",
+        "SPEC.md:2301",
         "src/guard/enforce.rs:100",
         "src/cli/guard.rs:232",
         "src/cli/decision.rs:60"
@@ -12527,7 +12527,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2301",
+        "SPEC.md:2302",
         "src/guard/enforce.rs:170",
         "src/guard/judge.rs:1550",
         "src/cli/guard.rs:232"
@@ -12555,7 +12555,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2302",
+        "SPEC.md:2303",
         "src/guard/judge.rs:1524",
         "src/cli/guard.rs:240"
       ],
@@ -12582,7 +12582,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2303",
+        "SPEC.md:2304",
         "src/guard/assets.rs:62",
         "src/guard/mod.rs:40"
       ],
@@ -12610,7 +12610,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2311",
+        "SPEC.md:2312",
         "src/guard/compare.rs:49"
       ],
       "test_status": [
@@ -12634,7 +12634,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2312",
+        "SPEC.md:2313",
         "src/guard/compare.rs:173"
       ],
       "test_status": [
@@ -12662,7 +12662,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2313",
+        "SPEC.md:2314",
         "src/guard/record.rs:299"
       ],
       "test_status": [
@@ -13065,7 +13065,8 @@
         "startup PATH order",
         "launch coverage warning",
         "real Claude Code execution",
-        "all-pane sync after startup restore handoff and reload"
+        "all-pane sync after startup restore handoff and reload",
+        "uncovered panes never retain markers including legacy handoff"
       ],
       "verification_methods": [
         "rust_test_target:login_zsh_keeps_shim_first_after_startup",
@@ -13073,7 +13074,8 @@
         "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13",
         "rust_test_target:guard_syncs_all_panes_after_restore_handoff_and_config_reload",
         "rust_test_target:load_live_config_parses_guard_and_reports_invalid_guard",
-        "platform_live_acceptance:macos_old_main_guard_coverage_handoff_2026_10_13"
+        "platform_live_acceptance:macos_old_main_guard_coverage_handoff_2026_10_13",
+        "rust_test_target:guard_markers_require_effective_launch_coverage"
       ],
       "source_anchors": [
         "SPEC.md:2275",
@@ -13189,6 +13191,33 @@
       ],
       "unrepresented_dimensions": [
         "Fixture parsing, signature participation and adoption comparison are unit-covered; a live real-agent screen with wrapped descriptions remains manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G12-575ecb370e",
+      "dimensions": [
+        "launch coverage marker invariant",
+        "legacy handoff stale marker removal",
+        "unchanged uncovered warnings"
+      ],
+      "verification_methods": [
+        "rust_test_target:guard_markers_require_effective_launch_coverage",
+        "rust_test_target:guard_syncs_all_panes_after_restore_handoff_and_config_reload",
+        "platform_live_acceptance:macos_legacy_marker_handoff_2026_10_13"
+      ],
+      "source_anchors": [
+        "SPEC.md:2276",
+        "src/app/guard.rs:77"
+      ],
+      "test_status": [
+        "static_verified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Isolated real shell with legacy environment (startup injection disabled in old main d2d9ac57) -> f5039adf 0.2.36 -> fixed build. Saved rm -rf bypass, ai_guard recovery, new-pane pending/reject and cleanup: .local/prd/RESULT-guard-legacy-marker.md. kazuph-v0.2.33 itself and Linux live handoff are not verified.",
+        "The current manifest schema has no live verified status; macOS live PASS is documented by the platform acceptance method and RESULT table, while portable live status remains unverified."
       ]
     }
   ]
