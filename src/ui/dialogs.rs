@@ -1293,18 +1293,24 @@ pub(crate) fn render_decision_dialog(
     );
 
     if let Some(text) = rects.text {
-        let (value, style) = if facts.text.is_empty() {
-            (
-                " type a response (optional)".to_string(),
+        let mut spans = if facts.text.is_empty() {
+            vec![Span::styled(
+                " type a response (optional) · click to type, ↵ to send",
                 Style::default().fg(palette.overlay0).bg(palette.surface0),
-            )
+            )]
         } else {
-            (
+            vec![Span::styled(
                 format!(" {}", facts.text),
                 Style::default().fg(palette.text).bg(palette.surface0),
-            )
+            )]
         };
-        frame.render_widget(Paragraph::new(value).style(style), text);
+        if facts.keyboard_active {
+            spans.push(Span::styled(
+                " ",
+                Style::default().fg(palette.text).bg(palette.accent),
+            ));
+        }
+        frame.render_widget(Paragraph::new(Line::from(spans)), text);
     }
 
     let band = rects.options_band;
@@ -1850,5 +1856,36 @@ mod shared_dialog_tests {
         );
         assert!(first.starts_with("short"), "{first:?}");
         assert_eq!(rects.options_band.x, rects.popup.x + 2);
+    }
+
+    #[test]
+    fn decision_dialog_text_input_shows_placeholder_and_cursor() {
+        let palette = crate::app::state::Palette::catppuccin();
+        let mut facts = decision_facts(None, true, 2);
+
+        // Empty + not focused: the row is a labelled placeholder, not a blank
+        // band, and no cursor is drawn.
+        let rects =
+            decision_dialog_rects(Rect::new(0, 0, 140, 40), &facts, &palette).expect("rects");
+        let text = rects.text.expect("text rect");
+        let buffer = decision_buffer(&facts, &palette, 140, 40);
+        let row = buffer_row_text(&buffer, text.y, text.x, text.width);
+        assert!(row.starts_with(" type a response (optional)"), "{row:?}");
+        for x in text.x..text.right() {
+            assert_ne!(buffer.cell((x, text.y)).expect("cell").bg, palette.accent);
+        }
+
+        // Focused with input: the typed text is visible with an accent block
+        // cursor right after it.
+        facts.keyboard_active = true;
+        facts.text = "deploy ok".into();
+        let buffer = decision_buffer(&facts, &palette, 140, 40);
+        let row = buffer_row_text(&buffer, text.y, text.x, text.width);
+        assert!(row.starts_with(" deploy ok"), "{row:?}");
+        let cursor_x = text.x + 1 + "deploy ok".len() as u16;
+        assert_eq!(
+            buffer.cell((cursor_x, text.y)).expect("cell").bg,
+            palette.accent
+        );
     }
 }
