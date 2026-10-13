@@ -13060,23 +13060,29 @@
       ]
     },
     {
-      "contract_id": "G12-8cbdcf2272",
+      "contract_id": "G12-3b79e53d94",
       "dimensions": [
         "startup PATH order",
         "launch coverage warning",
-        "real Claude Code execution"
+        "real Claude Code execution",
+        "all-pane sync after startup restore handoff and reload"
       ],
       "verification_methods": [
         "rust_test_target:login_zsh_keeps_shim_first_after_startup",
         "rust_test_target:coverage_requires_supported_matching_launch_and_bash_prompt",
-        "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
+        "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13",
+        "rust_test_target:guard_syncs_all_panes_after_restore_handoff_and_config_reload",
+        "rust_test_target:load_live_config_parses_guard_and_reports_invalid_guard",
+        "platform_live_acceptance:macos_old_main_guard_coverage_handoff_2026_10_13"
       ],
       "source_anchors": [
         "SPEC.md:2272",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
-        "src/client/endpoint/frontend/notice.rs:67"
+        "src/client/endpoint/frontend/notice.rs:67",
+        "src/app/mod.rs:841",
+        "src/config/io.rs:430"
       ],
       "test_status": [
         "static_verified"
@@ -13085,7 +13091,8 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "macOS real Claude default-mode evidence, exact tool commands, pending IDs, shim-first dispatch environment, ai_guard counts and real TUI assertions are saved in .local/prd/RESULT-guard-coverage.md. Linux live acceptance remains unverified; unsupported shell suppression is covered by the launch environment test."
+        "macOS real Claude default-mode evidence, exact tool commands, pending IDs, shim-first dispatch environment, ai_guard counts and real TUI assertions are saved in .local/prd/RESULT-guard-coverage.md. Linux live acceptance remains unverified; unsupported shell suppression is covered by the launch environment test.",
+        "Pre-fix main d2d9ac57 -> fixed debug build, isolated HOME/XDG and named session; detailed stderr, TUI, marker and native Claude proof are recorded in .local/prd/RESULT-guard-coverage-handoff.md. Linux live handoff remains unverified."
       ]
     }
   ]

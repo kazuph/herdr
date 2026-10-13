@@ -8,6 +8,23 @@
 use super::App;
 
 impl App {
+    pub(crate) fn sync_guard_markers_for_all_panes(&mut self) {
+        let panes: Vec<_> = self
+            .state
+            .workspaces
+            .iter()
+            .enumerate()
+            .flat_map(|(ws_idx, ws)| {
+                ws.tabs
+                    .iter()
+                    .flat_map(move |tab| tab.panes.keys().copied().map(move |pane| (ws_idx, pane)))
+            })
+            .collect();
+        for (ws_idx, pane) in panes {
+            self.sync_guard_marker_for_pane(ws_idx, pane);
+        }
+    }
+
     /// Sync the pane's guard marker to its current effective agent label.
     /// Called whenever the label may have changed (detect/release, agent
     /// start, pane death).

@@ -427,6 +427,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut invalid_sections,
         |section| config.decisions = section,
     );
+    load_live_section(
+        table,
+        "guard",
+        "guard config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.guard = section,
+    );
 
     Ok(LoadedConfig {
         config,
@@ -800,6 +808,18 @@ mod tests {
 
         std::env::remove_var(CONFIG_PATH_ENV_VAR);
         let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn load_live_config_parses_guard_and_reports_invalid_guard() {
+        let loaded = load_live_config_from_str("[guard]\nenabled = false\n").unwrap();
+        assert!(!loaded.config.guard.enabled);
+        assert!(loaded.diagnostics.is_empty());
+        assert!(loaded.invalid_sections.is_empty());
+
+        let invalid = load_live_config_from_str("[guard]\nenabled = \"invalid\"\n").unwrap();
+        assert_eq!(invalid.invalid_sections, vec!["guard"]);
+        assert!(invalid.diagnostics[0].contains("keeping current guard settings"));
     }
 
     #[test]
