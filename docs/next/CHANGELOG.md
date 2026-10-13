@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.36] - 2026-10-13
+
+### Fixed
+- Server startup, session restore, live handoff import, and config reload now synchronize guard markers and coverage warnings for every pane, including inactive tabs and workspaces. Agent panes inherited without launch-time guard injection show their pane, reason, and recovery action in `herdr guard status` stderr and the TUI immediately; a new guarded pane remains protected.
+
 ## Unreleased
 
 ### Added
