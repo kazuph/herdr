@@ -14,6 +14,36 @@ use crate::decision::{new_decision_id, unix_ms_now, AnswerOutcome, DecisionStore
 const DECISION_DEADLINE_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
 impl App {
+    /// Fill in the workspace/tab/pane labels for a decision origin whose
+    /// `pane_id` resolves to a local pane. Labels already supplied by the
+    /// caller are kept; unresolvable panes are left untouched.
+    pub(crate) fn enrich_decision_origin(&self, origin: &mut crate::api::schema::DecisionOrigin) {
+        let Some(public_id) = origin.pane_id.clone() else {
+            return;
+        };
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&public_id) else {
+            return;
+        };
+        let Some(ws) = self.state.workspaces.get(ws_idx) else {
+            return;
+        };
+        let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) else {
+            return;
+        };
+        if origin.workspace_label.is_none() {
+            origin.workspace_label =
+                Some(ws.display_name_from(&self.state.terminals, &self.terminal_runtimes));
+        }
+        if origin.tab_label.is_none() {
+            origin.tab_label = ws.tab_display_name(tab_idx);
+        }
+        if origin.pane_label.is_none() {
+            origin.pane_label = self
+                .pane_info(ws_idx, pane_id)
+                .and_then(|pane| pane.label.or(pane.terminal_title));
+        }
+    }
+
     pub(crate) fn handle_decision_create(
         &mut self,
         id: String,
@@ -23,6 +53,12 @@ impl App {
             return responses::encode_error(id, "invalid_request", message);
         }
         let now = unix_ms_now();
+        let mut origin = params
+            .origin
+            .filter(|origin| *origin != crate::api::schema::DecisionOrigin::default());
+        if let Some(origin) = origin.as_mut() {
+            self.enrich_decision_origin(origin);
+        }
         let decision = Decision {
             decision_id: new_decision_id(),
             kind: params.kind,
@@ -32,9 +68,7 @@ impl App {
             allow_text: params.allow_text,
             multi_select: params.multi_select,
             question_label: None,
-            origin: params
-                .origin
-                .filter(|origin| *origin != crate::api::schema::DecisionOrigin::default()),
+            origin,
             created_unix_ms: now,
             expires_unix_ms: params.timeout_ms.map(|timeout| now.saturating_add(timeout)),
             status: DecisionStatus::Pending,
@@ -400,5 +434,74 @@ mod tests {
         std::env::remove_var(crate::session::SESSION_ENV_VAR);
         std::env::remove_var("XDG_CONFIG_HOME");
         let _ = std::fs::remove_dir_all(&config_home);
+    }
+
+    fn app_with_pane(tag: &str) -> (App, crate::layout::PaneId) {
+        let dir =
+            std::env::temp_dir().join(format!("herdr-origin-labels-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::env::set_var(crate::dispatch::HERDR_DB_PATH_ENV_VAR, dir.join("herdr.db"));
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            tokio::sync::mpsc::unbounded_channel().1,
+            crate::api::EventHub::default(),
+        );
+        let workspace = crate::workspace::Workspace::test_new("ws-name");
+        let pane_id = workspace.tabs[0].root_pane;
+        app.state.workspaces.push(workspace);
+        app.state.active = Some(0);
+        app.state.ensure_test_terminals();
+        (app, pane_id)
+    }
+
+    #[test]
+    fn enrich_decision_origin_fills_workspace_tab_and_pane_labels() {
+        let (mut app, pane_id) = app_with_pane("fill");
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("test terminal")
+            .manual_label = Some("my-pane".into());
+
+        let public = app.public_pane_id(0, pane_id).expect("public id");
+        let mut origin = crate::api::schema::DecisionOrigin {
+            pane_id: Some(public),
+            ..Default::default()
+        };
+        app.enrich_decision_origin(&mut origin);
+        assert_eq!(origin.workspace_label.as_deref(), Some("ws-name"));
+        assert_eq!(origin.tab_label.as_deref(), Some("1"));
+        assert_eq!(origin.pane_label.as_deref(), Some("my-pane"));
+
+        // Caller-supplied labels are kept.
+        let mut origin = crate::api::schema::DecisionOrigin {
+            pane_id: Some(app.public_pane_id(0, pane_id).unwrap()),
+            workspace_label: Some("given".into()),
+            ..Default::default()
+        };
+        app.enrich_decision_origin(&mut origin);
+        assert_eq!(origin.workspace_label.as_deref(), Some("given"));
+    }
+
+    #[test]
+    fn enrich_decision_origin_leaves_unresolvable_panes_untouched() {
+        let (app, _pane_id) = app_with_pane("unresolved");
+        let mut origin = crate::api::schema::DecisionOrigin {
+            pane_id: Some("p999999".into()),
+            ..Default::default()
+        };
+        app.enrich_decision_origin(&mut origin);
+        assert!(origin.workspace_label.is_none());
+        assert!(origin.tab_label.is_none());
+        assert!(origin.pane_label.is_none());
+
+        let mut origin = crate::api::schema::DecisionOrigin::default();
+        app.enrich_decision_origin(&mut origin);
+        assert!(origin.workspace_label.is_none());
     }
 }

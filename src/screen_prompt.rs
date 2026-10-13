@@ -26,6 +26,32 @@ static PROMPT_END_RE: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 static RULE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*[─━-]{10,}\s*$").unwrap());
+// Dashed borders Claude Code draws around permission command boxes (`╌`,
+// `╍`). Unlike `RULE_RE` they sit inside the prompt region, so they are
+// skipped rather than ending the upward question walk — a hard stop would
+// drop the command and warning lines above them into the transcript.
+static DASHED_RULE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*[╌╍]{8,}\s*$").unwrap());
+// Claude Code's AFK guard on unattended sessions: `⚠ Claude Code will
+// automatically deny this request in 1:48, to avoid blocking progress on an
+// unattended session`. The countdown ticks once per second; it is lifted
+// out of the question text (with the digits normalised) into `notice` so it
+// cannot churn the prompt signature.
+// The warning may render as one row or split across rows, e.g.
+// `⚠ Claude Code will automatically deny this request` /
+// `in 1:48, to avoid blocking progress on an unattended` / `session`.
+static AUTO_DENY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"Claude Code will automatically deny this request|automatically deny this request|in \d+:\d{2},? to avoid blocking progress|to avoid blocking progress on an unattended|unattended session")
+        .unwrap()
+});
+static AUTO_DENY_TIME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"in \d+:\d{2}").unwrap());
+// Volatile displays that must not change a prompt's identity: `M:SS`
+// countdowns/clocks, `Ns` elapsed timers, and spinner glyphs.
+static VOLATILE_TIME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+:\d{2}(?::\d{2})?|\(\d+(?:\.\d+)?s\b").unwrap());
+const SPINNER_CHARS: &[char] = &[
+    '✳', '✽', '✢', '✣', '✤', '✥', '◐', '◑', '◒', '◓', '⠋', '⠙', '⠚', '⠞', '⠖', '⠦', '⠴', '⠲', '⠳',
+    '⠓', '⠏', '⠹', '⠸', '⠼',
+];
 static MQ_TAB_ROW_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*←\s+(.*?)\s*→\s*$").unwrap());
 static MQ_TAB_ITEM_RE: LazyLock<Regex> =
@@ -90,6 +116,11 @@ pub(crate) struct ScreenPrompt {
     pub header: String,
     /// Question/prompt text collected above the options.
     pub question: String,
+    /// Volatile notice lifted out of the question — Claude Code's AFK
+    /// auto-deny countdown, digits normalised to `M:SS`. Kept for the
+    /// decision body; excluded from the signature so ticking cannot churn
+    /// the pending decision.
+    pub notice: Option<String>,
     /// Numbered options minus the free-text pseudo options.
     pub choices: BTreeMap<u32, String>,
     /// Per-option detail text drawn on indented rows below an option
@@ -148,10 +179,19 @@ impl ScreenPrompt {
         // The header is excluded too: the multi-question tab markers flip
         // `☐`→`☒` (and `質問 N/M` → `最終確認`) as options are toggled, which
         // is the same prompt answering itself, not a prompt change.
+        // Displays that only change with time — countdowns (`M:SS`), elapsed
+        // timers (`Ns`), spinner glyphs — are normalised away so a ticking
+        // screen cannot manufacture prompt changes.
         serde_json::to_string(&(
-            self.question.as_str(),
-            &self.choices,
-            &self.descriptions,
+            normalize_volatile(&self.question),
+            self.choices
+                .iter()
+                .map(|(number, label)| (*number, normalize_volatile(label)))
+                .collect::<BTreeMap<u32, String>>(),
+            self.descriptions
+                .iter()
+                .map(|(number, text)| (*number, normalize_volatile(text)))
+                .collect::<BTreeMap<u32, String>>(),
             self.free_text,
             self.multi_select,
         ))
@@ -180,6 +220,77 @@ impl ScreenPrompt {
             }
         })
     }
+
+    /// Volatile notice lifted out of the question, for the decision body.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+}
+
+/// Displays that change with time get a stable form for identity purposes:
+/// `M:SS` countdowns/clocks, `(Ns` elapsed timers, spinner glyphs.
+pub(crate) fn normalize_volatile(text: &str) -> String {
+    let text = VOLATILE_TIME_RE.replace_all(text, "M:SS");
+    text.chars()
+        .map(|c| if SPINNER_CHARS.contains(&c) { '✳' } else { c })
+        .collect()
+}
+
+/// Rows above the question walk's stop point that hold the `⏺`-marked call
+/// the prompt is asking about (Claude Code permission dialogs). The call
+/// head can be clipped off the visible box, so the call line is the last
+/// place the full command survives.
+const CALL_SCAN_ROWS: usize = 12;
+
+/// A warning fragment row: short text continuing a sentence Claude Code
+/// wrapped mid-phrase in a narrow pane — no box/rule/agent-message prefix.
+fn is_afk_continuation(stripped: &str) -> bool {
+    stripped.len() <= 48 && !stripped.starts_with(['│', '─', '╌', '╍', '⎿', '❯', '›', '❭', '⏺'])
+}
+
+/// Recover the `⏺` call line nearest to (or at) `stop` plus its wrapped
+/// continuation rows. Returns the call text without the `⏺` marker.
+fn recover_call_lines(lines: &[&str], stop: usize) -> Option<String> {
+    if stop >= lines.len() {
+        return None;
+    }
+    let is_call = |line: &str| line.trim().starts_with('⏺');
+    let start = if is_call(lines[stop]) {
+        Some(stop)
+    } else {
+        let lo = stop.saturating_sub(CALL_SCAN_ROWS);
+        (lo..stop).rev().find(|&i| is_call(lines[i]))
+    }?;
+    let mut parts = vec![lines[start]
+        .trim()
+        .trim_start_matches('⏺')
+        .trim()
+        .to_string()];
+    for line in &lines[start + 1..] {
+        let stripped = line.trim().trim_start_matches('│').trim();
+        if stripped.is_empty()
+            || stripped.starts_with(['⎿', '⏺', '☐', '☒', '❯', '›', '❭'])
+            || RULE_RE.is_match(line)
+            || DASHED_RULE_RE.is_match(stripped)
+        {
+            break;
+        }
+        parts.push(stripped.to_string());
+    }
+    let call = join_description_lines(parts.into_iter());
+    (!call.is_empty()).then_some(call)
+}
+
+/// The head fragment used to decide whether the question already contains
+/// the recovered call — skips the `Tool(` prefix so a `│`-boxed copy of the
+/// same command still counts as present.
+fn call_head(call: &str) -> &str {
+    let head = call
+        .find('(')
+        .map(|at| &call[at + 1..])
+        .unwrap_or(call)
+        .trim();
+    &head[..head.floor_char_boundary(32)]
 }
 
 fn option_match(line: &str) -> Option<(u32, String)> {
@@ -538,9 +649,14 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         .to_string();
 
     // Question text: everything between the checkbox/tab rows and the options,
-    // top-down, stopping at agent-message (`⏺`) or rule lines.
+    // top-down, stopping at agent-message (`⏺`) or rule lines. Dashed
+    // permission-box borders are skipped without stopping; the AFK countdown
+    // is lifted into `notice` so its ticking digits cannot churn identity.
     let mut question_lines: Vec<&str> = Vec::new();
+    let mut notice_lines: Vec<String> = Vec::new();
+    let mut in_afk = false;
     let mut j = first;
+    let mut stop_at = 0usize;
     while j > 0 && question_lines.len() < MAX_QUESTION_LINES {
         j -= 1;
         if let Some(mq) = &mq {
@@ -550,13 +666,62 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         }
         let stripped = lines[j].trim().trim_start_matches('│').trim();
         if RULE_RE.is_match(lines[j]) || stripped.starts_with(['⏺', '❯', '›', '❭']) {
+            stop_at = j;
             break;
         }
         if !stripped.is_empty() && !stripped.starts_with(['☐', '☒', '✔']) {
+            if AUTO_DENY_RE.is_match(stripped) {
+                // The warning may wrap so its tail word (`session`) lands on
+                // its own row below; that fragment was already collected into
+                // the question — move it to the notice.
+                if question_lines.first().is_some_and(|line| {
+                    line.len() <= 24 && line.chars().next().is_some_and(|c| c.is_lowercase())
+                }) {
+                    let tail = question_lines.remove(0);
+                    notice_lines.push(tail.to_string());
+                }
+                notice_lines.insert(
+                    0,
+                    AUTO_DENY_TIME_RE
+                        .replace_all(stripped, "in M:SS")
+                        .to_string(),
+                );
+                in_afk = true;
+                continue;
+            }
+            // In narrow panes the warning splits into short fragment rows
+            // that no single pattern recognises; absorb the contiguous run
+            // above a matched row. The raw row is checked — `stripped` has
+            // already lost the `│` box prefix that marks real box content.
+            if in_afk && is_afk_continuation(lines[j].trim()) {
+                notice_lines.insert(
+                    0,
+                    AUTO_DENY_TIME_RE
+                        .replace_all(stripped, "in M:SS")
+                        .to_string(),
+                );
+                continue;
+            }
+            in_afk = false;
+            if DASHED_RULE_RE.is_match(stripped) {
+                continue;
+            }
             question_lines.insert(0, stripped);
         }
     }
+    // Claude Code anchors a permission dialog to a `⏺ Tool(...)` call line
+    // above the question box. When the box's top rows are clipped, the
+    // command head only survives there; recover it unless the question
+    // already carries the same call text.
+    let mut question_lines: Vec<String> = question_lines.into_iter().map(str::to_string).collect();
+    if let Some(call) = recover_call_lines(&lines, stop_at) {
+        let head = call_head(&call).to_string();
+        if !question_lines.iter().any(|line| line.contains(&head)) {
+            question_lines.insert(0, call);
+        }
+    }
     let question = question_lines.join(" ");
+    let notice = (!notice_lines.is_empty()).then(|| notice_lines.join(" "));
 
     // The visible preview belongs to the option under the `❯` cursor.
     let previews = preview
@@ -587,6 +752,7 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     let mut prompt = ScreenPrompt {
         header,
         question,
+        notice,
         choices,
         descriptions,
         free_text: free,
@@ -1245,6 +1411,190 @@ Press enter to confirm or esc to cancel
         );
     }
 
+    // Real Claude Code 2.1.296 AFK permission dialog (auto mode, dangerous
+    // `rm` on a variable path) — captured from a live pane. The `in M:SS`
+    // countdown ticks once per second.
+    fn afk_permission(countdown: &str) -> String {
+        format!(
+            "\
+⏺ Bash(B=/tmp/hdr-churn/bench; for r in light-nano-C mini-C; do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done)
+  ⎿  Waiting…
+
+──────────────────────────────────────────────────────
+ Bash command
+ Delete frames directories for two bench runs
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ B=/tmp/hdr-churn/bench; for r in light-nano-C mini-C; do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ Dangerous rm operation on possibly-empty variable path: $B/$r/frames in `/bin/rm -rf $B/$r/frames` (rewrite it as \"${{B:?}}\"/\"${{r:?}}\"/frames or use a literal path)
+ ⚠ Claude Code will automatically deny this request
+ in {countdown}, to avoid blocking progress on an unattended
+ session
+
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend
+"
+        )
+    }
+
+    #[test]
+    fn afk_countdown_lifts_notice_and_holds_signature() {
+        let first = parse_screen_prompt(&afk_permission("1:48")).expect("first");
+        let later = parse_screen_prompt(&afk_permission("0:03")).expect("later");
+        // The ticking countdown must not manufacture a new prompt.
+        assert_eq!(first.signature(), later.signature());
+        assert!(!first.question.contains("automatically deny"));
+        assert_eq!(
+            first.notice(),
+            Some(
+                "⚠ Claude Code will automatically deny this request in M:SS, \
+                 to avoid blocking progress on an unattended session"
+            )
+        );
+        // Full command + its description + the warning survive in the title.
+        assert!(first.title().contains("Bash command"));
+        assert!(first
+            .title()
+            .contains("Delete frames directories for two bench runs"));
+        assert!(first.title().contains(
+            "B=/tmp/hdr-churn/bench; for r in light-nano-C mini-C; \
+             do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done"
+        ));
+        assert!(first.title().contains("Dangerous rm operation"));
+        assert!(first.title().ends_with("Do you want to proceed?"));
+        // Dashed box borders stay out of the title.
+        assert!(!first.title().contains('╌'));
+        assert!(!first.title().contains('│'));
+    }
+
+    // Same AFK dialog in a narrow (~30 col) pane — the warning splits into
+    // six fragment rows.
+    fn afk_permission_narrow(countdown: &str) -> String {
+        format!(
+            "\
+ Bash command
+ Delete frames dirs for two
+ bench runs
+ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ B=/tmp/hdr-churn/bench; for
+ │ r in light-nano-C mini-C;
+ │ do printf \"%s\\n\" \"$r\";
+ │ /bin/rm -rf $B/$r/frames;
+ │ done
+ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ Dangerous rm operation on
+ │ possibly-empty variable
+ │ path: $B/$r/frames
+ ⚠ Claude Code will
+ automatically deny
+ this request in {countdown},
+ to avoid blocking
+ progress on an
+ unattended session
+
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend
+"
+        )
+    }
+
+    #[test]
+    fn afk_countdown_narrow_wrap_lifts_all_fragments() {
+        let prompt = parse_screen_prompt(&afk_permission_narrow("1:46")).expect("prompt");
+        assert_eq!(
+            prompt.notice(),
+            Some(
+                "⚠ Claude Code will automatically deny this request in M:SS, \
+                 to avoid blocking progress on an unattended session"
+            )
+        );
+        assert!(!prompt.question.contains("automatically deny"));
+        assert!(!prompt.question.contains("unattended"));
+        // The command is fully preserved across box wraps.
+        assert!(prompt.title().contains("/bin/rm -rf $B/$r/frames; done"));
+        assert!(prompt.title().contains("Dangerous rm operation"));
+        // And the ticking digits still cannot churn identity.
+        let later = parse_screen_prompt(&afk_permission_narrow("0:59")).expect("later");
+        assert_eq!(prompt.signature(), later.signature());
+    }
+
+    #[test]
+    fn clipped_permission_box_recovers_call_head() {
+        // The `│` box top is clipped (scrolled/dialog taller than rows): the
+        // command head only survives on the `⏺` call line.
+        let screen = "\
+⏺ Bash(B=/tmp/hdr-churn/bench; for r in light-nano-C mini-C; do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done)
+  ⎿  Waiting…
+
+──────────────────────────────────────────────────────
+ Bash command
+ Delete frames directories for two bench runs
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ light-nano-C mini-C; do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel
+";
+        let prompt = parse_screen_prompt(screen).expect("prompt");
+        assert!(
+            prompt
+                .title()
+                .contains("Bash(B=/tmp/hdr-churn/bench; for r in light-nano-C mini-C"),
+            "call head missing: {}",
+            prompt.title()
+        );
+        // And the question does not start mid-command anymore.
+        assert!(prompt.title().starts_with("Bash("));
+    }
+
+    #[test]
+    fn unclipped_permission_box_does_not_duplicate_call() {
+        let prompt = parse_screen_prompt(&afk_permission("1:48")).expect("prompt");
+        // The box already carries the full command — the `⏺` line must not
+        // be prepended as a duplicate `Bash(` call.
+        assert!(
+            !prompt.question.contains("Bash("),
+            "call duplicated: {}",
+            prompt.question
+        );
+    }
+
+    #[test]
+    fn volatile_displays_do_not_change_signature() {
+        let screen = |timer: &str, spinner: char| {
+            format!(
+                "\
+{spinner} 作業中 ({timer}経過中) — 続行しますか？
+
+❯ 1. Yes
+  2. No
+
+Esc to cancel
+"
+            )
+        };
+        let a = parse_screen_prompt(&screen("0:42", '✢')).expect("a");
+        let b = parse_screen_prompt(&screen("1:09", '◐')).expect("b");
+        assert_eq!(a.signature(), b.signature());
+        // Content differences still change the signature.
+        let other =
+            parse_screen_prompt(&screen("0:42", '✢').replace("続行しますか？", "停止しますか？"))
+                .expect("other");
+        assert_ne!(a.signature(), other.signature());
+    }
+
     #[test]
     fn non_prompt_screens_return_none() {
         assert_eq!(
@@ -1263,5 +1613,71 @@ Press enter to confirm or esc to cancel
             None
         );
         assert_eq!(parse_screen_prompt(""), None);
+    }
+    // Verbatim unwrapped capture of the real narrow-pane AFK dialog:
+    // box rows beyond the pane height survive in scrollback, and the title
+    // must still carry the whole command + warning + question.
+    #[test]
+    fn narrow_pane_permission_keeps_full_command_in_title() {
+        let screen = "\
+────────────────────────
+ Bash command
+ Delete frames
+ directories for two
+ bench runs
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ B=/tmp/hdr-churn/ben
+ │ ch; for r in
+ │ light-nano-C mini-C;
+ │ do printf \"%s\\n\"
+ │ \"$r\"; /bin/rm -rf
+ │ $B/$r/frames; done
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ Dangerous rm
+ │ operation on
+ │ possibly-empty
+ │ variable path:
+ │ $B/$r/frames in
+ │ `/bin/rm -rf
+ │ $B/$r/frames`
+ │ (rewrite it as \"${B:
+ │ ?}\"/\"${r:?}\"/frames
+ │ or use a literal
+ │ path)
+ ⚠ Claude Code will
+ automatically deny
+ this request in 0:08,
+ to avoid blocking
+ progress on an
+ unattended session
+
+
+ Do you want to
+ proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to
+ amend
+";
+        let p = parse_screen_prompt(screen).expect("prompt");
+        let title = p.title();
+        assert!(title.contains("Bash command"));
+        assert!(title.contains("Delete frames directories for two bench runs"));
+        assert!(title.contains(
+            "B=/tmp/hdr-churn/ben ch; for r in light-nano-C mini-C; \
+             do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done"
+        ));
+        assert!(title.contains("Dangerous rm operation on possibly-empty"));
+        assert!(title.contains("or use a literal path) Do you want to proceed?"));
+        assert!(!title.contains("automatically deny"));
+        assert!(!title.contains("unattended"));
+        assert_eq!(
+            p.notice(),
+            Some(
+                "\u{26a0} Claude Code will automatically deny this request in M:SS, \
+                 to avoid blocking progress on an unattended session"
+            )
+        );
     }
 }

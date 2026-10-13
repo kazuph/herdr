@@ -500,10 +500,12 @@ impl PaneTerminal {
         self.ghostty.detection_text()
     }
 
-    /// Same region as `detection_text` with soft-wrapped rows joined back
-    /// into whole logical lines — screen prompt parsing needs both.
-    pub fn detection_text_unwrapped(&self) -> String {
-        self.ghostty.detection_text_unwrapped()
+    /// Detection region with soft-wrapped rows joined back into whole
+    /// logical lines, plus `extra` scrollback rows — the screen prompt
+    /// parser uses it so dialogs taller than the pane still yield their
+    /// header, command box and `⏺` call line.
+    pub fn detection_text_unwrapped_extra(&self, extra: usize) -> String {
+        self.ghostty.detection_text_unwrapped_extra(extra)
     }
 
     pub fn recent_text(&self, lines: usize) -> String {
@@ -2023,11 +2025,11 @@ impl GhosttyPaneTerminal {
             .unwrap_or_default()
     }
 
-    pub fn detection_text_unwrapped(&self) -> String {
+    pub fn detection_text_unwrapped_extra(&self, extra: usize) -> String {
         self.core
             .lock()
             .ok()
-            .and_then(|core| ghostty_detection_text_unwrapped(&core).ok())
+            .and_then(|core| ghostty_detection_text_unwrapped_extra(&core, extra).ok())
             .unwrap_or_default()
     }
 
@@ -2554,8 +2556,12 @@ fn ghostty_detection_text(core: &GhosttyPaneCore) -> Result<String, crate::ghost
     ghostty_recent_text(core, lines)
 }
 
-fn ghostty_detection_text_unwrapped(
+/// Detection region joined into whole logical lines plus `extra` scrollback
+/// rows above the viewport — permission dialogs taller than the pane keep
+/// their header/command rows reachable for screen-prompt parsing.
+fn ghostty_detection_text_unwrapped_extra(
     core: &GhosttyPaneCore,
+    extra: usize,
 ) -> Result<String, crate::ghostty::Error> {
     let lines = core
         .terminal
@@ -2563,7 +2569,7 @@ fn ghostty_detection_text_unwrapped(
         .ok()
         .map(|rows| usize::from(rows).max(1))
         .unwrap_or(DEFAULT_DETECTION_ROWS);
-    ghostty_recent_text_unwrapped(core, lines)
+    ghostty_recent_text_unwrapped(core, lines + extra)
 }
 
 #[cfg(windows)]

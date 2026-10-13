@@ -213,6 +213,14 @@ impl DecisionStore {
         Ok(ResolveOutcome::Resolved(Box::new(decision)))
     }
 
+    /// Rewrite a pending decision's record in place, keeping its id and
+    /// created timestamp. Used when a screen prompt is re-parsed into an
+    /// equivalent decision — updating avoids a cancel+create pair that would
+    /// reflood watchers.
+    pub(crate) fn update_pending(&mut self, decision: &Decision) -> DecisionStoreResult<bool> {
+        update_if_pending(self.store.conn_mut(), decision)
+    }
+
     /// Mark every pending decision whose deadline passed as expired and return
     /// them so callers can emit `decision.resolved`.
     pub(crate) fn expire_pending(

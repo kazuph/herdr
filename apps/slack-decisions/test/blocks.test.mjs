@@ -91,3 +91,77 @@ test("fallback text carries option descriptions", () => {
   assert.match(text, /1\. はい\n   一度だけ実行する/);
   assert.match(text, /2\. いいえ/);
 });
+
+test("origin labels and question_label appear in the post", () => {
+  const decision = pendingDecision({
+    question_label: "質問 1/2 追加機能",
+    origin: {
+      machine: "darwin-mini",
+      workspace_label: "pv-src",
+      tab_label: "1",
+      pane_label: "pv-claude5",
+      pane_id: "p8",
+      agent: "claude",
+      cwd: "/tmp/repo",
+      command: "just test",
+      reason: "screen prompt",
+    },
+    options: [{ id: "1", label: "はい" }],
+  });
+  const blocks = buildDecisionBlocks({ decision, machine: LOCAL });
+  const all = blocks
+    .map((block) => (block.text?.text || block.elements?.[0]?.text || ""))
+    .join("\n");
+  assert.match(all, /質問 1\/2 追加機能/);
+  assert.match(all, /\*出どころマシン\* darwin-mini/);
+  assert.match(all, /\*スペース\* pv-src/);
+  assert.match(all, /\*タブ\* 1/);
+  assert.match(all, /\*ペイン\* pv-claude5/);
+  assert.match(all, /\*ペインID\* `p8`/);
+  assert.match(all, /\*エージェント\* `claude`/);
+});
+
+test("decision without labels omits those lines", () => {
+  const decision = pendingDecision({
+    origin: { machine: "darwin-mini" },
+    options: [{ id: "1", label: "はい" }],
+  });
+  const blocks = buildDecisionBlocks({ decision, machine: LOCAL });
+  const all = blocks
+    .map((block) => (block.text?.text || block.elements?.[0]?.text || ""))
+    .join("\n");
+  assert.match(all, /\*出どころマシン\* darwin-mini/);
+  assert.doesNotMatch(all, /スペース|タブ\*|\*ペイン\*/);
+});
+
+test("multi_select hint explains number reactions plus white_check_mark confirm", () => {
+  const decision = pendingDecision({
+    multi_select: true,
+    allow_text: true,
+    options: [
+      { id: "1", label: "検索" },
+      { id: "2", label: "通知" },
+    ],
+  });
+  const blocks = buildDecisionBlocks({ decision, machine: LOCAL });
+  const context = blocks
+    .filter((block) => block.type === "context")
+    .flatMap((block) => block.elements.map((el) => el.text))
+    .join("\n");
+  assert.match(context, /:white_check_mark: で確定/);
+  assert.match(context, /「1,3」/);
+  assert.match(context, /自由記述はスレッドに文で返信/);
+});
+
+test("option previews render in code blocks and unavailable is explicit", () => {
+  const decision = pendingDecision({
+    options: [
+      { id: "1", label: "A", preview: "+---+\n| A |\n+---+" },
+      { id: "2", label: "B", preview_unavailable: true },
+    ],
+  });
+  const blocks = buildDecisionBlocks({ decision, machine: LOCAL });
+  const text = sectionTexts(blocks).join("\n");
+  assert.match(text, /:one: A\n```\n\+---\+\n\| A \|\n\+---\+\n```/);
+  assert.match(text, /:two: B\n> プレビューあり（画面で確認）/);
+});
