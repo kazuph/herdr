@@ -1343,12 +1343,16 @@
   - server起動時（`herdr server`とmonolith `--no-session`）は、worker threadやchild spawnより先に同じmarkerを自分のprocess環境からも削除する。
   - 設定系・feature toggle系の変数（`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`CLAUDE_EFFORT`、`CLAUDE_CODE_ENABLE_TASKS`、`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING`など）は消さず、pane childへ従来どおり引き継ぐ。
   - pane launch envで呼出元が明示したenv（`PaneLaunchEnv` extras）はscrubより後に適用するため、利用者が意図してpaneへ入れる値は消えない。
+  - 同じscrub対象にpane-scopedなguard状態（`HERDR_GUARD_STARTUP`、`HERDR_GUARD_MODE`、`HERDR_GUARD_READY`、`HERDR_GUARD_ENFORCING`、`HERDR_GUARD_MARKER`、`HERDR_GUARD_SHIM_DIR`、`HERDR_GUARD_SHELL_DIR`、`HERDR_GUARD_HERDR`、`HERDR_GUARD_VIA`、`HERDR_GUARD_BASH_ENV_ORIG`、`HERDR_GUARD_ZDOTDIR_ORIG`）も含める。これらが漏れると `GuardLaunch::from_command` がguard未注入のcommandをcoveredと誤認し、見張られていないpaneへmarkerを付けてしまう。guard injection（`apply_guard_env`）はscrubより後に走るため、注入対象paneには新しい値が入る。`HERDR_GUARD_PANE_SHELL`はpane shell spawnが起動宣言としてscrub前に設定するので対象外とする。
+  - `BASH_ENV`・`ZDOTDIR`はユーザー値を持ち得るため、値がguard注入物と確証できる時だけ削除する（自namespaceのguard state directory配下、または別namespaceを含む既知の注入layout `*/guard/guard.bash`・`*/guard/zdotdir`）。`PROMPT_COMMAND`はguardが注入した末尾（shim pin＋ready書込み）だけを除去し、呼出元の行を保持する。
 - **受け入れ条件**:
   - `CLAUDE_CODE_CHILD_SESSION=1`等を含む環境から起動したserverのpaneで本物の`claude`を起動しても、transcript保存off警告が出ず、`~/.claude/sessions/<pid>.json`が生成され、herdrの`agent_session`にそのidが記録される。
   - 同じserverのpane shellの環境に `CLAUDE_CODE_SESSION_ID`・`CLAUDE_CODE_MESSAGING_SOCKET`・`CODEX_THREAD_ID`・`HERDR_AGENT`が残らず、`CLAUDE_EFFORT`等の設定変数は残る。
+  - `HERDR_GUARD_STARTUP=supported`等を含む環境から起動したserverが作るpaneでは、guard injectionが走らないspawnでcoverage evidenceが継承markerから作られず、injectionが走るpaneには新しい注入値が入る。
 - **デグレ判定**:
   - pane・job・pluginなどいずれかのspawn経路にmarkerが残り、そこで起動したClaude Codeがtranscript保存offになる。
-  - `CLAUDE_CONFIG_DIR`やfeature toggle等の設定系変数まで消してpane childの挙動が変わる。
+  - 継承したguard markerだけで未注入のpaneが見張り済み（covered）と記録される。
+  - `CLAUDE_CONFIG_DIR`やfeature toggle等の設定系変数、あるいはguard state directory外を指すユーザーの`BASH_ENV`・`ZDOTDIR`・`PROMPT_COMMAND`まで消してpane childの挙動が変わる。
 
 ### mouse routing・overlay・helpの微細契約
 - **元コミット**: 5b13801, e5e0e0e, fa6288a

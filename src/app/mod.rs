@@ -2305,6 +2305,9 @@ mod tests {
                 .unwrap();
             let mut state = runtime.handoff_runtime_state(pane.raw());
             let mut cmd = portable_pty::CommandBuilder::new("/bin/zsh");
+            // CommandBuilder snapshots this process's environment; a test run
+            // inside a guarded pane would otherwise look covered.
+            crate::integration::scrub_inherited_agent_session_env(&mut cmd);
             if let Some(startup) = startup {
                 cmd.env("HERDR_GUARD_STARTUP", startup);
             }

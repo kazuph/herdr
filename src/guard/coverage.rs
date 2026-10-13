@@ -91,6 +91,9 @@ mod tests {
     fn coverage_requires_supported_matching_launch_and_bash_prompt() {
         let mode = crate::config::GuardModeConfig::Enforce;
         let mut cmd = CommandBuilder::new("bash");
+        // CommandBuilder snapshots this process's environment; a test run
+        // inside a guarded pane would otherwise look covered.
+        crate::integration::scrub_inherited_agent_session_env(&mut cmd);
         assert!(GuardLaunch::from_command(&cmd).is_none());
         cmd.env("HERDR_GUARD_STARTUP", "unsupported");
         cmd.env("HERDR_GUARD_MODE", "enforce");

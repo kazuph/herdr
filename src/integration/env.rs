@@ -57,17 +57,136 @@ const INHERITED_AGENT_SESSION_ENV_VARS: &[&str] = &[
     "HERDR_AGENT",
 ];
 
+/// Guard coverage and plumbing state belongs to the pane the guard injected
+/// it into. A server started inside a guarded pane inherits these markers and
+/// would leak them into every spawn, where `GuardLaunch::from_command` would
+/// read a covered launch out of a command the guard never injected — marking
+/// an unwatched pane as watched. `apply_guard_env` always sets fresh values
+/// after this scrub, so removing the inherited copies is fail-closed.
+///
+/// `HERDR_GUARD_PANE_SHELL` is deliberately absent: pane-shell spawns set it
+/// on the command before this scrub runs, and an inherited copy can only make
+/// the supported-shell check stricter (fail-closed), never looser.
+const INHERITED_GUARD_ENV_VARS: &[&str] = &[
+    "HERDR_GUARD_STARTUP",
+    "HERDR_GUARD_MODE",
+    "HERDR_GUARD_READY",
+    "HERDR_GUARD_ENFORCING",
+    "HERDR_GUARD_MARKER",
+    "HERDR_GUARD_SHIM_DIR",
+    "HERDR_GUARD_SHELL_DIR",
+    "HERDR_GUARD_HERDR",
+    "HERDR_GUARD_VIA",
+    "HERDR_GUARD_BASH_ENV_ORIG",
+    "HERDR_GUARD_ZDOTDIR_ORIG",
+];
+
+/// `PROMPT_COMMAND` tail appended by the guard: the shim-pin case line from
+/// `pin_path_script`, an optional enforcing export, and the ready-file write.
+const GUARD_PIN_PATH_PREFIX: &str = "case \"$PATH\" in \"$HERDR_GUARD_SHIM_DIR\"";
+const GUARD_ENFORCING_EXPORT: &str = "export HERDR_GUARD_ENFORCING=1";
+const GUARD_READY_WRITE: &str = "builtin printf '' > \"$HERDR_GUARD_READY\"";
+
+/// True when `value` provably points at a file the guard injected. Matches
+/// this process's guard state directory and, for servers launched inside a
+/// pane of a *different* herdr namespace, the well-known injected paths
+/// (`.../guard/guard.bash`, `.../guard/zdotdir`) — both are internal layout,
+/// so user values elsewhere still survive.
+fn is_guard_owned_path(value: Option<&std::ffi::OsStr>) -> bool {
+    value.map(PathBuf::from).is_some_and(|path| {
+        if path.starts_with(crate::guard::guard_root()) {
+            return true;
+        }
+        let file_name = path.file_name().and_then(|name| name.to_str());
+        let parent_name = path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str());
+        parent_name == Some("guard") && matches!(file_name, Some("guard.bash") | Some("zdotdir"))
+    })
+}
+
+/// Returns the prompt command with the injected guard tail removed, or None
+/// when no injection is present. The caller's own lines are preserved.
+fn strip_injected_prompt_command(value: &str) -> Option<String> {
+    if !value.contains("HERDR_GUARD_READY") {
+        return None;
+    }
+    let cut = [
+        value.find(GUARD_PIN_PATH_PREFIX),
+        value.find(GUARD_ENFORCING_EXPORT),
+        value.find(GUARD_READY_WRITE),
+    ]
+    .into_iter()
+    .flatten()
+    .min()?;
+    Some(value[..cut].trim_end().to_string())
+}
+
+/// Decides what to do with the generic-name variables a guard injection
+/// writes, given a read-only `get` accessor. `BASH_ENV`/`ZDOTDIR` are removed
+/// only when they provably point at files the guard injected (user values
+/// survive); `PROMPT_COMMAND` keeps the caller's prefix with only the
+/// injected guard tail stripped.
+fn injected_shell_env_plan(
+    get: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> (Vec<&'static str>, Vec<(&'static str, String)>) {
+    let mut remove = Vec::new();
+    let mut set = Vec::new();
+    for name in ["BASH_ENV", "ZDOTDIR"] {
+        if is_guard_owned_path(get(name).as_deref()) {
+            remove.push(name);
+        }
+    }
+    if let Some(stripped) =
+        get("PROMPT_COMMAND").and_then(|value| strip_injected_prompt_command(value.to_str()?))
+    {
+        if stripped.is_empty() {
+            remove.push("PROMPT_COMMAND");
+        } else {
+            set.push(("PROMPT_COMMAND", stripped));
+        }
+    }
+    (remove, set)
+}
+
 pub(crate) fn scrub_inherited_agent_session_env(cmd: &mut CommandBuilder) {
-    for name in INHERITED_AGENT_SESSION_ENV_VARS {
+    for name in INHERITED_AGENT_SESSION_ENV_VARS
+        .iter()
+        .chain(INHERITED_GUARD_ENV_VARS)
+    {
         cmd.env_remove(name);
+    }
+    let (remove, set) =
+        injected_shell_env_plan(|name| cmd.get_env(name).map(std::ffi::OsStr::to_os_string));
+    for name in remove {
+        cmd.env_remove(name);
+    }
+    for (name, value) in set {
+        cmd.env(name, value);
     }
 }
 
 /// Same scrub for detached `std::process::Command` children (`herdr run`
 /// jobs and similar non-pty spawns).
 pub(crate) fn scrub_inherited_agent_session_env_process(command: &mut std::process::Command) {
-    for name in INHERITED_AGENT_SESSION_ENV_VARS {
+    for name in INHERITED_AGENT_SESSION_ENV_VARS
+        .iter()
+        .chain(INHERITED_GUARD_ENV_VARS)
+    {
         command.env_remove(name);
+    }
+    let (remove, set) = injected_shell_env_plan(|name| {
+        command
+            .get_envs()
+            .find(|(key, _)| key.to_str() == Some(name))
+            .and_then(|(_, value)| value.map(std::ffi::OsStr::to_os_string))
+    });
+    for name in remove {
+        command.env_remove(name);
+    }
+    for (name, value) in set {
+        command.env(name, value);
     }
 }
 
@@ -75,8 +194,18 @@ pub(crate) fn scrub_inherited_agent_session_env_process(command: &mut std::proce
 /// e.g. a server that was started inside an agent session. Call before
 /// spawning worker threads so no thread reads the environment mid-scrub.
 pub(crate) fn scrub_inherited_agent_session_env_process_env() {
-    for name in INHERITED_AGENT_SESSION_ENV_VARS {
+    for name in INHERITED_AGENT_SESSION_ENV_VARS
+        .iter()
+        .chain(INHERITED_GUARD_ENV_VARS)
+    {
         std::env::remove_var(name);
+    }
+    let (remove, set) = injected_shell_env_plan(|name| std::env::var_os(name));
+    for name in remove {
+        std::env::remove_var(name);
+    }
+    for (name, value) in set {
+        std::env::set_var(name, value);
     }
 }
 
@@ -287,6 +416,57 @@ mod tests {
                 .get_env("CLAUDE_EFFORT")
                 .and_then(std::ffi::OsStr::to_str),
             Some("medium")
+        );
+    }
+
+    #[test]
+    fn scrub_removes_inherited_guard_state_but_preserves_user_shell_env() {
+        let guard_root = crate::guard::guard_root();
+        let mut command = CommandBuilder::new("/bin/zsh");
+        for name in INHERITED_GUARD_ENV_VARS {
+            command.env(name, "leaked");
+        }
+        command.env("BASH_ENV", guard_root.join("guard.bash"));
+        command.env("ZDOTDIR", "/tmp/other-namespace/guard/zdotdir");
+        command.env(
+            "PROMPT_COMMAND",
+            format!(
+                "my-prompt\n{GUARD_PIN_PATH_PREFIX}|\"$HERDR_GUARD_SHIM_DIR\":*) ;; *) export PATH=\"$HERDR_GUARD_SHIM_DIR:$PATH\";; esac\n{GUARD_ENFORCING_EXPORT}\n{GUARD_READY_WRITE}"
+            ),
+        );
+
+        scrub_inherited_agent_session_env(&mut command);
+
+        for name in INHERITED_GUARD_ENV_VARS {
+            assert!(command.get_env(name).is_none(), "{name} must be scrubbed");
+        }
+        assert!(command.get_env("BASH_ENV").is_none());
+        assert!(command.get_env("ZDOTDIR").is_none());
+        assert_eq!(
+            command
+                .get_env("PROMPT_COMMAND")
+                .and_then(std::ffi::OsStr::to_str),
+            Some("my-prompt")
+        );
+
+        // User-owned values pointing outside the guard directory survive.
+        let mut user = CommandBuilder::new("/bin/zsh");
+        user.env("BASH_ENV", "/etc/profile.d/custom.sh");
+        user.env("ZDOTDIR", "/home/user/.zsh");
+        user.env("PROMPT_COMMAND", "my-prompt");
+        scrub_inherited_agent_session_env(&mut user);
+        assert_eq!(
+            user.get_env("BASH_ENV").and_then(std::ffi::OsStr::to_str),
+            Some("/etc/profile.d/custom.sh")
+        );
+        assert_eq!(
+            user.get_env("ZDOTDIR").and_then(std::ffi::OsStr::to_str),
+            Some("/home/user/.zsh")
+        );
+        assert_eq!(
+            user.get_env("PROMPT_COMMAND")
+                .and_then(std::ffi::OsStr::to_str),
+            Some("my-prompt")
         );
     }
 
