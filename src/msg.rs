@@ -4,6 +4,12 @@ use crate::api::schema::MsgMessage;
 
 pub(crate) const DEFAULT_ROOM: &str = "default";
 pub(crate) const JOBS_ROOM: &str = "herdr-jobs";
+
+pub(crate) fn is_global_pane_recipient(value: &str) -> bool {
+    value
+        .strip_prefix('p')
+        .is_some_and(|id| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_digit()))
+}
 #[cfg(test)]
 pub(crate) const MSG_DB_PATH_ENV_VAR: &str = crate::dispatch::HERDR_DB_PATH_ENV_VAR;
 
@@ -70,6 +76,21 @@ impl MsgStore {
             .map(Into::into)
     }
 
+    pub(crate) fn insert_failed_message(
+        &self,
+        room: &str,
+        project: &str,
+        from_agent: &str,
+        to_agent: &str,
+        body: &str,
+        reply_to: Option<i64>,
+        reason: &str,
+    ) -> rusqlite::Result<MsgMessage> {
+        self.store
+            .insert_failed_message(room, project, from_agent, to_agent, body, reply_to, reason)
+            .map(Into::into)
+    }
+
     pub(crate) fn unread_for_recipients(
         &mut self,
         room: &str,
@@ -115,6 +136,10 @@ impl MsgStore {
         self.store.rooms()
     }
 
+    pub(crate) fn pending_job_recipients(&self) -> rusqlite::Result<Vec<String>> {
+        self.store.pending_job_recipients()
+    }
+
     pub(crate) fn pending_nudge_for(
         &self,
         room: &str,
@@ -148,6 +173,10 @@ impl MsgStore {
 
     pub(crate) fn mark_delivered(&self, room: &str, to_agent: &str) -> rusqlite::Result<usize> {
         self.store.mark_messages_delivered(room, to_agent)
+    }
+
+    pub(crate) fn mark_message_failed(&self, id: i64, reason: &str) -> rusqlite::Result<()> {
+        self.store.mark_message_failed(id, reason)
     }
 
     pub(crate) fn mark_message_delivered(&self, id: i64) -> rusqlite::Result<bool> {

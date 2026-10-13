@@ -1583,6 +1583,7 @@
   - direct sendとroom broadcastを扱い、通常mailはSQLiteへ保存した直後、recipientがIdleまたはDoneなら新しいturn、Workingなら現在の作業へのsteeringとして、全roomのqueued本文をcreated時刻・同時刻ならmessage ID順に、そのまま1本文ずつtext+Enterで直接submitする。Working中のmessageをIdleまで保留せず、処理順や作業変更の判断は全文を受け取ったagentへ委ねる。Blocked、Unknown、runtime不在ではqueueを維持し、次にIdle、Working、Doneのいずれかとして利用可能になった時に同じ順序でsubmitする。通常自動配送で`herdr msg inbox` commandを注入したり、受信側に本文の取得・要約・再解釈を要求したりしない。各本文のsubmit成功後にそのmessage IDだけを`delivered`・`read`へ遷移する。
   - 通常mailのsubmit成功は、内部channelへの投入ではなく、本文とEnterの全byteをrecipientのPTY masterへ書き終えた時点とする。PTY完了は共有AppEventの容量を予約せず、mailbox専用eventでApp loopを待機させずに反映し、書き込み中のmessageは重複submitとmanual inbox取得から除外する。内部channelへ投入できてもPTY書き込みが失敗したmessageは`queued`を維持し、後続の利用可能eventで再試行する。
   - recipientは登録agent名でもglobal pane ID `pN`でも同一paneのmailboxを指す。serverはpaneに解決できるrecipientについて同一paneのrecipientエイリアス集合を使い、nudgeとinboxで同じqueued行を扱う。paneに解決できないrecipientは完全一致で扱い、`claude`や`codex`など個別paneを指さないagent種別名をrecipientエイリアス集合へ加えない。
+  - 同じagent名が複数paneにある時は名前宛の`herdr send`を拒否し、本文・宛先・理由を`failed`として記録する。解決済みの通知・通常mailのrecipientはglobal pane IDで保存し、actorの後続登録で配送先を変更しない。
   - 全利用可能agentの未読確認はserver起動時に1回だけ行う。message送信時はそのrecipient、agentがIdle、Working、Doneへ遷移した時、runtime復旧後にagentが同じ状態を再報告した時は、そのpaneのmailboxだけを確認し、無関係な通常API requestを全agent走査の起点にしない。
   - 通常mailはrecipientのactor IDとstatusのindexを使う1回のqueryで全roomをcreated時刻・message ID順に取得して直接配送する。`herdr-jobs`だけは既存のroom単位group配送を使う。agentごとに全roomを列挙してqueryしない。
 - **受け入れ条件**:
@@ -1593,7 +1594,7 @@
   - pane IDと登録agent名のrecipientエイリアスは同じpaneのqueued messageを指し、別paneのagent種別名宛てmessageは取得も配送もしない。inboxはbusy中のqueued messageの手動確認・回復に使えるが、通常自動配送の前提ではない。
   - queued messageがない状態でagent/pane一覧等の通常API requestを反復しても、requestごとの全利用可能agent走査とagent数×room数のmessage queryを実行しない。
   - server起動時の未読配送、message送信先への即時配送、Blocked/UnknownからIdle、Working、Doneへ変わったagentへの配送、runtime復旧後の同一状態再報告による再配送は、通常API request後の全agent走査を削除しても維持される。
-- **デグレ判定**: Working recipientへのmessageをIdleまで保留する。各API requestの完了時に全利用可能agentのmailboxを走査する。各agentについてroom一覧を取得してroomごとに未読queryする。recipient/status indexを使わずmessage全体を走査する。
+- **デグレ判定**: 同名agentの最後の登録paneへ配送する、曖昧な名前を推測で解決する、または拒否した配送の失敗記録を残さない。Working recipientへのmessageをIdleまで保留する。各API requestの完了時に全利用可能agentのmailboxを走査する。各agentについてroom一覧を取得してroomごとに未読queryする。recipient/status indexを使わずmessage全体を走査する。
 
 ### normal mailのPTY全byte書込み確認
 - **該当コミット**: f0b80e3, 0f61acb, 5f69fc9, 3200098, 88118ae
@@ -1632,7 +1633,10 @@
   - `herdr run`のdefaultはbackgroundで即座にjob IDを返し、job DBにcommand、cwd、caller pane/agent、status、PID、exit code、log pathを保存する。
   - background開始はCLIからserver socketへ渡し、running serverがjob記録とrunner起動を所有する。CLIはHerdr DBへの書込権限を必要としない。
   - list/status/log/cancelを提供する。cancelはrunner PIDが同じPIDのprocess group leaderであることを確認してからDBの`cancelling`を取得し、process groupへSIGTERMを送る。2秒以内にprocess groupが消滅しなければSIGKILLへ昇格し、消滅を確認した後だけDBを`cancelled`へ遷移する。SIGKILL後も残る時は`cancelling`のままfail closedする。
-  - cancelを含むcompletionは正確なcallerへ一行配送し、詳細は`herdr log <job_id>`を指す。
+  - jobのcaller pane/agentは作成時にcommand行へ保存し、actors表の現在paneから再構成しない。cancelと`--pane`を含むcompletionは作成時のglobal caller pane IDだけへ配送し、詳細は`herdr log <job_id>`を指す。
+  - `herdr-run`からの名前宛completionは、現在の同名paneが1つだけでも不変callerの証拠にならないため拒否し、failedとして保存する。旧実行中runnerから新serverへの通知にもこの規則を適用する。
+  - server不在時のcompletionは確定済みcaller pane IDへdurable queueする。serverがpane消失・曖昧宛先を確認した時、または旧jobのcallerが不明な時は配送せず、通知本文と理由を`failed`として保存する。Blocked/runtime未準備の既存pane宛はqueueを維持する。
+  - 旧command行には不変callerの証拠がないためcaller paneを空として扱い、actorsの現在paneを転用しない。旧queuedの名前宛`herdr-jobs`通知は本文を保持して`failed`にし、自動再送・既読化しない。既にpane ID宛のqueued通知はその宛先を保持する。
   - `herdr-jobs`のcompletionは直接注入後に既読化し、server起動時にも配送済みentryを未読へ戻さない。
 - **受け入れ条件**:
   - background runはvisible paneを増やさず即時returnし、成功・失敗のexit codeとstdout/stderrをjob logで確認できる。
@@ -1640,7 +1644,11 @@
   - caller identityがexactに解決できない時はjobを開始せずfail closedする。
   - completionが一般mailboxの未読clutterにならず、server再起動後もjob status/logが残る。
   - SIGTERMを無視する子processを持つjobでも、cancel完了時にはprocess group全体が消滅し、statusが`cancelled`になる。process groupの所有または消滅を証明できない時に`cancelled`を記録しない。
+  - 別workspaceに同名agentが2つ存在してもjobのcaller paneは変わらず、完了本文は起動元paneだけへ届く。
+  - caller不明・消失の通知と旧名前宛queued通知は本文を保持したfailed記録となり、別paneには届かず、再起動・再移行でqueuedへ戻らない。
   - job logにUTF-8として不正なbyteが混じっても、`herdr log <job_id>`と`--completion full`の通知は不正部分をU+FFFDに置き換えて全体を読める。
+
+- **デグレ判定**: jobのcallerをactorの変更可能なpane列から読む、completionをagent種別名へ送る、旧queued通知を現在の同名paneへ再送する、または配送先不明をqueuedのまま黙って残す。
 
 ### unified communication dispatcher
 - **該当コミット**: 70041ec

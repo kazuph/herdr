@@ -221,11 +221,11 @@ impl App {
             Err(err) => return encode_error_body(id, self.agent_start_error_body(err)),
         };
         if let Some(model) = crate::detect::model_from_cmdline(&argv.join(" ")) {
-            if let Some(actor_name) = agent.name.as_deref().or(agent.agent.as_deref()) {
+            if agent.name.is_some() || agent.agent.is_some() {
                 if let Ok(store) = crate::dispatch::DispatchStore::open_active() {
                     let _ = store.upsert_actor(
                         "agent",
-                        actor_name,
+                        &agent.global_pane_id,
                         agent.agent.as_deref(),
                         Some(&model),
                         None,
