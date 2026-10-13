@@ -1159,6 +1159,7 @@ impl AgentDetectionPresence {
 /// PTY runtime for a pane. Owns the terminal, I/O channels, and background tasks.
 /// Dropping this shuts down all background tasks and closes the PTY.
 pub struct PaneRuntime {
+    pub(crate) guard_launch: Option<crate::guard::coverage::GuardLaunch>,
     pane_id: PaneId,
     terminal: Arc<PaneTerminal>,
     io: PaneRuntimeIo,
@@ -1806,6 +1807,7 @@ impl PaneRuntime {
             input_state: self.input_state(),
             terminal_title: self.terminal_title(),
             initial_history_ansi: None,
+            guard_launch: self.guard_launch.clone(),
         }
     }
 
@@ -1875,6 +1877,7 @@ impl PaneRuntime {
         let windows_powershell_prompt_cwd_reporting =
             uses_windows_powershell_pane_shell(shell_config);
         let mut cmd = pane_shell_command_builder(shell_config)?;
+        cmd.env("HERDR_GUARD_PANE_SHELL", "1");
         cmd.cwd(cwd);
         apply_pane_terminal_env(&mut cmd);
         apply_pane_launch_env(&mut cmd, launch_env);
@@ -2001,6 +2004,7 @@ impl PaneRuntime {
             input_state,
             terminal_title,
             initial_history_ansi,
+            guard_launch,
         } = state;
         let pane_id = PaneId::from_raw(pane_id);
         use std::os::fd::FromRawFd;
@@ -2118,6 +2122,7 @@ impl PaneRuntime {
         );
 
         Ok(Self {
+            guard_launch,
             pane_id,
             terminal,
             io,
@@ -2154,6 +2159,7 @@ impl PaneRuntime {
         initial_state: SpawnInitialState<'_>,
         agent_detection: AgentDetection,
     ) -> std::io::Result<Self> {
+        let guard_launch = crate::guard::coverage::GuardLaunch::from_command(&cmd);
         crate::logging::pane_spawn_started(pane_id.raw(), rows, cols, scrollback_limit_bytes);
 
         let (response_tx, _response_rx) = mpsc::channel::<Bytes>(1);
@@ -2709,6 +2715,7 @@ impl PaneRuntime {
         };
 
         Ok(Self {
+            guard_launch,
             pane_id,
             terminal,
             io,
@@ -3280,6 +3287,7 @@ impl PaneRuntime {
         .expect("closed PTY actor starts");
 
         let runtime = Self {
+            guard_launch: None,
             pane_id: PaneId::from_raw(0),
             terminal,
             io: PaneRuntimeIo::Actor(actor),
@@ -3355,6 +3363,7 @@ impl PaneRuntime {
 
         (
             Self {
+                guard_launch: None,
                 pane_id: PaneId::from_raw(0),
                 terminal: Arc::new(PaneTerminal::new(
                     GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap(),
@@ -3891,6 +3900,7 @@ mod tests {
             .mode_set(crate::ghostty::MODE_FOCUS_EVENT, true)
             .unwrap();
         let runtime = PaneRuntime {
+            guard_launch: None,
             pane_id: PaneId::from_raw(0),
             terminal: Arc::new(PaneTerminal::new(
                 GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap(),
@@ -3925,6 +3935,7 @@ mod tests {
         let (resize_tx, _resize_rx) = watch::channel((80, 24, 0, 0));
         let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
         let runtime = PaneRuntime {
+            guard_launch: None,
             pane_id: PaneId::from_raw(0),
             terminal: Arc::new(PaneTerminal::new(
                 GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap(),

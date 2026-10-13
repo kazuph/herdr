@@ -88,12 +88,11 @@ use self::settings::render_settings_overlay;
 pub(crate) use self::sidebar::agent_panel_entries_from;
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};
 use self::status::{
-    copy_feedback_rect, pane_action_copy_label_width, render_config_diagnostic,
-    render_copy_feedback, render_pane_action_bar,
+    copy_feedback_rect, pane_action_copy_label_width, render_copy_feedback, render_pane_action_bar,
 };
 pub(crate) use self::status::{
-    pane_action_bar_rects, pane_action_copy_label, render_pane_action_bar_with_palette,
-    PaneActionBarRects,
+    pane_action_bar_rects, pane_action_copy_label, render_config_diagnostic,
+    render_pane_action_bar_with_palette, PaneActionBarRects,
 };
 pub(crate) use self::status::{render_toast_notification, state_label, toast_notification_rect};
 pub(crate) use self::status::{state_label_color, state_summary_icon};
@@ -579,8 +578,16 @@ pub fn render_with_runtime_registry(
 }
 
 fn render_notifications(app: &AppState, frame: &mut Frame, terminal_area: Rect) {
-    let has_config_diagnostic = app.config_diagnostic.is_some();
-    if let Some(message) = &app.config_diagnostic {
+    let diagnostic = app
+        .config_diagnostic
+        .iter()
+        .chain(app.guard_warnings.values())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let has_config_diagnostic = !diagnostic.is_empty();
+    if has_config_diagnostic {
+        let message = &diagnostic;
         let diagnostic_area = if app.view.layout == ViewLayout::Mobile {
             terminal_area
         } else {

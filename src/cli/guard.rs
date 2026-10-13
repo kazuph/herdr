@@ -760,6 +760,11 @@ fn guard_status(args: &[String]) -> std::io::Result<i32> {
         .as_ref()
         .and_then(|path| marker::read(path).map(|m| (path.clone(), m)));
     let log = crate::guard::log_path(config);
+    if config.enabled {
+        for warning in crate::guard::coverage::warnings() {
+            eprintln!("{warning}");
+        }
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({

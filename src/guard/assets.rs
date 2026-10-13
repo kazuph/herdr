@@ -10,7 +10,7 @@
 //!                 commands resolve through PATH with no extra process.
 //!                 While a marker exists it holds one forwarder script per
 //!                 target that runs `herdr guard exec`.
-//!   zdotdir/      injected ZDOTDIR holding only .zshenv: restores the
+//!   zdotdir/      injected zsh startup phases: restores the
 //!                 original ZDOTDIR, chain-loads the user's .zshenv, then
 //!                 installs wrappers without shadowing functions
 //!                 the user already defined (e.g. ai_guard).
@@ -89,29 +89,106 @@ pub(crate) fn apply_guard_env(cmd: &mut CommandBuilder, pane_env_id: Option<&str
             .as_ref(),
     );
 
-    // While the guard enforces, mark the pane so the dotfiles ai_guard
-    // loader can skip itself: without the marker, both confirmation systems
-    // would prompt for the same command.
-    if guard.mode == crate::config::GuardModeConfig::Enforce {
+    let shell = cmd
+        .get_argv()
+        .first()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .or_else(|| cmd.get_env("SHELL").and_then(OsStr::to_str))
+        .unwrap_or("");
+    let shell_name = Path::new(shell)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("");
+    let interactive_bash = shell_name == "bash"
+        && !cmd.get_argv().iter().skip(1).any(|arg| {
+            arg.to_str().is_some_and(|arg| {
+                arg.starts_with('-') && !arg.starts_with("--") && arg.contains('c')
+            })
+        });
+    let supported = matches!(shell_name, "zsh" | "bash")
+        || (cmd.get_env("HERDR_GUARD_PANE_SHELL").is_none()
+            && (!matches!(shell_name, "sh" | "fish" | "dash" | "ksh")
+                || (matches!(shell_name, "sh" | "dash")
+                    && cmd.get_argv().iter().any(|arg| arg == "-c")))
+            && cmd
+                .get_env("SHELL")
+                .and_then(OsStr::to_str)
+                .and_then(|shell| Path::new(shell).file_name())
+                .and_then(OsStr::to_str)
+                .is_some_and(|shell| matches!(shell, "zsh" | "bash")));
+    cmd.env_remove(ENFORCING_ENV_VAR);
+    if supported && !interactive_bash && guard.mode == crate::config::GuardModeConfig::Enforce {
         cmd.env(ENFORCING_ENV_VAR, "1");
+    }
+    cmd.env(
+        "HERDR_GUARD_STARTUP",
+        if supported {
+            "supported"
+        } else {
+            "unsupported"
+        },
+    );
+    cmd.env(
+        "HERDR_GUARD_MODE",
+        if guard.mode == crate::config::GuardModeConfig::Enforce {
+            "enforce"
+        } else {
+            "record"
+        },
+    );
+    if interactive_bash {
+        let ready = crate::guard::guard_root().join("ready").join(pane_env_id);
+        if let Some(parent) = ready.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::remove_file(&ready);
+        cmd.env("HERDR_GUARD_READY", ready.to_string_lossy().as_ref());
+        let original = cmd
+            .get_env("PROMPT_COMMAND")
+            .and_then(OsStr::to_str)
+            .unwrap_or("");
+        let enforcing = if guard.mode == crate::config::GuardModeConfig::Enforce {
+            "export HERDR_GUARD_ENFORCING=1\n"
+        } else {
+            ""
+        };
+        cmd.env(
+            "PROMPT_COMMAND",
+            format!(
+                "{original}\n{}{enforcing}builtin printf '' > \"$HERDR_GUARD_READY\"",
+                pin_path_script()
+            ),
+        );
     }
 
     // zsh: point ZDOTDIR at our .zshenv. The original ZDOTDIR (if any) is
     // recorded so the injected file can restore it before the user's
     // startup files run, keeping ZDOTDIR-derived paths like HISTFILE
     // unchanged.
-    if let Some(zdot_orig) = std::env::var_os("ZDOTDIR").filter(|value| !value.is_empty()) {
+    if let Some(zdot_orig) = cmd
+        .get_env("ZDOTDIR")
+        .map(OsStr::to_os_string)
+        .filter(|value| !value.is_empty())
+    {
         cmd.env(ZDOTDIR_ORIG_ENV_VAR, zdot_orig.to_string_lossy().as_ref());
     }
+    cmd.env(
+        "HERDR_GUARD_SHELL_DIR",
+        crate::guard::zdotdir().to_string_lossy().as_ref(),
+    );
     cmd.env(
         "ZDOTDIR",
         crate::guard::zdotdir().to_string_lossy().as_ref(),
     );
 
-    // bash: non-interactive shells read BASH_ENV. Interactive bash panes get
-    // no function coverage (BASH_ENV is ignored there); the PATH shims still
-    // judge every target command, so coverage holds either way.
-    if let Ok(bash_env) = std::env::var("BASH_ENV") {
+    // Non-interactive bash reads BASH_ENV; interactive bash acknowledges
+    // the PATH only after its startup files, via PROMPT_COMMAND above.
+    if let Some(bash_env) = cmd
+        .get_env("BASH_ENV")
+        .and_then(OsStr::to_str)
+        .map(str::to_owned)
+    {
         if !bash_env.is_empty() {
             cmd.env(BASH_ENV_ORIG_ENV_VAR, bash_env);
         }
@@ -140,11 +217,12 @@ pub(crate) fn ensure_assets(herdr_exe: &Path, targets: &[String]) -> std::io::Re
         zshenv_script(targets).as_bytes(),
         0o644,
     )?;
-    // Earlier guard builds injected chain-loading .zshrc/.zprofile/.zlogin
-    // files. They are obsolete now that .zshenv restores ZDOTDIR before the
-    // user's files run; remove leftovers so they cannot shadow anything.
-    for name in [".zshrc", ".zprofile", ".zlogin"] {
-        let _ = std::fs::remove_file(zdotdir.join(name));
+    for name in [".zprofile", ".zshrc", ".zlogin"] {
+        write_if_changed(
+            &zdotdir.join(name),
+            zsh_startup_script(name, targets).as_bytes(),
+            0o644,
+        )?;
     }
 
     write_if_changed(
@@ -257,9 +335,9 @@ exec "${{{HERDR_EXE_ENV_VAR}:-herdr}}" guard exec -- {} "$@"
 /// Order matters: the file first restores `ZDOTDIR` to its original value
 /// (or unsets it), so the user's `.zshenv` and every path derived from
 /// `ZDOTDIR` (e.g. `HISTFILE`) behave exactly as without injection — the
-/// same technique terminal emulators use for shell integration. zsh then
-/// reads `.zprofile`/`.zshrc`/`.zlogin` from the restored directory on its
-/// own, so no chain files are needed for those.
+/// same technique terminal emulators use for shell integration. Each phase
+/// chain-loads the user file, captures any ZDOTDIR change, and pins PATH.
+/// Only intervals between startup files use the injected directory.
 ///
 /// After sourcing the user's `.zshenv` it defines wrappers for
 /// target commands, but only for names that are not already a function or
@@ -270,28 +348,54 @@ exec "${{{HERDR_EXE_ENV_VAR}:-herdr}}" guard exec -- {} "$@"
 /// The `accept-line` recorder is installed from `precmd` so it runs after
 /// the user's `.zshrc` and wraps whatever `accept-line` widget exists then
 /// (including one installed by ai_guard), instead of replacing it.
-fn zshenv_script(targets: &[String]) -> String {
-    let herdr = r#""${HERDR_GUARD_HERDR:-herdr}""#;
-    let target_words = targets.join(" ");
-    format!(
-        r#"# herdr command guard .zshenv. Generated; do not edit.
+fn pin_path_script() -> &'static str {
+    r#"case "$PATH" in "$HERDR_GUARD_SHIM_DIR"|"$HERDR_GUARD_SHIM_DIR":*) ;; *) export PATH="$HERDR_GUARD_SHIM_DIR:$PATH";; esac
+"#
+}
 
-typeset -g _hg_orig_zdot="${{{ZDOTDIR_ORIG_ENV_VAR}:-}}"
+fn zshenv_script(targets: &[String]) -> String {
+    zsh_startup_script(".zshenv", targets)
+}
+
+fn zsh_startup_script(name: &str, targets: &[String]) -> String {
+    let next = match name {
+        ".zshenv" => "[[ -o login || -o interactive ]]",
+        ".zprofile" => "true",
+        ".zshrc" => "[[ -o login ]]",
+        _ => "false",
+    };
+    let startup = format!(
+        r#"typeset -g _hg_orig_zdot="${{HERDR_GUARD_ZDOTDIR_ORIG:-}}"
 if [[ -n "$_hg_orig_zdot" ]]; then
   export ZDOTDIR="$_hg_orig_zdot"
 else
   unset ZDOTDIR
 fi
-if [[ -r "${{_hg_orig_zdot:-$HOME}}/.zshenv" ]]; then
-  source "${{_hg_orig_zdot:-$HOME}}/.zshenv"
+if [[ -r "${{_hg_orig_zdot:-$HOME}}/{name}" ]]; then
+  source "${{_hg_orig_zdot:-$HOME}}/{name}"
 fi
+export HERDR_GUARD_ZDOTDIR_ORIG="${{ZDOTDIR:-}}"
 unset _hg_orig_zdot
+{pin}
+if {next}; then export ZDOTDIR="${{HERDR_GUARD_SHELL_DIR}}"; fi
+"#,
+        pin = pin_path_script()
+    );
+    if name != ".zshenv" {
+        return startup;
+    }
+    let herdr = r#""${HERDR_GUARD_HERDR:-herdr}""#;
+    let target_words = targets.join(" ");
+    format!(
+        r#"# herdr command guard .zshenv. Generated; do not edit.
+
+{startup}
 
 if [[ -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]]; then
   _herdr_guard_wrap() {{
     local _hg_t="$1"
     (( $+functions[$_hg_t] || $+aliases[$_hg_t] )) && return 0
-    functions[$_hg_t]='if [[ -f "${{{MARKER_ENV_VAR}:-}}" ]]; then HERDR_GUARD_VIA=shell-func '"${{HERDR_GUARD_HERDR:-herdr}}"' guard exec -- '"$_hg_t"' "$@"; else builtin command '"$_hg_t"' "$@"; fi'
+    functions[$_hg_t]='if [[ -f "${{{MARKER_ENV_VAR}:-}}" ]]; then {pin}HERDR_GUARD_VIA=shell-func '"${{HERDR_GUARD_HERDR:-herdr}}"' guard exec -- '"$_hg_t"' "$@"; else builtin command '"$_hg_t"' "$@"; fi'
   }}
   for _hg_t in {target_words}; do
     _herdr_guard_wrap "$_hg_t"
@@ -304,7 +408,7 @@ if [[ -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]]; then
       *" $_hg_cmd "*)
         shift
         if [[ -f "${{{MARKER_ENV_VAR}:-}}" ]]; then
-          HERDR_GUARD_VIA=shell-func {herdr} guard exec -- "$_hg_cmd" "$@"
+          {pin}HERDR_GUARD_VIA=shell-func {herdr} guard exec -- "$_hg_cmd" "$@"
         else
           builtin command "$_hg_cmd" "$@"
         fi
@@ -329,7 +433,8 @@ if [[ -o interactive && -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]]; then
   precmd_functions+=(_herdr_guard_precmd)
 fi
 "#,
-        ZDOTDIR_ORIG_ENV_VAR = ZDOTDIR_ORIG_ENV_VAR,
+        startup = startup,
+        pin = pin_path_script(),
         HERDR_EXE_ENV_VAR = HERDR_EXE_ENV_VAR,
         MARKER_ENV_VAR = MARKER_ENV_VAR,
         target_words = target_words,
@@ -350,6 +455,7 @@ fn bash_env_script(herdr_exe: &Path, targets: &[String]) -> String {
 if [ -n "${{{BASH_ENV_ORIG_ENV_VAR}:-}}" ] && [ -f "${{{BASH_ENV_ORIG_ENV_VAR}}}" ]; then
   . "${{{BASH_ENV_ORIG_ENV_VAR}}}"
 fi
+{pin}
 if [ -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]; then
   _herdr_guard_wrap() {{
     declare -F "$1" >/dev/null 2>&1 && return 0
@@ -377,6 +483,7 @@ if [ -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]; then
   }}
 fi
 "#,
+        pin = pin_path_script(),
         BASH_ENV_ORIG_ENV_VAR = BASH_ENV_ORIG_ENV_VAR,
         HERDR_EXE_ENV_VAR = HERDR_EXE_ENV_VAR,
         MARKER_ENV_VAR = MARKER_ENV_VAR,
@@ -423,6 +530,135 @@ mod tests {
         assert!(script.contains("HERDR_GUARD_MARKER"));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn login_zsh_keeps_shim_first_after_startup() {
+        let root = std::env::temp_dir().join(format!("hga-startup-{}", std::process::id()));
+        let user = root.join("user");
+        let injected = root.join("injected");
+        let shim = root.join("shim");
+        for dir in [&user, &injected, &shim] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
+            std::fs::write(
+                injected.join(name),
+                zsh_startup_script(name, &["rm".into()]),
+            )
+            .unwrap();
+        }
+        for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
+            std::fs::write(
+                user.join(name),
+                "export PATH=/usr/bin:/bin:$PATH\nHISTFILE=$ZDOTDIR/.zsh_history\n",
+            )
+            .unwrap();
+        }
+        let output = std::process::Command::new("/bin/zsh")
+            .env_clear()
+            .env("HOME", &user)
+            .env("ZDOTDIR", &injected)
+            .env("HERDR_GUARD_SHELL_DIR", &injected)
+            .env(ZDOTDIR_ORIG_ENV_VAR, &user)
+            .env(SHIM_DIR_ENV_VAR, &shim)
+            .env(HERDR_EXE_ENV_VAR, "/usr/bin/true")
+            .env("PATH", format!("{}:/usr/bin:/bin", shim.display()))
+            .args([
+                "-lic",
+                "print -r -- $PATH; print -r -- $ZDOTDIR; print -r -- $HISTFILE",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        let path = String::from_utf8(output.stdout).unwrap();
+        assert!(path.starts_with(&format!("{}:", shim.display())), "{path}");
+        assert!(path.contains(&shim.to_string_lossy().to_string()), "{path}");
+        let lines: Vec<_> = path.lines().collect();
+        assert_eq!(lines[1], user.to_string_lossy());
+        assert_eq!(lines[2], user.join(".zsh_history").to_string_lossy());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interactive_bash_acknowledges_path_only_after_user_startup() {
+        let _lock = crate::config::lock_test_config_env();
+        let root = std::env::temp_dir().join(format!("hga-bash-{}", std::process::id()));
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let config_path = root.join("config.toml");
+        std::fs::write(&config_path, "[guard]\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &config_path);
+        std::env::set_var("XDG_STATE_HOME", root.join("state"));
+        std::fs::write(home.join(".bash_profile"),
+            "export PATH=/usr/bin:/bin:$PATH\nprintf 'before=%s\\n' \"${HERDR_GUARD_ENFORCING:-}\"\n").unwrap();
+        let mut builder = CommandBuilder::new("/bin/bash");
+        builder.env_clear();
+        builder.env("HOME", &home);
+        builder.env("SHELL", "/bin/bash");
+        builder.env("PATH", "/usr/bin:/bin");
+        apply_guard_env(&mut builder, Some("p_bash"));
+        assert!(builder.get_env(ENFORCING_ENV_VAR).is_none());
+        let ready = builder.get_env("HERDR_GUARD_READY").unwrap();
+        assert!(!Path::new(ready).exists());
+        let mut command = std::process::Command::new("/bin/bash");
+        command
+            .env_clear()
+            .envs(builder.iter_full_env_as_str())
+            .args(["--login", "-i"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"printf 'after=%s|%s\\n' \"${HERDR_GUARD_ENFORCING:-}\" \"$PATH\"\nexit\n")
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("before=\n"), "{stdout}");
+        assert!(
+            stdout.contains(&format!(
+                "after=1|{}:",
+                crate::guard::pane_shim_dir("p_bash").display()
+            )),
+            "{stdout}"
+        );
+        assert!(Path::new(ready).is_file());
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        std::env::remove_var("XDG_STATE_HOME");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unsupported_pane_shell_never_suppresses_ai_guard() {
+        let _lock = crate::config::lock_test_config_env();
+        let root = std::env::temp_dir().join(format!("hga-unsupported-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.toml");
+        std::fs::write(&config_path, "[guard]\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &config_path);
+        std::env::set_var("XDG_STATE_HOME", root.join("state"));
+        let mut builder = CommandBuilder::new("/bin/sh");
+        builder.env("HERDR_GUARD_PANE_SHELL", "1");
+        builder.env(ENFORCING_ENV_VAR, "1");
+        apply_guard_env(&mut builder, Some("p_unsupported"));
+        assert!(builder.get_env(ENFORCING_ENV_VAR).is_none());
+        assert_eq!(
+            builder
+                .get_env("HERDR_GUARD_STARTUP")
+                .and_then(OsStr::to_str),
+            Some("unsupported")
+        );
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        std::env::remove_var("XDG_STATE_HOME");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn write_if_changed_sets_mode_and_skips_unchanged() {
         let root = std::env::temp_dir().join(format!("herdr-guard-assets-{}", std::process::id()));
@@ -467,7 +703,7 @@ mod tests {
         // CommandBuilder::new inherits this process's environment; drop the
         // guard vars so only what apply_guard_env sets is measured.
         let builder = || {
-            let mut builder = CommandBuilder::new("sh");
+            let mut builder = CommandBuilder::new("zsh");
             builder.env_remove(ENFORCING_ENV_VAR);
             builder.env_remove(MARKER_ENV_VAR);
             builder

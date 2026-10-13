@@ -285,7 +285,7 @@ pub(super) fn render_copy_feedback(
     frame.render_widget(Paragraph::new(text), inner);
 }
 
-pub(super) fn render_config_diagnostic(frame: &mut Frame, area: Rect, message: &str, p: &Palette) {
+pub(crate) fn render_config_diagnostic(frame: &mut Frame, area: Rect, message: &str, p: &Palette) {
     let style = Style::default()
         .fg(panel_contrast_fg(p))
         .bg(p.yellow)
