@@ -13505,13 +13505,13 @@
         "src/app/screen_prompts.rs:1780"
       ],
       "test_status": [
-        "unverified"
+        "static_verified"
       ],
       "live_status": [
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "Real Claude Code narrow-pane answer progression requires isolated live acceptance."
+        "Real Claude Code narrow-pane answer progression remains unverified: parent requested stopping test Claude until the guard recursion incident is repaired."
       ]
     }
   ]
