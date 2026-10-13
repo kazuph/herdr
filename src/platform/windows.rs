@@ -178,6 +178,12 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
 }
 
+/// Open-file enumeration is not wired on Windows; callers observe sessions
+/// fail-closed from other evidence.
+pub fn process_open_files(_pid: u32) -> Vec<PathBuf> {
+    Vec::new()
+}
+
 pub fn process_started_at(pid: u32) -> Option<std::time::SystemTime> {
     if pid == 0 {
         return None;

@@ -816,6 +816,9 @@ fn main() -> io::Result<()> {
     // --- Monolithic mode (--no-session escape hatch) ---
     // This is the pre-mission single-process behavior.
 
+    // Same scrub as the headless server: panes spawned from this process are
+    // fresh top-level contexts, not children of an outer agent session.
+    crate::integration::scrub_inherited_agent_session_env_process_env();
     init_logging();
 
     let (api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();

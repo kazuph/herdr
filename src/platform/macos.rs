@@ -985,11 +985,15 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
         return None;
     }
 
+    vnode_info_path_to_pathbuf(&pathinfo.pvi_cdir)
+}
+
+fn vnode_info_path_to_pathbuf(info: &libc::vnode_info_path) -> Option<PathBuf> {
     // vip_path is [[c_char; 32]; 32] in libc (workaround for old Rust const generics).
     // Reinterpret as flat bytes (total MAXPATHLEN = 1024).
     let vip_path = unsafe {
         std::slice::from_raw_parts(
-            pathinfo.pvi_cdir.vip_path.as_ptr() as *const u8,
+            info.vip_path.as_ptr() as *const u8,
             libc::MAXPATHLEN as usize,
         )
     };
@@ -999,6 +1003,114 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
         return None;
     }
     Some(PathBuf::from(OsStr::from_bytes(&vip_path[..nul])))
+}
+
+// `sys/proc_info.h` exposes `PROC_PIDFDVNODEPATHINFO`,
+// `struct proc_fileinfo`, and `struct vnode_fdinfowithpath`, none of which
+// is in the `libc` crate yet.
+const PROC_PIDFDVNODEPATHINFO: libc::c_int = 2;
+
+#[repr(C)]
+struct ProcFileInfo {
+    _fi_flags: u32,
+    _fi_status: u32,
+    _fi_offset: i64,
+    _fi_type: i32,
+    _fi_guardflags: u32,
+}
+
+#[repr(C)]
+struct VnodeFdInfoWithPath {
+    _pfi: ProcFileInfo,
+    pvip: libc::vnode_info_path,
+}
+
+/// Paths of regular files a process currently holds open.
+///
+/// Uses `proc_pidinfo(PROC_PIDLISTFDS)` and
+/// `proc_pidfdinfo(PROC_PIDFDVNODEPATHINFO)` directly instead of shelling out
+/// to `lsof`. Agent session observation only needs vnode paths; other fd
+/// types (sockets, pipes, kqueues) are skipped.
+pub fn process_open_files(pid: u32) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if pid == 0 {
+        return paths;
+    }
+
+    let fdinfo_size = std::mem::size_of::<libc::proc_fdinfo>();
+    let mut capacity = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDLISTFDS,
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if capacity < fdinfo_size as libc::c_int {
+        return paths;
+    }
+
+    let mut fdinfos: Vec<libc::proc_fdinfo> = Vec::new();
+    for _ in 0..4 {
+        let mut buffer = vec![
+            libc::proc_fdinfo {
+                proc_fd: 0,
+                proc_fdtype: 0,
+            };
+            capacity as usize / fdinfo_size
+        ];
+        let returned = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDLISTFDS,
+                0,
+                buffer.as_mut_ptr() as *mut libc::c_void,
+                capacity,
+            )
+        };
+        if returned <= 0 {
+            return paths;
+        }
+        let count = (returned as usize) / fdinfo_size;
+        if count < buffer.len() {
+            fdinfos = buffer;
+            fdinfos.truncate(count);
+            break;
+        }
+        // The fd table grew between the sizing call and the read.
+        capacity = capacity.saturating_mul(2);
+        if capacity == libc::c_int::MAX {
+            return paths;
+        }
+    }
+    if fdinfos.is_empty() {
+        return paths;
+    }
+    let vnode_size = std::mem::size_of::<VnodeFdInfoWithPath>() as libc::c_int;
+    for fdinfo in fdinfos {
+        if fdinfo.proc_fdtype != libc::PROX_FDTYPE_VNODE as u32 {
+            continue;
+        }
+        let mut vnode_info: VnodeFdInfoWithPath = unsafe { std::mem::zeroed() };
+        let ret = unsafe {
+            libc::proc_pidfdinfo(
+                pid as libc::c_int,
+                fdinfo.proc_fd,
+                PROC_PIDFDVNODEPATHINFO,
+                &mut vnode_info as *mut _ as *mut libc::c_void,
+                vnode_size,
+            )
+        };
+        if ret != vnode_size {
+            continue;
+        }
+        if let Some(path) = vnode_info_path_to_pathbuf(&vnode_info.pvip) {
+            paths.push(path);
+        }
+    }
+
+    paths
 }
 
 pub fn session_processes(child_pid: u32) -> Vec<u32> {
@@ -1115,6 +1227,29 @@ mod tests {
             .duration_since(started_at)
             .expect("current process cannot start in the future");
         assert!(elapsed < std::time::Duration::from_secs(60));
+    }
+
+    #[test]
+    fn vnode_fd_info_with_path_matches_proc_info_layout() {
+        // sys/proc_info.h: struct vnode_fdinfowithpath is a 24-byte
+        // proc_fileinfo followed by an 1176-byte vnode_info_path.
+        assert_eq!(std::mem::size_of::<ProcFileInfo>(), 24);
+        assert_eq!(std::mem::size_of::<VnodeFdInfoWithPath>(), 1200);
+    }
+
+    #[test]
+    fn process_open_files_lists_held_regular_files() {
+        let held =
+            std::env::temp_dir().join(format!("herdr-open-files-test-{}", std::process::id()));
+        let _guard = std::fs::File::create(&held).expect("create held file");
+        let held = held.canonicalize().unwrap_or(held);
+
+        let paths = process_open_files(std::process::id());
+        assert!(paths.contains(&held), "held file must appear: {paths:?}");
+        assert!(process_open_files(0).is_empty());
+
+        drop(_guard);
+        let _ = std::fs::remove_file(&held);
     }
 
     #[test]

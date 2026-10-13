@@ -646,9 +646,10 @@
   - Codexの復元コマンドは、`[agent_start.commands].codex`が設定されている場合、その構造化argvを順序どおり保持し、末尾へ`resume`とpane固有session idだけを追加する。新規pane起動とrestoreでsandbox・approval・network・wrapper等の起動オプションを変えず、shell aliasや`sh -lc`へ依存しない。
   - `[agent_start.commands].codex`が無い場合だけ、既存のagent別restore templateを使う。templateには`{session_id}`を必須とし、fork時点のbuiltinは`claude = "claude --resume {session_id}"`と`codex = "codex resume {session_id}"`。
   - session idは、trustedな明示報告が最優先。明示報告がないplain processでは、現在のruntime/session fileで一意に観測した現行IDを優先し、それが無い場合だけ実行中processのcmdlineから `claude --resume <id>` / `claude --resume=<id>` / `codex resume <id>` を読む。cmdlineは起動形状のfallbackであり、resume後の現行session identityを上書きしない。
-  - plain Claude/Codexでcmdlineにresume idがない場合だけ、実行中processのcwdとprocess start timeに一致するsession fileを探す。Codexは `$HOME/.codex/sessions/**/*.jsonl` の先頭 `session_meta.payload.id` または `session_meta.payload.session_id`、`payload.cwd`、`payload.timestamp` を使う。Claudeは `$HOME/.claude/projects/**/*.jsonl` の先頭64行以内にある `sessionId`、`cwd`、`timestamp` を使う。
+  - plain Claude/Codexでcmdlineにresume idがない場合だけ、実行中processのcwdとprocess start timeに一致するsession fileを探す。Codexは `$HOME/.codex/sessions/**/*.jsonl` の先頭 `session_meta.payload.id` または `session_meta.payload.session_id`、`payload.cwd`、`payload.timestamp` を使う。Codexはさらに、実行中processが開いている `.jsonl` file（rollout fileを掴んでいるCodex buildでは正確なpid紐付けになる）を同じ `session_meta` 基準で見る。Claudeは `$HOME/.claude/projects/**/*.jsonl` の先頭64行以内にある `sessionId`、`cwd`、`timestamp` を使う。
   - Claude processのcmdlineにある `claude --resume <old-id>` は、現在実行中processへ対応するClaude session file/runtimeで観測したIDより優先しない。runtime/session fileの現行IDをpane sessionとして報告し、`session_start_source = "resume"`を付けて「resume引数からの復元ではなく、resume後に観測した現行sessionへの置換」であることを保持する。
   - session file recoveryは、session timestampとprocess start timeの差が120秒以内で、候補が1件だけのときだけ採用する。0件または2件以上ならsession id未確定として扱う。
+  - Codex rollout scanは、file mtimeと `session_meta.payload.timestamp` がprocess start - 120秒以降の `rollout-*.jsonl` だけを候補にし、`payload.cwd` がpane processのcwdと一致し、`payload.timestamp` が同じwindow内にあるsession idが1件だけのとき採用する。window内で読めない・判定不能な `rollout-*.jsonl` が1つでもあれば、真の一致を隠す可能性があるためsession id未確定として扱う。`codex resume --last` の `--last` 自体はsession idとして記録しない。
   - session idはpaneのsession snapshotにも保存し、別途pane ledgerにも保存する。ledger entryはpane id、terminal id、workspace id、tab id、cwd、agent、session id、observed_at、source、titleを持つ。paneを明示closeした時、PaneDiedでpaneを永久削除した時、または所有tab/workspaceを閉じた時は対応entryを削除する。runtime processだけが停止してpaneがrestorable ownerとして残る時はledgerを保持する。stale ledger単独では別世代・再利用paneを復元対象にしない。
   - 同じcwdにある複数paneは、snapshot上もledger上も別session idを保持する。pane idやtab/workspaceが違うsession idを混ぜない。
   - `herdr agent restore [--dry-run]` は復元対象paneごとの結果を返す。action itemは `pane_id`、`agent`、`status`、任意の `command`、任意の `reason` を持ち、`status` は `launched` / `would_launch` / `skipped`。
@@ -666,6 +667,7 @@
   - 上記状態報告をclearした後も、次のsnapshotに同じnative session idが残る。
   - terminal側のsession idが消えてもledgerに同じpane/workspace/tab/agentのsafe idがあれば、次のsnapshotには同じsession idが残る。
   - pane死亡後に検出状態が一度消えても、restorable agent paneのsnapshotには同じagent/session idが残り、再度restore planが同じresume commandを作る。
+  - 実行中Codexがrollout fileを開いたままにしないbuildでも、pane processのcwdとstart timeに一致するrolloutのsession idが1件だけなら native `herdr:codex` session idとして記録される。同じcwdの複数Codex sessionがwindow内にあれば記録しない。
   - 旧fork snapshotの`agent_restore = { agent, session_id }`は、safeなsession idがある場合だけ現本家の`agent_session = { source, agent, kind, value }`へ移行し、同じpaneのnative resume planを作る。
   - 旧fork snapshotの`pane_order`、focused pane、root pane、`title`を移行後も保持する。
   - v4以前のsnapshotはworkspace配列順の表示番号を`s1`, `s2`…へ移行し、旧`public_pane_numbers`は旧composite pane targetを復元中だけ解決するalias入力として使う。v5 captureはこのlegacy fieldを保存しない。
@@ -1332,6 +1334,25 @@
   - 外側 `NO_COLOR=1` が pane child process に残る。
   - `NO_COLOR` 削除のために `TERM` / `COLORTERM` の pane identity が壊れる。
   - nested Claude Code / Codex / Copilot CLI の status helper が Herdr pane 内で単色表示に戻る。
+
+### inherited agent-session環境変数をpane childへ引き継がない
+- **status: fork独自・保持 (C)** — session-scoped markerのscrubと設定系変数の保持を残す。
+- **目的**: Herdr serverがagent session（Claude CodeのBash等）の内側から起動されると、そのagentのsession-scoped環境変数がserver環境に残り、serverが作るすべてのpane shell・job・plugin子processへ漏れる。Claude Code 2.1.296以降は `CLAUDE_CODE_CHILD_SESSION` を受け継ぐと自分をそのsessionの子agentと見なしてtranscript保存を止めるため、`~/.claude/sessions/<pid>.json` が生成されずherdrがsession idを観測できなくなる（no saved sessionのデグレ）。paneは外側agent sessionの子ではなく独立したtop-level contextなので、markerを引き継がない。
+- **UI挙動**:
+  - Herdrが子processを作る全経路（新規・split・restored・`herdr run` jobなどdetached spawn、plugin pane/process、その他pane spawn）は、child environmentからsession-scoped markerを削除する。対象は `AI_AGENT`、`CLAUDECODE`、`CLAUDE_PID`、`CLAUDE_CODE_CHILD_SESSION`、`CLAUDE_CODE_SESSION_ID`、`CLAUDE_CODE_SESSION_ATTENDED`、`CLAUDE_CODE_MESSAGING_SOCKET`、`CLAUDE_CODE_MESSAGING_TOKEN`、`CLAUDE_CODE_ENTRYPOINT`、`CLAUDE_CODE_EXECPATH`、`CODEX_THREAD_ID`、`HERDR_AGENT`。
+  - server起動時（`herdr server`とmonolith `--no-session`）は、worker threadやchild spawnより先に同じmarkerを自分のprocess環境からも削除する。
+  - 設定系・feature toggle系の変数（`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`CLAUDE_EFFORT`、`CLAUDE_CODE_ENABLE_TASKS`、`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING`など）は消さず、pane childへ従来どおり引き継ぐ。
+  - pane launch envで呼出元が明示したenv（`PaneLaunchEnv` extras）はscrubより後に適用するため、利用者が意図してpaneへ入れる値は消えない。
+  - 同じscrub対象にpane-scopedなguard状態（`HERDR_GUARD_STARTUP`、`HERDR_GUARD_MODE`、`HERDR_GUARD_READY`、`HERDR_GUARD_ENFORCING`、`HERDR_GUARD_MARKER`、`HERDR_GUARD_SHIM_DIR`、`HERDR_GUARD_SHELL_DIR`、`HERDR_GUARD_HERDR`、`HERDR_GUARD_VIA`、`HERDR_GUARD_BASH_ENV_ORIG`、`HERDR_GUARD_ZDOTDIR_ORIG`）も含める。これらが漏れると `GuardLaunch::from_command` がguard未注入のcommandをcoveredと誤認し、見張られていないpaneへmarkerを付けてしまう。guard injection（`apply_guard_env`）はscrubより後に走るため、注入対象paneには新しい値が入る。`HERDR_GUARD_PANE_SHELL`はpane shell spawnが起動宣言としてscrub前に設定するので対象外とする。
+  - `BASH_ENV`・`ZDOTDIR`はユーザー値を持ち得るため、値がguard注入物と確証できる時だけ削除する（自namespaceのguard state directory配下、または別namespaceを含む既知の注入layout `*/guard/guard.bash`・`*/guard/zdotdir`）。`PROMPT_COMMAND`はguardが注入した末尾（shim pin＋ready書込み）だけを除去し、呼出元の行を保持する。
+- **受け入れ条件**:
+  - `CLAUDE_CODE_CHILD_SESSION=1`等を含む環境から起動したserverのpaneで本物の`claude`を起動しても、transcript保存off警告が出ず、`~/.claude/sessions/<pid>.json`が生成され、herdrの`agent_session`にそのidが記録される。
+  - 同じserverのpane shellの環境に `CLAUDE_CODE_SESSION_ID`・`CLAUDE_CODE_MESSAGING_SOCKET`・`CODEX_THREAD_ID`・`HERDR_AGENT`が残らず、`CLAUDE_EFFORT`等の設定変数は残る。
+  - `HERDR_GUARD_STARTUP=supported`等を含む環境から起動したserverが作るpaneでは、guard injectionが走らないspawnでcoverage evidenceが継承markerから作られず、injectionが走るpaneには新しい注入値が入る。
+- **デグレ判定**:
+  - pane・job・pluginなどいずれかのspawn経路にmarkerが残り、そこで起動したClaude Codeがtranscript保存offになる。
+  - 継承したguard markerだけで未注入のpaneが見張り済み（covered）と記録される。
+  - `CLAUDE_CONFIG_DIR`やfeature toggle等の設定系変数、あるいはguard state directory外を指すユーザーの`BASH_ENV`・`ZDOTDIR`・`PROMPT_COMMAND`まで消してpane childの挙動が変わる。
 
 ### mouse routing・overlay・helpの微細契約
 - **元コミット**: 5b13801, e5e0e0e, fa6288a

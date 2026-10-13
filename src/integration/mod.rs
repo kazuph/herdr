@@ -13,7 +13,9 @@ pub(crate) use actions::{install_target, uninstall_target};
 #[cfg(all(test, unix))]
 pub(crate) use env::integration_env_lock;
 pub(crate) use env::{
-    apply_pane_base_env, HERDR_PANE_ID_ENV_VAR, HERDR_TAB_ID_ENV_VAR, HERDR_WORKSPACE_ID_ENV_VAR,
+    apply_pane_base_env, codex_dir, scrub_inherited_agent_session_env,
+    scrub_inherited_agent_session_env_process, scrub_inherited_agent_session_env_process_env,
+    HERDR_PANE_ID_ENV_VAR, HERDR_TAB_ID_ENV_VAR, HERDR_WORKSPACE_ID_ENV_VAR,
 };
 pub(crate) use types::{IntegrationRecommendation, IntegrationStatus, IntegrationStatusKind};
 
