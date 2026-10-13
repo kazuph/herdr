@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.36] - 2026-10-13
+
+### Fixed
+- Server startup, session restore, live handoff import, and config reload now synchronize guard markers and coverage warnings for every pane, including inactive tabs and workspaces. Agent panes inherited without launch-time guard injection show their pane, reason, and recovery action in `herdr guard status` stderr and the TUI immediately; a new guarded pane remains protected.
+
 ## Unreleased
 
 ### Added
@@ -28,7 +33,6 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
-- Server startup, session restore, live handoff import, and config reload now synchronize guard markers and coverage warnings for every pane, including inactive tabs and workspaces. Agent panes inherited without launch-time guard injection show their pane, reason, and recovery action in `herdr guard status` stderr and the TUI immediately; a new guarded pane remains protected.
 - Pending decisions no longer drop each option's description: screen prompt parsing carries the description rows under each numbered choice into a new optional `options[].description` field (joined across soft-wrapped rows and included in the prompt signature so a description-only change re-offers the prompt), `herdr decision ask` accepts `--option-desc <id:text>` per option, the decision dialog renders descriptions wrapped under their labels with an options band that scrolls or follows selection so every line is reachable, and the slack-decisions plugin quotes descriptions under each numbered option, splitting across section blocks instead of truncating when Slack's text limit is hit. Payloads written without `description` still deserialize.
 - Agent command guarding now keeps shims first in `PATH` after zsh startup files and at the first interactive bash prompt, preserves guard injection when restoring an agent session, and reports uncovered agent panes with their pane ID, reason, and recovery instructions in `herdr guard status` stderr and the TUI. Existing panes launched before guarding was enabled must start the agent in a new pane to recover coverage.
 - `herdr decision watch` no longer replays already-resolved decisions at startup: decision subscriptions start at the hub's current sequence instead of re-reading retained history, and a `resolved` for a decision the watch never announced is dropped, so consumers no longer see a stale `created`/`resolved` pair on every start.
