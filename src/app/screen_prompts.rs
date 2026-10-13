@@ -22,8 +22,7 @@ use crate::api::schema::{
 use crate::decision::{new_decision_id, unix_ms_now, DecisionStore, ResolveOutcome};
 use crate::detect::AgentState;
 use crate::layout::PaneId;
-use crate::screen_prompt::{parse_screen_prompt, OptionShortcut, ScreenPrompt};
-use crate::terminal::TerminalRuntime;
+use crate::screen_prompt::{normalize_volatile, parse_screen_prompt, OptionShortcut, ScreenPrompt};
 
 /// Decision origin reason marking decisions created from pane screens.
 pub(crate) const SCREEN_PROMPT_REASON: &str = "screen_prompt";
@@ -32,6 +31,16 @@ const SCREEN_PROMPT_SCAN_INTERVAL: Duration = Duration::from_millis(400);
 /// Consecutive reads that no longer show the watched prompt before the watch
 /// is released and the pending decision cancelled.
 const SCREEN_PROMPT_MISMATCH_LIMIT: u8 = 2;
+/// Extra scrollback rows above the viewport included in every screen-prompt
+/// read — a permission dialog taller than the pane keeps its header, the
+/// full command box and the `⏺` call line reachable for the title.
+const SCREEN_PROMPT_EXTRA_ROWS: usize = 24;
+/// Cancel+recreate rebuilds inside this window mark a pane as churning.
+const SCREEN_PROMPT_FLOOD_WINDOW: Duration = Duration::from_secs(30);
+/// Rebuild count inside the window that triggers the flood brake — beyond
+/// this cadence the pending decision updates in place instead of emitting
+/// another resolved+created pair per redraw.
+const SCREEN_PROMPT_FLOOD_LIMIT: usize = 3;
 /// Delay between typing the free-text option number and the answer text, and
 /// again before Enter (CC redraws the option row when a number is typed).
 const FREE_TEXT_OPTION_DELAY: Duration = Duration::from_millis(500);
@@ -51,6 +60,31 @@ const PREVIEW_SCAN_STEP_DELAY: Duration = Duration::from_millis(200);
 /// Consecutive torn/mismatched reads tolerated inside a preview scan before
 /// the walk is abandoned — the prompt genuinely changed, not a redraw.
 const PREVIEW_SCAN_MISMATCH_LIMIT: u8 = 3;
+
+/// Fields a parsed screen prompt contributes to a decision record. Built
+/// once and shared by create and the in-place refresh paths.
+pub(crate) struct PromptDecisionParts {
+    pub public_id: Option<String>,
+    pub kind: DecisionKind,
+    pub options: Vec<DecisionOption>,
+    pub allow_text: bool,
+    pub title: String,
+    pub body: Option<String>,
+    pub question_label: Option<String>,
+    pub origin: DecisionOrigin,
+}
+
+impl PromptDecisionParts {
+    /// Refresh an existing pending decision's content fields, keeping its
+    /// id, created timestamp, status and answer.
+    fn apply_to(&self, decision: &mut Decision) {
+        decision.title = self.title.clone();
+        decision.body = self.body.clone();
+        decision.question_label = self.question_label.clone();
+        decision.options = self.options.clone();
+        decision.origin = Some(self.origin.clone());
+    }
+}
 
 /// A screen prompt a pane is currently showing, tracked against the decision
 /// it created so redraws, tab moves and disappearances reconcile it.
@@ -253,10 +287,33 @@ impl App {
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
             return false;
         };
-        match parse_screen_prompt(&runtime.detection_text_unwrapped()) {
+        match parse_screen_prompt(&runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS))
+        {
             Some(prompt) => prompt.signature() == watch.signature,
             None => watch.mismatches == 0,
         }
+    }
+
+    /// Flood brake: the pane rebuilt its pending decision at least
+    /// SCREEN_PROMPT_FLOOD_LIMIT times inside the churn window — the latest
+    /// rebuild updates in place instead of emitting another cancel pair.
+    fn pane_is_flooding(&mut self, pane_id: PaneId) -> bool {
+        let rebuilds = self.screen_prompt_rebuilds.entry(pane_id).or_default();
+        while rebuilds
+            .front()
+            .is_some_and(|at| at.elapsed() > SCREEN_PROMPT_FLOOD_WINDOW)
+        {
+            rebuilds.pop_front();
+        }
+        rebuilds.len() >= SCREEN_PROMPT_FLOOD_LIMIT
+    }
+
+    /// Record a cancel+recreate so repeated rebuilds trip the flood brake.
+    fn record_pane_rebuild(&mut self, pane_id: PaneId) {
+        self.screen_prompt_rebuilds
+            .entry(pane_id)
+            .or_default()
+            .push_back(Instant::now());
     }
 
     /// The internal pane reference for a screen-prompt decision's origin.
@@ -373,7 +430,7 @@ impl App {
         for (ws_idx, pane_id, allow_unblocked) in candidates {
             let screen = self
                 .lookup_runtime_sender(ws_idx, pane_id)
-                .map(TerminalRuntime::detection_text_unwrapped);
+                .map(|runtime| runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS));
             let blocked = self.pane_is_blocked(ws_idx, pane_id);
             match screen {
                 Some(screen) => {
@@ -433,6 +490,16 @@ impl App {
         }
         if self.screen_prompt_watches.contains_key(&pane_id) {
             // Two consecutive mismatched reads: the prompt is gone or changed.
+            // A same-prompt redraw (only volatile text changed) or a pane
+            // churning rebuilds refreshes the pending decision in place — no
+            // resolved+created pair per redraw to flood watchers.
+            if let (Some(prompt), Some(sig)) = (&prompt, &current_sig) {
+                if self.refresh_watched_decision(ws_idx, pane_id, prompt, sig) {
+                    return true;
+                }
+                // This release leads into a fresh create for a new prompt.
+                self.record_pane_rebuild(pane_id);
+            }
             changed |= self.release_watch(pane_id);
         }
 
@@ -486,6 +553,193 @@ impl App {
         }
     }
 
+    /// Everything a screen prompt contributes to a decision record, shared
+    /// by create and by the in-place refresh paths.
+    fn prompt_decision_parts(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        prompt: &ScreenPrompt,
+    ) -> Option<PromptDecisionParts> {
+        let kind = if prompt.is_question() {
+            DecisionKind::AgentPrompt
+        } else {
+            DecisionKind::ToolPermission
+        };
+        let options: Vec<DecisionOption> = prompt
+            .choices
+            .iter()
+            .map(|(number, label)| DecisionOption {
+                id: number.to_string(),
+                label: label.clone(),
+                role: option_role(label),
+                description: prompt.descriptions.get(number).cloned(),
+                preview: prompt.previews.get(number).cloned(),
+                // Claude Code paints only the focused option's preview; when
+                // a preview box is up, options without a captured preview are
+                // explicitly marked so nothing is silently dropped. Options
+                // the preview scan already visited and saw draw no box are
+                // confirmed absent, not unavailable.
+                preview_unavailable: prompt.preview_box
+                    && !prompt.previews.contains_key(number)
+                    && !prompt.preview_none.contains(number),
+            })
+            .collect();
+        let allow_text = prompt.free_text.is_some();
+        if options.is_empty() && !allow_text {
+            return None;
+        }
+        let public_id = self.public_pane_id(ws_idx, pane_id);
+        let pane = self.pane_info(ws_idx, pane_id);
+        let title = {
+            let title = prompt.title();
+            if title.is_empty() {
+                let agent = pane
+                    .as_ref()
+                    .and_then(|pane| pane.agent.clone())
+                    .unwrap_or_else(|| "Agent".to_string());
+                match kind {
+                    DecisionKind::AgentPrompt => format!("{agent} question"),
+                    _ => format!("{agent} permission"),
+                }
+            } else {
+                title
+            }
+        };
+        // Volatile notices (auto-deny countdown, digit-free) ride in `body`
+        // so a deadline is visible without churning the decision title.
+        let progress = prompt.progress();
+        let body = [prompt.notice(), progress.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let body = (!body.is_empty()).then_some(body);
+        // The AskUserQuestion tab label + question progress ride next to the
+        // dialog header; `body` keeps carrying them for Slack/glasses.
+        let question_label = progress.filter(|label| !label.is_empty());
+        let origin = {
+            let mut origin = DecisionOrigin {
+                pane_id: public_id.clone(),
+                agent: pane.as_ref().and_then(|pane| pane.agent.clone()),
+                cwd: pane.as_ref().and_then(|pane| pane.cwd.clone()),
+                reason: Some(SCREEN_PROMPT_REASON.to_string()),
+                machine: Some("local".to_string()),
+                ..DecisionOrigin::default()
+            };
+            self.enrich_decision_origin(&mut origin);
+            origin
+        };
+        Some(PromptDecisionParts {
+            public_id,
+            kind,
+            options,
+            allow_text,
+            title,
+            body,
+            question_label,
+            origin,
+        })
+    }
+
+    /// Identical option ids+labels after volatile-display normalisation —
+    /// the answer surface is the same prompt's.
+    fn same_prompt_options(existing: &Decision, parts: &PromptDecisionParts) -> bool {
+        existing
+            .options
+            .iter()
+            .map(|option| (option.id.clone(), normalize_volatile(&option.label)))
+            .eq(parts
+                .options
+                .iter()
+                .map(|option| (option.id.clone(), normalize_volatile(&option.label))))
+    }
+
+    /// The same prompt redrawn: identical kind/answer channels, option
+    /// ids+labels+descriptions, and question once volatile displays
+    /// (countdowns/timers/spinners) are normalised. A description change is
+    /// a different prompt — it keeps cancel+create so stale approvals stay
+    /// rejected.
+    fn same_prompt_family(
+        existing: &Decision,
+        parts: &PromptDecisionParts,
+        prompt: &ScreenPrompt,
+    ) -> bool {
+        let same_descriptions = existing
+            .options
+            .iter()
+            .map(|option| option.description.as_deref().map(normalize_volatile))
+            .eq(parts
+                .options
+                .iter()
+                .map(|option| option.description.as_deref().map(normalize_volatile)));
+        existing.kind == parts.kind
+            && existing.allow_text == parts.allow_text
+            && existing.multi_select == prompt.multi_select
+            && Self::same_prompt_options(existing, parts)
+            && same_descriptions
+            && normalize_volatile(&existing.title) == normalize_volatile(&parts.title)
+    }
+
+    /// Keep the watched pane's pending decision when the re-parsed prompt is
+    /// the same prompt redrawn (volatile text changed) or when the pane is
+    /// churning rebuilds — update the record in place and re-arm the watch
+    /// on the new signature instead of cancelling and recreating. Returns
+    /// false when no eligible pending decision exists so the caller falls
+    /// through to release+create.
+    fn refresh_watched_decision(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        prompt: &ScreenPrompt,
+        sig: &str,
+    ) -> bool {
+        let Some(watch) = self.screen_prompt_watches.get(&pane_id) else {
+            return false;
+        };
+        let decision_id = watch.decision_id.clone();
+        let Some(parts) = self.prompt_decision_parts(ws_idx, pane_id, prompt) else {
+            return false;
+        };
+        let mut store = match DecisionStore::open_active() {
+            Ok(store) => store,
+            Err(err) => {
+                warn!(error = %err, "failed to open decision store for screen prompt");
+                return false;
+            }
+        };
+        let Ok(Some(existing)) = store.get(&decision_id) else {
+            return false;
+        };
+        if existing.status != DecisionStatus::Pending || !Self::is_screen_prompt_decision(&existing)
+        {
+            return false;
+        }
+        let churned =
+            Self::same_prompt_options(&existing, &parts) && self.pane_is_flooding(pane_id);
+        if !Self::same_prompt_family(&existing, &parts, prompt) && !churned {
+            return false;
+        }
+        let mut updated = existing;
+        parts.apply_to(&mut updated);
+        match store.update_pending(&updated) {
+            Ok(true) => {
+                if let Some(watch) = self.screen_prompt_watches.get_mut(&pane_id) {
+                    watch.signature = sig.to_string();
+                    watch.mismatches = 0;
+                    watch.resolved = false;
+                    watch.free_text_slot = prompt.free_text;
+                }
+                true
+            }
+            Ok(false) => false,
+            Err(err) => {
+                warn!(error = %err, "failed to refresh screen prompt decision");
+                false
+            }
+        }
+    }
+
     /// Reuse a still-pending decision for an identical prompt (server restart,
     /// watch lost on handoff) or create a fresh one.
     fn create_or_adopt_watch(
@@ -517,55 +771,9 @@ impl App {
         if self.preview_scans.contains_key(&pane_id) {
             return false;
         }
-        let kind = if prompt.is_question() {
-            DecisionKind::AgentPrompt
-        } else {
-            DecisionKind::ToolPermission
-        };
-        let options: Vec<DecisionOption> = prompt
-            .choices
-            .iter()
-            .map(|(number, label)| DecisionOption {
-                id: number.to_string(),
-                label: label.clone(),
-                role: option_role(label),
-                description: prompt.descriptions.get(number).cloned(),
-                preview: prompt.previews.get(number).cloned(),
-                // Claude Code paints only the focused option's preview; when
-                // a preview box is up, options without a captured preview are
-                // explicitly marked so nothing is silently dropped. Options
-                // the preview scan already visited and saw draw no box are
-                // confirmed absent, not unavailable.
-                preview_unavailable: prompt.preview_box
-                    && !prompt.previews.contains_key(number)
-                    && !prompt.preview_none.contains(number),
-            })
-            .collect();
-        let allow_text = prompt.free_text.is_some();
-        if options.is_empty() && !allow_text {
+        let Some(parts) = self.prompt_decision_parts(ws_idx, pane_id, prompt) else {
             return false;
-        }
-        let public_id = self.public_pane_id(ws_idx, pane_id);
-        let pane = self.pane_info(ws_idx, pane_id);
-        let title = {
-            let title = prompt.title();
-            if title.is_empty() {
-                let agent = pane
-                    .as_ref()
-                    .and_then(|pane| pane.agent.clone())
-                    .unwrap_or_else(|| "Agent".to_string());
-                match kind {
-                    DecisionKind::AgentPrompt => format!("{agent} question"),
-                    _ => format!("{agent} permission"),
-                }
-            } else {
-                title
-            }
         };
-        let body = prompt.progress().filter(|body| !body.is_empty());
-        // The AskUserQuestion tab label + question progress ride next to the
-        // dialog header; `body` keeps carrying them for Slack/glasses.
-        let question_label = prompt.progress().filter(|label| !label.is_empty());
 
         let mut store = match DecisionStore::open_active() {
             Ok(store) => store,
@@ -587,47 +795,43 @@ impl App {
                 && decision
                     .origin
                     .as_ref()
-                    .is_some_and(|origin| origin.pane_id == public_id)
+                    .is_some_and(|origin| origin.pane_id == parts.public_id)
         }) {
-            if existing.kind == kind
-                && existing.title == title
-                && existing.body == body
-                && existing.allow_text == allow_text
-                && existing.multi_select == prompt.multi_select
-                && existing
-                    .options
-                    .iter()
-                    .map(|option| {
-                        (
-                            option.id.clone(),
-                            option.label.clone(),
-                            option.description.clone(),
-                        )
-                    })
-                    .eq(options.iter().map(|option| {
-                        (
-                            option.id.clone(),
-                            option.label.clone(),
-                            option.description.clone(),
-                        )
-                    }))
+            if Self::same_prompt_family(existing, &parts, prompt)
+                || (Self::same_prompt_options(existing, &parts) && self.pane_is_flooding(pane_id))
             {
-                // Same prompt already has a pending decision — adopt it so a
-                // restarted server does not re-offer.
-                self.screen_prompt_watches.insert(
-                    pane_id,
-                    ScreenPromptWatch {
-                        signature: sig,
-                        decision_id: existing.decision_id.clone(),
-                        free_text_slot: prompt.free_text,
-                        resolved: false,
-                        mismatches: 0,
-                    },
-                );
-                return changed;
+                // Same prompt still pending — refresh the record in place
+                // and adopt it so a restarted server does not re-offer. The
+                // flood-brake branch covers rebuild churn; both avoid a
+                // resolved+created pair per redraw.
+                let mut updated = existing.clone();
+                parts.apply_to(&mut updated);
+                match store.update_pending(&updated) {
+                    Ok(true) => {
+                        self.screen_prompt_watches.insert(
+                            pane_id,
+                            ScreenPromptWatch {
+                                signature: sig,
+                                decision_id: existing.decision_id.clone(),
+                                free_text_slot: prompt.free_text,
+                                resolved: false,
+                                mismatches: 0,
+                            },
+                        );
+                        return changed;
+                    }
+                    // Resolved between list() and the update — no longer a
+                    // pending decision to adopt.
+                    Ok(false) => continue,
+                    Err(err) => {
+                        warn!(error = %err, "failed to update screen prompt decision in place");
+                        continue;
+                    }
+                }
             }
             // A different prompt on this pane holds a pending decision; it is
             // stale, so cancel it before offering the new one.
+            self.record_pane_rebuild(pane_id);
             match store.cancel(&existing.decision_id) {
                 Ok(ResolveOutcome::Resolved(decision)) => {
                     self.emit_decision_resolved(*decision);
@@ -640,25 +844,14 @@ impl App {
 
         let decision = Decision {
             decision_id: new_decision_id(),
-            kind,
-            title,
-            body,
-            options,
-            allow_text,
+            kind: parts.kind,
+            title: parts.title,
+            body: parts.body,
+            options: parts.options,
+            allow_text: parts.allow_text,
             multi_select: prompt.multi_select,
-            question_label,
-            origin: Some({
-                let mut origin = DecisionOrigin {
-                    pane_id: public_id,
-                    agent: pane.as_ref().and_then(|pane| pane.agent.clone()),
-                    cwd: pane.as_ref().and_then(|pane| pane.cwd.clone()),
-                    reason: Some(SCREEN_PROMPT_REASON.to_string()),
-                    machine: Some("local".to_string()),
-                    ..DecisionOrigin::default()
-                };
-                self.enrich_decision_origin(&mut origin);
-                origin
-            }),
+            question_label: parts.question_label,
+            origin: Some(parts.origin),
             created_unix_ms: unix_ms_now(),
             expires_unix_ms: None,
             status: DecisionStatus::Pending,
@@ -706,7 +899,7 @@ impl App {
             warn!(pane_id = ?pane_id, "screen prompt answer dropped: pane gone");
             return;
         };
-        let screen = runtime.detection_text_unwrapped();
+        let screen = runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS);
         let prompt = parse_screen_prompt(&screen);
 
         // Same freshness rule as the answer-side gate, kept at the
@@ -1013,7 +1206,7 @@ impl App {
         scan.steps_left = scan.steps_left.saturating_sub(1);
         let Some(screen) = self
             .lookup_runtime_sender(ws_idx, pane_id)
-            .map(|runtime| runtime.detection_text_unwrapped())
+            .map(|runtime| runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS))
         else {
             // The pane is gone; there is nothing to restore and no decision
             // to create.
@@ -1197,7 +1390,7 @@ impl App {
             warn!(pane_id = ?pane_id, "multi-select submit dropped: pane gone");
             return;
         };
-        let screen = runtime.detection_text_unwrapped();
+        let screen = runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS);
         let prompt = parse_screen_prompt(&screen);
         // Same freshness rule as phase 1: the visible prompt must still be
         // the watched one before keys are sent. Toggle keys redraw the
@@ -2059,5 +2252,126 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 
         // The same signature is never scanned again.
         assert!(app.preview_scan_done.contains_key(&pane_id));
+    }
+
+    // Real Claude Code 2.1.296 AFK permission dialog (auto mode, dangerous
+    // `rm` on a variable path) — the `in M:SS` countdown ticks once per
+    // second and used to recreate the decision on every tick.
+    fn afk_permission(countdown: &str) -> String {
+        format!(
+            "\
+⏺ Bash(B=/tmp/hdr-churn/bench; for r in light-nano-C mini-C; do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done)
+  ⎿  Waiting…
+
+──────────────────────────────────────────────────────
+ Bash command
+ Delete frames directories for two bench runs
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ B=/tmp/hdr-churn/bench; for r in light-nano-C mini-C; do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ Dangerous rm operation on possibly-empty variable path: $B/$r/frames in `/bin/rm -rf $B/$r/frames` (rewrite it as \"${{B:?}}\"/\"${{r:?}}\"/frames or use a literal path)
+ ⚠ Claude Code will automatically deny this request
+ in {countdown}, to avoid blocking progress on an unattended
+ session
+
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend
+"
+        )
+    }
+
+    #[tokio::test]
+    async fn afk_countdown_keeps_single_pending_decision() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("afk", &afk_permission("1:48"), true);
+        app.scan_screen_prompts(Instant::now());
+        let first = pending_decisions();
+        assert_eq!(first.len(), 1);
+        let decision_id = first[0].decision_id.clone();
+        // The deadline survives in body, digit-free; the title carries the
+        // full command, its description, and the warning.
+        assert!(first[0]
+            .body
+            .as_deref()
+            .is_some_and(|body| body.contains("automatically deny this request in M:SS")));
+        assert!(first[0]
+            .title
+            .contains("B=/tmp/hdr-churn/bench; for r in light-nano-C mini-C"));
+        assert!(first[0].title.contains("/bin/rm -rf $B/$r/frames; done"));
+        assert!(first[0].title.contains("Dangerous rm operation"));
+        assert!(!first[0].title.contains("automatically deny"));
+        assert!(!first[0].title.contains('╌'));
+
+        // Every redraw of the same prompt (countdown ticking) keeps the same
+        // pending decision — no cancel, no recreate.
+        for countdown in ["1:12", "0:30", "0:03"] {
+            replace_screen(&mut app, pane_id, &afk_permission(countdown));
+            app.scan_screen_prompts(Instant::now());
+            app.scan_screen_prompts(Instant::now());
+            app.scan_screen_prompts(Instant::now());
+        }
+        let all = all_decisions();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].decision_id, decision_id);
+        assert_eq!(all[0].status, DecisionStatus::Pending);
+        assert!(app.screen_prompt_watches.contains_key(&pane_id));
+    }
+
+    #[tokio::test]
+    async fn watch_loss_adopts_pending_decision_without_recreate() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("adopt", CC_QUESTION, true);
+        app.scan_screen_prompts(Instant::now());
+        let first = pending_decisions()[0].clone();
+
+        // Watch lost (e.g., server restart): the still-pending decision for
+        // the same prompt is adopted — same id, still pending, no cancel.
+        app.screen_prompt_watches.remove(&pane_id);
+        app.scan_screen_prompts(Instant::now());
+
+        let all = all_decisions();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].decision_id, first.decision_id);
+        assert_eq!(all[0].status, DecisionStatus::Pending);
+        assert!(app.screen_prompt_watches.contains_key(&pane_id));
+    }
+
+    #[tokio::test]
+    async fn rapid_rebuilds_trip_flood_brake_into_in_place_updates() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("flood", PERM_LS, true);
+        app.scan_screen_prompts(Instant::now());
+        assert_eq!(pending_decisions().len(), 1);
+
+        // Different questions on identical options normally cancel+create —
+        // keep bouncing between them until the flood brake engages.
+        for _ in 0..SCREEN_PROMPT_FLOOD_LIMIT {
+            replace_screen(&mut app, pane_id, PERM_RM);
+            app.scan_screen_prompts(Instant::now());
+            app.scan_screen_prompts(Instant::now());
+            app.scan_screen_prompts(Instant::now());
+            replace_screen(&mut app, pane_id, PERM_LS);
+            app.scan_screen_prompts(Instant::now());
+            app.scan_screen_prompts(Instant::now());
+            app.scan_screen_prompts(Instant::now());
+        }
+        let before = all_decisions().len();
+        let pending_id = pending_decisions()[0].decision_id.clone();
+
+        // Once churning, the same-options rebuild updates the record instead
+        // of cancelling it — one decision, one watcher notification.
+        replace_screen(&mut app, pane_id, PERM_RM);
+        app.scan_screen_prompts(Instant::now());
+        app.scan_screen_prompts(Instant::now());
+        app.scan_screen_prompts(Instant::now());
+        let all = all_decisions();
+        assert_eq!(all.len(), before);
+        assert_eq!(pending_decisions().len(), 1);
+        assert_eq!(pending_decisions()[0].decision_id, pending_id);
+        assert!(pending_decisions()[0].title.contains("rm -rf"));
     }
 }

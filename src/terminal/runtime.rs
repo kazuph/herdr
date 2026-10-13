@@ -354,8 +354,8 @@ impl TerminalRuntime {
         self.0.detection_text()
     }
 
-    pub fn detection_text_unwrapped(&self) -> String {
-        self.0.detection_text_unwrapped()
+    pub fn detection_text_unwrapped_extra(&self, extra: usize) -> String {
+        self.0.detection_text_unwrapped_extra(extra)
     }
 
     pub fn terminal_title(&self) -> Option<String> {

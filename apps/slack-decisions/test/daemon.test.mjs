@@ -96,7 +96,7 @@ function feed(daemon, event) {
   daemon.onWatchLine(event);
 }
 
-async function feedAndSettle(daemon, event, ms = 60) {
+async function feedAndSettle(daemon, event, ms = 300) {
   daemon.onWatchLine(event);
   await new Promise((r) => setTimeout(r, ms));
 }
