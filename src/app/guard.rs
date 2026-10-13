@@ -1,7 +1,7 @@
 //! Marker sync between herdr's agent state and the command
 //! guard's per-pane marker files (`<state>/guard/agent-panes/`).
 //!
-//! A marker file exists while herdr believes an agent runs in the pane;
+//! A marker file exists only for an agent with effective launch coverage;
 //! guard shims/shell functions judge commands only when their pane's marker
 //! is present. Human panes therefore never get judged.
 
@@ -58,14 +58,6 @@ impl App {
             });
         let agent = agent.map(str::to_owned);
         let cwd = tab.cwd_for_pane(pane_id, &self.state.terminals, &self.terminal_runtimes);
-        let targets = crate::guard::targets(&self.state.guard_config);
-        crate::guard::marker::sync(
-            &pane_env_id,
-            agent.as_deref().filter(|_| self.state.guard_config.enabled),
-            cwd.as_deref(),
-            Some(&public_pane_id),
-            &targets,
-        );
         let warning = if self.state.guard_config.enabled && agent.is_some() {
             let reason = self
                 .state
@@ -79,6 +71,16 @@ impl App {
         } else {
             None
         };
+        let targets = crate::guard::targets(&self.state.guard_config);
+        crate::guard::marker::sync(
+            &pane_env_id,
+            agent
+                .as_deref()
+                .filter(|_| self.state.guard_config.enabled && warning.is_none()),
+            cwd.as_deref(),
+            Some(&public_pane_id),
+            &targets,
+        );
         crate::guard::coverage::sync(&public_pane_id, warning.as_deref());
         if let Some(warning) = warning {
             self.state.guard_warnings.insert(public_pane_id, warning);

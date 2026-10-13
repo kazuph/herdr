@@ -2109,12 +2109,9 @@ mod tests {
                     .contains("shell の起動後に shim の PATH を保証できません"));
                 let marker =
                     crate::guard::marker_path(&crate::workspace::pane_env_id_from_public(&public));
-                assert_eq!(
-                    crate::guard::marker::read(&marker)
-                        .unwrap()
-                        .public_pane_id
-                        .as_deref(),
-                    Some(public.as_str())
+                assert!(
+                    !marker.exists(),
+                    "uncovered pane must not suppress ai_guard"
                 );
             }
             let human = format!("p{}", human.raw());
@@ -2155,6 +2152,20 @@ mod tests {
                     );
                 }
             }
+        }
+        for (_, pane) in agents {
+            let public = format!("p{}", pane.raw());
+            crate::guard::marker::sync(
+                &crate::workspace::pane_env_id_from_public(&public),
+                Some("legacy"),
+                None,
+                Some(&public),
+                &crate::guard::targets(&config.guard),
+            );
+            assert!(
+                crate::guard::marker_path(&crate::workspace::pane_env_id_from_public(&public))
+                    .exists()
+            );
         }
         let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let mut handed = App::new_from_handoff(
@@ -2208,6 +2219,150 @@ mod tests {
                 Some(value) => std::env::set_var(key, value),
                 None => std::env::remove_var(key),
             }
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn guard_markers_require_effective_launch_coverage() {
+        let _guard = crate::config::lock_test_config_env();
+        let root = unique_temp_path("guard-marker-coverage");
+        std::fs::create_dir_all(&root).unwrap();
+        let original = std::env::var_os("XDG_STATE_HOME");
+        std::env::set_var("XDG_STATE_HOME", &root);
+        let mut seed = test_app();
+        seed.state.workspaces = vec![Workspace::test_new("legacy")];
+        seed.state.ensure_test_terminals();
+        let pane = seed.state.workspaces[0].tabs[0].root_pane;
+        let terminal = seed.state.workspaces[0].terminal_id(pane).unwrap().clone();
+        seed.state
+            .terminals
+            .get_mut(&terminal)
+            .unwrap()
+            .set_agent_name("legacy".into());
+        let snapshot = crate::persist::capture(
+            &seed.state.workspaces,
+            &seed.state.terminals,
+            &seed.terminal_runtimes,
+            Some(0),
+            0,
+            seed.state.sidebar_width,
+            seed.state.sidebar_section_split,
+            Default::default(),
+            Default::default(),
+            &seed.state.agent_session_ledger,
+        );
+        crate::persist::save(&snapshot, None);
+        drop(seed);
+        let mut config = Config::default();
+        config.guard.enabled = false;
+        config.terminal.default_shell = "/bin/sh".into();
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(&config, false, None, rx, crate::api::EventHub::default());
+        config.guard.enabled = true;
+        config.guard.mode = crate::config::GuardModeConfig::Enforce;
+        let public = format!("p{}", pane.raw());
+        let env_id = crate::workspace::pane_env_id_from_public(&public);
+        let marker = crate::guard::marker_path(&env_id);
+        let ready = root.join("bash-ready");
+        let cases = [
+            (
+                None,
+                "enforce",
+                false,
+                Some("起動時に見張りが差し込まれていません"),
+            ),
+            (
+                Some("unsupported"),
+                "enforce",
+                false,
+                Some("shell の起動後に shim の PATH を保証できません"),
+            ),
+            (
+                Some("supported"),
+                "record",
+                false,
+                Some("起動時と現在の見張りモードが異なります"),
+            ),
+            (
+                Some("supported"),
+                "enforce",
+                true,
+                Some("bash の最初の prompt で shim を先頭にした確認がありません"),
+            ),
+            (Some("supported"), "enforce", false, None),
+        ];
+        for (startup, mode, bash, reason) in cases {
+            let terminal = app.state.workspaces[0].terminal_id(pane).unwrap().clone();
+            let runtime = app.terminal_runtimes.get(&terminal).unwrap();
+            runtime
+                .pause_handoff_reader(Duration::from_secs(5))
+                .unwrap();
+            let mut state = runtime.handoff_runtime_state(pane.raw());
+            let mut cmd = portable_pty::CommandBuilder::new("/bin/zsh");
+            if let Some(startup) = startup {
+                cmd.env("HERDR_GUARD_STARTUP", startup);
+            }
+            cmd.env("HERDR_GUARD_MODE", mode);
+            if bash {
+                cmd.env("HERDR_GUARD_READY", &ready);
+            }
+            state.guard_launch = crate::guard::coverage::GuardLaunch::from_command(&cmd);
+            let mut imports = std::collections::HashMap::from([(
+                pane.raw(),
+                crate::handoff_runtime::ImportedHandoffRuntime {
+                    master_fd: runtime.duplicate_handoff_fd().unwrap(),
+                    state,
+                },
+            )]);
+            // Reproduce the marker received from 0.2.36 before every handoff.
+            crate::guard::marker::sync(
+                &env_id,
+                Some("legacy"),
+                None,
+                Some(&public),
+                &crate::guard::targets(&config.guard),
+            );
+            assert!(marker.exists());
+            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut next = App::new_from_handoff(
+                &config,
+                None,
+                rx,
+                crate::api::EventHub::default(),
+                &snapshot,
+                &mut imports,
+            )
+            .unwrap();
+            for (_, runtime) in app.terminal_runtimes.drain_for_handoff() {
+                runtime.preserve_for_handoff();
+            }
+            next.assume_handoff_ownership();
+            next.unpause_handoff_readers();
+            assert_eq!(marker.exists(), reason.is_none());
+            assert_eq!(
+                crate::guard::pane_shim_dir(&env_id).join("rm").exists(),
+                reason.is_none()
+            );
+            if let Some(reason) = reason {
+                assert!(next.state.guard_warnings[&public].contains(reason));
+            } else {
+                assert!(!next.state.guard_warnings.contains_key(&public));
+            }
+            if bash {
+                std::fs::write(&ready, "").unwrap();
+                next.sync_guard_markers_for_all_panes();
+                assert!(marker.exists());
+                assert!(!next.state.guard_warnings.contains_key(&public));
+                std::fs::remove_file(&ready).unwrap();
+            }
+            app = next;
+        }
+        drop(app);
+        match original {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
         }
         let _ = std::fs::remove_dir_all(root);
     }
