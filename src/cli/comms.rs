@@ -691,12 +691,12 @@ fn run_in_pane(
     caller: String,
     close_on_success: bool,
 ) -> std::io::Result<i32> {
-    let caller_agent = resolve_agent_name(&caller, "cli:run:pane-agent")?;
+    let caller_pane = resolve_agent_pane(&caller, "cli:run:pane-agent")?;
     let split_response = super::send_request(&Request {
         id: "cli:run:split".into(),
         method: Method::PaneSplit(PaneSplitParams {
             workspace_id: None,
-            target_pane_id: Some(caller),
+            target_pane_id: Some(caller_pane.clone()),
             direction: split,
             ratio: None,
             cwd,
@@ -723,7 +723,7 @@ fn run_in_pane(
         shell_quote(&std::env::current_exe()?.display().to_string()),
         "__pane-run".to_string(),
         "--parent-agent".to_string(),
-        shell_quote(&caller_agent),
+        shell_quote(&caller_pane),
         "--target".to_string(),
         shell_quote(&pane),
         "--job-id".to_string(),
@@ -1163,12 +1163,33 @@ fn resolve_agent_name(target: &str, request_id: &str) -> std::io::Result<String>
         .ok_or_else(|| std::io::Error::other("target has no reported agent identity"))
 }
 
+fn resolve_agent_pane(target: &str, request_id: &str) -> std::io::Result<String> {
+    let response = super::send_request(&Request {
+        id: request_id.into(),
+        method: Method::AgentGet(crate::api::schema::AgentTarget {
+            target: target.into(),
+        }),
+    })?;
+    if let Some(error) = response.get("error") {
+        return Err(std::io::Error::other(error.to_string()));
+    }
+    response["result"]["agent"]["global_pane_id"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| std::io::Error::other("target has no global pane identity"))
+}
+
+enum JobMessageSendError {
+    Transport(std::io::Error),
+    Rejected(String),
+}
+
 fn send_job_message(
     to_agent: &str,
     project: &str,
     body: String,
     reply_to: Option<i64>,
-) -> std::io::Result<()> {
+) -> Result<(), JobMessageSendError> {
     let response = super::send_request(&Request {
         id: "cli:g9:job-message".into(),
         method: Method::MsgSend(MsgSendParams {
@@ -1180,9 +1201,9 @@ fn send_job_message(
             reply_to,
         }),
     });
-    let response = response?;
+    let response = response.map_err(JobMessageSendError::Transport)?;
     if let Some(error) = response.get("error") {
-        return Err(std::io::Error::other(error.to_string()));
+        return Err(JobMessageSendError::Rejected(error.to_string()));
     }
     Ok(())
 }
@@ -1210,16 +1231,39 @@ fn enqueue_job_completion(
     let reply_to = crate::dispatch::DispatchStore::open_active()
         .ok()
         .and_then(|store| store.command_dispatch_id(&job.id).ok().flatten());
-    if send_job_message(&job.caller_agent, &job.cwd, body.clone(), reply_to).is_ok() {
-        return Ok(());
+    if crate::msg::is_global_pane_recipient(&job.caller_pane) {
+        match send_job_message(&job.caller_pane, &job.cwd, body.clone(), reply_to) {
+            Ok(()) => return Ok(()),
+            Err(JobMessageSendError::Rejected(reason)) => {
+                return Err(std::io::Error::other(reason))
+            }
+            Err(JobMessageSendError::Transport(err)) => {
+                tracing::warn!(job = %job.id, %err, "server unavailable; queueing exact caller notice");
+            }
+        }
     }
     let mut store = crate::msg::MsgStore::open_active().map_err(std::io::Error::other)?;
+    if !crate::msg::is_global_pane_recipient(&job.caller_pane) {
+        let reason = "job has no immutable caller pane";
+        store
+            .insert_failed_message(
+                crate::msg::JOBS_ROOM,
+                &job.cwd,
+                "herdr-run",
+                &job.caller_pane,
+                &body,
+                reply_to,
+                reason,
+            )
+            .map_err(std::io::Error::other)?;
+        return Err(std::io::Error::other(reason));
+    }
     store
         .insert_message_with_reply(
             crate::msg::JOBS_ROOM,
             &job.cwd,
             "herdr-run",
-            &job.caller_agent,
+            &job.caller_pane,
             &body,
             reply_to,
         )
@@ -1965,7 +2009,7 @@ mod tests {
         let messages = store
             .unread_for_recipients(
                 crate::msg::JOBS_ROOM,
-                &["renamed-caller".into()],
+                &["p1".into()],
                 &std::collections::HashSet::new(),
             )
             .unwrap();

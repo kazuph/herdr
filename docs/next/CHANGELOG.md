@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.39] - 2026-10-13
+
+### Fixed
+- `herdr run` completion notices now retain the caller pane recorded at job creation and use that pane ID for background, cancellation, and pane-mode delivery even when agents in different workspaces share a name. Ambiguous or missing recipients leave a failed dispatch with the original body and reason; legacy name-addressed queued job notices fail closed instead of being replayed to a different pane.
+
 ## [0.2.37] - 2026-10-13
 
 ### Fixed
