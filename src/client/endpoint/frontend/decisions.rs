@@ -36,8 +36,11 @@ pub(super) struct Dialog {
     /// Free-text draft for `allow_text` decisions.
     text: String,
     replace_on_type: bool,
-    /// Option index highlighted for keyboard activation.
+    /// Item index highlighted for keyboard activation; `options.len()` marks
+    /// the free-text row (last item when `allow_text` is on).
     selected: usize,
+    /// Checked option indices for `multi_select` decisions.
+    checked: HashSet<usize>,
     /// Content-band scroll offset.
     scroll: u16,
     /// Options-band scroll offset for when labels + descriptions outgrow it.
@@ -141,6 +144,7 @@ pub(super) fn observe(frontend: &mut ClientFrontend) {
                     text: String::new(),
                     replace_on_type: false,
                     selected: 0,
+                    checked: HashSet::new(),
                     scroll: 0,
                     option_scroll: 0,
                     keyboard: false,
@@ -184,14 +188,51 @@ fn pending_current(frontend: &ClientFrontend, pending: &PendingDecision) -> bool
         })
 }
 
-fn answer(frontend: &mut ClientFrontend, option_index: usize) -> io::Result<()> {
+/// Item index of the free-text row — the last options-band item when the
+/// decision allows free text.
+fn text_row_index(pending: &PendingDecision) -> Option<usize> {
+    pending
+        .decision
+        .allow_text
+        .then_some(pending.decision.options.len())
+}
+
+/// Selectable options-band item count: every option plus the free-text row.
+fn item_count(pending: &PendingDecision) -> usize {
+    pending
+        .decision
+        .options
+        .len()
+        .saturating_add(usize::from(pending.decision.allow_text))
+        .max(1)
+}
+
+/// Toggle the focused option's checkbox for `multi_select` decisions.
+fn toggle_selected(frontend: &mut ClientFrontend, pending: &PendingDecision) {
+    let is_option = !matches!(
+        text_row_index(pending),
+        Some(row) if frontend.decisions.dialog.as_ref().is_some_and(|d| d.selected == row)
+    );
+    if !pending.decision.multi_select || !is_option {
+        return;
+    }
+    if let Some(dialog) = frontend.decisions.dialog.as_mut() {
+        if dialog.selected < pending.decision.options.len()
+            && !dialog.checked.insert(dialog.selected)
+        {
+            dialog.checked.remove(&dialog.selected);
+        }
+    }
+}
+
+fn answer(frontend: &mut ClientFrontend) -> io::Result<()> {
     let Some(dialog) = frontend.decisions.dialog.as_ref() else {
         return Ok(());
     };
     if dialog.answering.is_some() {
         return Ok(());
     }
-    let (endpoint, decision_id, option_id, text) = {
+    let (endpoint, decision_id, option_id, option_ids, text) = {
         let Some(pending) = frontend.decisions.current() else {
             frontend.decisions.dialog = None;
             return Ok(());
@@ -200,17 +241,46 @@ fn answer(frontend: &mut ClientFrontend, option_index: usize) -> io::Result<()> 
             frontend.decisions.dialog = None;
             return Ok(());
         }
-        let option_id = pending
-            .decision
-            .options
-            .get(option_index)
-            .map(|option| option.id.clone());
+        let on_text_row = matches!(
+            text_row_index(pending),
+            Some(row) if row == dialog.selected
+        );
         let text = pending
             .decision
             .allow_text
             .then(|| dialog.text.trim().to_owned())
             .filter(|text| !text.is_empty());
-        // A decision without options is answered by text alone.
+        let (option_id, option_ids) = if pending.decision.multi_select {
+            // Every checked option in list order; when nothing is checked the
+            // highlighted option answers alone.
+            let mut ids: Vec<String> = pending
+                .decision
+                .options
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| dialog.checked.contains(index))
+                .map(|(_, option)| option.id.clone())
+                .collect();
+            if ids.is_empty() && !on_text_row {
+                if let Some(option) = pending.decision.options.get(dialog.selected) {
+                    ids.push(option.id.clone());
+                }
+            }
+            let option_ids = (ids.len() > 1).then_some(ids.clone());
+            (ids.into_iter().next(), option_ids)
+        } else {
+            let option_id = (!on_text_row)
+                .then(|| {
+                    pending
+                        .decision
+                        .options
+                        .get(dialog.selected)
+                        .map(|option| option.id.clone())
+                })
+                .flatten();
+            (option_id, None)
+        };
+        // A decision without a selected option is answered by text alone.
         if option_id.is_none() && text.is_none() {
             return Ok(());
         }
@@ -218,12 +288,14 @@ fn answer(frontend: &mut ClientFrontend, option_index: usize) -> io::Result<()> 
             pending.key.endpoint.clone(),
             pending.decision.decision_id.clone(),
             option_id,
+            option_ids,
             text,
         )
     };
     let method = schema::Method::DecisionAnswer(schema::DecisionAnswerParams {
         decision_id,
         option_id,
+        option_ids,
         text,
         responder: Some("client".into()),
     });
@@ -413,12 +485,18 @@ fn facts(
             .decision
             .options
             .iter()
-            .map(|option| crate::ui::DecisionDialogOption {
+            .enumerate()
+            .map(|(index, option)| crate::ui::DecisionDialogOption {
                 label: option.label.clone(),
                 description: option.description.clone(),
+                checked: dialog.checked.contains(&index),
+                preview: option.preview.clone(),
+                preview_unavailable: option.preview_unavailable,
             })
             .collect(),
         selected: dialog.selected,
+        multi_select: pending.decision.multi_select,
+        question_label: pending.decision.question_label.clone(),
         allow_text: pending.decision.allow_text,
         text: dialog.text.clone(),
         remaining: remaining(&pending.decision),
@@ -535,22 +613,18 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                 if rects.close.contains(position) {
                     close(frontend);
                 } else if rects.confirm.contains(position) {
-                    let selected = frontend
-                        .decisions
-                        .dialog
-                        .as_ref()
-                        .map(|dialog| dialog.selected)
-                        .unwrap_or(0);
-                    answer(frontend, selected)?;
+                    answer(frontend)?;
                 } else if let Some(index) = rects
                     .options
                     .iter()
                     .position(|rect| rect.contains(position))
                 {
-                    // A click only selects; the confirm button or Enter sends.
+                    // A click moves the highlight (and toggles the checkbox
+                    // for multi-select); the confirm button or Enter sends.
                     if let Some(dialog) = frontend.decisions.dialog.as_mut() {
                         dialog.selected = index;
                     }
+                    toggle_selected(frontend, &pending);
                     reveal_selected_option(frontend, &pending);
                 }
                 Ok(true)
@@ -615,29 +689,59 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                     match key.code {
                         KeyCode::Esc => close(frontend),
                         KeyCode::Up => {
-                            let options = pending.decision.options.len().max(1);
+                            let items = item_count(&pending);
                             if let Some(dialog) = frontend.decisions.dialog.as_mut() {
-                                dialog.selected = (dialog.selected + options - 1) % options;
+                                dialog.selected = (dialog.selected + items - 1) % items;
                             }
                             reveal_selected_option(frontend, &pending);
                         }
                         KeyCode::Down => {
-                            let options = pending.decision.options.len().max(1);
+                            let items = item_count(&pending);
                             if let Some(dialog) = frontend.decisions.dialog.as_mut() {
-                                dialog.selected = (dialog.selected + 1) % options;
+                                dialog.selected = (dialog.selected + 1) % items;
                             }
                             reveal_selected_option(frontend, &pending);
                         }
+                        KeyCode::Char(' ')
+                            if pending.decision.multi_select
+                                && !matches!(
+                                    text_row_index(&pending),
+                                    Some(row) if frontend
+                                        .decisions
+                                        .dialog
+                                        .as_ref()
+                                        .is_some_and(|dialog| dialog.selected == row)
+                                ) =>
+                        {
+                            // Space toggles the focused checkbox, like Claude
+                            // Code's multi-select list; on the free-text row
+                            // it types a literal space instead.
+                            toggle_selected(frontend, &pending);
+                        }
                         KeyCode::Enter => {
-                            let Some(selected) = frontend
-                                .decisions
-                                .dialog
-                                .as_ref()
-                                .map(|dialog| dialog.selected)
-                            else {
-                                return Ok(true);
-                            };
-                            answer(frontend, selected)?;
+                            if pending.decision.multi_select {
+                                // Enter submits the checked set; with nothing
+                                // checked it toggles the focused option, like
+                                // pressing its checkbox on screen.
+                                let nothing_checked = frontend
+                                    .decisions
+                                    .dialog
+                                    .as_ref()
+                                    .is_none_or(|dialog| dialog.checked.is_empty());
+                                let on_option = !matches!(
+                                    text_row_index(&pending),
+                                    Some(row) if frontend
+                                        .decisions
+                                        .dialog
+                                        .as_ref()
+                                        .is_some_and(|dialog| dialog.selected == row)
+                                );
+                                if nothing_checked && on_option {
+                                    toggle_selected(frontend, &pending);
+                                    return Ok(true);
+                                }
+                            }
+                            answer(frontend)?;
                         }
                         KeyCode::PageUp | KeyCode::PageDown => {
                             let palette = frontend.chrome.settings.palette.clone();
@@ -661,7 +765,17 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                             }
                         }
                         _ => {
-                            if pending.decision.allow_text {
+                            // Typed characters land in the free-text row only
+                            // when that row is the focused item.
+                            let on_text_row = matches!(
+                                text_row_index(&pending),
+                                Some(row) if frontend
+                                    .decisions
+                                    .dialog
+                                    .as_ref()
+                                    .is_some_and(|dialog| dialog.selected == row)
+                            );
+                            if on_text_row {
                                 if let Some(dialog) = frontend.decisions.dialog.as_mut() {
                                     crate::input::rename::edit_key(
                                         &mut dialog.text,
@@ -675,7 +789,15 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
                     Ok(true)
                 }
                 RawInputEvent::Paste(text) => {
-                    if pending.decision.allow_text {
+                    let on_text_row = matches!(
+                        text_row_index(&pending),
+                        Some(row) if frontend
+                            .decisions
+                            .dialog
+                            .as_ref()
+                            .is_some_and(|dialog| dialog.selected == row)
+                    );
+                    if on_text_row {
                         if let Some(dialog) = frontend.decisions.dialog.as_mut() {
                             crate::input::rename::insert(
                                 &mut dialog.text,
@@ -776,15 +898,21 @@ mod tests {
                     label: "Yes".into(),
                     role: schema::DecisionOptionRole::Approve,
                     description: None,
+                    preview: None,
+                    preview_unavailable: false,
                 },
                 schema::DecisionOption {
                     id: "no".into(),
                     label: "No".into(),
                     role: schema::DecisionOptionRole::Reject,
                     description: None,
+                    preview: None,
+                    preview_unavailable: false,
                 },
             ],
             allow_text: false,
+            multi_select: false,
+            question_label: None,
             origin: None,
             created_unix_ms,
             expires_unix_ms: None,
@@ -1184,11 +1312,12 @@ mod tests {
                 decision_id: "gone".into(),
             },
             text: String::new(),
+            replace_on_type: false,
             selected: 0,
+            checked: HashSet::new(),
             scroll: 0,
             option_scroll: 0,
             keyboard: true,
-            replace_on_type: false,
             answering: None,
         });
         // The stale dialog never reaches the renderer: current() is None, so

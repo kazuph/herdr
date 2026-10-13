@@ -33,6 +33,14 @@ static MQ_TAB_ITEM_RE: LazyLock<Regex> =
 // Codex-style per-option shortcut hints: "… (y)", "… (a)", "… (esc)".
 static SHORTCUT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\(([a-zA-Z0-9]|esc|ESC|Esc)\)\s*$").unwrap());
+// Claude Code AskUserQuestion multiSelect checkbox inside the option label:
+// `1. [ ] label`, `1. [✔] label`.
+static CHECKBOX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\[( |x|X|✔)\]\s*(.*)$").unwrap());
+// The advance pseudo-row multiSelect questions draw below the last option —
+// `Next` between questions, `Submit` on the final one.
+static ADVANCE_ROW_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:[❯›]\s*)?(Next|Submit)\s*$").unwrap());
 
 const FREE_TEXT_LABELS: [&str; 2] = ["Type something", "Chat about this"];
 /// saberante stops collecting question lines after 60 rows of prompt context.
@@ -67,6 +75,14 @@ pub(crate) struct MqInfo {
     pub row: usize,
 }
 
+/// The selectable row the `❯` cursor sits on: a numbered option or the
+/// `Next`/`Submit` advance pseudo-row multiSelect questions draw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Focused {
+    Option(u32),
+    Advance,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScreenPrompt {
     /// Prompt header: the `☐`/`☒` checkbox line above the options, or the
@@ -86,6 +102,31 @@ pub(crate) struct ScreenPrompt {
     pub shortcuts: BTreeMap<u32, OptionShortcut>,
     /// Multi-question tab metadata when the `← ☐ … ✔ Submit →` row is present.
     pub mq: Option<MqInfo>,
+    /// Options carry `[ ]`/`[✔]` checkboxes (AskUserQuestion multiSelect):
+    /// numbers toggle and the prompt is submitted through the advance row.
+    pub multi_select: bool,
+    /// Option numbers currently checked on screen; excluded from the
+    /// signature so toggling does not churn the pending decision.
+    pub checked: std::collections::BTreeSet<u32>,
+    /// Preview box contents keyed by option number. Claude Code only paints
+    /// the focused option's preview, so at most one entry exists per frame.
+    pub previews: BTreeMap<u32, String>,
+    /// A preview box was drawn next to the options; options without a
+    /// captured preview may still have one on screen.
+    pub preview_box: bool,
+    /// Options the preview scan already focused and saw draw no box —
+    /// confirmed to have no preview rather than merely uncaptured.
+    pub preview_none: std::collections::BTreeSet<u32>,
+    /// A `Next`/`Submit` advance pseudo-row sits below the last option.
+    pub advance: bool,
+    /// Number of the last selectable item above the advance row — every
+    /// real option plus the free-text slot ("Chat about this" sits below
+    /// the advance row). Arrow-key plans for multiSelect delivery anchor
+    /// on it.
+    pub advance_after: Option<u32>,
+    /// The `❯` cursor position, used to attribute the visible preview and to
+    /// plan arrow keys for multiSelect delivery.
+    pub focused: Option<Focused>,
 }
 
 impl ScreenPrompt {
@@ -101,12 +142,18 @@ impl ScreenPrompt {
     /// share options ("Yes / don't ask again / No") are still different
     /// prompts when they ask about different commands.
     pub fn signature(&self) -> String {
+        // Checked state, the cursor position and the visible preview change
+        // as the user moves through the prompt on screen; keeping them out
+        // of the signature prevents the watch from churning the decision.
+        // The header is excluded too: the multi-question tab markers flip
+        // `☐`→`☒` (and `質問 N/M` → `最終確認`) as options are toggled, which
+        // is the same prompt answering itself, not a prompt change.
         serde_json::to_string(&(
-            self.header.as_str(),
             self.question.as_str(),
             &self.choices,
             &self.descriptions,
             self.free_text,
+            self.multi_select,
         ))
         .unwrap_or_default()
     }
@@ -188,16 +235,45 @@ fn split_glued_rows(line: &str) -> Vec<&str> {
     segments
 }
 
+/// MultiSelect / focus state gathered while walking the option block.
+#[derive(Default)]
+struct Extras {
+    multi_select: bool,
+    checked: std::collections::BTreeSet<u32>,
+    advance: bool,
+    /// First option number met after (above) the advance row while walking
+    /// bottom-up — the last selectable item above `Next`/`Submit`.
+    advance_next: Option<u32>,
+    focused: Option<Focused>,
+}
+
 /// Register a numbered option and attach the continuation rows that were
 /// buffered below it while walking upward.
+#[allow(clippy::too_many_arguments)]
 fn collect_option(
     options: &mut BTreeMap<u32, String>,
     descriptions: &mut BTreeMap<u32, String>,
     shortcuts: &mut BTreeMap<u32, OptionShortcut>,
     pending_lines: &mut Vec<String>,
+    extras: &mut Extras,
     number: u32,
-    label: String,
+    mut label: String,
+    cursor: bool,
 ) {
+    if let Some(caps) = CHECKBOX_RE.captures(&label) {
+        // AskUserQuestion multiSelect: `[ ]`/`[✔]` inside the option label.
+        extras.multi_select = true;
+        if caps.get(1).map(|m| m.as_str()) != Some(" ") {
+            extras.checked.insert(number);
+        }
+        label = caps
+            .get(2)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+    }
+    if cursor {
+        extras.focused = Some(Focused::Option(number));
+    }
     if let Some(shortcut) = shortcut_for(&label) {
         shortcuts.insert(number, shortcut);
     } else {
@@ -207,16 +283,132 @@ fn collect_option(
     options.insert(number, label);
 }
 
+/// The character sitting on terminal cell column `col`, counting CJK
+/// wide chars as two cells (preview-box borders are column-aligned in
+/// cells, not chars).
+fn char_at_cell(line: &str, col: usize) -> Option<char> {
+    let mut width = 0usize;
+    for ch in line.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + w > col {
+            return Some(ch);
+        }
+        width += w;
+    }
+    None
+}
+
+/// The row content left of cell column `col` (the option area beside a
+/// preview box).
+fn left_of_cell(line: &str, col: usize) -> String {
+    let mut width = 0usize;
+    let mut out = String::new();
+    for ch in line.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + w > col {
+            break;
+        }
+        width += w;
+        out.push(ch);
+    }
+    out
+}
+
+/// Claude Code draws the focused option's `preview` in a bordered box to the
+/// right of the options (`┌─┐` / `│` / `└─┘`). Returns `(box rows: first/last
+/// line indexes + border cell column, inner text)`; the box region is then
+/// stripped from the lines the option walk sees. `├── ✂ ─ N lines hidden ┤`
+/// separators keep their inner text so a truncated preview still reads
+/// truthfully.
+fn extract_preview_box(lines: &[&str]) -> Option<(usize, usize, usize, Vec<String>)> {
+    for top in 0..lines.len() {
+        let Some(box_col) = lines[top]
+            .chars()
+            .scan(0usize, |width, ch| {
+                let at = *width;
+                *width += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                Some((ch, at))
+            })
+            .find(|(ch, _)| *ch == '┌')
+            .map(|(_, at)| at)
+        else {
+            continue;
+        };
+        // A real box has a `│` side row and a `└` bottom at the same column.
+        let mut side = false;
+        let mut bottom = None;
+        for (row, later) in lines.iter().enumerate().skip(top + 1) {
+            match char_at_cell(later, box_col) {
+                Some('│') | Some('├') => side = true,
+                Some('└') if side => {
+                    bottom = Some(row);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let Some(bottom) = bottom else {
+            continue;
+        };
+        let mut inner = Vec::new();
+        for row in &lines[top + 1..bottom] {
+            if !matches!(char_at_cell(row, box_col), Some('│') | Some('├')) {
+                continue;
+            }
+            inner.push(preview_inner(row, box_col));
+        }
+        return Some((top, bottom, box_col, inner));
+    }
+    None
+}
+
+/// Inner text of one preview-box row: strip the left border at `box_col`
+/// and the right border char.
+fn preview_inner(row: &str, box_col: usize) -> String {
+    let mut width = 0usize;
+    let mut start = row.len();
+    for (byte, ch) in row.char_indices() {
+        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + w > box_col {
+            start = byte + ch.len_utf8();
+            break;
+        }
+        width += w;
+    }
+    // Strip trailing blanks, then the single right-border char, then blanks
+    // again — inner `┌─┐`/`└─┘` corners of a drawn diagram must survive.
+    let inner = row[start..].trim_end();
+    let inner = inner.strip_suffix(['│', '┤']).unwrap_or(inner).trim_end();
+    inner.to_string()
+}
+
 /// Port of saberante's `parse_prompt`. Returns `None` when the screen holds no
 /// numbered option block anchored by a prompt footer or by the screen bottom.
 pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
-    let lines: Vec<&str> = screen.lines().collect();
+    let raw_lines: Vec<&str> = screen.lines().collect();
+    // Lift the option-side preview box out of the text before option
+    // matching — its top border would otherwise land inside the first
+    // option's label and its side borders inside descriptions.
+    let preview = extract_preview_box(&raw_lines);
+    let display: Vec<String> = raw_lines
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            preview
+                .as_ref()
+                .filter(|(top, bottom, _, _)| i >= *top && i <= *bottom)
+                .map(|(_, _, box_col, _)| left_of_cell(line, *box_col))
+                .unwrap_or_else(|| line.to_string())
+        })
+        .collect();
+    let lines: Vec<&str> = display.iter().map(String::as_str).collect();
     // saberante anchors on the LAST footer line so a stale prompt in
     // scrollback cannot shadow the active one.
     let end = lines.iter().rposition(|line| PROMPT_END_RE.is_match(line));
     let mut options: BTreeMap<u32, String> = BTreeMap::new();
     let mut descriptions: BTreeMap<u32, String> = BTreeMap::new();
     let mut shortcuts: BTreeMap<u32, OptionShortcut> = BTreeMap::new();
+    let mut extras = Extras::default();
     let mut first: Option<usize> = None;
     let mq: Option<MqInfo>;
 
@@ -237,15 +429,28 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
             for (segment_index, segment) in segments.iter().enumerate().rev() {
                 let glued = segment_index > 0;
                 if let Some((number, label)) = option_match(segment) {
+                    let cursor = segment.trim_start().starts_with(['❯', '›']);
                     collect_option(
                         &mut options,
                         &mut descriptions,
                         &mut shortcuts,
                         &mut pending_lines,
+                        &mut extras,
                         number,
                         label,
+                        cursor,
                     );
+                    if extras.advance && extras.advance_next.is_none() {
+                        extras.advance_next = Some(number);
+                    }
                     first = Some(i);
+                } else if ADVANCE_ROW_RE.is_match(segment) {
+                    // multiSelect `Next`/`Submit` pseudo-row: selectable but
+                    // not a numbered option, never description text.
+                    extras.advance = true;
+                    if segment.trim_start().starts_with(['❯', '›']) {
+                        extras.focused = Some(Focused::Advance);
+                    }
                 } else if segment.trim().is_empty() || RULE_RE.is_match(segment) {
                     continue;
                 } else if first.is_some() && (segment.starts_with("     ") || glued) {
@@ -273,15 +478,26 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
             for (segment_index, segment) in segments.iter().enumerate().rev() {
                 let glued = segment_index > 0;
                 if let Some((number, label)) = option_match(segment) {
+                    let cursor = segment.trim_start().starts_with(['❯', '›']);
                     collect_option(
                         &mut options,
                         &mut descriptions,
                         &mut shortcuts,
                         &mut pending_lines,
+                        &mut extras,
                         number,
                         label,
+                        cursor,
                     );
+                    if extras.advance && extras.advance_next.is_none() {
+                        extras.advance_next = Some(number);
+                    }
                     first = Some(i);
+                } else if ADVANCE_ROW_RE.is_match(segment) {
+                    extras.advance = true;
+                    if segment.trim_start().starts_with(['❯', '›']) {
+                        extras.focused = Some(Focused::Advance);
+                    }
                 } else if first.is_some() {
                     if (segment.starts_with("     ") || glued) && !segment.trim().is_empty() {
                         pending_lines.push(segment.to_string());
@@ -342,6 +558,32 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     }
     let question = question_lines.join(" ");
 
+    // The visible preview belongs to the option under the `❯` cursor.
+    let previews = preview
+        .as_ref()
+        .filter(|(_, _, _, inner)| inner.iter().any(|line| !line.trim().is_empty()))
+        .and_then(|(_, _, _, inner)| {
+            extras
+                .focused
+                .and_then(|focused| match focused {
+                    Focused::Option(number) => Some(number),
+                    Focused::Advance => None,
+                })
+                .map(|number| (number, inner.join("\n")))
+        })
+        .into_iter()
+        .collect();
+
+    let advance_after = extras.advance.then(|| {
+        extras.advance_next.unwrap_or_else(|| {
+            choices
+                .keys()
+                .chain(free.iter())
+                .copied()
+                .max()
+                .unwrap_or(0)
+        })
+    });
     let mut prompt = ScreenPrompt {
         header,
         question,
@@ -350,6 +592,14 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         free_text: free,
         shortcuts,
         mq: None,
+        multi_select: extras.multi_select,
+        checked: extras.checked,
+        previews,
+        preview_box: preview.is_some(),
+        preview_none: Default::default(),
+        advance: extras.advance,
+        advance_after,
+        focused: extras.focused,
     };
     if let Some(mq) = mq {
         // Progress + tab name become the header so the review tab (no
@@ -631,6 +881,84 @@ with untrusted content.
 ❭ 1 Yes, trust /private/tmp/devin-hook-probe
 · 2 No, exit
 ";
+
+    // Verbatim multiSelect frame from a live Claude Code AskUserQuestion:
+    // `[ ]`/`[✔]` checkboxes, the `Next` advance row under the free-text
+    // slot, and the multi-question tab strip on top.
+    const CC_ASK_MULTISELECT: &str = "\
+←  ☐ 機能  ☐ 方式  ✔ Submit  →
+
+入れる機能は？
+
+❯ 1. [✔] 横断検索
+         全スペースを検索
+  2. [✔] 履歴保存
+         セッションを保存
+  3. [ ] Type something
+     Next
+";
+
+    // Verbatim preview frame: Claude Code draws the focused option's
+    // `preview` as a box to the right of the options.
+    const CC_ASK_PREVIEW: &str = "\
+←  ☐ 機能  ☒ 方式  ✔ Submit  →
+
+どの方式にする？
+
+❯ 1. 方式A                        ┌──────────────────────────────────────────┐
+  2. 方式B                        │ ┌─ 方式Aの図 ─┐                          │
+                                  │ │ input → A → out │                      │
+                                  │ └────────────┘                           │
+                                  └──────────────────────────────────────────┘
+
+                                  Notes: press n to add notes
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+
+    #[test]
+    fn parses_multiselect_checkboxes_and_advance_row() {
+        let prompt = parse_screen_prompt(CC_ASK_MULTISELECT).expect("prompt");
+        assert!(prompt.multi_select);
+        assert_eq!(prompt.checked, [1, 2].into_iter().collect());
+        assert_eq!(prompt.free_text, Some(3));
+        assert!(prompt.advance);
+        assert_eq!(prompt.advance_after, Some(3));
+        assert_eq!(prompt.focused, Some(Focused::Option(1)));
+        assert_eq!(
+            prompt.choices.values().cloned().collect::<Vec<_>>(),
+            vec!["横断検索".to_string(), "履歴保存".to_string()]
+        );
+        assert_eq!(
+            prompt.descriptions.get(&1).map(String::as_str),
+            Some("全スペースを検索")
+        );
+        // The tab strip gives the question label + progress.
+        assert_eq!(prompt.progress().as_deref(), Some("質問 1/2 機能"));
+        // Checking a different option must not change the signature.
+        let toggled = CC_ASK_MULTISELECT.replace("[✔] 横断検索", "[ ] 横断検索");
+        assert_eq!(
+            parse_screen_prompt(&toggled).unwrap().signature(),
+            prompt.signature()
+        );
+    }
+
+    #[test]
+    fn parses_preview_box_beside_focused_option() {
+        let prompt = parse_screen_prompt(CC_ASK_PREVIEW).expect("prompt");
+        assert!(prompt.preview_box);
+        assert_eq!(prompt.focused, Some(Focused::Option(1)));
+        let preview = prompt.previews.get(&1).expect("preview for option 1");
+        assert!(preview.contains("方式Aの図"), "{preview:?}");
+        assert!(preview.contains("input → A → out"), "{preview:?}");
+        assert!(!prompt.previews.contains_key(&2));
+        // The box is stripped from option rows: labels stay clean.
+        assert_eq!(
+            prompt.choices.values().cloned().collect::<Vec<_>>(),
+            vec!["方式A".to_string(), "方式B".to_string()]
+        );
+        assert!(prompt.descriptions.is_empty());
+    }
 
     #[test]
     fn parses_claude_code_single_question_with_free_text() {

@@ -91,6 +91,8 @@ mod tests {
             body: None,
             options: Vec::new(),
             allow_text: false,
+            multi_select: false,
+            question_label: None,
             origin: None,
             created_unix_ms: 0,
             expires_unix_ms: None,

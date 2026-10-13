@@ -976,6 +976,16 @@ fn elide_header_summary(summary: &str, budget: u16) -> String {
 pub(crate) struct DecisionDialogOption {
     pub label: String,
     pub description: Option<String>,
+    /// Checkbox state shown for `multi_select` decisions.
+    pub checked: bool,
+    /// Monospace preview attached to this option (AskUserQuestion drafts or
+    /// diagrams), rendered under the description.
+    pub preview: Option<String>,
+    /// True when the source screen shows a preview for this option but its
+    /// text was not captured — Claude Code only paints the focused option's
+    /// preview. Rendered as an explicit "preview exists" marker instead of
+    /// being silently dropped.
+    pub preview_unavailable: bool,
 }
 
 /// Render facts for one pending decision, already resolved for display by the
@@ -994,9 +1004,15 @@ pub(crate) struct DecisionDialogFacts {
     /// `(label, value)` origin rows such as `("pane", "p1")`.
     pub origin: Vec<(String, String)>,
     pub options: Vec<DecisionDialogOption>,
-    /// Option highlighted for keyboard activation; only used when
-    /// `keyboard_active` is set.
+    /// Item highlighted for keyboard activation; only used when
+    /// `keyboard_active` is set. `selected == options.len()` highlights the
+    /// free-text row, which sits last when `allow_text` is on.
     pub selected: usize,
+    /// True for multi-select prompts: options render checkboxes and the
+    /// answer carries every checked option.
+    pub multi_select: bool,
+    /// AskUserQuestion tab label / question progress shown by the header.
+    pub question_label: Option<String>,
     pub allow_text: bool,
     pub text: String,
     /// Remaining time such as `"42s"`, when the decision expires.
@@ -1017,11 +1033,13 @@ pub(crate) struct DecisionDialogFacts {
 pub(crate) struct DecisionDialogRects {
     pub popup: Rect,
     pub content: Rect,
-    pub text: Option<Rect>,
     /// Pinned band holding the option blocks; scrolls via `option_scroll`.
+    /// The free-text row is the last item in the band when `allow_text` is
+    /// on.
     pub options_band: Rect,
-    /// Visible portion of each option's block inside the band (a rect of
-    /// height 0 marks an option scrolled fully out of view).
+    /// Visible portion of each item's block inside the band (a rect of
+    /// height 0 marks an item scrolled fully out of view). The last entry
+    /// is the free-text row when `allow_text` is on.
     pub options: Vec<Rect>,
     /// Largest usable `option_scroll` at the current band size.
     pub options_scroll_max: u16,
@@ -1029,25 +1047,35 @@ pub(crate) struct DecisionDialogRects {
     pub close: Rect,
 }
 
-/// Rows each option occupies at `width`: one label row plus the wrapped
-/// description rows.
+/// Rows each options-band item occupies at `width`: one label row plus the
+/// wrapped description, preview, and "preview available" marker rows. When
+/// `allow_text` is on, the free-text row is appended as the last item.
 pub(crate) fn decision_dialog_option_rows(facts: &DecisionDialogFacts, width: u16) -> Vec<u16> {
-    facts
+    let mut rows: Vec<u16> = facts
         .options
         .iter()
         .map(|option| {
-            option
+            let description_rows = option
                 .description
                 .as_deref()
                 .filter(|description| !description.trim().is_empty())
-                .map_or(1, |description| {
-                    1 + Paragraph::new(description.to_string())
+                .map_or(0, |description| {
+                    Paragraph::new(description.to_string())
                         .wrap(Wrap { trim: false })
                         .line_count(width.saturating_sub(DECISION_OPTION_DESC_INDENT).max(1))
                         as u16
-                })
+                });
+            let preview_rows = option
+                .preview
+                .as_deref()
+                .map_or(0, |preview| preview.lines().count() as u16);
+            1 + description_rows + preview_rows + u16::from(option.preview_unavailable)
         })
-        .collect()
+        .collect();
+    if facts.allow_text {
+        rows.push(1);
+    }
+    rows
 }
 
 /// `option_scroll` adjusted so the whole block of `selected` is visible (or,
@@ -1057,8 +1085,7 @@ pub(crate) fn decision_dialog_reveal_option_scroll(facts: &DecisionDialogFacts, 
         .option_scroll
         .min(decision_dialog_options_scroll_max(facts, band));
     let rows = decision_dialog_option_rows(facts, band.width);
-    let Some(index) = facts
-        .options
+    let Some(index) = rows
         .len()
         .checked_sub(1)
         .map(|last| facts.selected.min(last))
@@ -1091,9 +1118,9 @@ pub(crate) fn decision_dialog_rects(
     facts: &DecisionDialogFacts,
     palette: &Palette,
 ) -> Option<DecisionDialogRects> {
-    // Fit the popup to the content (title/body/origin/timeout + text row +
-    // options + footer); only when the content outgrows the cap does the
-    // middle band scroll.
+    // Fit the popup to the content (title/body/origin/timeout + options
+    // including the free-text row + footer); only when the content outgrows
+    // the cap does the middle band scroll.
     let popup_w = DECISION_DIALOG_WIDTH.min(area.width.saturating_sub(4));
     let content_width = popup_w.saturating_sub(2 + 2 * DECISION_DIALOG_PAD);
     if content_width == 0 {
@@ -1106,7 +1133,6 @@ pub(crate) fn decision_dialog_rects(
     let total_option_rows: u16 = option_rows.iter().sum();
     let inner_needed = 1u16
         .saturating_add(content_lines.max(1))
-        .saturating_add(u16::from(facts.allow_text))
         .saturating_add(total_option_rows.max(1))
         .saturating_add(1);
     let popup_h = inner_needed
@@ -1126,29 +1152,19 @@ pub(crate) fn decision_dialog_rects(
         inner.height,
     );
     // The band keeps at most what is left after header, a minimal content
-    // row, the text row, and the footer; overflow scrolls.
+    // row, and the footer; overflow scrolls.
     let band_height = total_option_rows
         .max(1)
-        .min(
-            padded
-                .height
-                .saturating_sub(3 + u16::from(facts.allow_text)),
-        )
+        .min(padded.height.saturating_sub(3))
         .max(1);
-    let mut constraints = vec![Constraint::Length(1), Constraint::Min(1)];
-    if facts.allow_text {
-        constraints.push(Constraint::Length(1));
-    }
-    constraints.push(Constraint::Length(band_height));
-    constraints.push(Constraint::Length(1));
-    let slots = Layout::vertical(constraints).split(padded);
-    let mut cursor = 2usize;
-    let text = facts.allow_text.then(|| {
-        let rect = slots[cursor];
-        cursor += 1;
-        rect
-    });
-    let options_band = slots[cursor];
+    let slots = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(band_height),
+        Constraint::Length(1),
+    ])
+    .split(padded);
+    let options_band = slots[2];
     let options_scroll_max = total_option_rows.saturating_sub(options_band.height);
     let option_scroll = facts.option_scroll.min(options_scroll_max);
     let options = option_rows
@@ -1167,7 +1183,7 @@ pub(crate) fn decision_dialog_rects(
             ))
         })
         .collect();
-    let footer = slots[cursor + 1];
+    let footer = slots[3];
     let close = Rect::new(
         footer.right().saturating_sub(11),
         footer.y,
@@ -1184,7 +1200,6 @@ pub(crate) fn decision_dialog_rects(
     Some(DecisionDialogRects {
         popup,
         content: slots[1],
-        text,
         options_band,
         options,
         options_scroll_max,
@@ -1265,7 +1280,16 @@ pub(crate) fn render_decision_dialog(
         .as_deref()
         .filter(|summary| !summary.trim().is_empty())
         .unwrap_or(DECISION_ORIGIN_UNKNOWN);
-    let tail = format!(" · {}/{}", facts.position, facts.total);
+    // The AskUserQuestion tab label / question progress rides next to the
+    // machine · origin context, ahead of the queue position.
+    let question = facts
+        .question_label
+        .as_deref()
+        .filter(|label| !label.trim().is_empty());
+    let tail = match question {
+        Some(label) => format!(" · {label} · {}/{}", facts.position, facts.total),
+        None => format!(" · {}/{}", facts.position, facts.total),
+    };
     let prefix = format!(" {} · ", facts.machine);
     let context_x = header
         .x
@@ -1292,75 +1316,147 @@ pub(crate) fn render_decision_dialog(
         rects.content,
     );
 
-    if let Some(text) = rects.text {
-        let mut spans = if facts.text.is_empty() {
-            vec![Span::styled(
-                " type a response (optional) · click to type, ↵ to send",
-                Style::default().fg(palette.overlay0).bg(palette.surface0),
-            )]
-        } else {
-            vec![Span::styled(
-                format!(" {}", facts.text),
-                Style::default().fg(palette.text).bg(palette.surface0),
-            )]
-        };
-        if facts.keyboard_active {
-            spans.push(Span::styled(
-                " ",
-                Style::default().fg(palette.text).bg(palette.accent),
-            ));
-        }
-        frame.render_widget(Paragraph::new(Line::from(spans)), text);
-    }
-
     let band = rects.options_band;
     let option_scroll = facts.option_scroll.min(rects.options_scroll_max);
+    let indent = DECISION_OPTION_DESC_INDENT.min(band.width);
     let mut top = 0u16;
-    for (index, (option, rows)) in facts
-        .options
+    let items = facts.options.len() + usize::from(facts.allow_text);
+    for (index, rows) in decision_dialog_option_rows(facts, band.width)
         .iter()
-        .zip(decision_dialog_option_rows(facts, band.width).iter())
         .enumerate()
     {
-        let option_top = top;
+        let item_top = top;
         top += *rows;
-        if option_top >= option_scroll && option_top < option_scroll + band.height {
+        let is_text_row = facts.allow_text && index == items - 1;
+        if item_top >= option_scroll && item_top < option_scroll + band.height {
             let selected = facts.keyboard_active && index == facts.selected;
-            let style = if selected {
-                Style::default()
-                    .fg(panel_contrast_fg(palette))
-                    .bg(palette.accent)
-                    .add_modifier(Modifier::BOLD)
+            let y = band.y + item_top - option_scroll;
+            if is_text_row {
+                // The free-text row is the last list item, Claude Code's
+                // "Type something" equivalent: a dim hint while empty, the
+                // draft plus a block cursor while focused.
+                let style = if selected {
+                    Style::default()
+                        .fg(panel_contrast_fg(palette))
+                        .bg(palette.accent)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(palette.text).bg(palette.surface0)
+                };
+                let mut spans = if facts.text.is_empty() {
+                    vec![Span::styled(
+                        "type a response (optional) · click to type, ↵ to send",
+                        if selected {
+                            style
+                        } else {
+                            Style::default().fg(palette.overlay0).bg(palette.surface0)
+                        },
+                    )]
+                } else {
+                    vec![Span::styled(facts.text.clone(), style)]
+                };
+                if selected {
+                    spans.push(Span::styled(
+                        " ",
+                        Style::default().fg(palette.text).bg(palette.text),
+                    ));
+                }
+                frame.render_widget(
+                    Paragraph::new(Line::from(spans)),
+                    Rect::new(band.x, y, band.width, 1),
+                );
             } else {
-                Style::default().fg(palette.text).bg(palette.surface0)
-            };
-            frame.render_widget(
-                Paragraph::new(truncate_end(&option.label, band.width as usize)).style(style),
-                Rect::new(band.x, band.y + option_top - option_scroll, band.width, 1),
-            );
+                let option = &facts.options[index];
+                let selected_style = if selected {
+                    Style::default()
+                        .fg(panel_contrast_fg(palette))
+                        .bg(palette.accent)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(palette.text).bg(palette.surface0)
+                };
+                let label = if facts.multi_select {
+                    format!(
+                        "[{}] {}",
+                        if option.checked { "✔" } else { " " },
+                        option.label
+                    )
+                } else {
+                    option.label.clone()
+                };
+                frame.render_widget(
+                    Paragraph::new(truncate_end(&label, band.width as usize)).style(selected_style),
+                    Rect::new(band.x, y, band.width, 1),
+                );
+            }
         }
-        let Some(description) = option
+        if is_text_row {
+            continue;
+        }
+        let option = &facts.options[index];
+        // Rows after the label: wrapped description, then preview lines,
+        // then the "preview exists but not captured" marker.
+        let mut block_top = item_top + 1;
+        if let Some(description) = option
             .description
             .as_deref()
             .filter(|description| !description.trim().is_empty())
-        else {
-            continue;
-        };
-        let desc_top = option_top + 1;
-        let desc_end = option_top + *rows;
-        let visible_top = desc_top.max(option_scroll);
-        let visible_bottom = desc_end.min(option_scroll + band.height);
-        if visible_bottom > visible_top {
-            frame.render_widget(
-                Paragraph::new(description.to_string())
-                    .style(Style::default().fg(palette.subtext0).bg(palette.surface0))
+        {
+            let desc_end = block_top
+                + (Paragraph::new(description.to_string())
                     .wrap(Wrap { trim: false })
-                    .scroll((visible_top - desc_top, 0)),
+                    .line_count(band.width.saturating_sub(indent).max(1))
+                    as u16);
+            let visible_top = block_top.max(option_scroll);
+            let visible_bottom = desc_end.min(option_scroll + band.height);
+            if visible_bottom > visible_top {
+                frame.render_widget(
+                    Paragraph::new(description.to_string())
+                        .style(Style::default().fg(palette.subtext0).bg(palette.surface0))
+                        .wrap(Wrap { trim: false })
+                        .scroll((visible_top - block_top, 0)),
+                    Rect::new(
+                        band.x + indent,
+                        band.y + visible_top - option_scroll,
+                        band.width.saturating_sub(indent),
+                        visible_bottom - visible_top,
+                    ),
+                );
+            }
+            block_top = desc_end;
+        }
+        if let Some(preview) = option.preview.as_deref() {
+            for line in preview.lines() {
+                if block_top >= option_scroll && block_top < option_scroll + band.height {
+                    frame.render_widget(
+                        Paragraph::new(truncate_end(
+                            line,
+                            band.width.saturating_sub(indent) as usize,
+                        ))
+                        .style(Style::default().fg(palette.mauve).bg(palette.surface0)),
+                        Rect::new(
+                            band.x + indent,
+                            band.y + block_top - option_scroll,
+                            band.width.saturating_sub(indent),
+                            1,
+                        ),
+                    );
+                }
+                block_top += 1;
+            }
+        }
+        if option.preview_unavailable
+            && block_top >= option_scroll
+            && block_top < option_scroll + band.height
+        {
+            frame.render_widget(
+                Paragraph::new("プレビューあり（画面で確認）")
+                    .style(Style::default().fg(palette.overlay0).bg(palette.surface0)),
                 Rect::new(
-                    band.x + DECISION_OPTION_DESC_INDENT.min(band.width),
-                    band.y + visible_top - option_scroll,
-                    band.width.saturating_sub(DECISION_OPTION_DESC_INDENT),
-                    visible_bottom - visible_top,
+                    band.x + indent,
+                    band.y + block_top - option_scroll,
+                    band.width.saturating_sub(indent),
+                    1,
                 ),
             );
         }
@@ -1545,9 +1641,14 @@ mod shared_dialog_tests {
                 .map(|index| DecisionDialogOption {
                     label: format!("opt{index}"),
                     description: None,
+                    checked: false,
+                    preview: None,
+                    preview_unavailable: false,
                 })
                 .collect(),
             selected: 0,
+            multi_select: false,
+            question_label: None,
             allow_text,
             text: String::new(),
             remaining: Some("42s".into()),
@@ -1859,33 +1960,38 @@ mod shared_dialog_tests {
     }
 
     #[test]
-    fn decision_dialog_text_input_shows_placeholder_and_cursor() {
+    fn decision_dialog_text_input_is_the_last_option_row() {
         let palette = crate::app::state::Palette::catppuccin();
         let mut facts = decision_facts(None, true, 2);
 
-        // Empty + not focused: the row is a labelled placeholder, not a blank
-        // band, and no cursor is drawn.
+        // The free-text row is the last options-band item.
         let rects =
             decision_dialog_rects(Rect::new(0, 0, 140, 40), &facts, &palette).expect("rects");
-        let text = rects.text.expect("text rect");
+        assert_eq!(rects.options.len(), 3);
+        let text = *rects.options.last().expect("text row rect");
+        assert!(rects.options_band.contains((text.x, text.y).into()));
+
+        // Empty + not focused: the row is a labelled placeholder, not a blank
+        // band, and no cursor is drawn.
         let buffer = decision_buffer(&facts, &palette, 140, 40);
         let row = buffer_row_text(&buffer, text.y, text.x, text.width);
-        assert!(row.starts_with(" type a response (optional)"), "{row:?}");
+        assert!(row.starts_with("type a response (optional)"), "{row:?}");
         for x in text.x..text.right() {
-            assert_ne!(buffer.cell((x, text.y)).expect("cell").bg, palette.accent);
+            assert_ne!(buffer.cell((x, text.y)).expect("cell").bg, palette.text);
         }
 
-        // Focused with input: the typed text is visible with an accent block
-        // cursor right after it.
+        // Focused with input: the typed text is visible with a block cursor
+        // right after it.
         facts.keyboard_active = true;
+        facts.selected = 2;
         facts.text = "deploy ok".into();
         let buffer = decision_buffer(&facts, &palette, 140, 40);
         let row = buffer_row_text(&buffer, text.y, text.x, text.width);
-        assert!(row.starts_with(" deploy ok"), "{row:?}");
-        let cursor_x = text.x + 1 + "deploy ok".len() as u16;
+        assert!(row.contains("deploy ok"), "{row:?}");
+        let cursor_x = text.x + "deploy ok".len() as u16;
         assert_eq!(
             buffer.cell((cursor_x, text.y)).expect("cell").bg,
-            palette.accent
+            palette.text
         );
     }
 }

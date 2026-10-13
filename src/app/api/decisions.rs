@@ -30,6 +30,8 @@ impl App {
             body: params.body.filter(|body| !body.is_empty()),
             options: params.options,
             allow_text: params.allow_text,
+            multi_select: params.multi_select,
+            question_label: None,
             origin: params
                 .origin
                 .filter(|origin| *origin != crate::api::schema::DecisionOrigin::default()),
@@ -130,6 +132,7 @@ impl App {
         match store.answer(
             &params.decision_id,
             params.option_id,
+            params.option_ids,
             params.text,
             params.responder,
             unix_ms_now(),
@@ -307,6 +310,7 @@ mod tests {
             body: None,
             options,
             allow_text: false,
+            multi_select: false,
             timeout_ms: None,
             origin: None,
         }
@@ -318,6 +322,8 @@ mod tests {
             label: format!("label {id}"),
             role: DecisionOptionRole::Other,
             description: None,
+            preview: None,
+            preview_unavailable: false,
         }
     }
 
@@ -372,6 +378,8 @@ mod tests {
                 body: None,
                 options: vec![option("ok")],
                 allow_text: false,
+                multi_select: false,
+                question_label: None,
                 origin: None,
                 created_unix_ms: 1,
                 expires_unix_ms: Some(1),

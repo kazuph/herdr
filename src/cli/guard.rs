@@ -291,6 +291,7 @@ fn enforce_ask(
             body: Some(body),
             options: enforce::decision_options(),
             allow_text: true,
+            multi_select: false,
             timeout_ms: Some(ctx.config.ask_timeout_seconds.saturating_mul(1000)),
             origin: Some(DecisionOrigin {
                 pane_id: pane_id

@@ -650,11 +650,25 @@ function optionDescription(option) {
   return typeof option?.description === "string" ? option.description.trim() : "";
 }
 
-function optionEntryText(option, index) {
+function optionPreview(option) {
+  return typeof option?.preview === "string" ? option.preview.trimEnd() : "";
+}
+
+function optionEntryText(option, index, multiSelect = false) {
   const emoji = NUMBER_EMOJIS[index] || `${index + 1}番`;
-  const label = `:${emoji}: ${option.label || option.id}`;
+  const box = multiSelect ? ":white_medium_square: " : "";
+  const label = `:${emoji}: ${box}${option.label || option.id}`;
   const description = optionDescription(option);
-  return description ? `${label}\n> ${description.replace(/\n+/g, "\n> ")}` : label;
+  let entry = description
+    ? `${label}\n> ${description.replace(/\n+/g, "\n> ")}`
+    : label;
+  const preview = optionPreview(option);
+  if (preview) {
+    entry += `\n\`\`\`\n${preview.replace(/\`\`\`/g, "'\`\`'")}\n\`\`\``;
+  } else if (option?.preview_unavailable) {
+    entry += "\n> プレビューあり（画面で確認）";
+  }
+  return entry;
 }
 
 // Split text into pieces that each fit the section limit — newline cut when
@@ -674,9 +688,9 @@ function splitOptionText(text, limit) {
   return parts;
 }
 
-function optionBlockChunks(options) {
+function optionBlockChunks(options, multiSelect = false) {
   const pieces = options
-    .map((option, index) => optionEntryText(option, index))
+    .map((option, index) => optionEntryText(option, index, multiSelect))
     .flatMap((entry) => splitOptionText(entry, SLACK_SECTION_TEXT_LIMIT));
   const chunks = [];
   let current = "";
@@ -731,12 +745,17 @@ function buildDecisionBlocks({
     const options = Array.isArray(decision.options) ? decision.options : [];
     if (options.length > 0) {
       blocks.push({ type: "divider" });
-      for (const chunk of optionBlockChunks(options)) {
+      for (const chunk of optionBlockChunks(
+        options,
+        decision.multi_select === true,
+      )) {
         blocks.push({ type: "section", text: { type: "mrkdwn", text: chunk } });
       }
-      const hint = decision.allow_text
-        ? "数字リアクションで選択 or スレッド返信（文も答えに付きます）"
-        : "数字リアクションで選択 or スレッドに番号で返信";
+      const hint = decision.multi_select
+        ? "複数選択: スレッドに「1 2」のように番号を並べて返信 or 数字リアクション（自由記述も可）"
+        : decision.allow_text
+          ? "数字リアクションで選択 or スレッド返信（文も答えに付きます）"
+          : "数字リアクションで選択 or スレッドに番号で返信";
       blocks.push({
         type: "context",
         elements: [
@@ -761,8 +780,15 @@ function buildDecisionBlocks({
   }
 
   const answer = decision.answer || {};
-  const option = (decision.options || []).find((o) => o.id === answer.option_id);
-  const what = option?.label || answer.option_id || answer.text || "";
+  const answerIds = Array.isArray(answer.option_ids) && answer.option_ids.length
+    ? answer.option_ids
+    : [answer.option_id].filter(Boolean);
+  const what = answerIds
+    .map(
+      (id) =>
+        (decision.options || []).find((o) => o.id === id)?.label || id,
+    )
+    .join(" + ") || answer.text || "";
   const who = answer.responder || "";
   let resultText;
   if (status === "answered") {
@@ -1182,22 +1208,25 @@ export class SlackDecisionsDaemon {
     return null;
   }
 
-  async submitAnswer(entry, { optionId = null, text = null, via }) {
+  async submitAnswer(entry, { optionId = null, optionIds = null, text = null, via }) {
     if (entry.resolved || entry.answerPending) return;
     entry.answerPending = true;
     const did = entry.decision.decision_id;
+    const ids = Array.isArray(optionIds) && optionIds.length
+      ? optionIds
+      : [optionId ?? ""];
     const args = [
       "decision",
       "answer",
       did,
-      optionId ?? "",
+      ...ids,
       "--responder",
       "slack",
       "--machine",
       entry.machineId,
     ];
     if (text) args.push("--text", text);
-    this.log(`回答を送信: ${did} option=${optionId ?? "-"} via=${via}`);
+    this.log(`回答を送信: ${did} option=${ids.join(",") || "-"} via=${via}`);
     const result = await this.runAnswer(args);
     if (result.code === 0) return; // the resolved event updates the post
     entry.answerPending = false;
@@ -1227,11 +1256,24 @@ export class SlackDecisionsDaemon {
     const trimmed = (text || "").normalize("NFKC").trim();
     if (!trimmed) return;
     const options = entry.decision.options || [];
-    if (/^\d+$/.test(trimmed)) {
-      const index = Number(trimmed) - 1;
-      if (index >= 0 && index < options.length) {
+    const numbers = trimmed.match(/^\d[\d\s,、]*$/)
+      ? trimmed.split(/[\s,、]+/).filter(Boolean).map(Number)
+      : null;
+    if (numbers && numbers.length > 0) {
+      const picked = [
+        ...new Set(
+          numbers
+            .map((n) => n - 1)
+            .filter((index) => index >= 0 && index < options.length)
+            .map((index) => options[index].id),
+        ),
+      ];
+      const acceptsMany = entry.decision.multi_select === true;
+      const ids = acceptsMany ? picked : picked.slice(0, 1);
+      if (ids.length > 0) {
         await this.submitAnswer(entry, {
-          optionId: options[index].id,
+          optionId: ids[0],
+          optionIds: ids,
           via: `slack reply by ${user || "?"}`,
         });
         return;

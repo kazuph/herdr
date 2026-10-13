@@ -135,6 +135,7 @@ impl DecisionStore {
         &mut self,
         decision_id: &str,
         option_id: Option<String>,
+        option_ids: Option<Vec<String>>,
         text: Option<String>,
         responder: Option<String>,
         now_unix_ms: u64,
@@ -148,21 +149,28 @@ impl DecisionStore {
             tx.commit()?;
             return Ok(AnswerOutcome::AlreadyResolved);
         }
-        let option_id = option_id.filter(|value| !value.is_empty());
+        // `option_ids` (multi-select) and `option_id` (single) merge into one
+        // de-duplicated, order-preserving choice list.
+        let mut choices: Vec<String> = Vec::new();
+        for id in option_ids.into_iter().flatten().chain(option_id) {
+            let id = id.trim().to_string();
+            if !id.is_empty() && !choices.contains(&id) {
+                choices.push(id);
+            }
+        }
         let text = text.filter(|value| !value.is_empty());
-        if option_id.is_none() && text.is_none() {
+        if choices.is_empty() && text.is_none() {
             tx.commit()?;
             return Ok(AnswerOutcome::MissingAnswer);
         }
-        if let Some(option) = &option_id {
-            if !decision
+        if choices.iter().any(|option| {
+            !decision
                 .options
                 .iter()
                 .any(|candidate| &candidate.id == option)
-            {
-                tx.commit()?;
-                return Ok(AnswerOutcome::UnknownOption);
-            }
+        }) {
+            tx.commit()?;
+            return Ok(AnswerOutcome::UnknownOption);
         }
         if text.is_some() && !decision.allow_text {
             tx.commit()?;
@@ -170,7 +178,10 @@ impl DecisionStore {
         }
         decision.status = DecisionStatus::Answered;
         decision.answer = Some(DecisionAnswer {
-            option_id,
+            // `option_id` keeps carrying the first choice so older readers
+            // still see an answer; `option_ids` holds the full list.
+            option_id: choices.first().cloned(),
+            option_ids: (choices.len() > 1).then_some(choices),
             text,
             responder,
             answered_unix_ms: now_unix_ms,
@@ -306,15 +317,21 @@ mod tests {
                     label: "Yes".into(),
                     role: DecisionOptionRole::Approve,
                     description: None,
+                    preview: None,
+                    preview_unavailable: false,
                 },
                 DecisionOption {
                     id: "no".into(),
                     label: "No".into(),
                     role: DecisionOptionRole::Reject,
                     description: None,
+                    preview: None,
+                    preview_unavailable: false,
                 },
             ],
             allow_text: false,
+            multi_select: false,
+            question_label: None,
             origin: Some(DecisionOrigin {
                 pane_id: Some("p_1".into()),
                 ..DecisionOrigin::default()
@@ -384,6 +401,7 @@ mod tests {
                 "dec-fw-1",
                 Some("yes".into()),
                 None,
+                None,
                 Some("cli".into()),
                 2_000,
             )
@@ -398,7 +416,7 @@ mod tests {
         assert_eq!(answer.answered_unix_ms, 2_000);
 
         let second = store
-            .answer("dec-fw-1", Some("no".into()), None, None, 3_000)
+            .answer("dec-fw-1", Some("no".into()), None, None, None, 3_000)
             .unwrap();
         assert!(matches!(second, AnswerOutcome::AlreadyResolved));
         // The stored record still carries the first answer.
@@ -413,23 +431,30 @@ mod tests {
         store.insert(&pending_decision("dec-rj-1", None)).unwrap();
         assert!(matches!(
             store
-                .answer("dec-rj-1", Some("maybe".into()), None, None, 1)
+                .answer("dec-rj-1", Some("maybe".into()), None, None, None, 1)
                 .unwrap(),
             AnswerOutcome::UnknownOption
         ));
         assert!(matches!(
             store
-                .answer("dec-rj-1", Some("yes".into()), Some("note".into()), None, 1)
+                .answer(
+                    "dec-rj-1",
+                    Some("yes".into()),
+                    None,
+                    Some("note".into()),
+                    None,
+                    1
+                )
                 .unwrap(),
             AnswerOutcome::TextNotAllowed
         ));
         assert!(matches!(
-            store.answer("dec-rj-1", None, None, None, 1).unwrap(),
+            store.answer("dec-rj-1", None, None, None, None, 1).unwrap(),
             AnswerOutcome::MissingAnswer
         ));
         assert!(matches!(
             store
-                .answer("dec-absent", Some("yes".into()), None, None, 1)
+                .answer("dec-absent", Some("yes".into()), None, None, None, 1)
                 .unwrap(),
             AnswerOutcome::NotFound
         ));
@@ -444,7 +469,7 @@ mod tests {
         texty.allow_text = true;
         store.insert(&texty).unwrap();
         let outcome = store
-            .answer("dec-rj-2", None, Some("free text".into()), None, 1)
+            .answer("dec-rj-2", None, None, Some("free text".into()), None, 1)
             .unwrap();
         assert!(matches!(outcome, AnswerOutcome::Answered(_)));
         let _ = std::fs::remove_dir_all(dir);
@@ -465,7 +490,7 @@ mod tests {
         ));
         assert!(matches!(
             store
-                .answer("dec-c-1", Some("yes".into()), None, None, 1)
+                .answer("dec-c-1", Some("yes".into()), None, None, None, 1)
                 .unwrap(),
             AnswerOutcome::AlreadyResolved
         ));
@@ -489,7 +514,7 @@ mod tests {
         let mut answered = pending_decision("dec-e-4", Some(500));
         store.insert(&answered).unwrap();
         store
-            .answer("dec-e-4", Some("yes".into()), None, None, 600)
+            .answer("dec-e-4", Some("yes".into()), None, None, None, 600)
             .unwrap();
         answered.status = DecisionStatus::Answered;
 
