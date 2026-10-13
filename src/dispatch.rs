@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS dispatches (
   status        TEXT NOT NULL,
   completion    TEXT,
   runner_pid    INTEGER,
-  log_path      TEXT
+  log_path      TEXT,
+  caller_pane   TEXT,
+  caller_agent  TEXT,
+  delivery_error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_dispatch_pending ON dispatches(to_actor, status);
 CREATE INDEX IF NOT EXISTS idx_dispatch_room_time ON dispatches(room, created_at);
@@ -142,12 +145,32 @@ impl DispatchStore {
         self.ensure_dispatch_column("external_id", "TEXT")?;
         self.ensure_dispatch_column("completion", "TEXT")?;
         self.ensure_dispatch_column("runner_pid", "INTEGER")?;
+        self.ensure_dispatch_column("delivery_error", "TEXT")?;
+        self.migrate_job_callers()?;
         self.migrate_read_at()?;
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_dispatch_external ON dispatches(kind, external_id)",
             [],
         )?;
         Ok(())
+    }
+
+    fn migrate_job_callers(&self) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('dispatches') WHERE name='caller_pane')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            // Actor pane metadata is mutable; it cannot recover a legacy job's caller.
+            tx.execute_batch("ALTER TABLE dispatches ADD COLUMN caller_pane TEXT;
+                              ALTER TABLE dispatches ADD COLUMN caller_agent TEXT;
+                              UPDATE dispatches SET status='failed', delivery_error='legacy job recipient has no immutable caller pane'
+                              WHERE kind='message' AND room='herdr-jobs' AND status='queued'
+                              AND to_actor IN (SELECT id FROM actors WHERE name NOT GLOB 'p[0-9]*' OR substr(name,2) GLOB '*[^0-9]*');")?;
+        }
+        tx.commit()
     }
 
     fn ensure_dispatch_column(&self, name: &str, definition: &str) -> rusqlite::Result<()> {
@@ -262,6 +285,27 @@ impl DispatchStore {
         self.message_by_id(id)
     }
 
+    pub(crate) fn insert_failed_message(
+        &self,
+        room: &str,
+        project: &str,
+        from: &str,
+        to: &str,
+        body: &str,
+        reply_to: Option<i64>,
+        reason: &str,
+    ) -> rusqlite::Result<MessageRecord> {
+        let tx = self.conn.unchecked_transaction()?;
+        // A rejected send retains its reply link but is not an answer to that message.
+        let message = self.insert_message(room, project, from, to, body, None, false)?;
+        tx.execute(
+            "UPDATE dispatches SET status='failed', delivery_error=?2, reply_to=?3 WHERE id=?1",
+            params![message.id, reason, reply_to],
+        )?;
+        tx.commit()?;
+        Ok(message)
+    }
+
     pub(crate) fn insert_command(
         &self,
         id: &str,
@@ -274,16 +318,16 @@ impl DispatchStore {
         log_path: &str,
     ) -> rusqlite::Result<()> {
         let from_actor =
-            self.upsert_actor("agent", caller_agent, None, None, None, Some(caller_pane))?;
+            self.upsert_actor("agent", caller_pane, None, None, None, Some(caller_pane))?;
         let to_actor = self.upsert_actor("shell", "herdr-run", None, None, None, None)?;
         self.conn.execute(
             r#"
             INSERT INTO dispatches
-              (external_id, kind, room, project, from_actor, to_actor, body, label, created_at, status, completion, log_path)
+              (external_id, kind, room, project, from_actor, to_actor, body, label, created_at, status, completion, log_path, caller_pane, caller_agent)
             VALUES
-              (?1, 'command', 'default', ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 'queued', ?7, ?8)
+              (?1, 'command', 'default', ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 'queued', ?7, ?8, ?9, ?10)
             "#,
-            params![id, cwd, from_actor, to_actor, command, label, completion, log_path],
+            params![id, cwd, from_actor, to_actor, command, label, completion, log_path, caller_pane, caller_agent],
         )?;
         Ok(())
     }
@@ -479,6 +523,14 @@ impl DispatchStore {
         rows.collect()
     }
 
+    pub(crate) fn pending_job_recipients(&self) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT a.name FROM dispatches d JOIN actors a ON a.id=d.to_actor WHERE d.kind='message' AND d.room='herdr-jobs' AND d.status='queued'",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect()
+    }
+
     pub(crate) fn mark_messages_delivered(
         &self,
         room: &str,
@@ -501,6 +553,14 @@ impl DispatchStore {
         )
     }
 
+    pub(crate) fn mark_message_failed(&self, id: i64, reason: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE dispatches SET status='failed', delivery_error=?2 WHERE id=?1 AND kind='message' AND status='queued'",
+            params![id, reason],
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn mark_message_delivered(&self, id: i64) -> rusqlite::Result<bool> {
         let changed = self.conn.execute(
             r#"
@@ -521,7 +581,7 @@ impl DispatchStore {
             SELECT d.external_id, d.label, d.body, d.project, d.status, d.exit_code,
                    CAST((julianday(d.started_at) - 2440587.5) * 86400000 AS INTEGER),
                    CAST((julianday(d.finished_at) - 2440587.5) * 86400000 AS INTEGER),
-                   d.log_path, fa.name, fa.pane_id, d.completion, d.runner_pid
+                   d.log_path, COALESCE(d.caller_agent, fa.name), d.caller_pane, d.completion, d.runner_pid
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             WHERE d.kind='command'
@@ -546,7 +606,7 @@ impl DispatchStore {
             SELECT d.external_id, d.label, d.body, d.project, d.status, d.exit_code,
                    CAST((julianday(d.started_at) - 2440587.5) * 86400000 AS INTEGER),
                    CAST((julianday(d.finished_at) - 2440587.5) * 86400000 AS INTEGER),
-                   d.log_path, fa.name, fa.pane_id, d.completion, d.runner_pid
+                   d.log_path, COALESCE(d.caller_agent, fa.name), d.caller_pane, d.completion, d.runner_pid
             FROM dispatches d
             JOIN actors fa ON fa.id=d.from_actor
             WHERE d.kind='command'
@@ -668,7 +728,7 @@ impl DispatchStore {
                 SELECT d.external_id, d.label, d.body, d.project, d.status, d.exit_code,
                        CAST((julianday(d.started_at) - 2440587.5) * 86400000 AS INTEGER),
                        CAST((julianday(d.finished_at) - 2440587.5) * 86400000 AS INTEGER),
-                       d.log_path, fa.name, fa.pane_id, d.completion, d.runner_pid
+                       d.log_path, COALESCE(d.caller_agent, fa.name), d.caller_pane, d.completion, d.runner_pid
                 FROM dispatches d
                 JOIN actors fa ON fa.id=d.from_actor
                 WHERE d.kind='command' AND (d.external_id=?1 OR d.log_path LIKE '%' || ?1 || '.log')
@@ -861,6 +921,162 @@ fn job_log_metadata(log_path: &str) -> JobLogMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_named_job_callers_remain_bound_to_their_creation_panes() {
+        let dir =
+            std::env::temp_dir().join(format!("herdr-caller-snapshot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = DispatchStore::open_at(dir.join("herdr.db")).unwrap();
+        for (job, pane) in [("job-first", "p1"), ("job-second", "p2")] {
+            store
+                .insert_command(
+                    job,
+                    "test",
+                    "true",
+                    "/repo",
+                    pane,
+                    "codex",
+                    "summary",
+                    "/tmp/test.log",
+                )
+                .unwrap();
+        }
+        store
+            .upsert_actor("agent", "codex", None, None, None, Some("p999"))
+            .unwrap();
+        for jobs in [
+            store.command_rows().unwrap(),
+            store.recent_command_rows(2).unwrap(),
+        ] {
+            assert_eq!(
+                jobs.iter()
+                    .map(|job| (
+                        job.id.as_str(),
+                        job.caller_pane.as_str(),
+                        job.caller_agent.as_str()
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![("job-second", "p2", "codex"), ("job-first", "p1", "codex")]
+            );
+        }
+        assert_eq!(
+            store.command_row("job-first").unwrap().unwrap().caller_pane,
+            "p1"
+        );
+        drop(store);
+        let reopened = DispatchStore::open_at(dir.join("herdr.db")).unwrap();
+        assert_eq!(
+            reopened
+                .command_row("job-second")
+                .unwrap()
+                .unwrap()
+                .caller_pane,
+            "p2"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn legacy_job_notices_fail_closed_without_guessing_mutable_actor_panes() {
+        let dir =
+            std::env::temp_dir().join(format!("herdr-caller-migration-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("herdr.db");
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = Connection::open(&path).unwrap();
+        let legacy_schema = SCHEMA_DDL.replace(
+            "  log_path      TEXT,\n  caller_pane   TEXT,\n  caller_agent  TEXT,\n  delivery_error TEXT",
+            "  log_path      TEXT",
+        );
+        conn.execute_batch(&legacy_schema).unwrap();
+        conn.execute_batch("INSERT INTO actors (kind,name,pane_id,first_seen_at,last_seen_at) VALUES ('agent','codex','p2','now','now'), ('agent','p1','p1','now','now');
+                            INSERT INTO dispatches (external_id,kind,from_actor,to_actor,body,created_at,status,log_path,label) VALUES ('legacy-job','command',1,1,'true','now','exited','/tmp/legacy.log','legacy');
+                            INSERT INTO dispatches (kind,room,from_actor,to_actor,body,created_at,status) VALUES
+                              ('message','herdr-jobs',1,1,'legacy notice','now','queued'),
+                              ('message','herdr-jobs',1,2,'exact notice','now','queued'),
+                              ('message','ordinary',1,1,'ordinary notice','now','queued');").unwrap();
+        drop(conn);
+        for _ in 0..2 {
+            let store = DispatchStore::open_at(path.clone()).unwrap();
+            assert!(store
+                .command_row("legacy-job")
+                .unwrap()
+                .unwrap()
+                .caller_pane
+                .is_empty());
+            let rows = store.conn.prepare("SELECT body,status,delivery_error,delivered_at,read_at FROM dispatches WHERE kind='message' ORDER BY id").unwrap()
+                .query_map([], |row| Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,Option<String>>(2)?, row.get::<_,Option<String>>(3)?, row.get::<_,Option<String>>(4)?)))
+                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+            assert_eq!(rows[0].0, "legacy notice");
+            assert_eq!(rows[0].1, "failed");
+            assert!(rows[0].2.as_deref().unwrap().contains("immutable caller"));
+            assert_eq!((rows[0].3.as_ref(), rows[0].4.as_ref()), (None, None));
+            assert_eq!(rows[1].1, "queued");
+            assert_eq!(rows[2].1, "queued");
+            assert_eq!(store.pending_job_recipients().unwrap(), vec!["p1"]);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn failed_recipient_notice_retains_body_and_reason_without_delivery() {
+        let dir = std::env::temp_dir().join(format!("herdr-caller-failed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = DispatchStore::open_at(dir.join("herdr.db")).unwrap();
+        let original = store
+            .insert_message("ordinary", "/repo", "alice", "bob", "question", None, true)
+            .unwrap();
+        let message = store
+            .insert_failed_message(
+                "herdr-jobs",
+                "/repo",
+                "herdr-run",
+                "p404",
+                "exit=0",
+                Some(original.id),
+                "caller pane disappeared",
+            )
+            .unwrap();
+        let answered: Option<String> = store
+            .conn
+            .query_row(
+                "SELECT replied_at FROM dispatches WHERE id=?1",
+                [original.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(answered.is_none());
+        let link: i64 = store
+            .conn
+            .query_row(
+                "SELECT reply_to FROM dispatches WHERE id=?1",
+                [message.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(link, original.id);
+        assert!(store
+            .pending_messages("herdr-jobs", "p404")
+            .unwrap()
+            .is_empty());
+        assert!(!store.mark_message_delivered(message.id).unwrap());
+        let recorded: (String, String, String, Option<String>, Option<String>) = store.conn.query_row(
+            "SELECT body,status,delivery_error,delivered_at,read_at FROM dispatches WHERE id=?1", [message.id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+        ).unwrap();
+        assert_eq!(
+            recorded,
+            (
+                "exit=0".into(),
+                "failed".into(),
+                "caller pane disappeared".into(),
+                None,
+                None
+            )
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn reply_to_command_sets_replied_at_without_overwriting_terminal_status() {

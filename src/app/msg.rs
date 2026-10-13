@@ -54,7 +54,35 @@ impl App {
                         .into(),
             });
         }
-        let recipients = vec![self.resolve_msg_recipient(&room, &params.to)?];
+        let resolved = if room == crate::msg::JOBS_ROOM
+            && from_agent == "herdr-run"
+            && !crate::msg::is_global_pane_recipient(&params.to)
+        {
+            Err(ErrorBody {
+                code: "job_caller_not_exact".into(),
+                message: "job completion requires an immutable global caller pane ID".into(),
+            })
+        } else {
+            self.resolve_msg_recipient(&params.to)
+        };
+        let recipient = match resolved {
+            Ok(recipient) => recipient,
+            Err(err) => {
+                open_msg_store()?
+                    .insert_failed_message(
+                        &room,
+                        &params.project,
+                        &from_agent,
+                        &params.to,
+                        &body,
+                        params.reply_to,
+                        &err.message,
+                    )
+                    .map_err(msg_store_error)?;
+                return Err(err);
+            }
+        };
+        let recipients = vec![recipient];
 
         let mut store = open_msg_store()?;
         let mut messages = Vec::with_capacity(recipients.len());
@@ -95,6 +123,11 @@ impl App {
     ) -> Result<ResponseResult, ErrorBody> {
         let room = normalize_room(&params.room)?;
         let to_agent = normalize_agent(&params.to_agent, "to_agent")?;
+        if let Err(err @ super::terminal_targets::TerminalTargetError::Ambiguous { .. }) =
+            self.resolve_terminal_target(&to_agent)
+        {
+            return Err(self.agent_target_error_body(err));
+        }
         let recipients = self.mailbox_recipient_aliases(&room, &to_agent);
         let mut store = open_msg_store()?;
         let messages = store
@@ -136,6 +169,16 @@ impl App {
     }
 
     pub(crate) fn flush_msg_nudges_for_all_available_agents(&mut self) {
+        // On startup, also settle notices whose exact caller no longer exists.
+        if let Ok(recipients) = open_msg_store()
+            .and_then(|store| store.pending_job_recipients().map_err(msg_store_error))
+        {
+            for recipient in recipients {
+                if let Err(err) = self.flush_job_msg_nudge_for(crate::msg::JOBS_ROOM, &recipient) {
+                    tracing::warn!(recipient, err = %err.message, "failed to flush job notice");
+                }
+            }
+        }
         let agents = self.collect_agent_infos();
         for agent in agents {
             if !regular_mail_can_submit(agent.agent_status) {
@@ -153,12 +196,9 @@ impl App {
                 "failed to flush herdr msg nudges"
             );
         }
-        let Some(mailbox) = mailbox_agent_name(agent) else {
-            return;
-        };
-        if let Err(err) = self.flush_job_msg_nudges_for_agent(&mailbox) {
+        if let Err(err) = self.flush_job_msg_nudges_for_agent(&agent.global_pane_id) {
             tracing::warn!(
-                recipient = %mailbox,
+                recipient = %agent.global_pane_id,
                 err = %err.message,
                 "failed to flush herdr msg nudges"
             );
@@ -238,8 +278,33 @@ impl App {
         &mut self,
         nudge: crate::msg::PendingNudge,
     ) -> Result<bool, ErrorBody> {
-        let Ok(resolved) = self.resolve_terminal_target(&nudge.to_agent) else {
-            return Ok(false);
+        let resolved = match self
+            .resolve_terminal_target(&nudge.to_agent)
+            .and_then(|resolved| {
+                if crate::msg::is_global_pane_recipient(&nudge.to_agent)
+                    && nudge.to_agent == format!("p{}", resolved.pane_id.raw())
+                {
+                    Ok(resolved)
+                } else {
+                    Err(super::terminal_targets::TerminalTargetError::NotFound {
+                        target: nudge.to_agent.clone(),
+                    })
+                }
+            }) {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                let reason = self.agent_target_error_body(err).message;
+                let store = open_msg_store()?;
+                for message in store
+                    .pending_messages_for_agent(&nudge.room, &nudge.to_agent)
+                    .map_err(msg_store_error)?
+                {
+                    store
+                        .mark_message_failed(message.id, &reason)
+                        .map_err(msg_store_error)?;
+                }
+                return Ok(false);
+            }
         };
         let Some(agent) = self.agent_info(resolved.ws_idx, resolved.pane_id) else {
             return Ok(false);
@@ -272,22 +337,24 @@ impl App {
         Ok(true)
     }
 
-    fn resolve_msg_recipient(&self, room: &str, target: &str) -> Result<String, ErrorBody> {
+    fn resolve_msg_recipient(&self, target: &str) -> Result<String, ErrorBody> {
         let agent = self
             .agent_info_for_target(target)
             .map_err(|err| self.agent_target_error_body(err))?;
-        let mailbox = mailbox_agent_name(&agent).ok_or_else(|| ErrorBody {
+        if crate::msg::is_global_pane_recipient(target) && agent.global_pane_id != target {
+            return Err(ErrorBody {
+                code: "agent_not_found".into(),
+                message: format!("pane target {target} no longer exists"),
+            });
+        }
+        mailbox_agent_name(&agent).ok_or_else(|| ErrorBody {
             code: "agent_not_found".into(),
             message: format!("agent target {target} has no reported agent identity"),
         })?;
-        if room == crate::msg::JOBS_ROOM {
-            Ok(mailbox)
-        } else {
-            Ok(agent.global_pane_id)
-        }
+        Ok(agent.global_pane_id)
     }
 
-    fn mailbox_recipient_aliases(&self, room: &str, to_agent: &str) -> Vec<String> {
+    fn mailbox_recipient_aliases(&self, _room: &str, to_agent: &str) -> Vec<String> {
         let Ok(resolved) = self.resolve_terminal_target(to_agent) else {
             return vec![to_agent.to_string()];
         };
@@ -296,19 +363,6 @@ impl App {
         };
 
         let mut aliases = vec![agent.global_pane_id, agent.short_pane_id];
-        if room == crate::msg::JOBS_ROOM {
-            if let Some(name) = agent.name {
-                let name_resolves_to_pane =
-                    self.resolve_terminal_target(&name)
-                        .is_ok_and(|name_target| {
-                            name_target.ws_idx == resolved.ws_idx
-                                && name_target.pane_id == resolved.pane_id
-                        });
-                if name_resolves_to_pane {
-                    aliases.push(name);
-                }
-            }
-        }
         if let Some(public_pane_id) = self.public_pane_id(resolved.ws_idx, resolved.pane_id) {
             aliases.push(public_pane_id);
         }
@@ -756,12 +810,27 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_direct_target_fails_closed_without_persisting_message() {
+    fn unresolved_direct_target_records_failure_without_delivery() {
         with_msg_api_harness(&["alpha"], |harness| {
             let code = harness.send_error_code("alpha", "missing", "direct-missing");
 
             assert_eq!(code, "agent_not_found");
-            assert!(harness.history("direct-missing").is_empty());
+            let messages = harness.history("direct-missing");
+            assert_eq!(messages.len(), 1);
+            assert!(messages[0].delivered_at.is_none());
+            assert!(messages[0].read_at.is_none());
+            let store = crate::dispatch::DispatchStore::open_at(harness.db_path.clone()).unwrap();
+            let recorded: (String, Option<String>) = store
+                .conn()
+                .query_row(
+                    "SELECT status,delivery_error FROM dispatches WHERE id=?1",
+                    [messages[0].id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(recorded.0, "failed");
+            assert!(recorded.1.is_some());
+            assert!(harness.inbox("missing", "direct-missing").is_empty());
         });
     }
 
@@ -1148,9 +1217,14 @@ mod tests {
             harness.report_state("beta", PaneAgentState::Idle);
             let body = "[herdr run] exit=0 label=tests job=job-1 details: herdr log job-1";
 
-            let nudged = harness.send("herdr-run", "beta", crate::msg::JOBS_ROOM, body);
+            let nudged = harness.send(
+                "herdr-run",
+                &harness.global_pane_id("beta"),
+                crate::msg::JOBS_ROOM,
+                body,
+            );
 
-            assert_eq!(nudged, vec!["beta"]);
+            assert_eq!(nudged, vec![harness.global_pane_id("beta")]);
             let texts = harness.received_texts("beta");
             assert_eq!(texts, vec![body.to_string(), "\r".to_string()]);
             assert!(!texts[0].contains("herdr msg inbox"));
@@ -1167,9 +1241,14 @@ mod tests {
             harness.report_state("beta", PaneAgentState::Working);
             let body = "[herdr run] exit=0 label=tests job=job-1 details: herdr log job-1";
 
-            let nudged = harness.send("herdr-run", "beta", crate::msg::JOBS_ROOM, body);
+            let nudged = harness.send(
+                "herdr-run",
+                &harness.global_pane_id("beta"),
+                crate::msg::JOBS_ROOM,
+                body,
+            );
 
-            assert_eq!(nudged, vec!["beta"]);
+            assert_eq!(nudged, vec![harness.global_pane_id("beta")]);
             assert_eq!(
                 harness.received_texts("beta"),
                 vec![body.to_string(), "\r".to_string()]
@@ -1179,14 +1258,17 @@ mod tests {
     }
 
     #[test]
-    fn startup_flush_delivers_queued_job_message_to_named_agent() {
-        with_msg_api_harness(&["alpha", "renamed-caller"], |harness| {
+    fn startup_flush_delivers_queued_job_message_to_exact_pane() {
+        with_msg_api_harness(&["renamed-caller"], |harness| {
             harness.report_state("renamed-caller", PaneAgentState::Blocked);
             let body = "[herdr run] exit=0 label=tests job=job-1 details: herdr log job-1";
-            harness.insert_queued_message(crate::msg::JOBS_ROOM, "renamed-caller", body);
+            let pane = harness.global_pane_id("renamed-caller");
+            harness.insert_queued_message(crate::msg::JOBS_ROOM, &pane, body);
 
             let db_path = harness.db_path.clone();
-            let mut restarted = MsgApiHarness::new(&["alpha", "renamed-caller"], db_path, 16);
+            let root = harness.agents["renamed-caller"].pane_id;
+            let mut restarted =
+                MsgApiHarness::new_with_root_pane_id(&["renamed-caller"], db_path, 16, Some(root));
             restarted.report_state("renamed-caller", PaneAgentState::Idle);
             restarted.app.flush_msg_nudges_for_all_available_agents();
 
