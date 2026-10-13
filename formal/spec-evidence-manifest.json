@@ -8465,38 +8465,6 @@
       ]
     },
     {
-      "contract_id": "G9-0af81e6657",
-      "dimensions": [
-        "origin context in dialog header",
-        "explicit unknown-origin marker",
-        "uniform row padding",
-        "no empty bands"
-      ],
-      "verification_methods": [
-        "rust_test_target:decision_dialog_header_shows_resolved_origin_context",
-        "rust_test_target:decision_dialog_header_marks_unknown_origin_and_truncates_long_context",
-        "rust_test_target:decision_dialog_pads_every_row_and_shows_no_empty_band",
-        "rust_test_target:decision_dialog_options_are_left_aligned_with_content",
-        "drift_source_anchor:src/ui/dialogs.rs",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1922",
-        "src/ui/dialogs.rs:1240",
-        "src/client/endpoint/frontend/decisions.rs:272"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Header origin context, padding, and band removal are unit- and render-test covered; live visual check on a real endpoint is manual evidence"
-      ]
-    },
-    {
       "contract_id": "G10-2a64a7ad3b",
       "dimensions": [
         "upstream parity",
@@ -11551,173 +11519,6 @@
       ]
     },
     {
-      "contract_id": "G9-f2f62c595c",
-      "dimensions": [
-        "cross-machine pending projection",
-        "queued dialog presentation",
-        "safe input gating",
-        "reopen and auto-removal"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_decisions_follow_generation_boot_and_revision",
-        "rust_test_target:endpoint_decision_shows_oldest_pending_across_machines_with_queue_position",
-        "rust_test_target:endpoint_decision_close_snoozes_and_indicator_click_reopens",
-        "rust_test_target:endpoint_decision_keyboard_stays_on_pane_until_dialog_clicked",
-        "rust_test_target:endpoint_decision_resolved_elsewhere_and_disconnect_remove_it",
-        "rust_test_target:endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1921",
-        "src/client/endpoint/frontend/decisions.rs:111",
-        "src/server/headless/endpoints.rs:474"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Queue, input gating and resolution propagation are unit- and actual-socket-covered; a multi-machine run answering a remote decision from a real terminal is manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G9-87eb4f8028",
-      "dimensions": [
-        "cross-machine pending projection",
-        "queued dialog presentation",
-        "safe input gating",
-        "reopen and auto-removal"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_decisions_follow_generation_boot_and_revision",
-        "rust_test_target:endpoint_decision_shows_oldest_pending_across_machines_with_queue_position",
-        "rust_test_target:endpoint_decision_close_snoozes_and_indicator_click_reopens",
-        "rust_test_target:endpoint_decision_keyboard_stays_on_pane_until_dialog_clicked",
-        "rust_test_target:endpoint_decision_resolved_elsewhere_and_disconnect_remove_it",
-        "rust_test_target:endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process",
-        "rust_test_target:endpoint_decision_option_click_only_selects_confirm_or_enter_sends",
-        "rust_test_target:endpoint_decision_clicked_option_is_visually_selected",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1923",
-        "src/client/endpoint/frontend/decisions.rs:111",
-        "src/server/headless/endpoints.rs:474"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Queue, input gating and resolution propagation are unit- and actual-socket-covered; a multi-machine run answering a remote decision from a real terminal is manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G9-5590f50eff",
-      "dimensions": [
-        "cross-machine pending projection",
-        "queued dialog presentation",
-        "safe input gating",
-        "reopen and auto-removal"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_decisions_follow_generation_boot_and_revision",
-        "rust_test_target:endpoint_decision_shows_oldest_pending_across_machines_with_queue_position",
-        "rust_test_target:endpoint_decision_close_snoozes_and_indicator_click_reopens",
-        "rust_test_target:endpoint_decision_keyboard_stays_on_pane_until_dialog_clicked",
-        "rust_test_target:endpoint_decision_resolved_elsewhere_and_disconnect_remove_it",
-        "rust_test_target:endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1924",
-        "src/client/endpoint/frontend/decisions.rs:111",
-        "src/server/headless/endpoints.rs:474"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Queue, input gating and resolution propagation are unit- and actual-socket-covered; a multi-machine run answering a remote decision from a real terminal is manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G9-c593f2f5b2",
-      "dimensions": [
-        "cross-machine pending projection",
-        "queued dialog presentation",
-        "safe input gating",
-        "reopen and auto-removal"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_decisions_follow_generation_boot_and_revision",
-        "rust_test_target:endpoint_decision_shows_oldest_pending_across_machines_with_queue_position",
-        "rust_test_target:endpoint_decision_close_snoozes_and_indicator_click_reopens",
-        "rust_test_target:endpoint_decision_keyboard_stays_on_pane_until_dialog_clicked",
-        "rust_test_target:endpoint_decision_resolved_elsewhere_and_disconnect_remove_it",
-        "rust_test_target:endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1925",
-        "src/client/endpoint/frontend/decisions.rs:111",
-        "src/server/headless/endpoints.rs:474"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Queue, input gating and resolution propagation are unit- and actual-socket-covered; a multi-machine run answering a remote decision from a real terminal is manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G9-3fe801d351",
-      "dimensions": [
-        "cross-machine pending projection",
-        "queued dialog presentation",
-        "safe input gating",
-        "reopen and auto-removal"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_decisions_follow_generation_boot_and_revision",
-        "rust_test_target:endpoint_decision_shows_oldest_pending_across_machines_with_queue_position",
-        "rust_test_target:endpoint_decision_close_snoozes_and_indicator_click_reopens",
-        "rust_test_target:endpoint_decision_keyboard_stays_on_pane_until_dialog_clicked",
-        "rust_test_target:endpoint_decision_resolved_elsewhere_and_disconnect_remove_it",
-        "rust_test_target:endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1926",
-        "src/client/endpoint/frontend/decisions.rs:111",
-        "src/server/headless/endpoints.rs:474"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Queue, input gating and resolution propagation are unit- and actual-socket-covered; a multi-machine run answering a remote decision from a real terminal is manual evidence"
-      ]
-    },
-    {
       "contract_id": "G9-0715c4d8cc",
       "dimensions": [
         "json-lines stream",
@@ -13005,7 +12806,7 @@
       ]
     },
     {
-      "contract_id": "G9-236b635b79",
+      "contract_id": "G9-0d35f07815",
       "dimensions": [
         "regression containment",
         "existing decision surfaces"
@@ -13151,37 +12952,6 @@
       ]
     },
     {
-      "contract_id": "G9-53217ed1cd",
-      "dimensions": [
-        "option description rendering",
-        "options band scrolling",
-        "selection reveal",
-        "answer path preservation"
-      ],
-      "verification_methods": [
-        "rust_test_target:decision_dialog_renders_wrapped_option_descriptions",
-        "rust_test_target:decision_dialog_option_band_scrolls_to_reach_every_description",
-        "rust_test_target:endpoint_decision_option_click_only_selects_confirm_or_enter_sends",
-        "drift_source_anchor:src/ui/dialogs.rs",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1927",
-        "src/ui/dialogs.rs:956",
-        "src/client/endpoint/frontend/decisions.rs:111"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Wrapped rendering, band scroll and selection reveal are unit-covered; reading a real Claude Code question's descriptions in a live dialog remains manual evidence"
-      ]
-    },
-    {
       "contract_id": "G9-953c742f42",
       "dimensions": [
         "option description parse",
@@ -13247,7 +13017,7 @@
       ]
     },
     {
-      "contract_id": "G9-d4c13f8d23",
+      "contract_id": "G9-c77f2493d7",
       "dimensions": [
         "option preview parse",
         "one-time arrow traversal reads every option's preview",
@@ -13262,7 +13032,6 @@
         "rust_test_target:preview_scan_suppresses_decision_creation_until_finish",
         "drift_source_anchor:src/screen_prompt.rs",
         "drift_source_anchor:src/app/screen_prompts.rs",
-        "drift_source_anchor:src/ui/dialogs.rs",
         "drift_source_anchor:src/cli/decision.rs",
         "platform_live_acceptance:.artifacts/feat-decision-dialog-context/real-preview-scan-decisions.json"
       ],
@@ -13271,8 +13040,7 @@
         "src/screen_prompt.rs:320",
         "src/app/screen_prompts.rs:956",
         "src/app/screen_prompts.rs:1005",
-        "src/app/screen_prompts.rs:1171",
-        "src/ui/dialogs.rs:1963"
+        "src/app/screen_prompts.rs:1171"
       ],
       "test_status": [
         "static_verified"
@@ -13285,7 +13053,7 @@
       ]
     },
     {
-      "contract_id": "G9-defcf9f31c",
+      "contract_id": "G9-de602f1c11",
       "dimensions": [
         "multi-question tab parse",
         "question progress label",
@@ -13295,13 +13063,11 @@
         "rust_test_target:parses_multi_question_tabs_with_progress",
         "rust_test_target:multi_question_typing_in_free_text_slot_parses",
         "drift_source_anchor:src/screen_prompt.rs",
-        "drift_source_anchor:src/ui/dialogs.rs",
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
         "SPEC.md:1981",
-        "src/screen_prompt.rs:666",
-        "src/ui/dialogs.rs:1852"
+        "src/screen_prompt.rs:666"
       ],
       "test_status": [
         "unverified"
@@ -13314,19 +13080,18 @@
       ]
     },
     {
-      "contract_id": "G9-e964e6299b",
+      "contract_id": "G9-12aa0cc12e",
       "dimensions": [
         "multiselect dialog checkmarks",
         "free-text last option row"
       ],
       "verification_methods": [
-        "rust_test_target:decision_dialog_text_input_is_the_last_option_row",
-        "drift_source_anchor:src/ui/dialogs.rs",
+        "rust_test_target:create_rejects_empty_and_duplicate_option_ids",
+        "rust_test_target:parses_multiselect_checkboxes_and_advance_row",
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
         "SPEC.md:1982",
-        "src/ui/dialogs.rs:1963",
         "src/app/screen_prompts.rs:785"
       ],
       "test_status": [

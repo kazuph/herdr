@@ -1907,7 +1907,7 @@
 ### 判断待ちのマシン横断UI（decision dialog、工程2）
 - **該当コミット**: feat/decision-dialogの実装
 - **分類**: CORE-UI
-- **status: fork独自・保持 (C)** — 工程1でserverが所有する判断待ちを、マシン対応画面（endpoint client shell）へ、接続中の全マシン分をまとめて提示する。
+- **status: 破棄** — herdr本体のTUI判断待ちダイアログは店長判断（2026-10-13、「herdr自体でダイアログを出す機能は要らない。今すぐオフにしてほしい。herdrで回答することは二度とない」）で廃止。判断待ちへの回答はSlack・スマホアプリ・AIグラス・CLIから行い、serverのdecision API・`decision watch`・画面質問の判断待ち化は保持する。以下は廃止対象を識別する歴史的記録であり、active受け入れ条件には使わず、dialogを復活させない。
 - **目的**: つないでいる複数マシン（local・SSH endpoint）のどこで判断待ちが起きても同じclient画面から答えられ、誤回答を防ぐ操作設計を持つUIを作る。
 - **挙動**:
   - serverは接続中の各endpoint clientへ、pending判断待ちの全件リストをboot_id・projection revision付きのEndpointControl projectionとしてpushする。判断待ちの作成・回答・取消・期限切れイベントでprojectionを更新し、非active（surfaceをpresentしていない）clientにも届ける。clientはこのprojectionだけをpendingの根拠とし、自前で判断待ち状態を合成しない。
@@ -1974,12 +1974,12 @@
   - 判断待ち作成後に画面が別の質問へ変わった、または質問が消えた状態でanswerすると、キーは送られずその判断待ちはcancelされて`decision_stale`が返る。同じ質問が出ている間のanswerは従来どおりキーを送る。
   - `[decisions] screen_prompts`の既定はtrueで、falseへのlive切替で全watchとpending判断待ちを止める。
   - server capabilitiesの`screen_prompt_decisions`が`status --json`とping応答で読める。
-  - 既存のdecision API・`decision watch`・dialog・Slack・pane状態manifests・agent状態判定を変えない。
+  - 既存のdecision API・`decision watch`・Slack・pane状態manifests・agent状態判定を変えない。
   - 選択肢の下に続く説明文行はその選択肢の`description`としてoptionsへ入り（複数行・soft wrapでつながった文も復元する）、説明文だけが変わった画面は別の質問として新しい判断待ちになる。回答で送るキー・ショートカットは説明文の有無で変わらない。
   - 選択肢に`[ ]`/`[✔]`のチェックボックスが付く質問は`multi_select=true`の判断待ちになり、answerの`option_ids`へ複数の選択肢を入れられる。複数回答は各番号キーを別々の入力イベントとしてpaneへ送り、すべてのチェックが付いた後で進行行へ移ってEnterで確定する。単一の`option_id`回答との互換は保ち、`option_ids`を持たない古いpayloadも読める。
-  - プレビューboxの出る質問は、判断待ちを作る前にpaneへ上下の矢印キーだけを送る1回きりの走査で全選択肢のプレビューを読み取り、各選択肢の`preview`へ入れてdialogとSlackで読める。走査後のカーソルは元の位置へ戻る。走査が届かなかった選択肢は`preview_unavailable`として「プレビューあり（画面で確認）」と明示し、黙って落とさない。
-  - 複数質問（1〜4問）のタブ名と`質問 N/M`（最終確認）の進み具合が`question_label`へ入り、dialogの見出し付近に出る。
-  - `multi_select`の判断待ちのdialogは選択肢ごとにチェック表示を持ち複数選んで確定でき、`allow_text`の自由入力は選択肢帯の最後の項目になる。
+  - プレビューboxの出る質問は、判断待ちを作る前にpaneへ上下の矢印キーだけを送る1回きりの走査で全選択肢のプレビューを読み取り、各選択肢の`preview`へ入れてSlack・モバイル・グラスで読める。走査後のカーソルは元の位置へ戻る。走査が届かなかった選択肢は`preview_unavailable`として「プレビューあり（画面で確認）」と明示し、黙って落とさない。
+  - 複数質問（1〜4問）のタブ名と`質問 N/M`（最終確認）の進み具合が`question_label`へ入り、Slackの判断待ち表示に出る。
+  - `multi_select`の判断待ちはanswerの`option_ids`で複数の選択肢を確定でき、`allow_text`の判断待ちは自由入力の`text`回答を受け付ける。
 - **検証契約**: Rust unit testsで画面固定例のparse・選択肢説明文の読み取りと署名・キー/ショートカット/text+Enter送信・複数タブ遷移・消失2読取消・質問文を含む同一判定・answer時の画面確認（decision_stale）・二重防止・feature flag切替・capabilities値を固定する。隔離sessionの実agentでblocked→判断待ち作成→`decision answer`→pane前進を実地確認する。
 - **デグレ判定**: detection画面ではなくuser viewportを読む、saberanteと同じ画面を二重に判断待ち化する、1回の読み取り異常でcancelする、idleでloopを定期起こし続ける、agent状態判定manifestsの結果を変える。
 

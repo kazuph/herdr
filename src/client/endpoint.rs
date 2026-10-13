@@ -9,7 +9,6 @@ pub(crate) mod cache;
 pub(crate) mod catalog;
 pub(crate) mod chrome;
 pub(crate) mod commands;
-pub(crate) mod decisions;
 pub(crate) mod frontend;
 pub(crate) mod handshake;
 mod health;

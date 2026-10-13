@@ -164,9 +164,6 @@ pub struct App {
     /// one-time rescan so decisions that outlived a restart/handoff still
     /// expire; afterwards it tracks the earliest pending `expires_unix_ms`.
     pub(crate) decision_expiry_deadline: Option<Instant>,
-    /// Set whenever the pending-decision set may have changed; the headless
-    /// loop turns it into a fresh endpoint decisions projection.
-    pub(crate) decisions_projection_dirty: bool,
     /// Next screen-prompt scan. `Some(now)` when an event armed an immediate
     /// scan; the scan reschedules itself on an interval while blocked panes
     /// or live watches exist.
@@ -887,7 +884,6 @@ impl App {
             loaded_host_cursor: config.ui.host_cursor,
             agent_metadata_deadline: None,
             decision_expiry_deadline: Some(Instant::now()),
-            decisions_projection_dirty: true,
             screen_prompt_scan_at: config.decisions.screen_prompts.then_some(Instant::now()),
             screen_prompt_watches: HashMap::new(),
             deferred_pane_writes: Vec::new(),
