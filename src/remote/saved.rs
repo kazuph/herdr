@@ -17,6 +17,8 @@ use serde::Deserialize;
 
 use super::{RemoteHerdr, RemotePlatform};
 
+#[path = "saved/approval.rs"]
+mod approval;
 #[path = "saved/process.rs"]
 mod process;
 
@@ -92,13 +94,22 @@ fn open_auth_url(url: &str) -> io::Result<()> {
 
 /// Surface a Tailscale SSH check URL: the machine's status line carries the
 /// newest URL so it can be opened from another terminal, and the local browser
-/// opens it exactly once for this wait. A wait that ends unapproved parks the
-/// machine instead of reconnecting, so a tab can only reappear after a new
-/// wait — the first connect of a fresh client or a user retry.
-fn note_tailscale_auth_url(url: &str, status: &dyn Fn(&str)) {
-    status(&format!("waiting for Tailscale SSH approval: {url}"));
+/// opens it only for the first claim on the machine's shared approval record
+/// — once per machine across every client and every automatic reconnect of
+/// the same wait, until the connection goes through or a user-clicked retry
+/// rotates the record. A wait that ends unapproved parks the machine instead
+/// of reconnecting, so a tab can only reappear after a new wait — the first
+/// connect of a fresh client or a user retry.
+fn note_tailscale_auth_url(url: &str, hooks: &crate::remote::SavedSshHooks<'_>) {
+    (hooks.status)(&format!("waiting for Tailscale SSH approval: {url}"));
+    if !approval::claim(hooks.machine, url, hooks.retry_open) {
+        return;
+    }
     if let Err(error) = open_auth_url(url) {
         tracing::warn!(%error, %url, "failed to open the Tailscale SSH approval URL");
+        // Nothing reached the user; release our claim so a later attempt may
+        // open the page instead.
+        approval::clear_if_current(hooks.machine, url);
     }
 }
 
@@ -116,7 +127,7 @@ fn read_remote(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut on_auth_url = |url: &str| note_tailscale_auth_url(url, hooks.status);
+    let mut on_auth_url = |url: &str| note_tailscale_auth_url(url, hooks);
     process::wait_with_output_timeout(
         command.spawn()?,
         timeout(),
@@ -477,7 +488,7 @@ fn forward_stream(
                 .and_then(|bytes| process::tailscale_check_url(&bytes))
             {
                 deadline = Instant::now() + auth_wait();
-                note_tailscale_auth_url(&url, hooks.status);
+                note_tailscale_auth_url(&url, hooks);
                 auth_wait_url = Some(url);
             }
         }
@@ -496,6 +507,18 @@ fn forward_stream(
     }
 }
 
+/// True while the machine's shared approval record stands — an approval page
+/// was opened for it and no completed connection has cleared the record yet.
+pub(crate) fn approval_pending(machine: &str) -> bool {
+    approval::pending(machine)
+}
+
+/// A user-clicked retry while the machine's approval is still outstanding:
+/// rotate the record so the next sighted banner opens the page once more.
+pub(crate) fn retry_approval_open(machine: &str) {
+    approval::renew(machine);
+}
+
 pub(crate) fn connect_saved_ssh(
     target: &str,
     session: &str,
@@ -510,7 +533,13 @@ pub(crate) fn connect_saved_ssh(
         ));
     }
     let remote_herdr = discover_socket(target, session, hooks)?;
-    forward_stream(target, &remote_herdr, session, hooks)
+    let result = forward_stream(target, &remote_herdr, session, hooks);
+    if result.is_ok() {
+        // The connection went through — an approval was granted or none was
+        // needed — so the next approval wait may open the page once again.
+        approval::clear(hooks.machine);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -527,6 +556,7 @@ pub(crate) mod test_hooks {
     static CONNECT_TIMEOUT: Mutex<Option<Duration>> = Mutex::new(None);
     static AUTH_WAIT: Mutex<Option<Duration>> = Mutex::new(None);
     static OPEN_URL: Mutex<Option<OpenUrlHook>> = Mutex::new(None);
+    static APPROVAL_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
     /// Serializes tests that share these process-wide seams.
     static LOCK: Mutex<()> = Mutex::new(());
 
@@ -577,6 +607,14 @@ pub(crate) mod test_hooks {
 
     pub(crate) fn open_url_hook() -> Option<OpenUrlHook> {
         take(&OPEN_URL)
+    }
+
+    pub(crate) fn set_approval_dir(dir: Option<PathBuf>) {
+        put(&APPROVAL_DIR, dir);
+    }
+
+    pub(crate) fn approval_dir() -> Option<PathBuf> {
+        take(&APPROVAL_DIR)
     }
 
     static AUTH_URL_OPENS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -655,7 +693,8 @@ if banner and not (gate and os.path.exists(gate)):
     sys.stderr.write("# To authenticate, visit: %s\n" % banner)
     sys.stderr.flush()
     if gate:
-        deadline = time.time() + 120
+        wait_ms = env("FAKE_SSH_APPROVE_WAIT_MS")
+        deadline = time.time() + (float(wait_ms) / 1000 if wait_ms else 120)
         while not os.path.exists(gate):
             if time.time() > deadline:
                 sys.stderr.write("check approval timed out\n")
@@ -739,6 +778,9 @@ sys.exit(0)
             let pid_file = directory.join("pids");
             let approve_file = directory.join("approved");
             test_hooks::set_ssh_program(Some(program.into_os_string()));
+            // Every test gets its own approval-record dir so records never leak
+            // between tests or into the real state dir.
+            test_hooks::set_approval_dir(Some(directory.join("approvals")));
             let pid = pid_file.clone();
             Self {
                 _lock: lock,
@@ -782,6 +824,12 @@ sys.exit(0)
         /// connections skip the banner, like tailssh's cached check state.
         pub(crate) fn approve(&self) {
             fs::write(&self.approve_file, b"approved\n").unwrap();
+        }
+
+        /// The approval lapsed again (tailssh checks expire): the banner and
+        /// gate come back for later connections.
+        pub(crate) fn revoke_approval(&self) {
+            let _ = fs::remove_file(&self.approve_file);
         }
 
         /// A path inside the test directory where the fake appends the bridge
@@ -830,10 +878,12 @@ sys.exit(0)
             test_hooks::set_connect_timeout(None);
             test_hooks::set_auth_wait(None);
             test_hooks::set_open_url_hook(None);
+            test_hooks::set_approval_dir(None);
             test_hooks::clear_auth_url_opens();
             for name in [
                 "FAKE_SSH_PID_FILE",
                 "FAKE_SSH_APPROVE_FILE",
+                "FAKE_SSH_APPROVE_WAIT_MS",
                 "FAKE_SSH_BANNER_URL",
                 "FAKE_SSH_BANNER_FORWARD_ONLY",
                 "FAKE_SSH_FAIL_TARGET",
@@ -888,6 +938,21 @@ mod tests {
             }
         })));
         opened
+    }
+
+    /// Hooks for a fake-host connect: `machine` keys the shared approval
+    /// record, `retry_open` marks a user-clicked retry.
+    fn connect_hooks<'a>(
+        cancel: &'a AtomicBool,
+        sink: &'a dyn Fn(&str),
+        retry_open: bool,
+    ) -> crate::remote::SavedSshHooks<'a> {
+        crate::remote::SavedSshHooks {
+            cancel,
+            status: sink,
+            machine: "fake-host",
+            retry_open,
+        }
     }
 
     fn wait_for_status(messages: &Arc<Mutex<Vec<String>>>, needle: &str, timeout: Duration) {
@@ -1005,14 +1070,7 @@ mod tests {
         let (messages, sink) = status_recorder();
         std::thread::scope(|scope| {
             let worker = scope.spawn(|| {
-                connect_saved_ssh(
-                    "fake-host",
-                    "saved",
-                    &crate::remote::SavedSshHooks {
-                        cancel: &cancel,
-                        status: &sink,
-                    },
-                )
+                connect_saved_ssh("fake-host", "saved", &connect_hooks(&cancel, &sink, false))
             });
             // The machine's status now carries the full URL while the very same
             // ssh process keeps waiting for the check approval.
@@ -1022,6 +1080,8 @@ mod tests {
                 Duration::from_secs(10),
             );
             assert!(!worker.is_finished());
+            // The open was claimed in the shared record while the wait runs.
+            assert!(approval::recorded("fake-host").is_some());
             fake.approve();
             let (stream, bridge) = worker
                 .join()
@@ -1030,6 +1090,8 @@ mod tests {
             drop(stream);
             drop(bridge);
         });
+        // The completed connection cleared the record.
+        assert!(approval::recorded("fake-host").is_none());
         assert_eq!(
             opened.lock().unwrap_or_else(|p| p.into_inner()).as_slice(),
             ["https://login.tailscale.com/a/testcode"],
@@ -1043,6 +1105,96 @@ mod tests {
         assert!(fake.all_dead(Duration::from_secs(5)), "ssh child survived");
     }
 
+    /// After a completed connection cleared the record, the next approval wait
+    /// opens the page once again — and a concurrent second client's wait for
+    /// the same machine does not open another tab.
+    #[test]
+    fn approval_completion_clears_the_record_and_the_next_wait_opens_once_across_clients() {
+        let fake = FakeSsh::new("reapprove")
+            .with_banner("https://login.tailscale.com/a/again")
+            .with_approve_gate();
+        test_hooks::set_auth_wait(Some(Duration::from_millis(400)));
+        let opened = open_recorder();
+        let cancel = AtomicBool::new(false);
+        let (messages, sink) = status_recorder();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                connect_saved_ssh("fake-host", "saved", &connect_hooks(&cancel, &sink, false))
+            });
+            wait_for_status(
+                &messages,
+                "https://login.tailscale.com/a/again",
+                Duration::from_secs(10),
+            );
+            assert!(approval::recorded("fake-host").is_some());
+            fake.approve();
+            worker
+                .join()
+                .unwrap_or_else(|_| panic!("connect worker panicked"))
+                .unwrap_or_else(|error| panic!("approved connection should complete: {error}"));
+        });
+        assert!(approval::recorded("fake-host").is_none());
+        assert_eq!(opened_count(&opened), 1);
+
+        // The check lapses again: two clients reconnect at once, the banner is
+        // back, and exactly one of them opens the page — once in total.
+        fake.revoke_approval();
+        std::thread::scope(|scope| {
+            let messages_a = Arc::new(Mutex::new(Vec::new()));
+            let messages_b = Arc::new(Mutex::new(Vec::new()));
+            let first = scope.spawn({
+                let messages = Arc::clone(&messages_a);
+                let cancel = &cancel;
+                move || {
+                    let sink = move |message: &str| {
+                        messages
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .push(message.to_owned());
+                    };
+                    connect_saved_ssh("fake-host", "saved", &connect_hooks(cancel, &sink, false))
+                }
+            });
+            let second = scope.spawn({
+                let messages = Arc::clone(&messages_b);
+                let cancel = &cancel;
+                move || {
+                    let sink = move |message: &str| {
+                        messages
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .push(message.to_owned());
+                    };
+                    connect_saved_ssh("fake-host", "saved", &connect_hooks(cancel, &sink, false))
+                }
+            });
+            for worker in [first, second] {
+                match worker
+                    .join()
+                    .unwrap_or_else(|_| panic!("connect worker panicked"))
+                {
+                    Ok(_) => panic!("the unapproved wait should not have connected"),
+                    Err(error) => assert!(
+                        crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(&error),
+                        "expected the approval timeout, got: {error}"
+                    ),
+                }
+            }
+        });
+        assert_eq!(
+            opened_count(&opened),
+            2,
+            "two clients waiting on the same machine must open the page once in total"
+        );
+        assert!(
+            approval::recorded("fake-host")
+                .unwrap_or_default()
+                .contains("url=https://login.tailscale.com/a/again"),
+            "the record should name the URL that was opened"
+        );
+        assert!(fake.all_dead(Duration::from_secs(5)), "ssh child survived");
+    }
+
     fn opened_count(opened: &Arc<Mutex<Vec<String>>>) -> usize {
         opened
             .lock()
@@ -1050,12 +1202,45 @@ mod tests {
             .len()
     }
 
+    /// The shared record is claimed once, rotated by a user-clicked retry,
+    /// released by the claimant's failed open, and cleared by a completed
+    /// connection.
+    #[test]
+    fn approval_record_is_claimed_once_until_a_retry_or_a_completed_connect() {
+        let _fake = FakeSsh::new("record");
+        let url = |name: &str| format!("https://login.tailscale.com/a/{name}");
+        assert!(approval::claim("fake-host", &url("one"), false));
+        // A second client (or a later automatic attempt) loses the claim.
+        assert!(!approval::claim("fake-host", &url("two"), false));
+        assert!(approval::recorded("fake-host")
+            .unwrap_or_default()
+            .starts_with(&format!("url={}\n", url("one"))));
+        // A user-clicked retry rotates the record; automatic attempts lose
+        // again afterwards.
+        assert!(approval::claim("fake-host", &url("retry"), true));
+        assert!(approval::recorded("fake-host")
+            .unwrap_or_default()
+            .starts_with(&format!("url={}\n", url("retry"))));
+        assert!(!approval::claim("fake-host", &url("three"), false));
+        // A failed open releases only its own claim, never a newer one.
+        approval::clear_if_current("fake-host", &url("someone-else"));
+        assert!(approval::recorded("fake-host").is_some());
+        approval::clear_if_current("fake-host", &url("retry"));
+        assert!(approval::recorded("fake-host").is_none());
+        assert!(approval::claim("fake-host", &url("fresh"), false));
+        // A completed connection clears the record.
+        approval::clear("fake-host");
+        assert!(approval::recorded("fake-host").is_none());
+    }
+
     /// One connect attempt that ends in its unapproved approval wait, on a
     /// scoped worker so the caller can watch the status meanwhile.
+    /// `retry_open` marks the attempt as a user-clicked retry of a parked wait.
     fn unapproved_attempt<'scope, 'env>(
         scope: &'scope std::thread::Scope<'scope, 'env>,
         cancel: &'env AtomicBool,
         messages: &'env Arc<Mutex<Vec<String>>>,
+        retry_open: bool,
     ) -> std::thread::ScopedJoinHandle<'scope, io::Result<(crate::ipc::LocalStream, Box<dyn Send>)>>
     {
         scope.spawn(move || {
@@ -1071,10 +1256,7 @@ mod tests {
             connect_saved_ssh(
                 "fake-host",
                 "saved",
-                &crate::remote::SavedSshHooks {
-                    cancel,
-                    status: &sink,
-                },
+                &connect_hooks(cancel, &sink, retry_open),
             )
         })
     }
@@ -1089,7 +1271,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let messages = Arc::new(Mutex::new(Vec::new()));
         std::thread::scope(|scope| {
-            let worker = unapproved_attempt(scope, &cancel, &messages);
+            let worker = unapproved_attempt(scope, &cancel, &messages, false);
             wait_for_status(
                 &messages,
                 "https://login.tailscale.com/a/first",
@@ -1111,9 +1293,30 @@ mod tests {
                 .contains("https://login.tailscale.com/a/first"));
             assert_eq!(opened_count(&opened), 1);
 
+            // An automatic reconnect sees the record and never opens again,
+            // however many times it re-enters the approval wait.
+            for _ in 0..3 {
+                let automatic = unapproved_attempt(scope, &cancel, &messages, false);
+                wait_for_status(&messages, "a/first", Duration::from_secs(10));
+                match automatic
+                    .join()
+                    .unwrap_or_else(|_| panic!("automatic reconnect worker panicked"))
+                {
+                    Ok(_) => panic!("an unapproved reconnect should not have connected"),
+                    Err(error) => assert!(
+                        crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(&error)
+                    ),
+                }
+            }
+            assert_eq!(
+                opened_count(&opened),
+                1,
+                "automatic reconnects must not reopen the approval page"
+            );
+
             // The manual retry is a new attempt: its wait opens the new URL
             // exactly once, and an unapproved end parks it the same way.
-            let retry = unapproved_attempt(scope, &cancel, &messages);
+            let retry = unapproved_attempt(scope, &cancel, &messages, true);
             wait_for_status(&messages, "a/first", Duration::from_secs(10));
             let error = match retry
                 .join()
@@ -1123,6 +1326,19 @@ mod tests {
                 Err(error) => error,
             };
             assert!(crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(&error));
+            assert_eq!(opened_count(&opened), 2);
+
+            // After the clicked retry too, automatic reconnects stay silent.
+            let automatic = unapproved_attempt(scope, &cancel, &messages, false);
+            match automatic
+                .join()
+                .unwrap_or_else(|_| panic!("automatic reconnect worker panicked"))
+            {
+                Ok(_) => panic!("an unapproved reconnect should not have connected"),
+                Err(error) => {
+                    assert!(crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(&error))
+                }
+            }
             assert_eq!(opened_count(&opened), 2);
         });
         assert!(
@@ -1140,17 +1356,11 @@ mod tests {
         let opened = open_recorder();
         let cancel = AtomicBool::new(false);
         let (messages, sink) = status_recorder();
-        let error = match connect_saved_ssh(
-            "fake-host",
-            "saved",
-            &crate::remote::SavedSshHooks {
-                cancel: &cancel,
-                status: &sink,
-            },
-        ) {
-            Ok(_) => panic!("the unapproved forwarding wait should not have connected"),
-            Err(error) => error,
-        };
+        let error =
+            match connect_saved_ssh("fake-host", "saved", &connect_hooks(&cancel, &sink, false)) {
+                Ok(_) => panic!("the unapproved forwarding wait should not have connected"),
+                Err(error) => error,
+            };
         assert!(crate::remote::saved_ssh_failure_is_tailscale_approval_timeout(&error));
         assert!(error.to_string().contains("saved SSH bridge timed out"));
         assert!(error
@@ -1177,14 +1387,7 @@ mod tests {
         let (messages, sink) = status_recorder();
         std::thread::scope(|scope| {
             let worker = scope.spawn(|| {
-                connect_saved_ssh(
-                    "fake-host",
-                    "saved",
-                    &crate::remote::SavedSshHooks {
-                        cancel: &cancel,
-                        status: &sink,
-                    },
-                )
+                connect_saved_ssh("fake-host", "saved", &connect_hooks(&cancel, &sink, false))
             });
             wait_for_status(
                 &messages,
@@ -1242,10 +1445,7 @@ mod tests {
         let error = match connect_saved_ssh(
             "denied-host",
             "saved",
-            &crate::remote::SavedSshHooks {
-                cancel: &cancel,
-                status: &sink,
-            },
+            &connect_hooks(&cancel, &sink, false),
         ) {
             Ok(_) => panic!("a refused connection should not succeed"),
             Err(error) => error,
@@ -1265,14 +1465,7 @@ mod tests {
         let (_messages, sink) = status_recorder();
         std::thread::scope(|scope| {
             let worker = scope.spawn(|| {
-                connect_saved_ssh(
-                    "fake-host",
-                    "saved",
-                    &crate::remote::SavedSshHooks {
-                        cancel: &cancel,
-                        status: &sink,
-                    },
-                )
+                connect_saved_ssh("fake-host", "saved", &connect_hooks(&cancel, &sink, false))
             });
             let pids = fake.wait_for_pid(Duration::from_secs(10));
             assert!(!pids.is_empty(), "the fake ssh never started");
@@ -1295,15 +1488,9 @@ mod tests {
             .with_env_text("FAKE_SSH_BRIDGE_GREETING", "greeting-from-remote\n");
         let cancel = AtomicBool::new(false);
         let (_messages, sink) = status_recorder();
-        let (mut stream, bridge) = connect_saved_ssh(
-            "fake-host",
-            "saved",
-            &crate::remote::SavedSshHooks {
-                cancel: &cancel,
-                status: &sink,
-            },
-        )
-        .unwrap_or_else(|error| panic!("bridge should connect: {error}"));
+        let (mut stream, bridge) =
+            connect_saved_ssh("fake-host", "saved", &connect_hooks(&cancel, &sink, false))
+                .unwrap_or_else(|error| panic!("bridge should connect: {error}"));
 
         let expected = b"greeting-from-remote\n";
         let mut greeting = vec![0_u8; expected.len()];
@@ -1339,15 +1526,11 @@ mod tests {
             .with_env_text("FAKE_SSH_BRIDGE_GREETING", "greeting-after-noise");
         let cancel = AtomicBool::new(false);
         let (_messages, sink) = status_recorder();
-        let (mut stream, bridge) = connect_saved_ssh(
-            "fake-host",
-            "saved",
-            &crate::remote::SavedSshHooks {
-                cancel: &cancel,
-                status: &sink,
-            },
-        )
-        .unwrap_or_else(|error| panic!("prelude noise should not fail the bridge: {error}"));
+        let (mut stream, bridge) =
+            connect_saved_ssh("fake-host", "saved", &connect_hooks(&cancel, &sink, false))
+                .unwrap_or_else(|error| {
+                    panic!("prelude noise should not fail the bridge: {error}")
+                });
 
         let expected = b"greeting-after-noise";
         let mut greeting = vec![0_u8; expected.len()];
@@ -1367,17 +1550,11 @@ mod tests {
         let _fake = FakeSsh::new("flood").with_env_text("FAKE_SSH_BRIDGE_FLOOD", "1");
         let cancel = AtomicBool::new(false);
         let (_messages, sink) = status_recorder();
-        let error = match connect_saved_ssh(
-            "fake-host",
-            "saved",
-            &crate::remote::SavedSshHooks {
-                cancel: &cancel,
-                status: &sink,
-            },
-        ) {
-            Ok(_) => panic!("an endless noise preamble should not connect"),
-            Err(error) => error,
-        };
+        let error =
+            match connect_saved_ssh("fake-host", "saved", &connect_hooks(&cancel, &sink, false)) {
+                Ok(_) => panic!("an endless noise preamble should not connect"),
+                Err(error) => error,
+            };
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(
             error.to_string().contains("never became ready"),
@@ -1405,17 +1582,11 @@ mod tests {
         );
         let cancel = AtomicBool::new(false);
         let (_messages, sink) = status_recorder();
-        let error = match connect_saved_ssh(
-            "fake-host",
-            "saved",
-            &crate::remote::SavedSshHooks {
-                cancel: &cancel,
-                status: &sink,
-            },
-        ) {
-            Ok(_) => panic!("a failing remote bridge should not connect"),
-            Err(error) => error,
-        };
+        let error =
+            match connect_saved_ssh("fake-host", "saved", &connect_hooks(&cancel, &sink, false)) {
+                Ok(_) => panic!("a failing remote bridge should not connect"),
+                Err(error) => error,
+            };
         assert!(
             error
                 .to_string()
@@ -1435,15 +1606,9 @@ mod tests {
         let fake = FakeSsh::new("dropkill");
         let cancel = AtomicBool::new(false);
         let (_messages, sink) = status_recorder();
-        let (stream, bridge) = connect_saved_ssh(
-            "fake-host",
-            "saved",
-            &crate::remote::SavedSshHooks {
-                cancel: &cancel,
-                status: &sink,
-            },
-        )
-        .unwrap_or_else(|error| panic!("bridge should connect: {error}"));
+        let (stream, bridge) =
+            connect_saved_ssh("fake-host", "saved", &connect_hooks(&cancel, &sink, false))
+                .unwrap_or_else(|error| panic!("bridge should connect: {error}"));
         drop(stream);
         drop(bridge);
         assert!(
@@ -1463,15 +1628,9 @@ mod tests {
         let _fake = fake.with_env("FAKE_SSH_COMMAND_LOG", &log);
         let cancel = AtomicBool::new(false);
         let (_messages, sink) = status_recorder();
-        let (stream, bridge) = connect_saved_ssh(
-            "fake-host",
-            "fork",
-            &crate::remote::SavedSshHooks {
-                cancel: &cancel,
-                status: &sink,
-            },
-        )
-        .unwrap_or_else(|error| panic!("bridge should connect: {error}"));
+        let (stream, bridge) =
+            connect_saved_ssh("fake-host", "fork", &connect_hooks(&cancel, &sink, false))
+                .unwrap_or_else(|error| panic!("bridge should connect: {error}"));
         drop(stream);
         drop(bridge);
         let commands = fs::read_to_string(&log).unwrap_or_default();

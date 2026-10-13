@@ -155,21 +155,29 @@ impl EndpointRuntime {
         update
     }
 
-    /// A machine parked at its unapproved Tailscale approval wait retries on
-    /// click; any other machine keeps the click's collapse-toggle meaning, so
-    /// the caller falls through to the toggle when this returns None. The new
-    /// attempt is picked up by the next maintenance tick.
+    /// A machine parked at its unapproved Tailscale approval wait — or still
+    /// marked pending across clients — retries on click; any other machine
+    /// keeps the click's collapse-toggle meaning, so the caller falls through
+    /// to the toggle when this returns None. A pending click rotates the
+    /// shared record so the next attempt's banner opens the approval page
+    /// once more, and an in-flight wait is cut short so that attempt comes
+    /// promptly.
     pub(crate) fn retry_parked_endpoint(
         &mut self,
         id: &ClientEndpointId,
         now: Instant,
     ) -> Option<RuntimeUpdate> {
+        let pending = matches!(id, ClientEndpointId::Ssh(machine)
+            if crate::remote::approval_pending(machine));
         let parked = self
             .shell
             .endpoint(id)
             .is_some_and(|endpoint| endpoint.status == ClientEndpointStatus::AwaitingApproval);
-        if !parked {
+        if !pending && !parked {
             return None;
+        }
+        if let ClientEndpointId::Ssh(machine) = id {
+            crate::remote::retry_approval_open(machine);
         }
         if self.supervisors.retry(id, now) {
             self.shell

@@ -1,6 +1,14 @@
 use super::*;
 
 #[test]
+fn awaiting_approval_status_text_offers_to_open_the_approval_page() {
+    assert_eq!(
+        status_text(ClientEndpointStatus::AwaitingApproval),
+        "awaiting approval - click to open the approval page"
+    );
+}
+
+#[test]
 fn endpoint_chrome_agent_navigation_uses_rendered_order_and_keeps_target_visible() {
     let config = crate::config::Config::default();
     let mut chrome = ClientChrome::new(ChromeSettings::from_config(

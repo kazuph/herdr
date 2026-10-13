@@ -10329,11 +10329,13 @@
       ]
     },
     {
-      "contract_id": "G11-38d2de3c07",
+      "contract_id": "G11-d8fe443371",
       "dimensions": [
-        "browser opens the url once per approval wait",
-        "an unapproved wait parks the machine at click-to-retry without auto-reconnect",
+        "browser opens the url once per machine across every running client, recorded in the shared state-dir approval record",
+        "automatic reconnects and other clients never reopen the page while the record stands",
+        "an unapproved wait parks the machine at click-to-open without auto-reconnect",
         "a machine heading click retries the connection and opens the new url once",
+        "a completed connection clears the record so the next approval wait opens once again",
         "other endpoints and Local keep working during an auth wait",
         "retire and shutdown kill a waiting ssh child"
       ],
@@ -10342,16 +10344,22 @@
         "rust_test_target:saved_ssh_forwarding_wait_unapproved_opens_once_and_reports_tailscale_timeout",
         "rust_test_target:unapproved_tailscale_wait_parks_until_a_manual_retry",
         "rust_test_target:awaiting_approval_status_parks_and_a_machine_click_retries_it",
+        "rust_test_target:awaiting_approval_status_text_offers_to_open_the_approval_page",
         "rust_test_target:another_endpoint_progresses_while_one_waits_for_tailscale_approval",
         "rust_test_target:supervisor_shutdown_kills_a_waiting_tailscale_ssh_child",
+        "rust_test_target:approval_record_is_claimed_once_until_a_retry_or_a_completed_connect",
+        "rust_test_target:approval_completion_clears_the_record_and_the_next_wait_opens_once_across_clients",
+        "rust_test_target:tailscale_approval_opens_once_across_clients_until_a_manual_retry",
+        "drift_source_anchor:src/remote/saved/approval.rs",
         "drift_source_anchor:src/client/endpoint/supervisor.rs",
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
         "SPEC.md:2232",
         "src/remote.rs:37",
+        "src/remote/saved/approval.rs:45",
         "src/client/endpoint/supervisor.rs:181",
-        "src/client/endpoint/runtime.rs:162"
+        "src/client/endpoint/runtime.rs:165"
       ],
       "test_status": [
         "unverified"
@@ -10360,7 +10368,8 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "A real tailscaled approval expiry and a real machine-heading click remain live-unverified"
+        "A real tailscaled approval expiry and a real machine-heading click remain live-unverified",
+        "Two real client processes racing the shared record are covered by the in-process two-supervisor test, not by a live two-client run"
       ]
     },
     {

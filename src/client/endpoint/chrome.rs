@@ -728,7 +728,9 @@ pub(super) fn status_text(status: ClientEndpointStatus) -> &'static str {
         ClientEndpointStatus::Connecting => "connecting",
         ClientEndpointStatus::Online => "online",
         ClientEndpointStatus::Reconnecting => "reconnecting",
-        ClientEndpointStatus::AwaitingApproval => "approval pending - click to retry",
+        ClientEndpointStatus::AwaitingApproval => {
+            "awaiting approval - click to open the approval page"
+        }
         ClientEndpointStatus::Attention => "attention",
         ClientEndpointStatus::Disabled => "disabled",
     }

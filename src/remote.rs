@@ -15,6 +15,15 @@ pub(crate) struct SavedSshHooks<'a> {
     pub(crate) cancel: &'a std::sync::atomic::AtomicBool,
     /// Interim status text for the machine's status display.
     pub(crate) status: &'a dyn Fn(&str),
+    /// Saved machine identity (`MachineProfile::id`) keying the shared
+    /// approval-open record every client on this machine reads, so the
+    /// approval page opens once per machine, not once per screen.
+    pub(crate) machine: &'a str,
+    /// True when this attempt comes from a user-clicked retry of a parked
+    /// machine: its wait may replace the shared record and open the approval
+    /// page once more. Automatic reconnects pass false and never open it while
+    /// a record stands.
+    pub(crate) retry_open: bool,
 }
 
 #[cfg(windows)]
@@ -28,6 +37,17 @@ pub(crate) fn connect_saved_ssh(
         "saved SSH endpoints are not supported on Windows yet",
     ))
 }
+
+/// Windows has no saved SSH endpoints, so no approval record is ever pending
+/// and a retry request does nothing.
+#[cfg(windows)]
+pub(crate) fn approval_pending(_machine: &str) -> bool {
+    false
+}
+
+/// See the Unix `retry_approval_open`; a no-op where saved SSH does not exist.
+#[cfg(windows)]
+pub(crate) fn retry_approval_open(_machine: &str) {}
 
 /// Marks a saved-SSH connect whose Tailscale check approval wait expired
 /// unapproved. It is distinct from every other connect failure so the endpoint
