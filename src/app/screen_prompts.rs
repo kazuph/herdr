@@ -1028,9 +1028,9 @@ impl App {
         // Freshness: a different or unparsable screen ends the walk. The
         // resting cursor is only chased while the watched prompt is still
         // up — arrows on a different screen could move some other widget.
-        if !live
+        if live
             .as_ref()
-            .is_some_and(|prompt| prompt.signature() == signature)
+            .is_none_or(|prompt| prompt.signature() != signature)
         {
             let abort = {
                 let scan = self.preview_scans.get_mut(&pane_id).expect("scan checked");
