@@ -13000,7 +13000,7 @@
       ]
     },
     {
-      "contract_id": "G12-3268195bef",
+      "contract_id": "G12-bc15e8cddb",
       "dimensions": [
         "startup PATH order",
         "launch coverage warning",
@@ -13015,7 +13015,8 @@
         "SPEC.md:2270",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
-        "src/app/guard.rs:30"
+        "src/app/guard.rs:30",
+        "src/app/agent_resume.rs:317"
       ],
       "test_status": [
         "unverified"
@@ -13037,7 +13038,9 @@
       "verification_methods": [
         "rust_test_target:login_zsh_keeps_shim_first_after_startup",
         "rust_test_target:coverage_requires_supported_matching_launch_and_bash_prompt",
-        "platform_live_acceptance:unverified"
+        "platform_live_acceptance:unverified",
+        "rust_test_target:interactive_bash_acknowledges_path_only_after_user_startup",
+        "rust_test_target:unsupported_pane_shell_never_suppresses_ai_guard"
       ],
       "source_anchors": [
         "SPEC.md:2271",
@@ -13071,7 +13074,8 @@
         "SPEC.md:2272",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
-        "src/app/guard.rs:30"
+        "src/app/guard.rs:30",
+        "src/client/endpoint/frontend/notice.rs:67"
       ],
       "test_status": [
         "unverified"

@@ -63,6 +63,24 @@ pub(super) fn render(
     frame: &mut ratatui::Frame,
     view: &super::super::chrome::ChromeView,
 ) {
+    if let Some(message) = frontend
+        .runtime
+        .shell
+        .endpoint(&frontend.runtime.shell.active_endpoint_id)
+        .and_then(|endpoint| {
+            endpoint
+                .generation
+                .and_then(|generation| endpoint.cache.live_snapshot(generation))
+        })
+        .and_then(|snapshot| snapshot.config_diagnostic.as_deref())
+    {
+        crate::ui::render_config_diagnostic(
+            frame,
+            frame.area(),
+            message,
+            &frontend.chrome.settings.palette,
+        );
+    }
     let (Some(text), Some(area)) = (frontend.notice.as_deref(), area(view)) else {
         return;
     };

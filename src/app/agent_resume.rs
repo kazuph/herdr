@@ -283,6 +283,7 @@ impl App {
             return false;
         };
 
+        let resume_cwd = cwd.clone();
         let runtime = match crate::terminal::TerminalRuntime::spawn(
             pane_id,
             rows,
@@ -312,6 +313,28 @@ impl App {
             }
         };
 
+        let public_pane = format!("p{}", pane_id.raw());
+        let guard_pane = crate::workspace::pane_env_id_from_public(&public_pane);
+        if self.state.guard_config.enabled {
+            crate::guard::marker::sync(
+                &guard_pane,
+                Some(&plan.agent),
+                Some(&resume_cwd),
+                Some(&public_pane),
+                &crate::guard::targets(&self.state.guard_config),
+            );
+        }
+        // The pane shell restores the user's ZDOTDIR after startup. The
+        // resumed agent needs the injected entry point for its own snapshots.
+        #[cfg(unix)]
+        let resume_command = if self.state.guard_config.enabled {
+            format!(
+                "ZDOTDIR={} {resume_command}",
+                unix_shell_quote(&crate::guard::zdotdir().to_string_lossy())
+            )
+        } else {
+            resume_command
+        };
         let mut input = resume_command;
         input.push('\r');
         if let Err(err) = runtime.try_send_bytes(Bytes::from(input)) {
@@ -323,6 +346,7 @@ impl App {
                 "failed to send deferred agent resume command to shell"
             );
             runtime.shutdown();
+            crate::guard::marker::sync(&guard_pane, None, None, None, &[]);
             return false;
         }
 
@@ -330,6 +354,10 @@ impl App {
         if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
             terminal.pending_agent_resume_plan = None;
             terminal.respawn_shell_on_exit = false;
+            terminal.set_agent_name(plan.agent);
+        }
+        if let Some((ws_idx, _)) = self.find_pane(pane_id) {
+            self.sync_guard_marker_for_pane(ws_idx, pane_id);
         }
         true
     }

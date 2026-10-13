@@ -37,7 +37,7 @@ impl GuardLaunch {
 
 pub(crate) fn warning(pane: &str, reason: &str) -> String {
     format!(
-        "見張れていない agent pane {pane}: {reason}。新しい pane で agent を起動し直してください"
+        "見張れていない agent pane {pane}\n理由: {reason}\n回復: 新しい pane で agent を起動し直してください"
     )
 }
 

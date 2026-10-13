@@ -395,7 +395,7 @@ if [[ -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]]; then
   _herdr_guard_wrap() {{
     local _hg_t="$1"
     (( $+functions[$_hg_t] || $+aliases[$_hg_t] )) && return 0
-    functions[$_hg_t]='if [[ -f "${{{MARKER_ENV_VAR}:-}}" ]]; then HERDR_GUARD_VIA=shell-func '"${{HERDR_GUARD_HERDR:-herdr}}"' guard exec -- '"$_hg_t"' "$@"; else builtin command '"$_hg_t"' "$@"; fi'
+    functions[$_hg_t]='if [[ -f "${{{MARKER_ENV_VAR}:-}}" ]]; then {pin}HERDR_GUARD_VIA=shell-func '"${{HERDR_GUARD_HERDR:-herdr}}"' guard exec -- '"$_hg_t"' "$@"; else builtin command '"$_hg_t"' "$@"; fi'
   }}
   for _hg_t in {target_words}; do
     _herdr_guard_wrap "$_hg_t"
@@ -408,7 +408,7 @@ if [[ -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]]; then
       *" $_hg_cmd "*)
         shift
         if [[ -f "${{{MARKER_ENV_VAR}:-}}" ]]; then
-          HERDR_GUARD_VIA=shell-func {herdr} guard exec -- "$_hg_cmd" "$@"
+          {pin}HERDR_GUARD_VIA=shell-func {herdr} guard exec -- "$_hg_cmd" "$@"
         else
           builtin command "$_hg_cmd" "$@"
         fi
@@ -434,6 +434,7 @@ if [[ -o interactive && -n "${{{HERDR_EXE_ENV_VAR}:-}}" ]]; then
 fi
 "#,
         startup = startup,
+        pin = pin_path_script(),
         HERDR_EXE_ENV_VAR = HERDR_EXE_ENV_VAR,
         MARKER_ENV_VAR = MARKER_ENV_VAR,
         target_words = target_words,
@@ -547,7 +548,11 @@ mod tests {
             .unwrap();
         }
         for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
-            std::fs::write(user.join(name), "export PATH=/usr/bin:/bin:$PATH\n").unwrap();
+            std::fs::write(
+                user.join(name),
+                "export PATH=/usr/bin:/bin:$PATH\nHISTFILE=$ZDOTDIR/.zsh_history\n",
+            )
+            .unwrap();
         }
         let output = std::process::Command::new("/bin/zsh")
             .env_clear()
@@ -558,13 +563,99 @@ mod tests {
             .env(SHIM_DIR_ENV_VAR, &shim)
             .env(HERDR_EXE_ENV_VAR, "/usr/bin/true")
             .env("PATH", format!("{}:/usr/bin:/bin", shim.display()))
-            .args(["-lic", "print -r -- $PATH"])
+            .args([
+                "-lic",
+                "print -r -- $PATH; print -r -- $ZDOTDIR; print -r -- $HISTFILE",
+            ])
             .output()
             .unwrap();
         assert!(output.status.success(), "{:?}", output);
         let path = String::from_utf8(output.stdout).unwrap();
         assert!(path.starts_with(&format!("{}:", shim.display())), "{path}");
         assert!(path.contains(&shim.to_string_lossy().to_string()), "{path}");
+        let lines: Vec<_> = path.lines().collect();
+        assert_eq!(lines[1], user.to_string_lossy());
+        assert_eq!(lines[2], user.join(".zsh_history").to_string_lossy());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interactive_bash_acknowledges_path_only_after_user_startup() {
+        let _lock = crate::config::lock_test_config_env();
+        let root = std::env::temp_dir().join(format!("hga-bash-{}", std::process::id()));
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let config_path = root.join("config.toml");
+        std::fs::write(&config_path, "[guard]\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &config_path);
+        std::env::set_var("XDG_STATE_HOME", root.join("state"));
+        std::fs::write(home.join(".bash_profile"),
+            "export PATH=/usr/bin:/bin:$PATH\nprintf 'before=%s\\n' \"${HERDR_GUARD_ENFORCING:-}\"\n").unwrap();
+        let mut builder = CommandBuilder::new("/bin/bash");
+        builder.env_clear();
+        builder.env("HOME", &home);
+        builder.env("SHELL", "/bin/bash");
+        builder.env("PATH", "/usr/bin:/bin");
+        apply_guard_env(&mut builder, Some("p_bash"));
+        assert!(builder.get_env(ENFORCING_ENV_VAR).is_none());
+        let ready = builder.get_env("HERDR_GUARD_READY").unwrap();
+        assert!(!Path::new(ready).exists());
+        let mut command = std::process::Command::new("/bin/bash");
+        command
+            .env_clear()
+            .envs(builder.iter_full_env_as_str())
+            .args(["--login", "-i"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"printf 'after=%s|%s\\n' \"${HERDR_GUARD_ENFORCING:-}\" \"$PATH\"\nexit\n")
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("before=\n"), "{stdout}");
+        assert!(
+            stdout.contains(&format!(
+                "after=1|{}:",
+                crate::guard::pane_shim_dir("p_bash").display()
+            )),
+            "{stdout}"
+        );
+        assert!(Path::new(ready).is_file());
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        std::env::remove_var("XDG_STATE_HOME");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unsupported_pane_shell_never_suppresses_ai_guard() {
+        let _lock = crate::config::lock_test_config_env();
+        let root = std::env::temp_dir().join(format!("hga-unsupported-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.toml");
+        std::fs::write(&config_path, "[guard]\n").unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &config_path);
+        std::env::set_var("XDG_STATE_HOME", root.join("state"));
+        let mut builder = CommandBuilder::new("/bin/sh");
+        builder.env("HERDR_GUARD_PANE_SHELL", "1");
+        builder.env(ENFORCING_ENV_VAR, "1");
+        apply_guard_env(&mut builder, Some("p_unsupported"));
+        assert!(builder.get_env(ENFORCING_ENV_VAR).is_none());
+        assert_eq!(
+            builder
+                .get_env("HERDR_GUARD_STARTUP")
+                .and_then(OsStr::to_str),
+            Some("unsupported")
+        );
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        std::env::remove_var("XDG_STATE_HOME");
         std::fs::remove_dir_all(root).unwrap();
     }
 
