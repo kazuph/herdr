@@ -1887,12 +1887,12 @@
 - **status: fork独自・保持 (C)** — 危険commandの承認、agentからの質問、tool許可など人の判断を要する場面をserver側の共有状態として保持し、複数の受け口が同じ判断へ答えられる基盤を保持する。
 - **目的**: 判断待ちをTUI内の状態ではなくserverが所有する永続recordにし、どのclientが先に答えても最初の1件だけが採用される構造を作る。
 - **挙動**:
-  - 判断待ちは`dec-`で始まるID、`kind`（`command_guard`/`tool_permission`/`agent_prompt`/`ask`のいずれか）、必須の`title`、任意の`body`、1個以上の`options`（`id`・`label`・`role`、roleは`approve`/`reject`/`other`、idの重複はエラー）、既定falseの`allow_text`、任意の`origin`（`pane_id`/`agent`/`cwd`/`branch`/`command`/`reason`/`machine`）、`created_unix_ms`、`expires_unix_ms`（`timeout_ms`から計算、省略時は期限なし）、`status`（`pending`/`answered`/`expired`/`cancelled`）、`answer`（`option_id`/`text`/`responder`/`answered_unix_ms`）を持ち、dispatch DBの`decisions`表へ永続化する。
+  - 判断待ちは`dec-`で始まるID、`kind`（`command_guard`/`tool_permission`/`agent_prompt`/`ask`のいずれか）、必須の`title`、任意の`body`、1個以上の`options`（`id`・`label`・`role`・任意の`description`（選択肢ごとの説明文。無ければJSONへ出さない）、roleは`approve`/`reject`/`other`、idの重複はエラー）、既定falseの`allow_text`、任意の`origin`（`pane_id`/`agent`/`cwd`/`branch`/`command`/`reason`/`machine`）、`created_unix_ms`、`expires_unix_ms`（`timeout_ms`から計算、省略時は期限なし）、`status`（`pending`/`answered`/`expired`/`cancelled`）、`answer`（`option_id`/`text`/`responder`/`answered_unix_ms`）を持ち、dispatch DBの`decisions`表へ永続化する。
   - ソケットAPIは`decision.create`/`decision.get`/`decision.list`（`status`で絞り込み可）/`decision.wait`/`decision.answer`/`decision.cancel`を提供する。`decision.wait`はpendingでなくなった時点の判断待ちを返し、待ち時間切れではpendingのままの判断待ちを返す。
   - `decision.answer`は`status='pending'`を条件とするUPDATEで最初の有効な回答だけを受け付ける。決定済みへの回答・取消は`decision_already_resolved`、存在しないoptionはエラー、`allow_text=false`へのtextはエラー、option_idとtextの両方が無い回答はエラーとする。
   - serverは起動時・request処理時・loop待ち時に最も早いpending期限を追跡し、期限を過ぎたpending判断待ちを`expired`へ遷移させる。再起動やlive handoff後もpendingの判断待ちは消えず、期限切れの判定も継続する。
   - `decision.created`と`decision.resolved`（answered/expired/cancelled共通、payloadは判断待ち全体）をevent hubへ発行し、`events.subscribe`とplugin manifestの`[[events]] on = "decision.created"`フックの両方へ届く。
-  - `herdr decision ask`は判断待ちを作って決着まで待ち、判断待ちのJSONを出力する。終了codeはanswered=0、expired=3、cancelled=4。Herdr pane内で実行された時は`herdr pane current`と同じ解決で`origin.pane_id`へ自分のpaneを入れ、待ち中にserverとの接続が切れても同じ`decision_id`で接続し直して待ち続ける。`herdr decision answer <id> <option_id>`、`list [--status]`、`get <id>`、`cancel <id>`を提供する。
+  - `herdr decision ask`は判断待ちを作って決着まで待ち、判断待ちのJSONを出力する。`--option-desc <id:text>`（繰り返し可、未知のidはエラー）で選択肢ごとの説明文をその選択肢の`description`へ入れられる。終了codeはanswered=0、expired=3、cancelled=4。Herdr pane内で実行された時は`herdr pane current`と同じ解決で`origin.pane_id`へ自分のpaneを入れ、待ち中にserverとの接続が切れても同じ`decision_id`で接続し直して待ち続ける。`herdr decision answer <id> <option_id>`、`list [--status]`、`get <id>`、`cancel <id>`を提供する。
 - **受け入れ条件**:
   - `decision.create`で作った判断待ちが`decision.get`/`decision.list`から同じrecordとして読め、`dec-`で始まる一意なIDを持つ。
   - 同じ判断待ちへの2件目のanswerは`decision_already_resolved`になり、最初の回答が上書きされない。存在しないoption、`allow_text=false`へのtext、回答なしはエラーになる。
@@ -1900,7 +1900,8 @@
   - `decision.wait`は回答・取消・期限切れで判断待ちを返し、待ち時間切れではpendingの判断待ちを返す。client切断では待ちを黙って終える。
   - `decision.created`と`decision.resolved`が`events.subscribe`とpluginイベントフックへ届き、payloadは判断待ち全体を含む。
   - `herdr decision ask`が回答まで待ってstatusに対応する終了code（answered=0、expired=3、cancelled=4）を返し、`answer`/`list`/`get`/`cancel`がsocket API経由で同じrecordを操作する。
-- **検証契約**: Rust unit testsでrecord保存・first-answer-wins・期限切れ・wait終了・plugin event名を固定する。複数client同時応答と隔離sessionでのCLI end-to-endは実地検証で扱う。
+  - `options[]`の`description`は省略可能で、`description`を持たない古いpayloadも読め、未指定の選択肢はJSONへ`description`を出さない。`decision watch`の`created`/`resolved`行はrecord全体を載せるため、説明文もconsumerへ届く。
+- **検証契約**: Rust unit testsでrecord保存・first-answer-wins・期限切れ・wait終了・plugin event名・`description`の旧形式互換と`--option-desc`の適用を固定する。複数client同時応答と隔離sessionでのCLI end-to-endは実地検証で扱う。
 - **デグレ判定**: 判断待ちをTUI専用stateにする、2件目の回答で上書きする、再起動でpendingが消える、plugin hookがdecision eventを受け取れない。
 
 ### 判断待ちのマシン横断UI（decision dialog、工程2）
@@ -1910,7 +1911,7 @@
 - **目的**: つないでいる複数マシン（local・SSH endpoint）のどこで判断待ちが起きても同じclient画面から答えられ、誤回答を防ぐ操作設計を持つUIを作る。
 - **挙動**:
   - serverは接続中の各endpoint clientへ、pending判断待ちの全件リストをboot_id・projection revision付きのEndpointControl projectionとしてpushする。判断待ちの作成・回答・取消・期限切れイベントでprojectionを更新し、非active（surfaceをpresentしていない）clientにも届ける。clientはこのprojectionだけをpendingの根拠とし、自前で判断待ち状態を合成しない。
-  - endpoint client shellは接続中の全endpointのprojectionを束ね、`created_unix_ms`の古い順に並べて1件ずつdialogへ出す。dialogはtitle・body・マシン表示名・origin情報（存在する分）・選択肢・`N/M`形式のキュー位置・`expires_unix_ms`がある場合の残り時間を表示し、本文・commandが長い場合は枠内で折返しまたはscrollする。見た目・Esc・閉じる操作は既存のmodal/dialogパターンに従う。
+  - endpoint client shellは接続中の全endpointのprojectionを束ね、`created_unix_ms`の古い順に並べて1件ずつdialogへ出す。dialogはtitle・body・マシン表示名・origin情報（存在する分）・選択肢・`N/M`形式のキュー位置・`expires_unix_ms`がある場合の残り時間を表示し、本文・commandが長い場合は枠内で折返しまたはscrollする。`description`を持つ選択肢はlabelの下に説明文を折り返して全文表示し、dialogへ収まらない時は選択肢帯のscrollと選択中選択肢への追従で全行へたどり着ける。見た目・Esc・閉じる操作は既存のmodal/dialogパターンに従う。
   - 選択肢のクリックはその選択肢を選ぶだけに留め（選択中の選択肢はaccentの強調表示で分かる）、`↵ confirm`ボタンまたはEnterがその判断待ちを所有するendpointへ`decision.answer`を送る。`responder`にはUI由来を示す値（`client`）を入れる。`allow_text`の判断待ちはtext入力欄を表示し、入力したtextを回答へ添える。回答対象のendpointはpresenting endpointでなくてもよい。
   - dialogが開いていても、dialog内をクリックするまではキーボード入力はpaneへそのまま届き、Enter一発で誤回答しない既定動作はない。dialog内のクリックでキーボードがdialogへ移り、上下キーの選択・Enterの確定・text入力が有効になる。Escまたはcloseボタンで回答せず閉じる。
   - 回答せず閉じた判断待ちが残る間は`! N`形式の目印をアクションバーへ出し、クリックで同じ判断待ちのdialogを再表示する。
@@ -1921,7 +1922,8 @@
   - dialogをクリックするまでキーボードはpaneへ届き、クリック後はキー操作だけで選択・確定・text入力できる。
   - 閉じたあとも件数目印が残り、クリックでdialogが再表示される。
   - `decision.answer`/取消/期限切れを別経路で行うとdialogと目印が消え、endpoint切断でそのマシン分がqueueから外れ、再接続で復帰する。
-- **検証契約**: Rust unit testsでqueueの対象・順序・カウント・選択と確定の分離・close/reopen・外部解決・切断除去を固定し、実socket経由のactual-process testで選択クリック→決定ボタン→`decision.answer`送信→store反映→外部解決での消去を固定する。隔離server上の`herdr decision ask`とANSI/画面証拠で実地確認する。
+  - 選択肢の`description`がその選択肢labelの下に欠けず表示され、dialogへ収まらない時もscroll・選択追従で全文へたどり着ける。クリック選択・決定ボタン/Enterの回答経路は従来どおり。
+- **検証契約**: Rust unit testsでqueueの対象・順序・カウント・選択と確定の分離・close/reopen・外部解決・切断除去・選択肢説明文の折返し表示と選択肢帯scrollを固定し、実socket経由のactual-process testで選択クリック→決定ボタン→`decision.answer`送信→store反映→外部解決での消去を固定する。隔離server上の`herdr decision ask`とANSI/画面証拠で実地確認する。
 - **デグレ判定**: clientがprojection以外の根拠でpending判断待ちを作る、選択肢の1クリックだけやdialog外クリック・未focusのEnterで誤回答できる、閉じた判断待ちを二度と開けない、他マシンへの回答がactive endpoint以外へ届かない。
 
 ### 判断待ちの配信とマシン横断回答（decision watch、工程3A）
@@ -1956,9 +1958,9 @@
 - **status: fork独自・保持 (C)** — Claude Code・Codex・Devinが画面に出す番号付きの質問とツール許可確認を、工程1の判断待ちへ変換し、既存の全受け口（TUI dialog・SABERA・Android・Slack・CLI）で答えられるようにする。
 - **目的**: blockedなagent paneが待つ画面の選択肢を、各受け口が個別に画面を読むのではなく、server側の判断待ちとして一元化する。
 - **挙動**:
-  - `[decisions] screen_prompts`（既定true）が有効な時、serverはblockedなagent paneのdetection画面（soft wrapを戻した論理行。利用者がスクロールする表示ではない）を定期走査し、saberanteの`parse_prompt`/`_parse_mq_tabs`と同じ規則で番号付き選択肢ブロックを読み取る。質問はkind `agent_prompt`、許可・信頼確認はkind `tool_permission`の判断待ちになり、titleは質問文、optionsは画面の番号と文、`origin`にpane_id・agent・cwd・machine="local"・reason="screen_prompt"が入る。自由入力の選択肢（`Type something`/`Chat about this`）はoptionsから外して`allow_text`にする。
+  - `[decisions] screen_prompts`（既定true）が有効な時、serverはblockedなagent paneのdetection画面（soft wrapを戻した論理行。利用者がスクロールする表示ではない）を定期走査し、saberanteの`parse_prompt`/`_parse_mq_tabs`と同じ規則で番号付き選択肢ブロックを読み取る。質問はkind `agent_prompt`、許可・信頼確認はkind `tool_permission`の判断待ちになり、titleは質問文、optionsは画面の番号と文、`origin`にpane_id・agent・cwd・machine="local"・reason="screen_prompt"が入る。選択肢行の下に続くインデントされた説明文行（Claude Codeの選択肢説明、複数行・soft wrapを含む）はその選択肢の`description`へ入り、説明文の無い選択肢は`description`を持たない。選択肢行がフル幅ハイライトで次の物理行と1つの論理行へ接着されて見える時は、行末の空白塊を境に分割して下の行を選択肢・説明文へ戻す。自由入力の選択肢（`Type something`/`Chat about this`）はoptionsから外して`allow_text`にする。
   - 回答はペインへキーとして届く。選択肢が画面で示すショートカット（Codexの`(y)`/`(a)`/`(esc)`など）があればそのキー（`(esc)`はEscキー）、無ければ番号キーを送る。`allow_text`へのtext回答は自由入力選択肢の番号→文→Enterを順に遅延書き込みする。複数タブの質問はタブを含む画面署名で区別し、回答で画面が進むたび次のタブの判断待ちを作る。
-  - paneごとに画面署名とdecision_idを持ち、署名と2回連続で一致しない読み取りで判断待ちをcancelする（プロンプトが消えた・別の質問へ変わった・利用者が直接答えた場合）。画面署名はheader・質問文・選択肢で決まるため、選択肢が同じでも質問文が違う確認（許可対象のコマンド違い等）は別の質問として新しい判断待ちになる。1回の読み取り異常ではcancelしない。同一内容のpending判断待ちは再利用し、再起動やhandoff後に同じ質問を二重に作らない。answer/cancel/expiredが別経路で着た場合はwatchをresolvedにして同じ質問を再提示しない。blockedが一瞬揺れてもwatch中のpaneは走査を続ける。
+  - paneごとに画面署名とdecision_idを持ち、署名と2回連続で一致しない読み取りで判断待ちをcancelする（プロンプトが消えた・別の質問へ変わった・利用者が直接答えた場合）。画面署名はheader・質問文・選択肢と選択肢の説明文で決まるため、選択肢が同じでも質問文や説明文が違う確認（許可対象のコマンド違い等）は別の質問として新しい判断待ちになる。1回の読み取り異常ではcancelしない。同一内容のpending判断待ちは再利用し、再起動やhandoff後に同じ質問を二重に作らない。answer/cancel/expiredが別経路で着た場合はwatchをresolvedにして同じ質問を再提示しない。blockedが一瞬揺れてもwatch中のpaneは走査を続ける。
   - 画面の質問由来の判断待ち（origin.reason=screen_prompt）への回答は、確定する前にそのpaneの画面を読み直して確認する。画面の質問がwatchの署名と一致する時（または読み取りが崩れて解析できず、直前のスキャンが一致していた時）だけanswerを確定してキーを送る。一致しない・paneが無い・watchが無い場合はanswerを確定せず判断待ちをcancelし、エラーコード`decision_stale`で返す。
   - 走査の期限はwatch中またはblocked paneがある時だけloopを起こし、idleでは起こさない。`[decisions] screen_prompts=false`へlive reloadした時点で全watchを止め、pendingのscreen prompt判断待ちをcancelする。
   - `ping`応答と`herdr status --json`のserver capabilitiesへ`screen_prompt_decisions: true`を返し、saberante等のconsumerはこの印で自前の画面読み取り提供を抑止できる。
@@ -1971,7 +1973,8 @@
   - `[decisions] screen_prompts`の既定はtrueで、falseへのlive切替で全watchとpending判断待ちを止める。
   - server capabilitiesの`screen_prompt_decisions`が`status --json`とping応答で読める。
   - 既存のdecision API・`decision watch`・dialog・Slack・pane状態manifests・agent状態判定を変えない。
-- **検証契約**: Rust unit testsで画面固定例のparse・キー/ショートカット/text+Enter送信・複数タブ遷移・消失2読取消・質問文を含む同一判定・answer時の画面確認（decision_stale）・二重防止・feature flag切替・capabilities値を固定する。隔離sessionの実agentでblocked→判断待ち作成→`decision answer`→pane前進を実地確認する。
+  - 選択肢の下に続く説明文行はその選択肢の`description`としてoptionsへ入り（複数行・soft wrapでつながった文も復元する）、説明文だけが変わった画面は別の質問として新しい判断待ちになる。回答で送るキー・ショートカットは説明文の有無で変わらない。
+- **検証契約**: Rust unit testsで画面固定例のparse・選択肢説明文の読み取りと署名・キー/ショートカット/text+Enter送信・複数タブ遷移・消失2読取消・質問文を含む同一判定・answer時の画面確認（decision_stale）・二重防止・feature flag切替・capabilities値を固定する。隔離sessionの実agentでblocked→判断待ち作成→`decision answer`→pane前進を実地確認する。
 - **デグレ判定**: detection画面ではなくuser viewportを読む、saberanteと同じ画面を二重に判断待ち化する、1回の読み取り異常でcancelする、idleでloopを定期起こし続ける、agent状態判定manifestsの結果を変える。
 
 ## G10. 本家最新リリース v0.8.0 と現状fork版の差分・段階取込契約

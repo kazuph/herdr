@@ -394,6 +394,7 @@ impl App {
                 id: number.to_string(),
                 label: label.clone(),
                 role: option_role(label),
+                description: prompt.descriptions.get(number).cloned(),
             })
             .collect();
         let allow_text = prompt.free_text.is_some();
@@ -448,10 +449,20 @@ impl App {
                 && existing
                     .options
                     .iter()
-                    .map(|option| (option.id.clone(), option.label.clone()))
-                    .eq(options
-                        .iter()
-                        .map(|option| (option.id.clone(), option.label.clone())))
+                    .map(|option| {
+                        (
+                            option.id.clone(),
+                            option.label.clone(),
+                            option.description.clone(),
+                        )
+                    })
+                    .eq(options.iter().map(|option| {
+                        (
+                            option.id.clone(),
+                            option.label.clone(),
+                            option.description.clone(),
+                        )
+                    }))
             {
                 // Same prompt already has a pending decision — adopt it so a
                 // restarted server does not re-offer.
@@ -919,6 +930,11 @@ Esc to cancel
                 .collect::<Vec<_>>(),
             ["1", "2"]
         );
+        assert_eq!(
+            decision.options[0].description.as_deref(),
+            Some("1つ目の答え")
+        );
+        assert_eq!(decision.options[1].description.as_deref(), Some("選ばない"));
         assert!(decision.allow_text);
         let origin = decision.origin.as_ref().expect("origin");
         let public_id = origin.pane_id.as_deref().expect("pane_id");
@@ -1012,6 +1028,47 @@ Esc to cancel
         assert_eq!(old.status, DecisionStatus::Cancelled);
         assert_eq!(new.status, DecisionStatus::Pending);
         assert_eq!(new.kind, DecisionKind::ToolPermission);
+    }
+
+    #[tokio::test]
+    async fn same_options_different_description_replaces_decision() {
+        // Identical labels; only option 1's description row differs. The
+        // description is part of the signature, so this is a new prompt.
+        const CC_QUESTION_ALT_DESC: &str = "\
+グラスで見えるか確認します
+
+❯ 1. りんご
+     別の説明文に変わった
+  2. みかん
+     選ばない
+  3. Type something.
+───────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("desc-change", CC_QUESTION, true);
+        app.scan_screen_prompts(Instant::now());
+        let first = pending_decisions()[0].clone();
+        assert_eq!(first.options[0].description.as_deref(), Some("1つ目の答え"));
+
+        let _ = replace_screen(&mut app, pane_id, CC_QUESTION_ALT_DESC);
+        app.scan_screen_prompts(Instant::now());
+        app.scan_screen_prompts(Instant::now());
+
+        let decisions = all_decisions();
+        assert_eq!(decisions.len(), 2);
+        assert_eq!(decisions[0].status, DecisionStatus::Cancelled);
+        assert_eq!(decisions[1].status, DecisionStatus::Pending);
+        assert_eq!(
+            decisions[1].options[0].description.as_deref(),
+            Some("別の説明文に変わった")
+        );
+        assert_eq!(
+            app.screen_prompt_watches[&pane_id].decision_id,
+            decisions[1].decision_id
+        );
     }
 
     #[tokio::test]

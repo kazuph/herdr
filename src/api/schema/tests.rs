@@ -1264,3 +1264,30 @@ fn popup_close_request_round_trips() {
     assert_eq!(json["method"], "popup.close");
     assert_eq!(json["params"], serde_json::json!({}));
 }
+
+#[test]
+fn decision_option_without_description_still_deserializes() {
+    // Payloads written before the field existed carry only id/label/role.
+    let legacy = serde_json::json!({"id": "1", "label": "Yes", "role": "approve"});
+    let option: DecisionOption = serde_json::from_value(legacy).expect("legacy option");
+    assert_eq!(option.id, "1");
+    assert_eq!(option.label, "Yes");
+    assert_eq!(option.role, DecisionOptionRole::Approve);
+    assert_eq!(option.description, None);
+    // Serializing an option without a description omits the key so older
+    // readers keep parsing untouched payloads.
+    let json = serde_json::to_value(&option).unwrap();
+    assert!(json.get("description").is_none());
+
+    let described: DecisionOption = serde_json::from_value(serde_json::json!({
+        "id": "1",
+        "label": "Yes",
+        "description": "Run it once",
+    }))
+    .expect("described option");
+    assert_eq!(described.description.as_deref(), Some("Run it once"));
+    assert_eq!(
+        serde_json::to_value(&described).unwrap()["description"],
+        serde_json::json!("Run it once")
+    );
+}

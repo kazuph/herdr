@@ -195,6 +195,13 @@
         },
         "DecisionOption": {
           "properties": {
+            "description": {
+              "description": "Per-option detail text (Claude Code AskUserQuestion description rows,\n`--option-desc` on `decision ask`). Absent on older wire payloads.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "id": {
               "type": "string"
             },
@@ -2047,6 +2054,13 @@
         },
         "DecisionOption": {
           "properties": {
+            "description": {
+              "description": "Per-option detail text (Claude Code AskUserQuestion description rows,\n`--option-desc` on `decision ask`). Absent on older wire payloads.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "id": {
               "type": "string"
             },
@@ -7872,6 +7886,13 @@
         },
         "DecisionOption": {
           "properties": {
+            "description": {
+              "description": "Per-option detail text (Claude Code AskUserQuestion description rows,\n`--option-desc` on `decision ask`). Absent on older wire payloads.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "id": {
               "type": "string"
             },

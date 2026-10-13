@@ -35,6 +35,10 @@ pub struct DecisionOption {
     pub label: String,
     #[serde(default)]
     pub role: DecisionOptionRole,
+    /// Per-option detail text (Claude Code AskUserQuestion description rows,
+    /// `--option-desc` on `decision ask`). Absent on older wire payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

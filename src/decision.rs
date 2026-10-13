@@ -305,11 +305,13 @@ mod tests {
                     id: "yes".into(),
                     label: "Yes".into(),
                     role: DecisionOptionRole::Approve,
+                    description: None,
                 },
                 DecisionOption {
                     id: "no".into(),
                     label: "No".into(),
                     role: DecisionOptionRole::Reject,
+                    description: None,
                 },
             ],
             allow_text: false,

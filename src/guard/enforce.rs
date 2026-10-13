@@ -34,16 +34,19 @@ pub(crate) fn decision_options() -> Vec<DecisionOption> {
             id: OPTION_APPROVE.to_string(),
             label: "承認".to_string(),
             role: DecisionOptionRole::Approve,
+            description: None,
         },
         DecisionOption {
             id: OPTION_APPROVE_DAY.to_string(),
             label: "1日許可".to_string(),
             role: DecisionOptionRole::Approve,
+            description: None,
         },
         DecisionOption {
             id: OPTION_REJECT.to_string(),
             label: "却下".to_string(),
             role: DecisionOptionRole::Reject,
+            description: None,
         },
     ]
 }

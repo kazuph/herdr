@@ -10,7 +10,7 @@ mod watch;
 
 const DECISION_WAIT_RETRY_DELAY: Duration = Duration::from_millis(300);
 
-const DECISION_ASK_USAGE: &str = "usage: herdr decision ask --kind <command_guard|tool_permission|agent_prompt|ask> --title <text> [--body <text>] --option <id:label[:approve|reject|other]>... [--allow-text] [--timeout <secs>]";
+const DECISION_ASK_USAGE: &str = "usage: herdr decision ask --kind <command_guard|tool_permission|agent_prompt|ask> --title <text> [--body <text>] --option <id:label[:approve|reject|other]>... [--option-desc <id:text>]... [--allow-text] [--timeout <secs>]";
 const DECISION_ANSWER_USAGE: &str =
     "usage: herdr decision answer <decision_id> <option_id> [--text <text>] [--responder <name>] [--machine <label-or-id>]";
 const DECISION_LIST_USAGE: &str =
@@ -53,6 +53,7 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
     let mut title = None;
     let mut body = None;
     let mut options = Vec::new();
+    let mut option_descriptions = Vec::new();
     let mut allow_text = false;
     let mut timeout_ms = None;
 
@@ -105,6 +106,21 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
                 }
                 index += 2;
             }
+            "--option-desc" => {
+                let Some(value) = args.get(index + 1) else {
+                    eprintln!("missing value for --option-desc");
+                    return Ok(2);
+                };
+                match parse_option_description(value) {
+                    Ok(parsed) => option_descriptions.push(parsed),
+                    Err(err) => {
+                        eprintln!("{err}");
+                        eprintln!("{DECISION_ASK_USAGE}");
+                        return Ok(2);
+                    }
+                }
+                index += 2;
+            }
             "--allow-text" => {
                 allow_text = true;
                 index += 1;
@@ -144,6 +160,11 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
     };
     if options.is_empty() {
         eprintln!("missing required --option (at least one)");
+        eprintln!("{DECISION_ASK_USAGE}");
+        return Ok(2);
+    }
+    if let Err(message) = apply_option_descriptions(&mut options, option_descriptions) {
+        eprintln!("{message}");
         eprintln!("{DECISION_ASK_USAGE}");
         return Ok(2);
     }
@@ -413,7 +434,35 @@ fn parse_decision_option(value: &str) -> std::io::Result<DecisionOption> {
         id: id.to_string(),
         label: label.to_string(),
         role,
+        description: None,
     })
+}
+
+fn parse_option_description(value: &str) -> std::io::Result<(String, String)> {
+    let Some((id, text)) = value.split_once(':') else {
+        return Err(std::io::Error::other(format!(
+            "invalid --option-desc {value:?} (expected id:text)"
+        )));
+    };
+    if id.is_empty() || text.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "invalid --option-desc {value:?} (id and text must not be empty)"
+        )));
+    }
+    Ok((id.to_string(), text.to_string()))
+}
+
+fn apply_option_descriptions(
+    options: &mut [DecisionOption],
+    descriptions: Vec<(String, String)>,
+) -> Result<(), String> {
+    for (id, description) in descriptions {
+        let Some(option) = options.iter_mut().find(|option| option.id == id) else {
+            return Err(format!("--option-desc references unknown option id: {id}"));
+        };
+        option.description = Some(description);
+    }
+    Ok(())
 }
 
 /// Resolve the caller pane exactly like `herdr pane current`: HERDR_PANE_ID
@@ -471,5 +520,37 @@ mod tests {
         assert!(parse_decision_option("nocolon").is_err());
         assert!(parse_decision_option(":label").is_err());
         assert!(parse_decision_option("id:").is_err());
+    }
+
+    #[test]
+    fn option_desc_parser_and_application() {
+        assert_eq!(
+            parse_option_description("1:説明文").unwrap(),
+            ("1".to_string(), "説明文".to_string())
+        );
+        // Description text may itself contain colons.
+        assert_eq!(
+            parse_option_description("1:a:b:c").unwrap(),
+            ("1".to_string(), "a:b:c".to_string())
+        );
+        assert!(parse_option_description("nodesc").is_err());
+        assert!(parse_option_description(":text").is_err());
+        assert!(parse_option_description("1:").is_err());
+
+        let mut options = vec![
+            parse_decision_option("1:はい:approve").unwrap(),
+            parse_decision_option("2:いいえ").unwrap(),
+        ];
+        apply_option_descriptions(
+            &mut options,
+            vec![("2".to_string(), "後で再検討する".to_string())],
+        )
+        .unwrap();
+        assert_eq!(options[0].description, None);
+        assert_eq!(options[1].description.as_deref(), Some("後で再検討する"));
+        assert!(
+            apply_option_descriptions(&mut options, vec![("9".to_string(), "x".to_string())])
+                .is_err()
+        );
     }
 }
