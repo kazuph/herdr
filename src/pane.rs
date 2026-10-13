@@ -113,6 +113,7 @@ impl PaneLaunchEnv {
 }
 
 fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
+    crate::integration::scrub_inherited_agent_session_env(cmd);
     for (key, value) in &launch_env.extra {
         cmd.env(key, value);
     }
@@ -648,6 +649,18 @@ fn observed_agent_session_from_foreground_job(
             )
             .or_else(|| {
                 crate::agent_sessions::claude_session_id_from_session_files(cwd, started_at)
+            })
+        }
+        Agent::Codex => {
+            let cwd = process.cwd.as_deref()?;
+            crate::agent_sessions::session_id_from_codex_open_files(
+                crate::platform::process_open_files(process.pid),
+                cwd,
+            )
+            .or_else(|| {
+                process.started_at.and_then(|started_at| {
+                    crate::agent_sessions::codex_session_id_from_rollout_files(cwd, started_at)
+                })
             })
         }
         Agent::Devin => devin_child_session_id(process),

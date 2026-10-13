@@ -243,6 +243,193 @@ pub fn session_id_from_open_session_file(agent: &str, path: &Path, cwd: &Path) -
     }
 }
 
+/// Observe a running Codex session through the rollout files the process
+/// keeps open. Older Codex builds hold `~/.codex/sessions/<date>/rollout-*-
+/// <session id>.jsonl` open for the lifetime of the session, so the set of
+/// `.jsonl` paths in `paths` (the process's open files) that carry a
+/// `session_meta` record for `cwd` identifies the session exactly. Matching
+/// is fail-closed: zero or more than one distinct session id yields `None`
+/// rather than a guess.
+pub fn session_id_from_codex_open_files(
+    paths: impl IntoIterator<Item = impl AsRef<Path>>,
+    cwd: &Path,
+) -> Option<String> {
+    let mut session_ids = std::collections::BTreeSet::new();
+    for path in paths {
+        let path = path.as_ref();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+            continue;
+        }
+        if let Some(session_id) = session_id_from_codex_file(path, cwd) {
+            session_ids.insert(session_id);
+        }
+    }
+    (session_ids.len() == 1)
+        .then(|| session_ids.pop_first())
+        .flatten()
+}
+
+/// Observe a running Codex session by scanning `~/.codex/sessions` for the
+/// rollout file its thread created at process start.
+///
+/// Recent Codex builds do not hold the rollout open between writes, so the
+/// open-files observation alone sees nothing. A fresh Codex process creates
+/// exactly one rollout whose `session_meta` record carries the process cwd
+/// and a timestamp at (or just after) process start; matching `cwd` plus
+/// `timestamp >= started_at - window` ties the file to sessions that began
+/// no earlier than this process. Rollouts for other cwds, threads started
+/// before this process, or an idle `codex resume` (whose `session_meta`
+/// predates the process) never match; resumed sessions are still identified
+/// exactly through their `resume <id>` command line.
+///
+/// Matching is fail-closed: more than one matching session id, or any
+/// in-window `rollout-*.jsonl` that cannot be read and classified (a file we
+/// cannot rule out could hide the true match), yields `None`.
+pub fn codex_session_id_from_rollout_files(
+    cwd: &Path,
+    process_started_at: SystemTime,
+) -> Option<String> {
+    let sessions_dir = crate::integration::codex_dir().ok()?.join("sessions");
+    codex_session_id_from_rollout_files_in(&sessions_dir, cwd, process_started_at)
+}
+
+enum CodexRolloutMatch {
+    Session(String),
+    NotOurs,
+    Unreadable,
+}
+
+fn codex_session_id_from_rollout_files_in(
+    dir: &Path,
+    cwd: &Path,
+    process_started_at: SystemTime,
+) -> Option<String> {
+    let mut session_ids = std::collections::BTreeSet::new();
+    let mut unreadable = false;
+    collect_matching_codex_rollout_ids(
+        dir,
+        cwd,
+        process_started_at,
+        &mut session_ids,
+        &mut unreadable,
+    );
+    if unreadable {
+        return None;
+    }
+    (session_ids.len() == 1)
+        .then(|| session_ids.pop_first())
+        .flatten()
+}
+
+fn collect_matching_codex_rollout_ids(
+    dir: &Path,
+    cwd: &Path,
+    process_started_at: SystemTime,
+    session_ids: &mut std::collections::BTreeSet<String>,
+    unreadable: &mut bool,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            // A directory entry we cannot read could hide the true match.
+            *unreadable = true;
+            continue;
+        };
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            collect_matching_codex_rollout_ids(
+                &path,
+                cwd,
+                process_started_at,
+                session_ids,
+                unreadable,
+            );
+            continue;
+        }
+        let is_rollout = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"));
+        if !is_rollout {
+            continue;
+        }
+        let Ok(modified_at) = entry.metadata().and_then(|meta| meta.modified()) else {
+            *unreadable = true;
+            continue;
+        };
+        if !time_is_after_process_start_window(modified_at, process_started_at) {
+            continue;
+        }
+        match codex_rollout_session_id_for_start(&path, cwd, process_started_at) {
+            CodexRolloutMatch::Session(session_id) => {
+                session_ids.insert(session_id);
+            }
+            CodexRolloutMatch::NotOurs => {}
+            CodexRolloutMatch::Unreadable => {
+                *unreadable = true;
+            }
+        }
+    }
+}
+
+fn codex_rollout_session_id_for_start(
+    path: &Path,
+    cwd: &Path,
+    process_started_at: SystemTime,
+) -> CodexRolloutMatch {
+    use std::io::BufRead;
+
+    let Ok(file) = std::fs::File::open(path) else {
+        return CodexRolloutMatch::Unreadable;
+    };
+    let first_line = match std::io::BufReader::new(file).lines().next() {
+        Some(Ok(line)) => line,
+        _ => return CodexRolloutMatch::Unreadable,
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&first_line) else {
+        return CodexRolloutMatch::Unreadable;
+    };
+    if value.get("type").and_then(|value| value.as_str()) != Some("session_meta") {
+        return CodexRolloutMatch::Unreadable;
+    }
+    let Some(payload) = value.get("payload") else {
+        return CodexRolloutMatch::Unreadable;
+    };
+    let Some(session_id) = payload
+        .get("session_id")
+        .or_else(|| payload.get("id"))
+        .and_then(|value| value.as_str())
+    else {
+        return CodexRolloutMatch::Unreadable;
+    };
+    if !is_safe_session_id(session_id) {
+        return CodexRolloutMatch::Unreadable;
+    }
+    let Some(session_cwd) = payload.get("cwd").and_then(|value| value.as_str()) else {
+        return CodexRolloutMatch::Unreadable;
+    };
+    if Path::new(session_cwd) != cwd {
+        return CodexRolloutMatch::NotOurs;
+    }
+    let Some(timestamp) = payload
+        .get("timestamp")
+        .and_then(|value| value.as_str())
+        .and_then(parse_rfc3339_z)
+    else {
+        return CodexRolloutMatch::Unreadable;
+    };
+    if time_is_after_process_start_window(timestamp, process_started_at) {
+        CodexRolloutMatch::Session(session_id.to_string())
+    } else {
+        CodexRolloutMatch::NotOurs
+    }
+}
+
 pub fn session_id_from_claude_process_record(
     pid: u32,
     cwd: &Path,
@@ -860,6 +1047,237 @@ mod tests {
             session_id_from_open_session_file("codex", &path, cwd),
             Some(id.into()),
             "the exact file opened by the agent is authoritative"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_open_files_match_returns_the_held_session() {
+        let root = test_temp_dir("codex-open-files-match");
+        let day = root.join("2026").join("10").join("13");
+        std::fs::create_dir_all(&day).unwrap();
+        let cwd = Path::new("/Users/example");
+        let id = "01a12d69-a844-7c20-8493-b8077cc10eae";
+        let rollout =
+            day.join("rollout-2026-10-13T18-29-00-01a12d69-a844-7c20-8493-b8077cc10eae.jsonl");
+        std::fs::write(
+            &rollout,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"session_id\":\"{id}\",\"id\":\"{id}\",\"cwd\":\"{}\"}}}}\n",
+                cwd.display()
+            ),
+        )
+        .unwrap();
+        let unrelated = root.join("notes.txt");
+
+        assert_eq!(
+            session_id_from_codex_open_files([&rollout, &unrelated], cwd),
+            Some(id.into()),
+            "a codex session in a home-directory cwd is still identified exactly"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_open_files_fail_closed_on_conflict_miss_and_other_cwd() {
+        let root = test_temp_dir("codex-open-files-fail-closed");
+        let day = root.join("2026").join("10").join("13");
+        std::fs::create_dir_all(&day).unwrap();
+        let cwd = Path::new("/Users/example");
+        let rollout = |id: &str, meta_cwd: &str| {
+            let path = day.join(format!("rollout-2026-10-13T18-29-00-{id}.jsonl"));
+            std::fs::write(
+                &path,
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"{meta_cwd}\"}}}}\n"
+                ),
+            )
+            .unwrap();
+            path
+        };
+        let first = rollout("01a12d69-a844-7c20-8493-b8077cc10eae", "/Users/example");
+        let other_cwd = rollout("02b23e70-b955-8d31-95a4-c9188dd11fbf", "/tmp/other");
+
+        assert_eq!(
+            session_id_from_codex_open_files(Vec::<&Path>::new(), cwd),
+            None
+        );
+        assert_eq!(
+            session_id_from_codex_open_files([&other_cwd], cwd),
+            None,
+            "a session file for another cwd must not be attributed"
+        );
+
+        let second = rollout("03c34f81-c066-9e42-a6b5-da299ee22ac0", "/Users/example");
+        assert_eq!(
+            session_id_from_codex_open_files([&first, &second], cwd),
+            None,
+            "two distinct open sessions in one process are ambiguous"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_cmdline_resume_last_never_yields_a_session_id() {
+        assert_eq!(
+            session_id_from_cmdline(
+                "codex",
+                "node /path/bin/codex --sandbox workspace-write resume --last"
+            ),
+            None,
+            "a --last resume must not record the flag itself as a session id"
+        );
+    }
+
+    fn write_codex_rollout(dir: &Path, id: &str, timestamp: &str, cwd: &str) {
+        std::fs::write(
+            dir.join(format!("rollout-2026-10-13T20-02-20-{id}.jsonl")),
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"session_id\":\"{id}\",\"id\":\"{id}\",\"timestamp\":\"{timestamp}\",\"cwd\":\"{cwd}\"}}}}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn codex_rollout_for_start_matches_exact_cwd_and_process_start() {
+        let root = test_temp_dir("codex-rollout-for-start");
+        let day = root.join("2026").join("10").join("13");
+        std::fs::create_dir_all(&day).unwrap();
+        let cwd = Path::new("/Users/example");
+        let id = "01a134ed-79a0-7382-9bf9-da390c49af07";
+        let path = day.join(format!("rollout-2026-10-13T20-02-20-{id}.jsonl"));
+        write_codex_rollout(&day, id, "2026-10-13T20:02:20Z", "/Users/example");
+
+        let started_at = parse_rfc3339_z("2026-10-13T20:02:16Z").unwrap();
+        assert!(
+            matches!(
+                codex_rollout_session_id_for_start(&path, cwd, started_at),
+                CodexRolloutMatch::Session(session_id) if session_id == id
+            ),
+            "a home-directory session started with the process must match"
+        );
+        assert!(
+            matches!(
+                codex_rollout_session_id_for_start(&path, Path::new("/tmp/other"), started_at),
+                CodexRolloutMatch::NotOurs
+            ),
+            "another cwd must not be attributed"
+        );
+        let after_window = parse_rfc3339_z("2026-10-13T20:05:00Z").unwrap();
+        assert!(
+            matches!(
+                codex_rollout_session_id_for_start(&path, cwd, after_window),
+                CodexRolloutMatch::NotOurs
+            ),
+            "a thread started before the process must not be attributed"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_rollout_for_start_rejects_non_session_files() {
+        let root = test_temp_dir("codex-rollout-non-session");
+        std::fs::create_dir_all(&root).unwrap();
+        let cwd = Path::new("/Users/example");
+        let started_at = SystemTime::now();
+
+        let not_jsonl =
+            root.join("rollout-2026-10-13T20-02-20-01a134ed-79a0-7382-9bf9-da390c49af07.txt");
+        std::fs::write(&not_jsonl, "{}").unwrap();
+
+        let garbage =
+            root.join("rollout-2026-10-13T20-02-20-02b23e70-b955-8d31-95a4-c9188dd11fbf.jsonl");
+        std::fs::write(&garbage, "not json\n").unwrap();
+        assert!(matches!(
+            codex_rollout_session_id_for_start(&garbage, cwd, started_at),
+            CodexRolloutMatch::Unreadable
+        ));
+
+        let wrong_type =
+            root.join("rollout-2026-10-13T20-02-20-03c34f81-c066-9e42-a6b5-da299ee22ac0.jsonl");
+        std::fs::write(&wrong_type, "{\"type\":\"turn_context\"}\n").unwrap();
+        assert!(matches!(
+            codex_rollout_session_id_for_start(&wrong_type, cwd, started_at),
+            CodexRolloutMatch::Unreadable
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_rollout_scan_returns_single_matching_session() {
+        let root = test_temp_dir("codex-rollout-scan-match");
+        let day = root.join("2026").join("10").join("13");
+        std::fs::create_dir_all(&day).unwrap();
+        let cwd = Path::new("/Users/example");
+        let id = "01a134ed-79a0-7382-9bf9-da390c49af07";
+        // The timestamp is far in the future so the file is in-window for a
+        // test started_at of `now`; the point is scan mechanics, not the
+        // boundary, which `codex_rollout_for_start_*` covers exactly.
+        write_codex_rollout(&day, id, "2099-01-01T00:00:04Z", "/Users/example");
+        // A concurrent codex in another cwd must not shadow the match.
+        write_codex_rollout(
+            &day,
+            "02b23e70-b955-8d31-95a4-c9188dd11fbf",
+            "2099-01-01T00:00:04Z",
+            "/tmp/other",
+        );
+        std::fs::write(day.join("state_5.sqlite-wal"), "ignored").unwrap();
+
+        assert_eq!(
+            codex_session_id_from_rollout_files_in(&root, cwd, SystemTime::now()),
+            Some(id.into())
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn codex_rollout_scan_fail_closed_on_ambiguity_and_unreadable() {
+        let root = test_temp_dir("codex-rollout-scan-fail-closed");
+        let day = root.join("2026").join("10").join("13");
+        std::fs::create_dir_all(&day).unwrap();
+        let cwd = Path::new("/Users/example");
+        write_codex_rollout(
+            &day,
+            "01a134ed-79a0-7382-9bf9-da390c49af07",
+            "2099-01-01T00:00:04Z",
+            "/Users/example",
+        );
+
+        // Two same-cwd sessions in the window are ambiguous.
+        write_codex_rollout(
+            &day,
+            "02b23e70-b955-8d31-95a4-c9188dd11fbf",
+            "2099-01-01T00:00:05Z",
+            "/Users/example",
+        );
+        assert_eq!(
+            codex_session_id_from_rollout_files_in(&root, cwd, SystemTime::now()),
+            None,
+            "two matching sessions must not be attributed to either"
+        );
+
+        // An in-window rollout that cannot be classified could hide the true
+        // match, so it poisons the result even with one readable match left.
+        std::fs::remove_file(
+            day.join("rollout-2026-10-13T20-02-20-02b23e70-b955-8d31-95a4-c9188dd11fbf.jsonl"),
+        )
+        .unwrap();
+        std::fs::write(
+            day.join("rollout-2026-10-13T20-02-21-03c34f81-c066-9e42-a6b5-da299ee22ac0.jsonl"),
+            "not json\n",
+        )
+        .unwrap();
+        assert_eq!(
+            codex_session_id_from_rollout_files_in(&root, cwd, SystemTime::now()),
+            None,
+            "an unreadable in-window rollout must fail closed"
+        );
+
+        assert_eq!(
+            codex_session_id_from_rollout_files_in(&root.join("missing"), cwd, SystemTime::now()),
+            None,
+            "no rollouts means no session, not a guess"
         );
         let _ = std::fs::remove_dir_all(root);
     }

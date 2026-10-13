@@ -646,9 +646,10 @@
   - Codexの復元コマンドは、`[agent_start.commands].codex`が設定されている場合、その構造化argvを順序どおり保持し、末尾へ`resume`とpane固有session idだけを追加する。新規pane起動とrestoreでsandbox・approval・network・wrapper等の起動オプションを変えず、shell aliasや`sh -lc`へ依存しない。
   - `[agent_start.commands].codex`が無い場合だけ、既存のagent別restore templateを使う。templateには`{session_id}`を必須とし、fork時点のbuiltinは`claude = "claude --resume {session_id}"`と`codex = "codex resume {session_id}"`。
   - session idは、trustedな明示報告が最優先。明示報告がないplain processでは、現在のruntime/session fileで一意に観測した現行IDを優先し、それが無い場合だけ実行中processのcmdlineから `claude --resume <id>` / `claude --resume=<id>` / `codex resume <id>` を読む。cmdlineは起動形状のfallbackであり、resume後の現行session identityを上書きしない。
-  - plain Claude/Codexでcmdlineにresume idがない場合だけ、実行中processのcwdとprocess start timeに一致するsession fileを探す。Codexは `$HOME/.codex/sessions/**/*.jsonl` の先頭 `session_meta.payload.id` または `session_meta.payload.session_id`、`payload.cwd`、`payload.timestamp` を使う。Claudeは `$HOME/.claude/projects/**/*.jsonl` の先頭64行以内にある `sessionId`、`cwd`、`timestamp` を使う。
+  - plain Claude/Codexでcmdlineにresume idがない場合だけ、実行中processのcwdとprocess start timeに一致するsession fileを探す。Codexは `$HOME/.codex/sessions/**/*.jsonl` の先頭 `session_meta.payload.id` または `session_meta.payload.session_id`、`payload.cwd`、`payload.timestamp` を使う。Codexはさらに、実行中processが開いている `.jsonl` file（rollout fileを掴んでいるCodex buildでは正確なpid紐付けになる）を同じ `session_meta` 基準で見る。Claudeは `$HOME/.claude/projects/**/*.jsonl` の先頭64行以内にある `sessionId`、`cwd`、`timestamp` を使う。
   - Claude processのcmdlineにある `claude --resume <old-id>` は、現在実行中processへ対応するClaude session file/runtimeで観測したIDより優先しない。runtime/session fileの現行IDをpane sessionとして報告し、`session_start_source = "resume"`を付けて「resume引数からの復元ではなく、resume後に観測した現行sessionへの置換」であることを保持する。
   - session file recoveryは、session timestampとprocess start timeの差が120秒以内で、候補が1件だけのときだけ採用する。0件または2件以上ならsession id未確定として扱う。
+  - Codex rollout scanは、file mtimeと `session_meta.payload.timestamp` がprocess start - 120秒以降の `rollout-*.jsonl` だけを候補にし、`payload.cwd` がpane processのcwdと一致し、`payload.timestamp` が同じwindow内にあるsession idが1件だけのとき採用する。window内で読めない・判定不能な `rollout-*.jsonl` が1つでもあれば、真の一致を隠す可能性があるためsession id未確定として扱う。`codex resume --last` の `--last` 自体はsession idとして記録しない。
   - session idはpaneのsession snapshotにも保存し、別途pane ledgerにも保存する。ledger entryはpane id、terminal id、workspace id、tab id、cwd、agent、session id、observed_at、source、titleを持つ。paneを明示closeした時、PaneDiedでpaneを永久削除した時、または所有tab/workspaceを閉じた時は対応entryを削除する。runtime processだけが停止してpaneがrestorable ownerとして残る時はledgerを保持する。stale ledger単独では別世代・再利用paneを復元対象にしない。
   - 同じcwdにある複数paneは、snapshot上もledger上も別session idを保持する。pane idやtab/workspaceが違うsession idを混ぜない。
   - `herdr agent restore [--dry-run]` は復元対象paneごとの結果を返す。action itemは `pane_id`、`agent`、`status`、任意の `command`、任意の `reason` を持ち、`status` は `launched` / `would_launch` / `skipped`。
@@ -666,6 +667,7 @@
   - 上記状態報告をclearした後も、次のsnapshotに同じnative session idが残る。
   - terminal側のsession idが消えてもledgerに同じpane/workspace/tab/agentのsafe idがあれば、次のsnapshotには同じsession idが残る。
   - pane死亡後に検出状態が一度消えても、restorable agent paneのsnapshotには同じagent/session idが残り、再度restore planが同じresume commandを作る。
+  - 実行中Codexがrollout fileを開いたままにしないbuildでも、pane processのcwdとstart timeに一致するrolloutのsession idが1件だけなら native `herdr:codex` session idとして記録される。同じcwdの複数Codex sessionがwindow内にあれば記録しない。
   - 旧fork snapshotの`agent_restore = { agent, session_id }`は、safeなsession idがある場合だけ現本家の`agent_session = { source, agent, kind, value }`へ移行し、同じpaneのnative resume planを作る。
   - 旧fork snapshotの`pane_order`、focused pane、root pane、`title`を移行後も保持する。
   - v4以前のsnapshotはworkspace配列順の表示番号を`s1`, `s2`…へ移行し、旧`public_pane_numbers`は旧composite pane targetを復元中だけ解決するalias入力として使う。v5 captureはこのlegacy fieldを保存しない。
@@ -1333,6 +1335,25 @@
   - `NO_COLOR` 削除のために `TERM` / `COLORTERM` の pane identity が壊れる。
   - nested Claude Code / Codex / Copilot CLI の status helper が Herdr pane 内で単色表示に戻る。
 
+### inherited agent-session環境変数をpane childへ引き継がない
+- **status: fork独自・保持 (C)** — session-scoped markerのscrubと設定系変数の保持を残す。
+- **目的**: Herdr serverがagent session（Claude CodeのBash等）の内側から起動されると、そのagentのsession-scoped環境変数がserver環境に残り、serverが作るすべてのpane shell・job・plugin子processへ漏れる。Claude Code 2.1.296以降は `CLAUDE_CODE_CHILD_SESSION` を受け継ぐと自分をそのsessionの子agentと見なしてtranscript保存を止めるため、`~/.claude/sessions/<pid>.json` が生成されずherdrがsession idを観測できなくなる（no saved sessionのデグレ）。paneは外側agent sessionの子ではなく独立したtop-level contextなので、markerを引き継がない。
+- **UI挙動**:
+  - Herdrが子processを作る全経路（新規・split・restored・`herdr run` jobなどdetached spawn、plugin pane/process、その他pane spawn）は、child environmentからsession-scoped markerを削除する。対象は `AI_AGENT`、`CLAUDECODE`、`CLAUDE_PID`、`CLAUDE_CODE_CHILD_SESSION`、`CLAUDE_CODE_SESSION_ID`、`CLAUDE_CODE_SESSION_ATTENDED`、`CLAUDE_CODE_MESSAGING_SOCKET`、`CLAUDE_CODE_MESSAGING_TOKEN`、`CLAUDE_CODE_ENTRYPOINT`、`CLAUDE_CODE_EXECPATH`、`CODEX_THREAD_ID`、`HERDR_AGENT`。
+  - server起動時（`herdr server`とmonolith `--no-session`）は、worker threadやchild spawnより先に同じmarkerを自分のprocess環境からも削除する。
+  - 設定系・feature toggle系の変数（`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`CLAUDE_EFFORT`、`CLAUDE_CODE_ENABLE_TASKS`、`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING`など）は消さず、pane childへ従来どおり引き継ぐ。
+  - pane launch envで呼出元が明示したenv（`PaneLaunchEnv` extras）はscrubより後に適用するため、利用者が意図してpaneへ入れる値は消えない。
+  - 同じscrub対象にpane-scopedなguard状態（`HERDR_GUARD_STARTUP`、`HERDR_GUARD_MODE`、`HERDR_GUARD_READY`、`HERDR_GUARD_ENFORCING`、`HERDR_GUARD_MARKER`、`HERDR_GUARD_SHIM_DIR`、`HERDR_GUARD_SHELL_DIR`、`HERDR_GUARD_HERDR`、`HERDR_GUARD_VIA`、`HERDR_GUARD_BASH_ENV_ORIG`、`HERDR_GUARD_ZDOTDIR_ORIG`）も含める。これらが漏れると `GuardLaunch::from_command` がguard未注入のcommandをcoveredと誤認し、見張られていないpaneへmarkerを付けてしまう。guard injection（`apply_guard_env`）はscrubより後に走るため、注入対象paneには新しい値が入る。`HERDR_GUARD_PANE_SHELL`はpane shell spawnが起動宣言としてscrub前に設定するので対象外とする。
+  - `BASH_ENV`・`ZDOTDIR`はユーザー値を持ち得るため、値がguard注入物と確証できる時だけ削除する（自namespaceのguard state directory配下、または別namespaceを含む既知の注入layout `*/guard/guard.bash`・`*/guard/zdotdir`）。`PROMPT_COMMAND`はguardが注入した末尾（shim pin＋ready書込み）だけを除去し、呼出元の行を保持する。
+- **受け入れ条件**:
+  - `CLAUDE_CODE_CHILD_SESSION=1`等を含む環境から起動したserverのpaneで本物の`claude`を起動しても、transcript保存off警告が出ず、`~/.claude/sessions/<pid>.json`が生成され、herdrの`agent_session`にそのidが記録される。
+  - 同じserverのpane shellの環境に `CLAUDE_CODE_SESSION_ID`・`CLAUDE_CODE_MESSAGING_SOCKET`・`CODEX_THREAD_ID`・`HERDR_AGENT`が残らず、`CLAUDE_EFFORT`等の設定変数は残る。
+  - `HERDR_GUARD_STARTUP=supported`等を含む環境から起動したserverが作るpaneでは、guard injectionが走らないspawnでcoverage evidenceが継承markerから作られず、injectionが走るpaneには新しい注入値が入る。
+- **デグレ判定**:
+  - pane・job・pluginなどいずれかのspawn経路にmarkerが残り、そこで起動したClaude Codeがtranscript保存offになる。
+  - 継承したguard markerだけで未注入のpaneが見張り済み（covered）と記録される。
+  - `CLAUDE_CONFIG_DIR`やfeature toggle等の設定系変数、あるいはguard state directory外を指すユーザーの`BASH_ENV`・`ZDOTDIR`・`PROMPT_COMMAND`まで消してpane childの挙動が変わる。
+
 ### mouse routing・overlay・helpの微細契約
 - **元コミット**: 5b13801, e5e0e0e, fa6288a
 - **分類**: CORE-UI
@@ -1566,6 +1587,7 @@
   - direct sendとroom broadcastを扱い、通常mailはSQLiteへ保存した直後、recipientがIdleまたはDoneなら新しいturn、Workingなら現在の作業へのsteeringとして、全roomのqueued本文をcreated時刻・同時刻ならmessage ID順に、そのまま1本文ずつtext+Enterで直接submitする。Working中のmessageをIdleまで保留せず、処理順や作業変更の判断は全文を受け取ったagentへ委ねる。Blocked、Unknown、runtime不在ではqueueを維持し、次にIdle、Working、Doneのいずれかとして利用可能になった時に同じ順序でsubmitする。通常自動配送で`herdr msg inbox` commandを注入したり、受信側に本文の取得・要約・再解釈を要求したりしない。各本文のsubmit成功後にそのmessage IDだけを`delivered`・`read`へ遷移する。
   - 通常mailのsubmit成功は、内部channelへの投入ではなく、本文とEnterの全byteをrecipientのPTY masterへ書き終えた時点とする。PTY完了は共有AppEventの容量を予約せず、mailbox専用eventでApp loopを待機させずに反映し、書き込み中のmessageは重複submitとmanual inbox取得から除外する。内部channelへ投入できてもPTY書き込みが失敗したmessageは`queued`を維持し、後続の利用可能eventで再試行する。
   - recipientは登録agent名でもglobal pane ID `pN`でも同一paneのmailboxを指す。serverはpaneに解決できるrecipientについて同一paneのrecipientエイリアス集合を使い、nudgeとinboxで同じqueued行を扱う。paneに解決できないrecipientは完全一致で扱い、`claude`や`codex`など個別paneを指さないagent種別名をrecipientエイリアス集合へ加えない。
+  - 同じagent名が複数paneにある時は名前宛の`herdr send`を拒否し、本文・宛先・理由を`failed`として記録する。解決済みの通知・通常mailのrecipientはglobal pane IDで保存し、actorの後続登録で配送先を変更しない。
   - 全利用可能agentの未読確認はserver起動時に1回だけ行う。message送信時はそのrecipient、agentがIdle、Working、Doneへ遷移した時、runtime復旧後にagentが同じ状態を再報告した時は、そのpaneのmailboxだけを確認し、無関係な通常API requestを全agent走査の起点にしない。
   - 通常mailはrecipientのactor IDとstatusのindexを使う1回のqueryで全roomをcreated時刻・message ID順に取得して直接配送する。`herdr-jobs`だけは既存のroom単位group配送を使う。agentごとに全roomを列挙してqueryしない。
 - **受け入れ条件**:
@@ -1576,7 +1598,7 @@
   - pane IDと登録agent名のrecipientエイリアスは同じpaneのqueued messageを指し、別paneのagent種別名宛てmessageは取得も配送もしない。inboxはbusy中のqueued messageの手動確認・回復に使えるが、通常自動配送の前提ではない。
   - queued messageがない状態でagent/pane一覧等の通常API requestを反復しても、requestごとの全利用可能agent走査とagent数×room数のmessage queryを実行しない。
   - server起動時の未読配送、message送信先への即時配送、Blocked/UnknownからIdle、Working、Doneへ変わったagentへの配送、runtime復旧後の同一状態再報告による再配送は、通常API request後の全agent走査を削除しても維持される。
-- **デグレ判定**: Working recipientへのmessageをIdleまで保留する。各API requestの完了時に全利用可能agentのmailboxを走査する。各agentについてroom一覧を取得してroomごとに未読queryする。recipient/status indexを使わずmessage全体を走査する。
+- **デグレ判定**: 同名agentの最後の登録paneへ配送する、曖昧な名前を推測で解決する、または拒否した配送の失敗記録を残さない。Working recipientへのmessageをIdleまで保留する。各API requestの完了時に全利用可能agentのmailboxを走査する。各agentについてroom一覧を取得してroomごとに未読queryする。recipient/status indexを使わずmessage全体を走査する。
 
 ### normal mailのPTY全byte書込み確認
 - **該当コミット**: f0b80e3, 0f61acb, 5f69fc9, 3200098, 88118ae
@@ -1615,7 +1637,10 @@
   - `herdr run`のdefaultはbackgroundで即座にjob IDを返し、job DBにcommand、cwd、caller pane/agent、status、PID、exit code、log pathを保存する。
   - background開始はCLIからserver socketへ渡し、running serverがjob記録とrunner起動を所有する。CLIはHerdr DBへの書込権限を必要としない。
   - list/status/log/cancelを提供する。cancelはrunner PIDが同じPIDのprocess group leaderであることを確認してからDBの`cancelling`を取得し、process groupへSIGTERMを送る。2秒以内にprocess groupが消滅しなければSIGKILLへ昇格し、消滅を確認した後だけDBを`cancelled`へ遷移する。SIGKILL後も残る時は`cancelling`のままfail closedする。
-  - cancelを含むcompletionは正確なcallerへ一行配送し、詳細は`herdr log <job_id>`を指す。
+  - jobのcaller pane/agentは作成時にcommand行へ保存し、actors表の現在paneから再構成しない。cancelと`--pane`を含むcompletionは作成時のglobal caller pane IDだけへ配送し、詳細は`herdr log <job_id>`を指す。
+  - `herdr-run`からの名前宛completionは、現在の同名paneが1つだけでも不変callerの証拠にならないため拒否し、failedとして保存する。旧実行中runnerから新serverへの通知にもこの規則を適用する。
+  - server不在時のcompletionは確定済みcaller pane IDへdurable queueする。serverがpane消失・曖昧宛先を確認した時、または旧jobのcallerが不明な時は配送せず、通知本文と理由を`failed`として保存する。Blocked/runtime未準備の既存pane宛はqueueを維持する。
+  - 旧command行には不変callerの証拠がないためcaller paneを空として扱い、actorsの現在paneを転用しない。旧queuedの名前宛`herdr-jobs`通知は本文を保持して`failed`にし、自動再送・既読化しない。既にpane ID宛のqueued通知はその宛先を保持する。
   - `herdr-jobs`のcompletionは直接注入後に既読化し、server起動時にも配送済みentryを未読へ戻さない。
 - **受け入れ条件**:
   - background runはvisible paneを増やさず即時returnし、成功・失敗のexit codeとstdout/stderrをjob logで確認できる。
@@ -1623,7 +1648,11 @@
   - caller identityがexactに解決できない時はjobを開始せずfail closedする。
   - completionが一般mailboxの未読clutterにならず、server再起動後もjob status/logが残る。
   - SIGTERMを無視する子processを持つjobでも、cancel完了時にはprocess group全体が消滅し、statusが`cancelled`になる。process groupの所有または消滅を証明できない時に`cancelled`を記録しない。
+  - 別workspaceに同名agentが2つ存在してもjobのcaller paneは変わらず、完了本文は起動元paneだけへ届く。
+  - caller不明・消失の通知と旧名前宛queued通知は本文を保持したfailed記録となり、別paneには届かず、再起動・再移行でqueuedへ戻らない。
   - job logにUTF-8として不正なbyteが混じっても、`herdr log <job_id>`と`--completion full`の通知は不正部分をU+FFFDに置き換えて全体を読める。
+
+- **デグレ判定**: jobのcallerをactorの変更可能なpane列から読む、completionをagent種別名へ送る、旧queued通知を現在の同名paneへ再送する、または配送先不明をqueuedのまま黙って残す。
 
 ### unified communication dispatcher
 - **該当コミット**: 70041ec
@@ -2286,7 +2315,8 @@
   - zsh の対象コマンド関数・`command` 通過 wrapper・accept-line の記録、bash の対象コマンド関数・`command` 通過 wrapper は、呼び出し時にそのペインの marker ファイルが存在するときだけ `herdr guard exec` へ回る。利用者の設定で同名の関数やエイリアスが定義済みの名前（ai_guard の wrapper など）は上書きせず、本物の実行が PATH の shim を通ることで記録だけは残る。
   - zsh は `.zshenv`・`.zprofile`・`.zshrc`・`.zlogin` を利用者の ZDOTDIR で読み、各ファイルとシステムの起動ファイルによる PATH の変更後も shim を先頭に保つ。Claude Code の shell snapshot からの実行でも herdr の判断待ちに届く。session 復元時は再開コマンドを送る前に agent の marker と shim を同期し、再開する agent の shell snapshot にも起動設定を差し込む。snapshot が起動処理の後に PATH を並べ替えたときも、marker 付き対象コマンドの wrapper は転送前に shim を先頭に戻す。
   - bash の非対話 shell は元の BASH_ENV を読んだ後、対話 shell は全起動ファイルの後の最初の prompt で shim を先頭へ戻す。対話 bash はその確認後に初めて `HERDR_GUARD_ENFORCING=1` を出し、保証できない shell では出さない。
-  - 起動時に見張りが差し込まれていない agent pane、起動後のモード変更、未確認の bash prompt、未対応 shell を `guard status` の stderr と画面の警告で pane ID・理由・新しい pane での起動し直しとともに知らせる。guard の JSON と判断待ち API は変えない。live handoff は起動時の差し込みの事実を保持し、古い runtime には未適用の警告を出す。
+  - 起動時に見張りが差し込まれていない agent pane、起動後のモード変更、未確認の bash prompt、未対応 shell を `guard status` の stderr と画面の警告で pane ID・理由・新しい pane での起動し直しとともに知らせる。guard の JSON と判断待ち API は変えない。live handoff は起動時の差し込みの事実を保持し、古い runtime には未適用の警告を出す。server 起動・session 復元・live handoff 受信・設定再読込の直後に、非表示の workspace と tab を含む全 pane の印と未適用の警告を同期し、検出や起動報告の次のイベントを待たない。
+  - デグレ判定: agent の印は、起動時に shim を PATH 先頭へ保つ supported の差し込みを受け、現在の mode と一致し、対話 bash の ready が確認できるなど未適用の理由がない pane にだけ書く。起動時の証拠がない・unsupported・mode 不一致・bash ready 未確認の pane は、印を作らず既存の印と shim を除去する。0.2.36 からの live handoff で受け取った未適用 pane の既存印も受信直後に除去し、stderr と画面の未適用警告は保持する。未適用 pane の `HERDR_GUARD_ENFORCING=1` だけで ai_guard を止める状態を作らない。
   - `[guard].enabled = false` のとき shim・ZDOTDIR・BASH_ENV・marker の環境変数を一切差し込まない。
   - ペイン識別を持たない spawn（popup・overlay の `without_pane_identity` など）には差し込まず、通常のペイン spawn の既存環境変数を壊さない。
 
@@ -2294,7 +2324,7 @@
 - **該当コミット**: feat/command-guardの実装
 - **分類**: CORE-RUNTIME
 - **status: fork独自・保持 (C)** — herdr が把握するペインのエージェント情報だけで判定対象を決める。`[guard].mode = "record"` は移植時点の記録のみ挙動をそのまま保つ。
-- **挙動**: `<state>/guard/agent-panes/<p_N>.json` の marker は herdr のペインのエージェント状態（`agent start`・検出・解除・ペイン終了・ペイン close）に同期する。`herdr guard exec` は marker が存在するときだけ判定して `<state>/guard/decisions.jsonl` に1行1JSONで追記する。record モードではその後は判定に関係なく必ず本物のコマンドを実行し、判断待ち（decision）は作らない。
+- **挙動**: `<state>/guard/agent-panes/<p_N>.json` の marker は起動時の適用証拠が現在の mode で有効なペインに限り、herdr のペインのエージェント状態（`agent start`・検出・解除・ペイン終了・ペイン close）に同期する。`herdr guard exec` は marker が存在するときだけ判定して `<state>/guard/decisions.jsonl` に1行1JSONで追記する。record モードではその後は判定に関係なく必ず本物のコマンドを実行し、判断待ち（decision）は作らない。
 - **受け入れ条件**:
   - エージェント情報を持つペインでは対象コマンドが判定・記録され、エージェント情報を持たないペイン（人が使うペイン）では同じコマンドを打っても判定・記録が起きず、コマンドはそのまま実行される。
   - marker はエージェントの開始・解除・ペインの終了・close で同期され、残ったままの marker が無いペインを後からエージェント扱いしない。

@@ -1963,7 +1963,7 @@ impl App {
                 .or(params.session_id.as_deref());
             let _ = store.upsert_actor(
                 "agent",
-                &agent_label,
+                &format!("p{}", pane_id.raw()),
                 Some(&params.source),
                 params.model.as_deref(),
                 session_id,

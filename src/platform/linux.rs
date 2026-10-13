@@ -306,6 +306,28 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
     std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
 }
 
+/// Paths of regular files a process currently holds open.
+///
+/// Reads `/proc/<pid>/fd` symlinks and keeps absolute filesystem targets;
+/// socket/pipe/anon-inode links are not absolute paths and drop out.
+pub fn process_open_files(pid: u32) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if pid == 0 {
+        return paths;
+    }
+    let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return paths;
+    };
+    for entry in entries.flatten() {
+        if let Ok(target) = std::fs::read_link(entry.path()) {
+            if target.is_absolute() {
+                paths.push(target);
+            }
+        }
+    }
+    paths
+}
+
 pub fn process_started_at(pid: u32) -> Option<std::time::SystemTime> {
     if pid == 0 {
         return None;
