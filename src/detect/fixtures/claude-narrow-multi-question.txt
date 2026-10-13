@@ -1,0 +1,21 @@
+  (description "For the local team.") and English
+  (description "For wider sharing."). Use preview
+  fields if the tool supports them. Wait for answers.
+
+  Thought for 5s (ctrl+o to expand)
+──────────────────────────────────────────────────────
+←  ☐ Sections  ☐ Language  ✔ Submit  →
+
+Which sections should the report include?
+
+❯ 1. [ ] Summary
+         A concise overview.
+  2. [ ] Evidence
+         Commands and outputs.
+  3. [ ] Type something
+     Next
+──────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to
+cancel

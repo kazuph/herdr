@@ -1830,12 +1830,13 @@
 - **目的**: 新しい検出ルールを再起動なしで効かせつつ、fork独自のDevin作業状態ルールが本家配信で黙って消えないようにする。
 - **挙動**:
   - 稼働中serverは、別processが既にdownloadしたremote manifestも有効化する。
-  - bundled Claude manifestは本家2026.09.11.1に揃える（turn後のbackground shellだけではworkingにしない、MCP elicitationはblocked）。Devinは`(esc twice to interrupt)`や待ち行列barがある間はworking、待ち行列だけのidle promptはidle。
+  - bundled Claude manifestは2026.10.14.1を使う（turn後のbackground shellだけではworkingにしない、MCP elicitationはblocked）。Claudeの質問footerは、端末幅でEnter・移動・Escの操作案内が改行されても同じblocked判定にする。操作案内全体が連続するfooterだけを対象とし、本文の別々の「esc to」と「cancel」ではblockedにしない。Devinは`(esc twice to interrupt)`や待ち行列barがある間はworking、待ち行列だけのidle promptはidle。
   - bundled manifestは`fork_owned = true`を宣言でき、その agentはherdr.devのより新しいmanifestがあってもbundledを使う。Devinはfork所有。flagの無いagent（Claudeなど）は本家更新を受ける。explainは理由を示す。
 - **受け入れ条件**:
   - 他processがdownload済みのmanifestが再起動なしで有効になる。
   - fork所有のbundled manifestはより新しいremote manifestで置き換わらない。
   - fork所有でないagentはremote manifestの更新を受ける。
+  - Claudeの複数タブ・multiSelect質問は、端末幅でfooterの操作案内が折れてもblockedとなり工程6の判断待ちが作られる。広いpaneの既存判定と通常のidleは維持し、本文の別々の「esc to」と「cancel」ではblockedにしない。
 - **デグレ判定**: Devinのfork独自ルールが本家配信で消える、またはClaudeが本家更新を受けなくなる。
 
 ### live handoffでのmouse報告状態の引継ぎ

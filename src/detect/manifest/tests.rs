@@ -1193,3 +1193,41 @@ fn letta_profile_selector_keeps_prior_state() {
         assert!(result.skip_state_update);
     });
 }
+
+#[test]
+fn claude_narrow_question_footer_wraps_are_blocked() {
+    with_manifest_dirs("claude-narrow-question", || {
+        let screen = include_str!("../fixtures/claude-narrow-multi-question.txt");
+        let footer = "Enter to select · Tab/Arrow keys to navigate · Esc to cancel";
+        let wide = screen.replace("Esc to\ncancel", "Esc to cancel");
+        let mut variants = vec![screen.to_string(), wide.clone()];
+        // Every whitespace boundary can become a physical footer line break.
+        for (offset, _) in footer.match_indices(' ') {
+            let mut wrapped = footer.to_string();
+            wrapped.replace_range(offset..offset + 1, "\n");
+            variants.push(wide.replace(footer, &wrapped));
+        }
+        variants.push(wide.replace(footer, &footer.replace(' ', "\n")));
+        for screen in variants {
+            let result = explain(Agent::Claude, &screen);
+            assert_eq!(result.state, AgentState::Blocked, "{screen}");
+            assert!(result.visible_blocker);
+            assert_eq!(result.matched_rule.unwrap().id, "live_blocked_form");
+        }
+    });
+}
+
+#[test]
+fn claude_separate_cancel_prose_does_not_match_wrapped_footer() {
+    with_manifest_dirs("claude-narrow-negative", || {
+        for screen in [
+            "──────────\n❯ \n? for shortcuts\n",
+            "──────────\nEnter to select · Tab/Arrow keys to navigate · Esc to\nThis is ordinary prose about an action.\ncancel\n❯ \n",
+            "──────────\nThe text mentions esc to\ncancel a task later.\n❯ \n",
+        ] {
+            let result = explain(Agent::Claude, screen);
+            assert_eq!(result.state, AgentState::Idle, "{screen}");
+            assert!(!result.visible_blocker);
+        }
+    });
+}
