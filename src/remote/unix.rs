@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 #[path = "saved.rs"]
 mod saved;
-pub(crate) use saved::connect_saved_ssh;
+pub(crate) use saved::{approval_pending, connect_saved_ssh, retry_approval_open};
 #[cfg(test)]
 pub(crate) use saved::{test_fakes, test_hooks};
 
