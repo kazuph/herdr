@@ -4495,6 +4495,9 @@ fn is_keybinding_config_diagnostic(diagnostic: &str) -> bool {
 
 /// Run the headless server. This is the entry point called from main.rs.
 pub fn run_server() -> io::Result<()> {
+    // The server is often started from inside an agent session; scrub those
+    // session markers before any worker thread or child can inherit them.
+    crate::integration::scrub_inherited_agent_session_env_process_env();
     init_logging();
     crate::platform::raise_server_nofile_limit();
 

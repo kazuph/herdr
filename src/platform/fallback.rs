@@ -69,6 +69,11 @@ pub fn process_started_at(_pid: u32) -> Option<std::time::SystemTime> {
 }
 
 /// Unsupported platform stub.
+pub fn process_open_files(_pid: u32) -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// Unsupported platform stub.
 pub fn session_processes(_child_pid: u32) -> Vec<u32> {
     Vec::new()
 }

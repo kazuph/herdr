@@ -1517,6 +1517,7 @@ fn scrub_herdr_runtime_env(command: &mut Command) {
     ] {
         command.env_remove(key);
     }
+    crate::integration::scrub_inherited_agent_session_env_process(command);
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("HERDR_PLUGIN_") {
             command.env_remove(key);

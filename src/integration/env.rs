@@ -17,6 +17,69 @@ pub(crate) const COPILOT_HOME_ENV_VAR: &str = "COPILOT_HOME";
 pub(crate) const QODERCLI_CONFIG_DIR_ENV_VAR: &str = "QODER_CONFIG_DIR";
 pub(crate) const CURSOR_CONFIG_DIR_ENV_VAR: &str = "CURSOR_CONFIG_DIR";
 
+/// Environment variables that identify one specific running agent session.
+///
+/// Herdr servers are often started from inside an agent session, so these
+/// markers can end up in the server environment and would otherwise leak into
+/// every pane the server spawns. A pane is a fresh top-level context, never a
+/// child of the agent session that hosted the server, so the markers must not
+/// propagate. Claude Code in particular treats an inherited
+/// `CLAUDE_CODE_CHILD_SESSION` as proof it is a sub-agent session and turns
+/// transcript persistence off, which also removes the
+/// `sessions/<pid>.json` record Herdr uses to observe the session id.
+///
+/// Only session- or instance-scoped markers belong here, measured from a
+/// real Claude Code child environment (`AI_AGENT`, `CLAUDECODE`,
+/// `CLAUDE_PID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_ENTRYPOINT`,
+/// `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_MESSAGING_SOCKET`,
+/// `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_CODE_SESSION_ATTENDED`,
+/// `CLAUDE_CODE_SESSION_ID`). Configuration-style variables
+/// (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, effort/feature toggles) must keep
+/// flowing to pane children.
+const INHERITED_AGENT_SESSION_ENV_VARS: &[&str] = &[
+    // Claude Code marks the processes it spawns so tools know they run
+    // inside an agent session; a fresh pane is not that session's child.
+    "AI_AGENT",
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    // Codex exposes its session id to spawned children; a new pane starts a
+    // new thread, not the inherited one.
+    "CODEX_THREAD_ID",
+    // Herdr's own foreground-process identity hint; a plain pane shell is
+    // not the wrapped agent it names.
+    "HERDR_AGENT",
+];
+
+pub(crate) fn scrub_inherited_agent_session_env(cmd: &mut CommandBuilder) {
+    for name in INHERITED_AGENT_SESSION_ENV_VARS {
+        cmd.env_remove(name);
+    }
+}
+
+/// Same scrub for detached `std::process::Command` children (`herdr run`
+/// jobs and similar non-pty spawns).
+pub(crate) fn scrub_inherited_agent_session_env_process(command: &mut std::process::Command) {
+    for name in INHERITED_AGENT_SESSION_ENV_VARS {
+        command.env_remove(name);
+    }
+}
+
+/// Drop inherited agent-session markers from the running process itself,
+/// e.g. a server that was started inside an agent session. Call before
+/// spawning worker threads so no thread reads the environment mid-scrub.
+pub(crate) fn scrub_inherited_agent_session_env_process_env() {
+    for name in INHERITED_AGENT_SESSION_ENV_VARS {
+        std::env::remove_var(name);
+    }
+}
+
 pub(crate) fn apply_pane_base_env(cmd: &mut CommandBuilder) {
     cmd.env(crate::api::SOCKET_PATH_ENV_VAR, crate::api::socket_path());
     cmd.env(crate::api::SOCKET_PATH_EXPLICIT_ENV_VAR, "1");
@@ -165,6 +228,67 @@ pub(crate) fn integration_env_lock() -> MutexGuard<'static, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrub_removes_inherited_agent_session_markers_but_keeps_config() {
+        let mut command = CommandBuilder::new("/bin/sh");
+        for name in [
+            "AI_AGENT",
+            "CLAUDECODE",
+            "CLAUDE_PID",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ATTENDED",
+            "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_MESSAGING_TOKEN",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_EXECPATH",
+            "CODEX_THREAD_ID",
+            "HERDR_AGENT",
+        ] {
+            command.env(name, "leaked");
+        }
+        command.env(CLAUDE_CONFIG_DIR_ENV_VAR, "/tmp/claude-config");
+        command.env(CODEX_HOME_ENV_VAR, "/tmp/codex-home");
+        command.env("CLAUDE_EFFORT", "medium");
+
+        scrub_inherited_agent_session_env(&mut command);
+
+        for name in [
+            "AI_AGENT",
+            "CLAUDECODE",
+            "CLAUDE_PID",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_SESSION_ATTENDED",
+            "CLAUDE_CODE_MESSAGING_SOCKET",
+            "CLAUDE_CODE_MESSAGING_TOKEN",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CLAUDE_CODE_EXECPATH",
+            "CODEX_THREAD_ID",
+            "HERDR_AGENT",
+        ] {
+            assert!(command.get_env(name).is_none(), "{name} must be scrubbed");
+        }
+        assert_eq!(
+            command
+                .get_env(CLAUDE_CONFIG_DIR_ENV_VAR)
+                .and_then(std::ffi::OsStr::to_str),
+            Some("/tmp/claude-config")
+        );
+        assert_eq!(
+            command
+                .get_env(CODEX_HOME_ENV_VAR)
+                .and_then(std::ffi::OsStr::to_str),
+            Some("/tmp/codex-home")
+        );
+        assert_eq!(
+            command
+                .get_env("CLAUDE_EFFORT")
+                .and_then(std::ffi::OsStr::to_str),
+            Some("medium")
+        );
+    }
 
     #[test]
     fn pane_base_env_marks_parent_socket_as_explicit() {

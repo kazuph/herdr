@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 511,
+    "active_contract_count": 514,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -3220,7 +3220,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:659"
+        "SPEC.md:660"
       ],
       "test_status": [
         "unverified"
@@ -3244,7 +3244,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:660"
+        "SPEC.md:661"
       ],
       "test_status": [
         "unverified"
@@ -3268,7 +3268,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:661"
+        "SPEC.md:662"
       ],
       "test_status": [
         "unverified"
@@ -3292,7 +3292,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:662"
+        "SPEC.md:663"
       ],
       "test_status": [
         "unverified"
@@ -3316,7 +3316,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:663"
+        "SPEC.md:664"
       ],
       "test_status": [
         "unverified"
@@ -3340,7 +3340,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:664"
+        "SPEC.md:665"
       ],
       "test_status": [
         "unverified"
@@ -3364,7 +3364,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:665"
+        "SPEC.md:666"
       ],
       "test_status": [
         "unverified"
@@ -3388,7 +3388,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:666"
+        "SPEC.md:667"
       ],
       "test_status": [
         "unverified"
@@ -3412,7 +3412,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:667"
+        "SPEC.md:668"
       ],
       "test_status": [
         "unverified"
@@ -3436,30 +3436,6 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:668"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-a1b795c138",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
         "SPEC.md:669"
       ],
       "test_status": [
@@ -3473,31 +3449,37 @@
       ]
     },
     {
-      "contract_id": "G3-77fbc1bd46",
+      "contract_id": "G3-018f08bd7a",
       "dimensions": [
         "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
+        "codex session observation",
+        "fail-closed attribution"
       ],
       "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
+        "rust_test_target:codex_rollout_scan_returns_single_matching_session",
+        "rust_test_target:codex_rollout_scan_fail_closed_on_ambiguity_and_unreadable",
+        "rust_test_target:codex_rollout_for_start_matches_exact_cwd_and_process_start",
+        "rust_test_target:codex_open_files_match_returns_the_held_session",
+        "drift_source_anchor:src/agent_sessions.rs",
+        "platform_live_acceptance:macos_real_codex_home_and_repo_cwd_2026_10_13"
       ],
       "source_anchors": [
-        "SPEC.md:670"
+        "SPEC.md:670",
+        "src/agent_sessions.rs:272",
+        "src/pane.rs:654"
       ],
       "test_status": [
-        "unverified"
+        "static_verified"
       ],
       "live_status": [
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
+        "Linux live acceptance unverified; concurrent same-cwd codex panes correctly fail closed by test, real-machine proof pending"
       ]
     },
     {
-      "contract_id": "G3-ff8d577464",
+      "contract_id": "G3-a1b795c138",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -3521,7 +3503,7 @@
       ]
     },
     {
-      "contract_id": "G3-3bafff4adf",
+      "contract_id": "G3-77fbc1bd46",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -3545,55 +3527,55 @@
       ]
     },
     {
+      "contract_id": "G3-ff8d577464",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:673"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
+      "contract_id": "G3-3bafff4adf",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:674"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
       "contract_id": "G3-c84e71f394",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:696"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-5cf363994e",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:697"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-bac2a3a038",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -3617,7 +3599,7 @@
       ]
     },
     {
-      "contract_id": "G3-919090df68",
+      "contract_id": "G3-5cf363994e",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -3641,55 +3623,55 @@
       ]
     },
     {
+      "contract_id": "G3-bac2a3a038",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:700"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
+      "contract_id": "G3-919090df68",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:701"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
       "contract_id": "G3-c237a240b9",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:717"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-05bc317a33",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:718"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-e3958be774",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -3713,55 +3695,55 @@
       ]
     },
     {
+      "contract_id": "G3-05bc317a33",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:720"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
+      "contract_id": "G3-e3958be774",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:721"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
       "contract_id": "G3-27feed47fb",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:736"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-3d23ba95fa",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:737"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-36eb36ebfa",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -3785,55 +3767,55 @@
       ]
     },
     {
+      "contract_id": "G3-3d23ba95fa",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:739"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
+      "contract_id": "G3-36eb36ebfa",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:740"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
       "contract_id": "G3-8ee1730ad9",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:756"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-0c46d217e9",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:757"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-e9bbc075dc",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -3857,55 +3839,55 @@
       ]
     },
     {
+      "contract_id": "G3-0c46d217e9",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:759"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
+      "contract_id": "G3-e9bbc075dc",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:760"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
       "contract_id": "G3-c422c6356a",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:782"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-886c8ea64a",
-      "dimensions": [
-        "agent session identity",
-        "restore failure behavior",
-        "restart lifecycle"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/persist/restore.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:783"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "post-restart multi-agent runtime unverified"
-      ]
-    },
-    {
-      "contract_id": "G3-cb15e33129",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -3929,7 +3911,7 @@
       ]
     },
     {
-      "contract_id": "G3-e7166bf549",
+      "contract_id": "G3-886c8ea64a",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -3953,7 +3935,7 @@
       ]
     },
     {
-      "contract_id": "G3-1eb76c01ab",
+      "contract_id": "G3-cb15e33129",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -3977,7 +3959,7 @@
       ]
     },
     {
-      "contract_id": "G3-9e5d86b366",
+      "contract_id": "G3-e7166bf549",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -4001,7 +3983,7 @@
       ]
     },
     {
-      "contract_id": "G3-9d387333ab",
+      "contract_id": "G3-1eb76c01ab",
       "dimensions": [
         "agent session identity",
         "restore failure behavior",
@@ -4025,55 +4007,55 @@
       ]
     },
     {
+      "contract_id": "G3-9e5d86b366",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:789"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
+      "contract_id": "G3-9d387333ab",
+      "dimensions": [
+        "agent session identity",
+        "restore failure behavior",
+        "restart lifecycle"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/persist/restore.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:790"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "post-restart multi-agent runtime unverified"
+      ]
+    },
+    {
       "contract_id": "G4-a38f201823",
-      "dimensions": [
-        "notification target",
-        "delivery channel",
-        "platform action"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/api.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:880"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "platform notification click acceptance unverified"
-      ]
-    },
-    {
-      "contract_id": "G4-0891c4f3b5",
-      "dimensions": [
-        "notification target",
-        "delivery channel",
-        "platform action"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/api.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:881"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "platform notification click acceptance unverified"
-      ]
-    },
-    {
-      "contract_id": "G4-bf762fd46b",
       "dimensions": [
         "notification target",
         "delivery channel",
@@ -4097,7 +4079,7 @@
       ]
     },
     {
-      "contract_id": "G4-9ed583cd71",
+      "contract_id": "G4-0891c4f3b5",
       "dimensions": [
         "notification target",
         "delivery channel",
@@ -4121,7 +4103,7 @@
       ]
     },
     {
-      "contract_id": "G4-439ace5cad",
+      "contract_id": "G4-bf762fd46b",
       "dimensions": [
         "notification target",
         "delivery channel",
@@ -4145,55 +4127,55 @@
       ]
     },
     {
+      "contract_id": "G4-9ed583cd71",
+      "dimensions": [
+        "notification target",
+        "delivery channel",
+        "platform action"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/api.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:885"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "platform notification click acceptance unverified"
+      ]
+    },
+    {
+      "contract_id": "G4-439ace5cad",
+      "dimensions": [
+        "notification target",
+        "delivery channel",
+        "platform action"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/api.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:886"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "platform notification click acceptance unverified"
+      ]
+    },
+    {
       "contract_id": "G4-6d6af31689",
-      "dimensions": [
-        "notification target",
-        "delivery channel",
-        "platform action"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/api.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:904"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "platform notification click acceptance unverified"
-      ]
-    },
-    {
-      "contract_id": "G4-76d5e82994",
-      "dimensions": [
-        "notification target",
-        "delivery channel",
-        "platform action"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/api.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:905"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "platform notification click acceptance unverified"
-      ]
-    },
-    {
-      "contract_id": "G4-3fb25362be",
       "dimensions": [
         "notification target",
         "delivery channel",
@@ -4217,7 +4199,7 @@
       ]
     },
     {
-      "contract_id": "G4-ed385ca1b2",
+      "contract_id": "G4-76d5e82994",
       "dimensions": [
         "notification target",
         "delivery channel",
@@ -4241,7 +4223,7 @@
       ]
     },
     {
-      "contract_id": "G4-1051a2441f",
+      "contract_id": "G4-3fb25362be",
       "dimensions": [
         "notification target",
         "delivery channel",
@@ -4265,55 +4247,55 @@
       ]
     },
     {
+      "contract_id": "G4-ed385ca1b2",
+      "dimensions": [
+        "notification target",
+        "delivery channel",
+        "platform action"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/api.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:909"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "platform notification click acceptance unverified"
+      ]
+    },
+    {
+      "contract_id": "G4-1051a2441f",
+      "dimensions": [
+        "notification target",
+        "delivery channel",
+        "platform action"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/api.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:910"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "platform notification click acceptance unverified"
+      ]
+    },
+    {
       "contract_id": "G4-e420673c68",
-      "dimensions": [
-        "notification target",
-        "delivery channel",
-        "platform action"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/api.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:933"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "platform notification click acceptance unverified"
-      ]
-    },
-    {
-      "contract_id": "G4-91397766bd",
-      "dimensions": [
-        "notification target",
-        "delivery channel",
-        "platform action"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/api.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:934"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "platform notification click acceptance unverified"
-      ]
-    },
-    {
-      "contract_id": "G4-3f5f744fcb",
       "dimensions": [
         "notification target",
         "delivery channel",
@@ -4337,7 +4319,7 @@
       ]
     },
     {
-      "contract_id": "G4-8b6304ac1e",
+      "contract_id": "G4-91397766bd",
       "dimensions": [
         "notification target",
         "delivery channel",
@@ -4361,7 +4343,7 @@
       ]
     },
     {
-      "contract_id": "G4-9713c032ec",
+      "contract_id": "G4-3f5f744fcb",
       "dimensions": [
         "notification target",
         "delivery channel",
@@ -4385,55 +4367,55 @@
       ]
     },
     {
+      "contract_id": "G4-8b6304ac1e",
+      "dimensions": [
+        "notification target",
+        "delivery channel",
+        "platform action"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/api.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:938"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "platform notification click acceptance unverified"
+      ]
+    },
+    {
+      "contract_id": "G4-9713c032ec",
+      "dimensions": [
+        "notification target",
+        "delivery channel",
+        "platform action"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/api.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:939"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "platform notification click acceptance unverified"
+      ]
+    },
+    {
       "contract_id": "G4-63a7e22464",
-      "dimensions": [
-        "notification target",
-        "delivery channel",
-        "platform action"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/api.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:957"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "platform notification click acceptance unverified"
-      ]
-    },
-    {
-      "contract_id": "G4-058a2b8ef0",
-      "dimensions": [
-        "notification target",
-        "delivery channel",
-        "platform action"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/api.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:958"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "platform notification click acceptance unverified"
-      ]
-    },
-    {
-      "contract_id": "G4-dc3401add6",
       "dimensions": [
         "notification target",
         "delivery channel",
@@ -4457,55 +4439,55 @@
       ]
     },
     {
+      "contract_id": "G4-058a2b8ef0",
+      "dimensions": [
+        "notification target",
+        "delivery channel",
+        "platform action"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/api.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:960"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "platform notification click acceptance unverified"
+      ]
+    },
+    {
+      "contract_id": "G4-dc3401add6",
+      "dimensions": [
+        "notification target",
+        "delivery channel",
+        "platform action"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/api.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:961"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "platform notification click acceptance unverified"
+      ]
+    },
+    {
       "contract_id": "G5-b9b3e903b9",
-      "dimensions": [
-        "public pane identity",
-        "caller resolution",
-        "API failure behavior"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/ids.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:983"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "live caller-process resolution unverified"
-      ]
-    },
-    {
-      "contract_id": "G5-fa083ced55",
-      "dimensions": [
-        "public pane identity",
-        "caller resolution",
-        "API failure behavior"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/ids.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:984"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "live caller-process resolution unverified"
-      ]
-    },
-    {
-      "contract_id": "G5-7f2fd08042",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4529,7 +4511,7 @@
       ]
     },
     {
-      "contract_id": "G5-9fdfbd6cf4",
+      "contract_id": "G5-fa083ced55",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4553,7 +4535,7 @@
       ]
     },
     {
-      "contract_id": "G5-cb44afa0f8",
+      "contract_id": "G5-7f2fd08042",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4577,55 +4559,55 @@
       ]
     },
     {
+      "contract_id": "G5-9fdfbd6cf4",
+      "dimensions": [
+        "public pane identity",
+        "caller resolution",
+        "API failure behavior"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/ids.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:988"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "live caller-process resolution unverified"
+      ]
+    },
+    {
+      "contract_id": "G5-cb44afa0f8",
+      "dimensions": [
+        "public pane identity",
+        "caller resolution",
+        "API failure behavior"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/ids.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:989"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "live caller-process resolution unverified"
+      ]
+    },
+    {
       "contract_id": "G5-1bb1bf718d",
-      "dimensions": [
-        "public pane identity",
-        "caller resolution",
-        "API failure behavior"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/ids.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1011"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "live caller-process resolution unverified"
-      ]
-    },
-    {
-      "contract_id": "G5-6c3b4c4110",
-      "dimensions": [
-        "public pane identity",
-        "caller resolution",
-        "API failure behavior"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/ids.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1012"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "live caller-process resolution unverified"
-      ]
-    },
-    {
-      "contract_id": "G5-9ef6bbc53c",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4649,7 +4631,7 @@
       ]
     },
     {
-      "contract_id": "G5-e66e1f8468",
+      "contract_id": "G5-6c3b4c4110",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4673,7 +4655,7 @@
       ]
     },
     {
-      "contract_id": "G5-55aa7ed470",
+      "contract_id": "G5-9ef6bbc53c",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4697,55 +4679,55 @@
       ]
     },
     {
+      "contract_id": "G5-e66e1f8468",
+      "dimensions": [
+        "public pane identity",
+        "caller resolution",
+        "API failure behavior"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/ids.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1016"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "live caller-process resolution unverified"
+      ]
+    },
+    {
+      "contract_id": "G5-55aa7ed470",
+      "dimensions": [
+        "public pane identity",
+        "caller resolution",
+        "API failure behavior"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/ids.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1017"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "live caller-process resolution unverified"
+      ]
+    },
+    {
       "contract_id": "G5-7681f38bbb",
-      "dimensions": [
-        "public pane identity",
-        "caller resolution",
-        "API failure behavior"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/ids.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1036"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "live caller-process resolution unverified"
-      ]
-    },
-    {
-      "contract_id": "G5-4db8f2c7d1",
-      "dimensions": [
-        "public pane identity",
-        "caller resolution",
-        "API failure behavior"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/ids.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1037"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "live caller-process resolution unverified"
-      ]
-    },
-    {
-      "contract_id": "G5-c09c7b979b",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4769,7 +4751,7 @@
       ]
     },
     {
-      "contract_id": "G5-b1236ea5fa",
+      "contract_id": "G5-4db8f2c7d1",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4793,7 +4775,7 @@
       ]
     },
     {
-      "contract_id": "G5-d5b4653c96",
+      "contract_id": "G5-c09c7b979b",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4817,55 +4799,55 @@
       ]
     },
     {
+      "contract_id": "G5-b1236ea5fa",
+      "dimensions": [
+        "public pane identity",
+        "caller resolution",
+        "API failure behavior"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/ids.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1041"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "live caller-process resolution unverified"
+      ]
+    },
+    {
+      "contract_id": "G5-d5b4653c96",
+      "dimensions": [
+        "public pane identity",
+        "caller resolution",
+        "API failure behavior"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/ids.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1042"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "live caller-process resolution unverified"
+      ]
+    },
+    {
       "contract_id": "G5-650b5a23d1",
-      "dimensions": [
-        "public pane identity",
-        "caller resolution",
-        "API failure behavior"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/ids.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1062"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "live caller-process resolution unverified"
-      ]
-    },
-    {
-      "contract_id": "G5-41c2bbc50a",
-      "dimensions": [
-        "public pane identity",
-        "caller resolution",
-        "API failure behavior"
-      ],
-      "verification_methods": [
-        "drift_source_anchor:src/app/ids.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1063"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "live caller-process resolution unverified"
-      ]
-    },
-    {
-      "contract_id": "G5-94c777f0cc",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4889,7 +4871,7 @@
       ]
     },
     {
-      "contract_id": "G5-c143ae7b61",
+      "contract_id": "G5-41c2bbc50a",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4913,7 +4895,7 @@
       ]
     },
     {
-      "contract_id": "G5-fa613ceede",
+      "contract_id": "G5-94c777f0cc",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4937,7 +4919,7 @@
       ]
     },
     {
-      "contract_id": "G5-8db7ded44c",
+      "contract_id": "G5-c143ae7b61",
       "dimensions": [
         "public pane identity",
         "caller resolution",
@@ -4949,6 +4931,54 @@
       ],
       "source_anchors": [
         "SPEC.md:1067"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "live caller-process resolution unverified"
+      ]
+    },
+    {
+      "contract_id": "G5-fa613ceede",
+      "dimensions": [
+        "public pane identity",
+        "caller resolution",
+        "API failure behavior"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/ids.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1068"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "live caller-process resolution unverified"
+      ]
+    },
+    {
+      "contract_id": "G5-8db7ded44c",
+      "dimensions": [
+        "public pane identity",
+        "caller resolution",
+        "API failure behavior"
+      ],
+      "verification_methods": [
+        "drift_source_anchor:src/app/ids.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1069"
       ],
       "test_status": [
         "unverified"
@@ -4973,7 +5003,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1092"
+        "SPEC.md:1094"
       ],
       "test_status": [
         "unverified"
@@ -4997,7 +5027,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1093"
+        "SPEC.md:1095"
       ],
       "test_status": [
         "unverified"
@@ -5022,7 +5052,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1094",
+        "SPEC.md:1096",
         "src/app/ids.rs:47"
       ],
       "test_status": [
@@ -5051,7 +5081,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1095",
+        "SPEC.md:1097",
         "src/workspace.rs:132",
         "src/app/ids.rs:47",
         "src/app/api/plugins/runtime.rs:73",
@@ -5080,7 +5110,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1096"
+        "SPEC.md:1098"
       ],
       "test_status": [
         "unverified"
@@ -5104,7 +5134,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1097"
+        "SPEC.md:1099"
       ],
       "test_status": [
         "unverified"
@@ -5128,7 +5158,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1098"
+        "SPEC.md:1100"
       ],
       "test_status": [
         "unverified"
@@ -5153,7 +5183,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1115"
+        "SPEC.md:1117"
       ],
       "test_status": [
         "unverified"
@@ -5178,7 +5208,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1116"
+        "SPEC.md:1118"
       ],
       "test_status": [
         "unverified"
@@ -5203,7 +5233,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1117"
+        "SPEC.md:1119"
       ],
       "test_status": [
         "unverified"
@@ -5227,7 +5257,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1140"
+        "SPEC.md:1142"
       ],
       "test_status": [
         "unverified"
@@ -5251,7 +5281,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1141"
+        "SPEC.md:1143"
       ],
       "test_status": [
         "unverified"
@@ -5275,7 +5305,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1142"
+        "SPEC.md:1144"
       ],
       "test_status": [
         "unverified"
@@ -5299,7 +5329,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1143"
+        "SPEC.md:1145"
       ],
       "test_status": [
         "unverified"
@@ -5323,7 +5353,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1144"
+        "SPEC.md:1146"
       ],
       "test_status": [
         "unverified"
@@ -5347,7 +5377,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1165"
+        "SPEC.md:1167"
       ],
       "test_status": [
         "unverified"
@@ -5371,7 +5401,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1166"
+        "SPEC.md:1168"
       ],
       "test_status": [
         "unverified"
@@ -5395,7 +5425,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1167"
+        "SPEC.md:1169"
       ],
       "test_status": [
         "unverified"
@@ -5419,7 +5449,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1168"
+        "SPEC.md:1170"
       ],
       "test_status": [
         "unverified"
@@ -5443,7 +5473,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1181"
+        "SPEC.md:1183"
       ],
       "test_status": [
         "unverified"
@@ -5467,7 +5497,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1182"
+        "SPEC.md:1184"
       ],
       "test_status": [
         "unverified"
@@ -5491,7 +5521,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1183"
+        "SPEC.md:1185"
       ],
       "test_status": [
         "unverified"
@@ -5515,7 +5545,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1184"
+        "SPEC.md:1186"
       ],
       "test_status": [
         "unverified"
@@ -5539,7 +5569,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1198"
+        "SPEC.md:1200"
       ],
       "test_status": [
         "unverified"
@@ -5563,7 +5593,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1199"
+        "SPEC.md:1201"
       ],
       "test_status": [
         "unverified"
@@ -5587,7 +5617,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1200"
+        "SPEC.md:1202"
       ],
       "test_status": [
         "unverified"
@@ -5611,7 +5641,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1249"
+        "SPEC.md:1251"
       ],
       "test_status": [
         "unverified"
@@ -5635,7 +5665,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1250"
+        "SPEC.md:1252"
       ],
       "test_status": [
         "unverified"
@@ -5659,7 +5689,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1251"
+        "SPEC.md:1253"
       ],
       "test_status": [
         "unverified"
@@ -5683,7 +5713,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1252"
+        "SPEC.md:1254"
       ],
       "test_status": [
         "unverified"
@@ -5707,7 +5737,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1272"
+        "SPEC.md:1274"
       ],
       "test_status": [
         "unverified"
@@ -5731,7 +5761,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1273"
+        "SPEC.md:1275"
       ],
       "test_status": [
         "unverified"
@@ -5755,7 +5785,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1274"
+        "SPEC.md:1276"
       ],
       "test_status": [
         "unverified"
@@ -5779,7 +5809,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1275"
+        "SPEC.md:1277"
       ],
       "test_status": [
         "unverified"
@@ -5803,7 +5833,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1300"
+        "SPEC.md:1302"
       ],
       "test_status": [
         "unverified"
@@ -5827,7 +5857,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1301"
+        "SPEC.md:1303"
       ],
       "test_status": [
         "unverified"
@@ -5851,7 +5881,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1302"
+        "SPEC.md:1304"
       ],
       "test_status": [
         "unverified"
@@ -5875,7 +5905,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1303"
+        "SPEC.md:1305"
       ],
       "test_status": [
         "unverified"
@@ -5899,7 +5929,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1304"
+        "SPEC.md:1306"
       ],
       "test_status": [
         "unverified"
@@ -5923,7 +5953,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1305"
+        "SPEC.md:1307"
       ],
       "test_status": [
         "unverified"
@@ -5947,7 +5977,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1307"
+        "SPEC.md:1309"
       ],
       "test_status": [
         "unverified"
@@ -5971,7 +6001,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1308"
+        "SPEC.md:1310"
       ],
       "test_status": [
         "unverified"
@@ -5995,7 +6025,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1327"
+        "SPEC.md:1329"
       ],
       "test_status": [
         "unverified"
@@ -6019,7 +6049,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1328"
+        "SPEC.md:1330"
       ],
       "test_status": [
         "unverified"
@@ -6043,7 +6073,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1329"
+        "SPEC.md:1331"
       ],
       "test_status": [
         "unverified"
@@ -6053,6 +6083,62 @@
       ],
       "unrepresented_dimensions": [
         "PTY and device input acceptance unverified"
+      ]
+    },
+    {
+      "contract_id": "G6-c12dfd5997",
+      "dimensions": [
+        "pane launch environment",
+        "agent session identity",
+        "child process environment"
+      ],
+      "verification_methods": [
+        "rust_test_target:scrub_removes_inherited_agent_session_markers_but_keeps_config",
+        "drift_source_anchor:src/integration/env.rs",
+        "platform_live_acceptance:macos_polluted_env_server_real_claude_2026_10_13"
+      ],
+      "source_anchors": [
+        "SPEC.md:1347",
+        "src/integration/env.rs:39",
+        "src/pane.rs:115",
+        "src/server/headless.rs:4497"
+      ],
+      "test_status": [
+        "static_verified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Linux and Windows spawn-path live acceptance unverified; plugin-spawn coverage is code-path review plus shared scrub test"
+      ]
+    },
+    {
+      "contract_id": "G6-7a8a05be10",
+      "dimensions": [
+        "pane launch environment",
+        "agent session identity",
+        "child process environment"
+      ],
+      "verification_methods": [
+        "rust_test_target:scrub_removes_inherited_agent_session_markers_but_keeps_config",
+        "drift_source_anchor:src/integration/env.rs",
+        "platform_live_acceptance:macos_polluted_env_server_real_claude_2026_10_13"
+      ],
+      "source_anchors": [
+        "SPEC.md:1348",
+        "src/integration/env.rs:39",
+        "src/pane.rs:115",
+        "src/server/headless.rs:4497"
+      ],
+      "test_status": [
+        "static_verified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Linux and Windows spawn-path live acceptance unverified; plugin-spawn coverage is code-path review plus shared scrub test"
       ]
     },
     {
@@ -6067,7 +6153,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1341"
+        "SPEC.md:1358"
       ],
       "test_status": [
         "unverified"
@@ -6091,7 +6177,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1342"
+        "SPEC.md:1359"
       ],
       "test_status": [
         "unverified"
@@ -6115,7 +6201,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1343"
+        "SPEC.md:1360"
       ],
       "test_status": [
         "unverified"
@@ -6139,7 +6225,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1344"
+        "SPEC.md:1361"
       ],
       "test_status": [
         "unverified"
@@ -6163,7 +6249,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1368"
+        "SPEC.md:1385"
       ],
       "test_status": [
         "unverified"
@@ -6187,7 +6273,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1369"
+        "SPEC.md:1386"
       ],
       "test_status": [
         "unverified"
@@ -6211,7 +6297,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1370"
+        "SPEC.md:1387"
       ],
       "test_status": [
         "unverified"
@@ -6235,7 +6321,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1371"
+        "SPEC.md:1388"
       ],
       "test_status": [
         "unverified"
@@ -6259,7 +6345,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1372"
+        "SPEC.md:1389"
       ],
       "test_status": [
         "unverified"
@@ -6283,7 +6369,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1373"
+        "SPEC.md:1390"
       ],
       "test_status": [
         "unverified"
@@ -6307,7 +6393,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1374"
+        "SPEC.md:1391"
       ],
       "test_status": [
         "unverified"
@@ -6331,7 +6417,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1375"
+        "SPEC.md:1392"
       ],
       "test_status": [
         "unverified"
@@ -6355,7 +6441,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1376"
+        "SPEC.md:1393"
       ],
       "test_status": [
         "unverified"
@@ -6379,7 +6465,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1395"
+        "SPEC.md:1412"
       ],
       "test_status": [
         "unverified"
@@ -6403,7 +6489,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1396"
+        "SPEC.md:1413"
       ],
       "test_status": [
         "unverified"
@@ -6427,7 +6513,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1397"
+        "SPEC.md:1414"
       ],
       "test_status": [
         "unverified"
@@ -6451,7 +6537,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1398"
+        "SPEC.md:1415"
       ],
       "test_status": [
         "unverified"
@@ -6475,7 +6561,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1399"
+        "SPEC.md:1416"
       ],
       "test_status": [
         "unverified"
@@ -6499,7 +6585,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1400"
+        "SPEC.md:1417"
       ],
       "test_status": [
         "unverified"
@@ -6523,7 +6609,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1422"
+        "SPEC.md:1439"
       ],
       "test_status": [
         "unverified"
@@ -6547,7 +6633,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1423"
+        "SPEC.md:1440"
       ],
       "test_status": [
         "unverified"
@@ -6571,7 +6657,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1424"
+        "SPEC.md:1441"
       ],
       "test_status": [
         "unverified"
@@ -6595,7 +6681,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1442"
+        "SPEC.md:1459"
       ],
       "test_status": [
         "unverified"
@@ -6619,7 +6705,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1443"
+        "SPEC.md:1460"
       ],
       "test_status": [
         "unverified"
@@ -6643,7 +6729,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1444"
+        "SPEC.md:1461"
       ],
       "test_status": [
         "unverified"
@@ -6667,7 +6753,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1445"
+        "SPEC.md:1462"
       ],
       "test_status": [
         "unverified"
@@ -6691,7 +6777,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1446"
+        "SPEC.md:1463"
       ],
       "test_status": [
         "unverified"
@@ -6715,7 +6801,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1447"
+        "SPEC.md:1464"
       ],
       "test_status": [
         "unverified"
@@ -6739,7 +6825,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1448"
+        "SPEC.md:1465"
       ],
       "test_status": [
         "unverified"
@@ -6763,7 +6849,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1468"
+        "SPEC.md:1485"
       ],
       "test_status": [
         "unverified"
@@ -6787,7 +6873,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1469"
+        "SPEC.md:1486"
       ],
       "test_status": [
         "unverified"
@@ -6811,7 +6897,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1470"
+        "SPEC.md:1487"
       ],
       "test_status": [
         "unverified"
@@ -6835,7 +6921,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1471"
+        "SPEC.md:1488"
       ],
       "test_status": [
         "unverified"
@@ -6859,7 +6945,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1486"
+        "SPEC.md:1503"
       ],
       "test_status": [
         "unverified"
@@ -6883,7 +6969,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1487"
+        "SPEC.md:1504"
       ],
       "test_status": [
         "unverified"
@@ -6907,7 +6993,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1488"
+        "SPEC.md:1505"
       ],
       "test_status": [
         "unverified"
@@ -6931,7 +7017,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1501"
+        "SPEC.md:1518"
       ],
       "test_status": [
         "unverified"
@@ -6955,7 +7041,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1502"
+        "SPEC.md:1519"
       ],
       "test_status": [
         "unverified"
@@ -6979,7 +7065,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1518"
+        "SPEC.md:1535"
       ],
       "test_status": [
         "unverified"
@@ -7003,7 +7089,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1519"
+        "SPEC.md:1536"
       ],
       "test_status": [
         "unverified"
@@ -7027,7 +7113,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1533"
+        "SPEC.md:1550"
       ],
       "test_status": [
         "unverified"
@@ -7051,7 +7137,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1534"
+        "SPEC.md:1551"
       ],
       "test_status": [
         "unverified"
@@ -7075,7 +7161,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1535"
+        "SPEC.md:1552"
       ],
       "test_status": [
         "unverified"
@@ -7099,7 +7185,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1536"
+        "SPEC.md:1553"
       ],
       "test_status": [
         "unverified"
@@ -7126,7 +7212,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1572"
+        "SPEC.md:1589"
       ],
       "test_status": [
         "unverified"
@@ -7151,7 +7237,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1573"
+        "SPEC.md:1590"
       ],
       "test_status": [
         "unverified"
@@ -7177,7 +7263,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1574"
+        "SPEC.md:1591"
       ],
       "test_status": [
         "unverified"
@@ -7203,7 +7289,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1575"
+        "SPEC.md:1592"
       ],
       "test_status": [
         "unverified"
@@ -7228,7 +7314,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1576"
+        "SPEC.md:1593"
       ],
       "test_status": [
         "unverified"
@@ -7254,7 +7340,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1577"
+        "SPEC.md:1594"
       ],
       "test_status": [
         "unverified"
@@ -7282,7 +7368,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1578"
+        "SPEC.md:1595"
       ],
       "test_status": [
         "unverified"
@@ -7308,7 +7394,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1595"
+        "SPEC.md:1612"
       ],
       "test_status": [
         "unverified"
@@ -7335,7 +7421,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1596"
+        "SPEC.md:1613"
       ],
       "test_status": [
         "unverified"
@@ -7361,7 +7447,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1597"
+        "SPEC.md:1614"
       ],
       "test_status": [
         "unverified"
@@ -7388,7 +7474,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1598"
+        "SPEC.md:1615"
       ],
       "test_status": [
         "unverified"
@@ -7414,7 +7500,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1599"
+        "SPEC.md:1616"
       ],
       "test_status": [
         "unverified"
@@ -7441,7 +7527,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1600"
+        "SPEC.md:1617"
       ],
       "test_status": [
         "unverified"
@@ -7466,7 +7552,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1601"
+        "SPEC.md:1618"
       ],
       "test_status": [
         "unverified"
@@ -7490,7 +7576,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1621"
+        "SPEC.md:1638"
       ],
       "test_status": [
         "unverified"
@@ -7514,7 +7600,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1622"
+        "SPEC.md:1639"
       ],
       "test_status": [
         "unverified"
@@ -7538,7 +7624,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1623"
+        "SPEC.md:1640"
       ],
       "test_status": [
         "unverified"
@@ -7562,7 +7648,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1624"
+        "SPEC.md:1641"
       ],
       "test_status": [
         "unverified"
@@ -7587,7 +7673,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1625",
+        "SPEC.md:1642",
         "tests/cli_wrapper.rs:3547"
       ],
       "test_status": [
@@ -7612,7 +7698,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1638"
+        "SPEC.md:1655"
       ],
       "test_status": [
         "unverified"
@@ -7636,7 +7722,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1639"
+        "SPEC.md:1656"
       ],
       "test_status": [
         "unverified"
@@ -7660,7 +7746,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1640"
+        "SPEC.md:1657"
       ],
       "test_status": [
         "unverified"
@@ -7684,7 +7770,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1651"
+        "SPEC.md:1668"
       ],
       "test_status": [
         "unverified"
@@ -7708,7 +7794,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1652"
+        "SPEC.md:1669"
       ],
       "test_status": [
         "unverified"
@@ -7732,7 +7818,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1653"
+        "SPEC.md:1670"
       ],
       "test_status": [
         "unverified"
@@ -7756,7 +7842,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1662"
+        "SPEC.md:1679"
       ],
       "test_status": [
         "unverified"
@@ -7780,7 +7866,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1663"
+        "SPEC.md:1680"
       ],
       "test_status": [
         "unverified"
@@ -7804,7 +7890,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1672"
+        "SPEC.md:1689"
       ],
       "test_status": [
         "unverified"
@@ -7828,7 +7914,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1673"
+        "SPEC.md:1690"
       ],
       "test_status": [
         "unverified"
@@ -7852,7 +7938,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1682"
+        "SPEC.md:1699"
       ],
       "test_status": [
         "unverified"
@@ -7876,7 +7962,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1683"
+        "SPEC.md:1700"
       ],
       "test_status": [
         "unverified"
@@ -7900,7 +7986,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1684"
+        "SPEC.md:1701"
       ],
       "test_status": [
         "unverified"
@@ -7924,7 +8010,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1693"
+        "SPEC.md:1710"
       ],
       "test_status": [
         "unverified"
@@ -7948,7 +8034,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1694"
+        "SPEC.md:1711"
       ],
       "test_status": [
         "unverified"
@@ -7972,7 +8058,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1695"
+        "SPEC.md:1712"
       ],
       "test_status": [
         "unverified"
@@ -7996,7 +8082,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1704"
+        "SPEC.md:1721"
       ],
       "test_status": [
         "unverified"
@@ -8020,7 +8106,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1705"
+        "SPEC.md:1722"
       ],
       "test_status": [
         "unverified"
@@ -8044,7 +8130,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1706"
+        "SPEC.md:1723"
       ],
       "test_status": [
         "unverified"
@@ -8068,7 +8154,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1707"
+        "SPEC.md:1724"
       ],
       "test_status": [
         "unverified"
@@ -8092,7 +8178,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1708"
+        "SPEC.md:1725"
       ],
       "test_status": [
         "unverified"
@@ -8116,7 +8202,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1718"
+        "SPEC.md:1735"
       ],
       "test_status": [
         "unverified"
@@ -8140,7 +8226,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1719"
+        "SPEC.md:1736"
       ],
       "test_status": [
         "unverified"
@@ -8164,7 +8250,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1720"
+        "SPEC.md:1737"
       ],
       "test_status": [
         "unverified"
@@ -8188,7 +8274,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1721"
+        "SPEC.md:1738"
       ],
       "test_status": [
         "unverified"
@@ -8212,7 +8298,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1722"
+        "SPEC.md:1739"
       ],
       "test_status": [
         "unverified"
@@ -8236,7 +8322,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1731"
+        "SPEC.md:1748"
       ],
       "test_status": [
         "unverified"
@@ -8260,7 +8346,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1732"
+        "SPEC.md:1749"
       ],
       "test_status": [
         "unverified"
@@ -8284,7 +8370,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1733"
+        "SPEC.md:1750"
       ],
       "test_status": [
         "unverified"
@@ -8308,7 +8394,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1734"
+        "SPEC.md:1751"
       ],
       "test_status": [
         "unverified"
@@ -8332,7 +8418,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1744"
+        "SPEC.md:1761"
       ],
       "test_status": [
         "unverified"
@@ -8356,7 +8442,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1745"
+        "SPEC.md:1762"
       ],
       "test_status": [
         "unverified"
@@ -8380,7 +8466,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1746"
+        "SPEC.md:1763"
       ],
       "test_status": [
         "unverified"
@@ -8404,7 +8490,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1866"
+        "SPEC.md:1883"
       ],
       "test_status": [
         "unverified"
@@ -8428,7 +8514,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1867"
+        "SPEC.md:1884"
       ],
       "test_status": [
         "unverified"
@@ -8452,7 +8538,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1868"
+        "SPEC.md:1885"
       ],
       "test_status": [
         "unverified"
@@ -8477,7 +8563,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2019"
+        "SPEC.md:2036"
       ],
       "test_status": [
         "unverified"
@@ -8502,7 +8588,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2020"
+        "SPEC.md:2037"
       ],
       "test_status": [
         "unverified"
@@ -8527,7 +8613,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2021"
+        "SPEC.md:2038"
       ],
       "test_status": [
         "unverified"
@@ -8552,7 +8638,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2022"
+        "SPEC.md:2039"
       ],
       "test_status": [
         "unverified"
@@ -8577,7 +8663,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2023"
+        "SPEC.md:2040"
       ],
       "test_status": [
         "unverified"
@@ -8602,7 +8688,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2024"
+        "SPEC.md:2041"
       ],
       "test_status": [
         "unverified"
@@ -8627,7 +8713,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2025"
+        "SPEC.md:2042"
       ],
       "test_status": [
         "unverified"
@@ -8652,7 +8738,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2026"
+        "SPEC.md:2043"
       ],
       "test_status": [
         "unverified"
@@ -8677,7 +8763,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2027"
+        "SPEC.md:2044"
       ],
       "test_status": [
         "unverified"
@@ -8702,7 +8788,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2028"
+        "SPEC.md:2045"
       ],
       "test_status": [
         "unverified"
@@ -8726,7 +8812,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2099",
+        "SPEC.md:2116",
         "src/detect/mod.rs:159"
       ],
       "test_status": [
@@ -8752,7 +8838,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2100",
+        "SPEC.md:2117",
         "src/detect/manifests/muse.toml:35"
       ],
       "test_status": [
@@ -8777,7 +8863,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2101",
+        "SPEC.md:2118",
         "src/detect/manifests/qwen.toml:39"
       ],
       "test_status": [
@@ -8807,7 +8893,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2102",
+        "SPEC.md:2119",
         "src/agent_resume.rs:190"
       ],
       "test_status": [
@@ -8832,7 +8918,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2103",
+        "SPEC.md:2120",
         "src/cli/integration.rs:3"
       ],
       "test_status": [
@@ -8857,7 +8943,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2104",
+        "SPEC.md:2121",
         "src/agent_resume.rs:196"
       ],
       "test_status": [
@@ -8883,7 +8969,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2132",
+        "SPEC.md:2149",
         "src/cli/machine.rs:162",
         "src/machine.rs:251"
       ],
@@ -8909,7 +8995,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2133",
+        "SPEC.md:2150",
         "src/machine.rs:88"
       ],
       "test_status": [
@@ -8934,7 +9020,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2134",
+        "SPEC.md:2151",
         "src/cli/machine.rs:40"
       ],
       "test_status": [
@@ -8961,7 +9047,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2135",
+        "SPEC.md:2152",
         "src/cli/machine.rs:212",
         "src/cli/machine.rs:273",
         "src/machine.rs:155"
@@ -8988,7 +9074,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2136",
+        "SPEC.md:2153",
         "src/machine.rs:219"
       ],
       "test_status": [
@@ -9016,7 +9102,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2154",
+        "SPEC.md:2171",
         "src/machine.rs:367"
       ],
       "test_status": [
@@ -9042,7 +9128,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2155",
+        "SPEC.md:2172",
         "src/main.rs:544",
         "src/machine.rs:419"
       ],
@@ -9069,7 +9155,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2156",
+        "SPEC.md:2173",
         "src/machine.rs:155"
       ],
       "test_status": [
@@ -9095,7 +9181,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2157",
+        "SPEC.md:2174",
         "src/main.rs:544",
         "src/machine.rs:295"
       ],
@@ -9202,7 +9288,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:808",
+        "SPEC.md:810",
         "src/agent_sessions.rs:561"
       ],
       "test_status": [
@@ -9230,7 +9316,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:809",
+        "SPEC.md:811",
         "src/agent_sessions.rs:561"
       ],
       "test_status": [
@@ -9258,7 +9344,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:810",
+        "SPEC.md:812",
         "src/agent_sessions.rs:561"
       ],
       "test_status": [
@@ -9273,68 +9359,6 @@
     },
     {
       "contract_id": "G3-f6397b70a5",
-      "dimensions": [
-        "live session evidence",
-        "restore skip",
-        "startup resume skip"
-      ],
-      "verification_methods": [
-        "rust_test_target:plan_skips_sessions_already_running_elsewhere",
-        "rust_test_target:pane_restore_skips_sessions_running_elsewhere",
-        "rust_test_target:claude_registry_reports_only_live_matching_sessions",
-        "rust_test_target:command_lines_match_whole_session_id_arguments",
-        "rust_test_target:devin_lock_counts_only_a_live_owner",
-        "drift_source_anchor:src/agent_sessions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:823",
-        "src/agent_sessions.rs:70",
-        "src/persist/restore.rs:923"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Registry, lock and argv probes are unit-covered; the 2026-10-07 isolated fixtest restart is manual evidence, not an automated live gate"
-      ]
-    },
-    {
-      "contract_id": "G3-95c8a79e5d",
-      "dimensions": [
-        "live session evidence",
-        "restore skip",
-        "startup resume skip"
-      ],
-      "verification_methods": [
-        "rust_test_target:plan_skips_sessions_already_running_elsewhere",
-        "rust_test_target:pane_restore_skips_sessions_running_elsewhere",
-        "rust_test_target:claude_registry_reports_only_live_matching_sessions",
-        "rust_test_target:command_lines_match_whole_session_id_arguments",
-        "rust_test_target:devin_lock_counts_only_a_live_owner",
-        "drift_source_anchor:src/agent_sessions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:824",
-        "src/agent_sessions.rs:70",
-        "src/persist/restore.rs:923"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Registry, lock and argv probes are unit-covered; the 2026-10-07 isolated fixtest restart is manual evidence, not an automated live gate"
-      ]
-    },
-    {
-      "contract_id": "G3-40fccd3027",
       "dimensions": [
         "live session evidence",
         "restore skip",
@@ -9365,7 +9389,7 @@
       ]
     },
     {
-      "contract_id": "G3-c31975ace8",
+      "contract_id": "G3-95c8a79e5d",
       "dimensions": [
         "live session evidence",
         "restore skip",
@@ -9396,6 +9420,68 @@
       ]
     },
     {
+      "contract_id": "G3-40fccd3027",
+      "dimensions": [
+        "live session evidence",
+        "restore skip",
+        "startup resume skip"
+      ],
+      "verification_methods": [
+        "rust_test_target:plan_skips_sessions_already_running_elsewhere",
+        "rust_test_target:pane_restore_skips_sessions_running_elsewhere",
+        "rust_test_target:claude_registry_reports_only_live_matching_sessions",
+        "rust_test_target:command_lines_match_whole_session_id_arguments",
+        "rust_test_target:devin_lock_counts_only_a_live_owner",
+        "drift_source_anchor:src/agent_sessions.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:827",
+        "src/agent_sessions.rs:70",
+        "src/persist/restore.rs:923"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Registry, lock and argv probes are unit-covered; the 2026-10-07 isolated fixtest restart is manual evidence, not an automated live gate"
+      ]
+    },
+    {
+      "contract_id": "G3-c31975ace8",
+      "dimensions": [
+        "live session evidence",
+        "restore skip",
+        "startup resume skip"
+      ],
+      "verification_methods": [
+        "rust_test_target:plan_skips_sessions_already_running_elsewhere",
+        "rust_test_target:pane_restore_skips_sessions_running_elsewhere",
+        "rust_test_target:claude_registry_reports_only_live_matching_sessions",
+        "rust_test_target:command_lines_match_whole_session_id_arguments",
+        "rust_test_target:devin_lock_counts_only_a_live_owner",
+        "drift_source_anchor:src/agent_sessions.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:828",
+        "src/agent_sessions.rs:70",
+        "src/persist/restore.rs:923"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Registry, lock and argv probes are unit-covered; the 2026-10-07 isolated fixtest restart is manual evidence, not an automated live gate"
+      ]
+    },
+    {
       "contract_id": "G6-03fb3812d0",
       "dimensions": [
         "pixel mouse fallback",
@@ -9410,7 +9496,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1359",
+        "SPEC.md:1376",
         "src/app/input/mouse.rs:1872"
       ],
       "test_status": [
@@ -9438,7 +9524,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1360",
+        "SPEC.md:1377",
         "src/app/input/mouse.rs:1872"
       ],
       "test_status": [
@@ -9466,7 +9552,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1361",
+        "SPEC.md:1378",
         "src/app/input/mouse.rs:1872"
       ],
       "test_status": [
@@ -9494,7 +9580,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1757",
+        "SPEC.md:1774",
         "src/cli/comms.rs:1230"
       ],
       "test_status": [
@@ -9522,7 +9608,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1758",
+        "SPEC.md:1775",
         "src/cli/comms.rs:1230"
       ],
       "test_status": [
@@ -9550,7 +9636,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1759",
+        "SPEC.md:1776",
         "src/cli/comms.rs:1230"
       ],
       "test_status": [
@@ -9578,7 +9664,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1760",
+        "SPEC.md:1777",
         "src/cli/comms.rs:1230"
       ],
       "test_status": [
@@ -9608,7 +9694,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1775",
+        "SPEC.md:1792",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ],
@@ -9639,7 +9725,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1776",
+        "SPEC.md:1793",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ],
@@ -9670,7 +9756,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1777",
+        "SPEC.md:1794",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ],
@@ -9701,7 +9787,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1778",
+        "SPEC.md:1795",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ],
@@ -9732,7 +9818,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1792",
+        "SPEC.md:1809",
         "src/app/api/agents.rs:957"
       ],
       "test_status": [
@@ -9762,7 +9848,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1793",
+        "SPEC.md:1810",
         "src/app/api/agents.rs:957"
       ],
       "test_status": [
@@ -9792,7 +9878,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1794",
+        "SPEC.md:1811",
         "src/app/api/agents.rs:957"
       ],
       "test_status": [
@@ -9820,7 +9906,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1807",
+        "SPEC.md:1824",
         "src/detect/manifest.rs:147"
       ],
       "test_status": [
@@ -9848,7 +9934,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1808",
+        "SPEC.md:1825",
         "src/detect/manifest.rs:147"
       ],
       "test_status": [
@@ -9876,7 +9962,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1809",
+        "SPEC.md:1826",
         "src/detect/manifest.rs:147"
       ],
       "test_status": [
@@ -9900,7 +9986,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1819",
+        "SPEC.md:1836",
         "src/pane/terminal.rs:24"
       ],
       "test_status": [
@@ -9929,7 +10015,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2066",
+        "SPEC.md:2083",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -9959,7 +10045,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2067",
+        "SPEC.md:2084",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -9989,7 +10075,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2068",
+        "SPEC.md:2085",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10019,7 +10105,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2069",
+        "SPEC.md:2086",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10049,7 +10135,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2070",
+        "SPEC.md:2087",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10079,7 +10165,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2071",
+        "SPEC.md:2088",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10109,7 +10195,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2072",
+        "SPEC.md:2089",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10136,7 +10222,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2173",
+        "SPEC.md:2190",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ],
       "test_status": [
@@ -10162,7 +10248,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2174",
+        "SPEC.md:2191",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ],
       "test_status": [
@@ -10192,7 +10278,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2190",
+        "SPEC.md:2207",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10223,7 +10309,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2191",
+        "SPEC.md:2208",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10254,7 +10340,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2192",
+        "SPEC.md:2209",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10285,7 +10371,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2193",
+        "SPEC.md:2210",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10314,7 +10400,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2194",
+        "SPEC.md:2211",
         "src/remote/saved.rs:98",
         "src/remote/saved/process.rs:23"
       ],
@@ -10348,7 +10434,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2195",
+        "SPEC.md:2212",
         "src/remote.rs:37",
         "src/client/endpoint/supervisor.rs:181",
         "src/client/endpoint/runtime.rs:162"
@@ -10378,7 +10464,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2196",
+        "SPEC.md:2213",
         "src/remote/saved/process.rs:119",
         "src/client/endpoint/supervisor.rs:181"
       ],
@@ -10405,7 +10491,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2209",
+        "SPEC.md:2226",
         "src/client/endpoint/frontend/machines.rs:129"
       ],
       "test_status": [
@@ -10431,7 +10517,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2210",
+        "SPEC.md:2227",
         "src/client/endpoint/frontend/machines.rs:129"
       ],
       "test_status": [
@@ -10463,7 +10549,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2234",
+        "SPEC.md:2251",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10496,7 +10582,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2241",
+        "SPEC.md:2258",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10529,7 +10615,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2242",
+        "SPEC.md:2259",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10562,7 +10648,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2244",
+        "SPEC.md:2261",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10595,7 +10681,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2245",
+        "SPEC.md:2262",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10620,7 +10706,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1551",
+        "SPEC.md:1568",
         "scripts/spec_update_gate.py:42",
         ".github/workflows/ci.yml:43"
       ],
@@ -10645,7 +10731,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1552",
+        "SPEC.md:1569",
         "scripts/spec_update_gate.py:42",
         ".github/workflows/ci.yml:43"
       ],
@@ -10670,7 +10756,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1553",
+        "SPEC.md:1570",
         "scripts/spec_update_gate.py:42",
         ".github/workflows/ci.yml:43"
       ],
@@ -10695,7 +10781,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1554",
+        "SPEC.md:1571",
         "scripts/spec_update_gate.py:42",
         ".github/workflows/ci.yml:43"
       ],
@@ -10720,7 +10806,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1626",
+        "SPEC.md:1643",
         "src/cli/comms.rs:1640"
       ],
       "test_status": [
@@ -10753,7 +10839,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2240",
+        "SPEC.md:2257",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10779,7 +10865,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1831",
+        "SPEC.md:1848",
         "src/ghostty/mod.rs:483"
       ],
       "test_status": [
@@ -10804,7 +10890,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1832",
+        "SPEC.md:1849",
         "src/ghostty/mod.rs:483"
       ],
       "test_status": [
@@ -10832,7 +10918,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1850",
+        "SPEC.md:1867",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ],
@@ -10861,7 +10947,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1851",
+        "SPEC.md:1868",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ],
@@ -10890,7 +10976,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1856",
+        "SPEC.md:1873",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ],
@@ -10926,7 +11012,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2235",
+        "SPEC.md:2252",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10962,7 +11048,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2239",
+        "SPEC.md:2256",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10991,7 +11077,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1849",
+        "SPEC.md:1866",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ],
@@ -11020,7 +11106,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1855",
+        "SPEC.md:1872",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ],
@@ -11049,7 +11135,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1852",
+        "SPEC.md:1869",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ],
@@ -11078,7 +11164,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1853",
+        "SPEC.md:1870",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ],
@@ -11105,7 +11191,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1306",
+        "SPEC.md:1308",
         "src/input/parse.rs:13"
       ],
       "test_status": [
@@ -11140,7 +11226,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2236",
+        "SPEC.md:2253",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11169,7 +11255,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1848",
+        "SPEC.md:1865",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ],
@@ -11198,7 +11284,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1854",
+        "SPEC.md:1871",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ],
@@ -11234,7 +11320,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2237",
+        "SPEC.md:2254",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11270,7 +11356,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2238",
+        "SPEC.md:2255",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11306,7 +11392,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2243",
+        "SPEC.md:2260",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11339,7 +11425,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1897",
+        "SPEC.md:1914",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ],
@@ -11372,7 +11458,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1898",
+        "SPEC.md:1915",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ],
@@ -11405,7 +11491,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1899",
+        "SPEC.md:1916",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ],
@@ -11438,7 +11524,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1900",
+        "SPEC.md:1917",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ],
@@ -11471,7 +11557,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1901",
+        "SPEC.md:1918",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ],
@@ -11504,7 +11590,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1902",
+        "SPEC.md:1919",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ],
@@ -11532,7 +11618,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1944",
+        "SPEC.md:1961",
         "src/cli/decision/watch.rs:356"
       ],
       "test_status": [
@@ -11558,7 +11644,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1945",
+        "SPEC.md:1962",
         "src/cli/decision/watch.rs:348"
       ],
       "test_status": [
@@ -11584,7 +11670,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1946",
+        "SPEC.md:1963",
         "src/cli/decision/watch.rs:109"
       ],
       "test_status": [
@@ -11611,7 +11697,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1947",
+        "SPEC.md:1964",
         "src/cli/decision/watch.rs:356"
       ],
       "test_status": [
@@ -11639,7 +11725,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1948",
+        "SPEC.md:1965",
         "src/cli/decision/watch.rs:701"
       ],
       "test_status": [
@@ -11669,7 +11755,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1949",
+        "SPEC.md:1966",
         "src/cli/decision/watch.rs:259",
         "src/cli/decision/watch.rs:701"
       ],
@@ -11697,7 +11783,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1950",
+        "SPEC.md:1967",
         "src/machine.rs:301",
         "src/machine.rs:311"
       ],
@@ -11726,7 +11812,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1951",
+        "SPEC.md:1968",
         "src/cli/decision/watch.rs:1110",
         "src/api/subscriptions.rs:738"
       ],
@@ -11755,7 +11841,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1952",
+        "SPEC.md:1969",
         "src/cli/decision/watch.rs:271",
         "src/cli/decision/watch.rs:1509"
       ],
@@ -11781,7 +11867,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1953",
+        "SPEC.md:1970",
         "src/cli/decision/watch.rs:31"
       ],
       "test_status": [
@@ -11808,7 +11894,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2261",
+        "SPEC.md:2278",
         "src/guard/judge.rs:200",
         "src/cli/guard.rs:36"
       ],
@@ -11838,7 +11924,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2262",
+        "SPEC.md:2279",
         "src/guard/judge.rs:507",
         "src/guard/judge.rs:586"
       ],
@@ -11866,7 +11952,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2263",
+        "SPEC.md:2280",
         "src/guard/judge.rs:672",
         "src/guard/judge.rs:740"
       ],
@@ -11896,7 +11982,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2264",
+        "SPEC.md:2281",
         "src/guard/judge.rs:865",
         "src/guard/judge.rs:1158"
       ],
@@ -11924,7 +12010,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2265",
+        "SPEC.md:2282",
         "src/guard/judge.rs:367",
         "src/guard/judge.rs:430"
       ],
@@ -11958,7 +12044,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2266",
+        "SPEC.md:2283",
         "src/guard/judge.rs:1202",
         "src/guard/judge.rs:1643"
       ],
@@ -11986,7 +12072,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2267",
+        "SPEC.md:2284",
         "src/guard/judge.rs:265",
         "src/guard/judge.rs:1524"
       ],
@@ -12013,7 +12099,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2268",
+        "SPEC.md:2285",
         "src/config/model.rs:332",
         "src/guard/judge.rs:359"
       ],
@@ -12039,7 +12125,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2283",
+        "SPEC.md:2300",
         "src/guard/assets.rs:42"
       ],
       "test_status": [
@@ -12067,7 +12153,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2284",
+        "SPEC.md:2301",
         "src/pane.rs:1920",
         "src/guard/assets.rs:42"
       ],
@@ -12096,7 +12182,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2292",
+        "SPEC.md:2309",
         "src/guard/marker.rs:49",
         "src/cli/guard.rs:36"
       ],
@@ -12124,7 +12210,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2293",
+        "SPEC.md:2310",
         "src/app/guard.rs:14",
         "src/guard/marker.rs:93"
       ],
@@ -12151,7 +12237,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2294",
+        "SPEC.md:2311",
         "src/cli/guard.rs:36"
       ],
       "test_status": [
@@ -12178,7 +12264,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2295",
+        "SPEC.md:2312",
         "src/guard/record.rs:142"
       ],
       "test_status": [
@@ -12207,7 +12293,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2303",
+        "SPEC.md:2320",
         "src/config/model.rs:332",
         "src/guard/assets.rs:47",
         "src/cli/guard.rs:150"
@@ -12235,7 +12321,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2304",
+        "SPEC.md:2321",
         "src/cli/guard.rs:188"
       ],
       "test_status": [
@@ -12263,7 +12349,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2305",
+        "SPEC.md:2322",
         "src/guard/enforce.rs:150",
         "src/cli/guard.rs:211"
       ],
@@ -12294,7 +12380,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2306",
+        "SPEC.md:2323",
         "src/guard/enforce.rs:60",
         "src/cli/guard.rs:228"
       ],
@@ -12326,7 +12412,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2307",
+        "SPEC.md:2324",
         "src/guard/enforce.rs:100",
         "src/cli/guard.rs:232",
         "src/cli/decision.rs:60"
@@ -12360,7 +12446,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2308",
+        "SPEC.md:2325",
         "src/guard/enforce.rs:170",
         "src/guard/judge.rs:1550",
         "src/cli/guard.rs:232"
@@ -12388,7 +12474,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2309",
+        "SPEC.md:2326",
         "src/guard/judge.rs:1524",
         "src/cli/guard.rs:240"
       ],
@@ -12415,7 +12501,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2310",
+        "SPEC.md:2327",
         "src/guard/assets.rs:62",
         "src/guard/mod.rs:40"
       ],
@@ -12443,7 +12529,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2318",
+        "SPEC.md:2335",
         "src/guard/compare.rs:49"
       ],
       "test_status": [
@@ -12467,7 +12553,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2319",
+        "SPEC.md:2336",
         "src/guard/compare.rs:173"
       ],
       "test_status": [
@@ -12495,7 +12581,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2320",
+        "SPEC.md:2337",
         "src/guard/record.rs:299"
       ],
       "test_status": [
@@ -12522,7 +12608,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2276",
+        "SPEC.md:2293",
         "src/guard/assets.rs:160",
         "src/guard/assets.rs:244",
         "src/cli/guard.rs:97"
@@ -12553,7 +12639,7 @@
         "rust_test_target:login_zsh_keeps_shim_first_after_startup"
       ],
       "source_anchors": [
-        "SPEC.md:2277",
+        "SPEC.md:2294",
         "src/guard/assets.rs:256",
         "src/guard/assets.rs:331",
         "src/guard/assets.rs:92"
@@ -12584,7 +12670,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2278",
+        "SPEC.md:2295",
         "src/guard/assets.rs:269",
         "src/guard/assets.rs:288",
         "src/guard/assets.rs:337"
@@ -12619,7 +12705,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1970",
+        "SPEC.md:1987",
         "src/screen_prompt.rs:145",
         "src/app/screen_prompts.rs:378"
       ],
@@ -12649,7 +12735,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1971",
+        "SPEC.md:1988",
         "src/app/screen_prompts.rs:533"
       ],
       "test_status": [
@@ -12676,7 +12762,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1972",
+        "SPEC.md:1989",
         "src/app/screen_prompts.rs:299"
       ],
       "test_status": [
@@ -12705,7 +12791,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1973",
+        "SPEC.md:1990",
         "src/app/screen_prompts.rs:378"
       ],
       "test_status": [
@@ -12735,7 +12821,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1974",
+        "SPEC.md:1991",
         "src/app/api/decisions.rs:113",
         "src/app/screen_prompts.rs:160"
       ],
@@ -12764,7 +12850,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1975",
+        "SPEC.md:1992",
         "src/config/model.rs:379",
         "src/app/screen_prompts.rs:696"
       ],
@@ -12791,7 +12877,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1976",
+        "SPEC.md:1993",
         "src/api/schema/server.rs:29",
         "src/cli/status.rs:277"
       ],
@@ -12818,7 +12904,7 @@
         "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
       ],
       "source_anchors": [
-        "SPEC.md:2279",
+        "SPEC.md:2296",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
@@ -12849,7 +12935,7 @@
         "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
       ],
       "source_anchors": [
-        "SPEC.md:2280",
+        "SPEC.md:2297",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30"
@@ -12883,7 +12969,7 @@
         "rust_test_target:guard_markers_require_effective_launch_coverage"
       ],
       "source_anchors": [
-        "SPEC.md:2281",
+        "SPEC.md:2298",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
@@ -12918,7 +13004,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1903",
+        "SPEC.md:1920",
         "src/api/schema/decisions.rs:41",
         "src/cli/decision.rs:114"
       ],
@@ -12953,7 +13039,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1978",
+        "SPEC.md:1995",
         "src/screen_prompt.rs:76",
         "src/app/screen_prompts.rs:397"
       ],
@@ -12980,7 +13066,7 @@
         "platform_live_acceptance:macos_legacy_marker_handoff_2026_10_13"
       ],
       "source_anchors": [
-        "SPEC.md:2282",
+        "SPEC.md:2299",
         "src/app/guard.rs:77"
       ],
       "test_status": [
@@ -13008,7 +13094,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1977",
+        "SPEC.md:1994",
         "src/app/api/decisions.rs:9",
         "src/cli/decision/watch.rs:229"
       ],
@@ -13038,7 +13124,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1979",
+        "SPEC.md:1996",
         "src/screen_prompt.rs:96",
         "src/app/screen_prompts.rs:785"
       ],
@@ -13072,7 +13158,7 @@
         "platform_live_acceptance:.artifacts/feat-decision-dialog-context/real-preview-scan-decisions.json"
       ],
       "source_anchors": [
-        "SPEC.md:1980",
+        "SPEC.md:1997",
         "src/screen_prompt.rs:320",
         "src/app/screen_prompts.rs:956",
         "src/app/screen_prompts.rs:1005",
@@ -13102,7 +13188,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1981",
+        "SPEC.md:1998",
         "src/screen_prompt.rs:666"
       ],
       "test_status": [
@@ -13127,7 +13213,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1982",
+        "SPEC.md:1999",
         "src/app/screen_prompts.rs:785"
       ],
       "test_status": [

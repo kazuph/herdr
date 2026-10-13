@@ -34,7 +34,9 @@ pub enum Signal {
 }
 
 pub(crate) fn detached_custom_command_process(command: &str) -> std::process::Command {
-    detached_custom_command_process_platform(command)
+    let mut process = detached_custom_command_process_platform(command);
+    crate::integration::scrub_inherited_agent_session_env_process(&mut process);
+    process
 }
 
 pub(crate) fn pane_custom_command_pty_builder(command: &str) -> portable_pty::CommandBuilder {
