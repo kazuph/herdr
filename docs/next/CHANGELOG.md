@@ -28,6 +28,7 @@
 - Popup terminals without an explicit width or height now use 80% of the terminal area instead of half, matching the documented popup configuration examples.
 
 ### Fixed
+- Server startup, session restore, live handoff import, and config reload now synchronize guard markers and coverage warnings for every pane, including inactive tabs and workspaces. Agent panes inherited without launch-time guard injection show their pane, reason, and recovery action in `herdr guard status` stderr and the TUI immediately; a new guarded pane remains protected.
 - Agent command guarding now keeps shims first in `PATH` after zsh startup files and at the first interactive bash prompt, preserves guard injection when restoring an agent session, and reports uncovered agent panes with their pane ID, reason, and recovery instructions in `herdr guard status` stderr and the TUI. Existing panes launched before guarding was enabled must start the agent in a new pane to recover coverage.
 - `herdr decision watch` no longer replays already-resolved decisions at startup: decision subscriptions start at the hub's current sequence instead of re-reading retained history, and a `resolved` for a decision the watch never announced is dropped, so consumers no longer see a stale `created`/`resolved` pair on every start.
 - A saved machine running a herdr too old to know `decision` no longer fails every minute in `decision watch --all-machines`: the watch emits one `machine_down` whose reason says the machine does not support decisions and retries only that machine every 30 minutes.
