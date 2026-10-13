@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.37] - 2026-10-13
+
+### Fixed
+- Guard markers are now written only for agent panes with effective startup injection (supported shell, matching mode, and bash prompt readiness). Uncovered panes lose any stale marker immediately, including after live handoff from 0.2.36, so the dotfiles ai_guard loader remains active; existing stderr and screen coverage warnings are preserved.
+
+## [0.2.36] - 2026-10-13
+
+### Fixed
+- Server startup, session restore, live handoff import, and config reload now synchronize guard markers and coverage warnings for every pane, including inactive tabs and workspaces. Agent panes inherited without launch-time guard injection show their pane, reason, and recovery action in `herdr guard status` stderr and the TUI immediately; a new guarded pane remains protected.
+
 ## Unreleased
 
 ### Added

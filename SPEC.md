@@ -2278,7 +2278,8 @@
   - zsh の対象コマンド関数・`command` 通過 wrapper・accept-line の記録、bash の対象コマンド関数・`command` 通過 wrapper は、呼び出し時にそのペインの marker ファイルが存在するときだけ `herdr guard exec` へ回る。利用者の設定で同名の関数やエイリアスが定義済みの名前（ai_guard の wrapper など）は上書きせず、本物の実行が PATH の shim を通ることで記録だけは残る。
   - zsh は `.zshenv`・`.zprofile`・`.zshrc`・`.zlogin` を利用者の ZDOTDIR で読み、各ファイルとシステムの起動ファイルによる PATH の変更後も shim を先頭に保つ。Claude Code の shell snapshot からの実行でも herdr の判断待ちに届く。session 復元時は再開コマンドを送る前に agent の marker と shim を同期し、再開する agent の shell snapshot にも起動設定を差し込む。snapshot が起動処理の後に PATH を並べ替えたときも、marker 付き対象コマンドの wrapper は転送前に shim を先頭に戻す。
   - bash の非対話 shell は元の BASH_ENV を読んだ後、対話 shell は全起動ファイルの後の最初の prompt で shim を先頭へ戻す。対話 bash はその確認後に初めて `HERDR_GUARD_ENFORCING=1` を出し、保証できない shell では出さない。
-  - 起動時に見張りが差し込まれていない agent pane、起動後のモード変更、未確認の bash prompt、未対応 shell を `guard status` の stderr と画面の警告で pane ID・理由・新しい pane での起動し直しとともに知らせる。guard の JSON と判断待ち API は変えない。live handoff は起動時の差し込みの事実を保持し、古い runtime には未適用の警告を出す。
+  - 起動時に見張りが差し込まれていない agent pane、起動後のモード変更、未確認の bash prompt、未対応 shell を `guard status` の stderr と画面の警告で pane ID・理由・新しい pane での起動し直しとともに知らせる。guard の JSON と判断待ち API は変えない。live handoff は起動時の差し込みの事実を保持し、古い runtime には未適用の警告を出す。server 起動・session 復元・live handoff 受信・設定再読込の直後に、非表示の workspace と tab を含む全 pane の印と未適用の警告を同期し、検出や起動報告の次のイベントを待たない。
+  - デグレ判定: agent の印は、起動時に shim を PATH 先頭へ保つ supported の差し込みを受け、現在の mode と一致し、対話 bash の ready が確認できるなど未適用の理由がない pane にだけ書く。起動時の証拠がない・unsupported・mode 不一致・bash ready 未確認の pane は、印を作らず既存の印と shim を除去する。0.2.36 からの live handoff で受け取った未適用 pane の既存印も受信直後に除去し、stderr と画面の未適用警告は保持する。未適用 pane の `HERDR_GUARD_ENFORCING=1` だけで ai_guard を止める状態を作らない。
   - `[guard].enabled = false` のとき shim・ZDOTDIR・BASH_ENV・marker の環境変数を一切差し込まない。
   - ペイン識別を持たない spawn（popup・overlay の `without_pane_identity` など）には差し込まず、通常のペイン spawn の既存環境変数を壊さない。
 
@@ -2286,7 +2287,7 @@
 - **該当コミット**: feat/command-guardの実装
 - **分類**: CORE-RUNTIME
 - **status: fork独自・保持 (C)** — herdr が把握するペインのエージェント情報だけで判定対象を決める。`[guard].mode = "record"` は移植時点の記録のみ挙動をそのまま保つ。
-- **挙動**: `<state>/guard/agent-panes/<p_N>.json` の marker は herdr のペインのエージェント状態（`agent start`・検出・解除・ペイン終了・ペイン close）に同期する。`herdr guard exec` は marker が存在するときだけ判定して `<state>/guard/decisions.jsonl` に1行1JSONで追記する。record モードではその後は判定に関係なく必ず本物のコマンドを実行し、判断待ち（decision）は作らない。
+- **挙動**: `<state>/guard/agent-panes/<p_N>.json` の marker は起動時の適用証拠が現在の mode で有効なペインに限り、herdr のペインのエージェント状態（`agent start`・検出・解除・ペイン終了・ペイン close）に同期する。`herdr guard exec` は marker が存在するときだけ判定して `<state>/guard/decisions.jsonl` に1行1JSONで追記する。record モードではその後は判定に関係なく必ず本物のコマンドを実行し、判断待ち（decision）は作らない。
 - **受け入れ条件**:
   - エージェント情報を持つペインでは対象コマンドが判定・記録され、エージェント情報を持たないペイン（人が使うペイン）では同じコマンドを打っても判定・記録が起きず、コマンドはそのまま実行される。
   - marker はエージェントの開始・解除・ペインの終了・close で同期され、残ったままの marker が無いペインを後からエージェント扱いしない。

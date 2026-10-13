@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 517,
+    "active_contract_count": 511,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -12039,7 +12039,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2282",
+        "SPEC.md:2283",
         "src/guard/assets.rs:42"
       ],
       "test_status": [
@@ -12067,7 +12067,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2283",
+        "SPEC.md:2284",
         "src/pane.rs:1920",
         "src/guard/assets.rs:42"
       ],
@@ -12096,7 +12096,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2291",
+        "SPEC.md:2292",
         "src/guard/marker.rs:49",
         "src/cli/guard.rs:36"
       ],
@@ -12124,7 +12124,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2292",
+        "SPEC.md:2293",
         "src/app/guard.rs:14",
         "src/guard/marker.rs:93"
       ],
@@ -12151,7 +12151,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2293",
+        "SPEC.md:2294",
         "src/cli/guard.rs:36"
       ],
       "test_status": [
@@ -12178,7 +12178,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2294",
+        "SPEC.md:2295",
         "src/guard/record.rs:142"
       ],
       "test_status": [
@@ -12207,7 +12207,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2302",
+        "SPEC.md:2303",
         "src/config/model.rs:332",
         "src/guard/assets.rs:47",
         "src/cli/guard.rs:150"
@@ -12235,7 +12235,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2303",
+        "SPEC.md:2304",
         "src/cli/guard.rs:188"
       ],
       "test_status": [
@@ -12263,7 +12263,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2304",
+        "SPEC.md:2305",
         "src/guard/enforce.rs:150",
         "src/cli/guard.rs:211"
       ],
@@ -12294,7 +12294,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2305",
+        "SPEC.md:2306",
         "src/guard/enforce.rs:60",
         "src/cli/guard.rs:228"
       ],
@@ -12326,7 +12326,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2306",
+        "SPEC.md:2307",
         "src/guard/enforce.rs:100",
         "src/cli/guard.rs:232",
         "src/cli/decision.rs:60"
@@ -12360,7 +12360,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2307",
+        "SPEC.md:2308",
         "src/guard/enforce.rs:170",
         "src/guard/judge.rs:1550",
         "src/cli/guard.rs:232"
@@ -12388,7 +12388,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2308",
+        "SPEC.md:2309",
         "src/guard/judge.rs:1524",
         "src/cli/guard.rs:240"
       ],
@@ -12415,7 +12415,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2309",
+        "SPEC.md:2310",
         "src/guard/assets.rs:62",
         "src/guard/mod.rs:40"
       ],
@@ -12443,7 +12443,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2317",
+        "SPEC.md:2318",
         "src/guard/compare.rs:49"
       ],
       "test_status": [
@@ -12467,7 +12467,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2318",
+        "SPEC.md:2319",
         "src/guard/compare.rs:173"
       ],
       "test_status": [
@@ -12495,7 +12495,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2319",
+        "SPEC.md:2320",
         "src/guard/record.rs:299"
       ],
       "test_status": [
@@ -12806,34 +12806,6 @@
       ]
     },
     {
-      "contract_id": "G9-0d35f07815",
-      "dimensions": [
-        "regression containment",
-        "existing decision surfaces"
-      ],
-      "verification_methods": [
-        "rust_test_target:first_answer_wins_and_second_answer_is_already_resolved",
-        "rust_test_target:watch_line_shapes_match_the_contract",
-        "drift_source_anchor:src/app/api/decisions.rs",
-        "drift_source_anchor:src/cli/decision/watch.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1977",
-        "src/app/api/decisions.rs:9",
-        "src/cli/decision/watch.rs:229"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "The full nextest suite re-pins existing decision surfaces; interactive dialog and Slack regression is manual evidence"
-      ]
-    },
-    {
       "contract_id": "G12-bc15e8cddb",
       "dimensions": [
         "startup PATH order",
@@ -12893,23 +12865,31 @@
       ]
     },
     {
-      "contract_id": "G12-8cbdcf2272",
+      "contract_id": "G12-3b79e53d94",
       "dimensions": [
         "startup PATH order",
         "launch coverage warning",
-        "real Claude Code execution"
+        "real Claude Code execution",
+        "all-pane sync after startup restore handoff and reload",
+        "uncovered panes never retain markers including legacy handoff"
       ],
       "verification_methods": [
         "rust_test_target:login_zsh_keeps_shim_first_after_startup",
         "rust_test_target:coverage_requires_supported_matching_launch_and_bash_prompt",
-        "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
+        "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13",
+        "rust_test_target:guard_syncs_all_panes_after_restore_handoff_and_config_reload",
+        "rust_test_target:load_live_config_parses_guard_and_reports_invalid_guard",
+        "platform_live_acceptance:macos_old_main_guard_coverage_handoff_2026_10_13",
+        "rust_test_target:guard_markers_require_effective_launch_coverage"
       ],
       "source_anchors": [
         "SPEC.md:2281",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
-        "src/client/endpoint/frontend/notice.rs:67"
+        "src/client/endpoint/frontend/notice.rs:67",
+        "src/app/mod.rs:841",
+        "src/config/io.rs:430"
       ],
       "test_status": [
         "static_verified"
@@ -12918,7 +12898,8 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "macOS real Claude default-mode evidence, exact tool commands, pending IDs, shim-first dispatch environment, ai_guard counts and real TUI assertions are saved in .local/prd/RESULT-guard-coverage.md. Linux live acceptance remains unverified; unsupported shell suppression is covered by the launch environment test."
+        "macOS real Claude default-mode evidence, exact tool commands, pending IDs, shim-first dispatch environment, ai_guard counts and real TUI assertions are saved in .local/prd/RESULT-guard-coverage.md. Linux live acceptance remains unverified; unsupported shell suppression is covered by the launch environment test.",
+        "Pre-fix main d2d9ac57 -> fixed debug build, isolated HOME/XDG and named session; detailed stderr, TUI, marker and native Claude proof are recorded in .local/prd/RESULT-guard-coverage-handoff.md. Linux live handoff remains unverified."
       ]
     },
     {
@@ -12984,6 +12965,61 @@
       ],
       "unrepresented_dimensions": [
         "Fixture parsing, signature participation and adoption comparison are unit-covered; a live real-agent screen with wrapped descriptions remains manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G12-575ecb370e",
+      "dimensions": [
+        "launch coverage marker invariant",
+        "legacy handoff stale marker removal",
+        "unchanged uncovered warnings"
+      ],
+      "verification_methods": [
+        "rust_test_target:guard_markers_require_effective_launch_coverage",
+        "rust_test_target:guard_syncs_all_panes_after_restore_handoff_and_config_reload",
+        "platform_live_acceptance:macos_legacy_marker_handoff_2026_10_13"
+      ],
+      "source_anchors": [
+        "SPEC.md:2282",
+        "src/app/guard.rs:77"
+      ],
+      "test_status": [
+        "static_verified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Isolated real shell with legacy environment (startup injection disabled in old main d2d9ac57) -> f5039adf 0.2.36 -> fixed build. Saved rm -rf bypass, ai_guard recovery, new-pane pending/reject and cleanup: .local/prd/RESULT-guard-legacy-marker.md. kazuph-v0.2.33 itself and Linux live handoff are not verified.",
+        "The current manifest schema has no live verified status; macOS live PASS is documented by the platform acceptance method and RESULT table, while portable live status remains unverified."
+      ]
+    },
+    {
+      "contract_id": "G9-0d35f07815",
+      "dimensions": [
+        "regression containment",
+        "existing decision surfaces"
+      ],
+      "verification_methods": [
+        "rust_test_target:first_answer_wins_and_second_answer_is_already_resolved",
+        "rust_test_target:watch_line_shapes_match_the_contract",
+        "drift_source_anchor:src/app/api/decisions.rs",
+        "drift_source_anchor:src/cli/decision/watch.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1977",
+        "src/app/api/decisions.rs:9",
+        "src/cli/decision/watch.rs:229"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The full nextest suite re-pins existing decision surfaces; interactive dialog and Slack regression is manual evidence"
       ]
     },
     {
