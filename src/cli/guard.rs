@@ -90,17 +90,33 @@ fn load_context() -> GuardContext {
     }
 }
 
-/// Current `PATH` with this pane's guard shim directory removed so helper
+/// Current `PATH` with every guard shim directory removed so helper
 /// commands (`git`, `gh`) and the wrapped command resolve to real binaries.
-/// The directory is per-pane and named by `HERDR_GUARD_SHIM_DIR`, which the
-/// pane launch env always sets alongside the PATH prepend.
+/// The pane's own directory is named by `HERDR_GUARD_SHIM_DIR`, but a process
+/// can inherit the shim `PATH` prepend without that variable (an env scrub on
+/// a spawned job, for example). Matching only the named directory then leaves
+/// the pane shim first in `PATH`, the "real" command resolves back to the
+/// shim, and `herdr guard exec` re-enters itself without end. Dropping every
+/// directory under the shim root closes that loop regardless of the env.
 fn sanitize_path() -> String {
-    let shim = std::env::var(crate::guard::SHIM_DIR_ENV_VAR)
-        .unwrap_or_else(|_| crate::guard::shim_dir().to_string_lossy().to_string());
-    std::env::var("PATH")
-        .unwrap_or_default()
-        .split(':')
-        .filter(|component| *component != shim)
+    let shim = std::env::var(crate::guard::SHIM_DIR_ENV_VAR).ok();
+    let root = crate::guard::shim_dir();
+    sanitize_path_from(
+        &std::env::var("PATH").unwrap_or_default(),
+        shim.as_deref(),
+        &root,
+    )
+}
+
+fn sanitize_path_from(path: &str, shim: Option<&str>, root: &Path) -> String {
+    path.split(':')
+        .filter(|component| {
+            if Some(*component) == shim {
+                return false;
+            }
+            let component = Path::new(component);
+            !(component == root || component.starts_with(root))
+        })
         .collect::<Vec<_>>()
         .join(":")
 }
@@ -786,4 +802,41 @@ fn guard_status(args: &[String]) -> std::io::Result<i32> {
         .unwrap_or_default()
     );
     Ok(0)
+}
+
+#[cfg(test)]
+mod sanitize_path_tests {
+    use super::sanitize_path_from;
+    use std::path::Path;
+
+    #[test]
+    fn drops_named_and_unnamed_pane_shim_dirs() {
+        let root = Path::new("/state/guard/bin");
+        let path = "/state/guard/bin/p_7:/state/guard/bin/p_9:/usr/bin:/bin";
+        // HERDR_GUARD_SHIM_DIR names p_9 only; p_7 (inherited prepend without
+        // its variable) must still go, or the real command resolves to a shim.
+        assert_eq!(
+            sanitize_path_from(path, Some("/state/guard/bin/p_9"), root),
+            "/usr/bin:/bin"
+        );
+    }
+
+    #[test]
+    fn drops_shim_dirs_when_the_shim_variable_was_scrubbed() {
+        let root = Path::new("/state/guard/bin");
+        let path = "/state/guard/bin/p_2467:/opt/homebrew/bin:/usr/bin";
+        assert_eq!(
+            sanitize_path_from(path, None, root),
+            "/opt/homebrew/bin:/usr/bin"
+        );
+    }
+
+    #[test]
+    fn keeps_unrelated_dirs_that_share_a_prefix() {
+        let root = Path::new("/state/guard/bin");
+        assert_eq!(
+            sanitize_path_from("/state/guard/binaries:/usr/bin", None, root),
+            "/state/guard/binaries:/usr/bin"
+        );
+    }
 }
