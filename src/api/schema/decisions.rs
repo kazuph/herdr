@@ -70,6 +70,16 @@ pub struct DecisionOrigin {
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<String>,
+    /// Display name of the workspace (space) owning the pane, resolved by the
+    /// server when the decision is created. Absent on older wire payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_label: Option<String>,
+    /// Display name of the tab owning the pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_label: Option<String>,
+    /// Pane label or terminal title identifying the pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

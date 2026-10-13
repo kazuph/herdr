@@ -201,6 +201,36 @@ function loadCredentials(config, env = process.env) {
   return { token, channel, appToken, mention };
 }
 
+// The daemon outlives the server that launched it: a Homebrew install
+// records HERDR_BIN_PATH as a versioned Cellar path that `brew upgrade`
+// deletes, so every herdr invocation resolves the binary afresh — the
+// configured path while it exists, then PATH, then the usual prefixes.
+function resolveHerdrBin(config, logFn = () => {}) {
+  const configured = config.herdrBin;
+  if (configured && configured !== "herdr" && fs.existsSync(configured)) {
+    return configured;
+  }
+  const candidates = [
+    ...(process.env.PATH || "")
+      .split(path.delimiter)
+      .filter(Boolean)
+      .map((dir) => path.join(dir, "herdr")),
+    "/opt/homebrew/bin/herdr",
+    path.join(os.homedir(), ".local", "bin", "herdr"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      if (configured && configured !== "herdr" && !fs.existsSync(configured)) {
+        logFn(
+          `HERDR_BIN_PATH (${configured}) が存在しないため ${candidate} を使います`,
+        );
+      }
+      return candidate;
+    }
+  }
+  return null;
+}
+
 function execFileText(file, args, options = {}) {
   return new Promise((resolve) => {
     execFile(
@@ -625,13 +655,17 @@ function fmtDeadline(decision, now = Date.now()) {
 function originLines(decision) {
   const origin = decision.origin || {};
   const lines = [];
-  if (origin.pane_id) lines.push(`*ペイン* \`${origin.pane_id}\``);
+  if (origin.machine) lines.push(`*出どころマシン* ${origin.machine}`);
+  if (origin.workspace_label)
+    lines.push(`*スペース* ${origin.workspace_label}`);
+  if (origin.tab_label) lines.push(`*タブ* ${origin.tab_label}`);
+  if (origin.pane_label) lines.push(`*ペイン* ${origin.pane_label}`);
+  if (origin.pane_id) lines.push(`*ペインID* \`${origin.pane_id}\``);
   if (origin.agent) lines.push(`*エージェント* \`${origin.agent}\``);
   if (origin.cwd) lines.push(`*ディレクトリ* \`${origin.cwd}\``);
   if (origin.branch) lines.push(`*ブランチ* \`${origin.branch}\``);
   if (origin.command) lines.push(`*コマンド* \`${origin.command}\``);
   if (origin.reason) lines.push(`*理由* ${origin.reason}`);
-  if (origin.machine) lines.push(`*出どころマシン* ${origin.machine}`);
   return lines;
 }
 
@@ -717,9 +751,10 @@ function buildDecisionBlocks({
 }) {
   const statusText = STATUS_TEXT[status] || status;
   const machineLabel = machine?.label || machine?.id || "local";
-  const head = mention
-    ? `【${statusText}】判断待ち | ${machineLabel} | ${mention}`
-    : `【${statusText}】判断待ち | ${machineLabel}`;
+  const headParts = [`【${statusText}】判断待ち`, machineLabel];
+  if (decision.question_label) headParts.push(decision.question_label);
+  if (mention) headParts.push(mention);
+  const head = headParts.join(" | ");
   const blocks = [
     { type: "context", elements: [{ type: "mrkdwn", text: head }] },
     {
@@ -751,11 +786,15 @@ function buildDecisionBlocks({
       )) {
         blocks.push({ type: "section", text: { type: "mrkdwn", text: chunk } });
       }
-      const hint = decision.multi_select
-        ? "複数選択: スレッドに「1 2」のように番号を並べて返信 or 数字リアクション（自由記述も可）"
-        : decision.allow_text
-          ? "数字リアクションで選択 or スレッド返信（文も答えに付きます）"
-          : "数字リアクションで選択 or スレッドに番号で返信";
+      const hints = decision.multi_select
+        ? [
+            "複数選択: 番号リアクションで選んで :white_check_mark: で確定 or スレッドに「1,3」と番号を並べて返信",
+          ]
+        : ["数字リアクションで選択 or スレッドに番号で返信"];
+      if (decision.allow_text) {
+        hints.push("自由記述はスレッドに文で返信");
+      }
+      const hint = hints.join(" / ");
       blocks.push({
         type: "context",
         elements: [
@@ -1011,6 +1050,9 @@ export class SlackDecisionsDaemon {
       postTimer: null,
       seenReplies: new Set(),
       seenReactions: new Set(),
+      // Option ids picked via number reactions on a multi_select decision;
+      // submitted when a :white_check_mark: reaction confirms them.
+      selection: new Set(),
     };
     this.entries.set(key, entry);
     if (entry.post) {
@@ -1293,10 +1335,41 @@ export class SlackDecisionsDaemon {
   }
 
   async handleReaction(entry, reactionName, user = "") {
+    const options = entry.decision.options || [];
+    const multiSelect = entry.decision.multi_select === true;
+    if (multiSelect && reactionName === "white_check_mark") {
+      if (entry.selection.size === 0) {
+        await this.postThreadNote(
+          entry,
+          "まだ選択肢が選ばれていません。先に番号リアクションを付けてから :white_check_mark: で確定してください。",
+        );
+        return;
+      }
+      const ids = [...entry.selection]
+        .map((index) => options[index]?.id)
+        .filter(Boolean);
+      await this.submitAnswer(entry, {
+        optionId: ids[0],
+        optionIds: ids,
+        via: `slack confirm :white_check_mark: by ${user || "?"}`,
+      });
+      return;
+    }
     const index = NUMBER_EMOJIS.indexOf(reactionName);
     if (index === -1) return;
-    const options = entry.decision.options || [];
     if (index >= options.length) return;
+    if (multiSelect) {
+      entry.selection.add(index);
+      const picked = [...entry.selection]
+        .sort((a, b) => a - b)
+        .map((pickedIndex) => `:${NUMBER_EMOJIS[pickedIndex]}:`)
+        .join(" ");
+      await this.postThreadNote(
+        entry,
+        `選択中: ${picked} — :white_check_mark: で確定します。`,
+      );
+      return;
+    }
     await this.submitAnswer(entry, {
       optionId: options[index].id,
       via: `slack reaction :${reactionName}: by ${user || "?"}`,
@@ -1425,22 +1498,34 @@ export class SlackDecisionsDaemon {
     } catch {
       return;
     }
+    const multiSelect = entry.decision.multi_select === true;
+    const options = entry.decision.options || [];
+    let confirmUser = "";
     for (const reaction of message?.reactions || []) {
-      const index = NUMBER_EMOJIS.indexOf(reaction.name);
-      if (index === -1) continue;
       const users = (reaction.users || []).filter((u) => u !== this.botUserId);
       if (users.length === 0) continue;
       const marker = `${reaction.name}:${users[0]}`;
       if (entry.seenReactions.has(marker)) continue;
+      if (multiSelect && reaction.name === "white_check_mark") {
+        entry.seenReactions.add(marker);
+        confirmUser = users[0];
+        continue;
+      }
+      const index = NUMBER_EMOJIS.indexOf(reaction.name);
+      if (index === -1 || index >= options.length) continue;
       entry.seenReactions.add(marker);
-      const options = entry.decision.options || [];
-      if (index < options.length) {
+      if (multiSelect) {
+        entry.selection.add(index);
+      } else {
         await this.submitAnswer(entry, {
           optionId: options[index].id,
           via: `slack reaction :${reaction.name}: (history)`,
         });
+        return;
       }
-      return;
+    }
+    if (confirmUser) {
+      await this.handleReaction(entry, "white_check_mark", confirmUser);
     }
   }
 
@@ -1474,8 +1559,20 @@ export class SlackDecisionsDaemon {
 // --- process plumbing -----------------------------------------------------------
 
 function spawnDecisionWatch(config, logFn) {
+  const bin = resolveHerdrBin(config, logFn);
+  if (!bin) {
+    return {
+      lines: (async function* () {
+        throw new Error(
+          `herdr 実行ファイルが見つかりません (HERDR_BIN_PATH=${config.herdrBin})。` +
+            "PATH・/opt/homebrew/bin・~/.local/bin を確認してください",
+        );
+      })(),
+      close() {},
+    };
+  }
   const child = spawn(
-    config.herdrBin,
+    bin,
     ["decision", "watch", "--all-machines"],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
@@ -1520,14 +1617,33 @@ function spawnDecisionWatch(config, logFn) {
   };
 }
 
-function createRunAnswer(config) {
-  return (args) => execFileText(config.herdrBin, args, { timeoutMs: 60_000 });
+function createRunAnswer(config, logFn = () => {}) {
+  return (args) => {
+    const bin = resolveHerdrBin(config, logFn);
+    if (!bin) {
+      return Promise.resolve({
+        code: 127,
+        stdout: "",
+        stderr:
+          `herdr 実行ファイルが見つかりません (HERDR_BIN_PATH=${config.herdrBin})。` +
+          "PATH・/opt/homebrew/bin・~/.local/bin を確認してください",
+      });
+    }
+    return execFileText(bin, args, { timeoutMs: 60_000 });
+  };
 }
 
-function createGetDecision(config) {
+function createGetDecision(config, logFn = () => {}) {
   return async (machineId, decisionId) => {
+    const bin = resolveHerdrBin(config, logFn);
+    if (!bin) {
+      throw new Error(
+        `herdr 実行ファイルが見つかりません (HERDR_BIN_PATH=${config.herdrBin})。` +
+          "PATH・/opt/homebrew/bin・~/.local/bin を確認してください",
+      );
+    }
     const result = await execFileText(
-      config.herdrBin,
+      bin,
       ["decision", "get", decisionId, "--machine", machineId],
       { timeoutMs: 60_000 },
     );
@@ -1628,15 +1744,23 @@ async function ensureDaemon(config, env) {
       ["HERDR_PLUGIN_CONFIG_DIR", config.configDir],
       ["HERDR_PLUGIN_STATE_DIR", config.stateDir],
       ["HERDR_SOCKET_PATH", env.HERDR_SOCKET_PATH || ""],
-      ["HERDR_BIN_PATH", config.herdrBin],
+      ["HERDR_BIN_PATH", resolveHerdrBin(config, log) || config.herdrBin],
       ["PATH", env.PATH || ""],
     ]
       .filter(([, value]) => value)
       .map(([key, value]) => `${key}=${shellQuote(value)}`)
       .join(" ");
     const inner = `export ${exportsList}; exec node ${shellQuote(path.join(pluginRoot, "slack-decisions.mjs"))} run`;
+    const daemonBin = resolveHerdrBin(config, log);
+    if (!daemonBin) {
+      log(
+        `herdr 実行ファイルが見つかりません (HERDR_BIN_PATH=${config.herdrBin})。` +
+          "デーモンを起動できません",
+      );
+      return;
+    }
     const result = await execFileText(
-      config.herdrBin,
+      daemonBin,
       [
         "run",
         "--label",
@@ -1870,8 +1994,8 @@ async function main() {
     slack,
     botUserId,
     spawnWatch: () => Promise.resolve(spawnDecisionWatch(config, log)),
-    runAnswer: createRunAnswer(config),
-    getDecision: createGetDecision(config),
+    runAnswer: createRunAnswer(config, log),
+    getDecision: createGetDecision(config, log),
     glassesState: () => saberaGlassesState(config.saberaSocket),
     log,
     postsFilePath: path.join(config.stateDir, POSTS_FILE),
@@ -1905,6 +2029,8 @@ if (invokedAsScript) {
 
 export {
   buildDecisionBlocks,
+  createRunAnswer,
+  resolveHerdrBin,
   optionBlockChunks,
   decisionKey,
   deliverFile,

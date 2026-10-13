@@ -12,7 +12,7 @@ const DECISION_WAIT_RETRY_DELAY: Duration = Duration::from_millis(300);
 
 const DECISION_ASK_USAGE: &str = "usage: herdr decision ask --kind <command_guard|tool_permission|agent_prompt|ask> --title <text> [--body <text>] --option <id:label[:approve|reject|other]>... [--option-desc <id:text>]... [--allow-text] [--multi-select] [--timeout <secs>]";
 const DECISION_ANSWER_USAGE: &str =
-    "usage: herdr decision answer <decision_id> <option_id> [option_id ...] [--text <text>] [--responder <name>] [--machine <label-or-id>]";
+    "usage: herdr decision answer <decision_id> [<option_id>...] [--text <text>] [--responder <name>] [--machine <label-or-id>]\n  at least one option id or --text is required";
 const DECISION_LIST_USAGE: &str =
     "usage: herdr decision list [--status <pending|answered|expired|cancelled>]";
 
@@ -280,11 +280,6 @@ fn decision_answer(args: &[String]) -> std::io::Result<i32> {
         option_ids.push(args[index].clone());
         index += 1;
     }
-    if option_ids.is_empty() {
-        eprintln!("{DECISION_ANSWER_USAGE}");
-        return Ok(2);
-    }
-
     let mut text = None;
     let mut responder = None;
     while index < args.len() {
@@ -311,6 +306,10 @@ fn decision_answer(args: &[String]) -> std::io::Result<i32> {
                 return Ok(2);
             }
         }
+    }
+    if option_ids.is_empty() && text.is_none() {
+        eprintln!("{DECISION_ANSWER_USAGE}");
+        return Ok(2);
     }
 
     super::print_response(&super::send_request(&Request {

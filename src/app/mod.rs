@@ -171,6 +171,11 @@ pub struct App {
     /// Screen prompts currently tracked against the decision they created.
     pub(crate) screen_prompt_watches:
         HashMap<crate::layout::PaneId, screen_prompts::ScreenPromptWatch>,
+    /// Recent cancel+recreate timestamps per pane. A pane rebuilding its
+    /// pending decision faster than a human could answer is churning; the
+    /// flood brake switches it to in-place updates.
+    pub(crate) screen_prompt_rebuilds:
+        HashMap<crate::layout::PaneId, std::collections::VecDeque<Instant>>,
     /// Pane writes waiting on a delay (free-text answers type text and Enter
     /// in timed steps so the agent TUI redraws between keys).
     pub(crate) deferred_pane_writes: Vec<screen_prompts::DeferredPaneWrite>,
@@ -886,6 +891,7 @@ impl App {
             decision_expiry_deadline: Some(Instant::now()),
             screen_prompt_scan_at: config.decisions.screen_prompts.then_some(Instant::now()),
             screen_prompt_watches: HashMap::new(),
+            screen_prompt_rebuilds: HashMap::new(),
             deferred_pane_writes: Vec::new(),
             preview_scans: HashMap::new(),
             preview_scan_done: HashMap::new(),

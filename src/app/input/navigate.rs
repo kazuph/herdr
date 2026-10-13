@@ -871,11 +871,8 @@ impl App {
             crate::api::SOCKET_PATH_ENV_VAR.to_string(),
             crate::api::socket_path().display().to_string(),
         )];
-        if let Ok(current_exe) = std::env::current_exe() {
-            env.push((
-                "HERDR_BIN_PATH".to_string(),
-                current_exe.display().to_string(),
-            ));
+        if let Some(bin_path) = crate::api::herdr_bin_path() {
+            env.push(("HERDR_BIN_PATH".to_string(), bin_path));
         }
 
         let mut cwd = None;
