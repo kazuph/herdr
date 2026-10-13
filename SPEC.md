@@ -2262,11 +2262,14 @@
 - **該当コミット**: feat/command-guardの実装
 - **分類**: CORE-RUNTIME
 - **status: fork独自・保持 (C)** — ペイン起動時にだけ PATH と shell 起動設定へ見張りを差し込む。
-- **挙動**: ペインごとの `<state>/guard/bin/<p_N>` を PATH 先頭へ置く。ディレクトリは marker が無い間は空のままで PATH の解決に介入せず、marker が立つと対象コマンドごとの転送スクリプトが置かれて `herdr guard exec` へ回り、marker が外れると取り除かれる。zsh は生成した ZDOTDIR の `.zshenv` で元の ZDOTDIR を戻してから利用者の実 `.zshenv` を読み、残りの起動ファイルは元の ZDOTDIR から zsh が読む。bash は BASH_ENV を同じく連鎖させる。いずれの wrapper もそのペインの marker ファイルがある時だけ `herdr guard exec` へ回し、無い時はそのまま本物を呼ぶ。
+- **挙動**: ペインごとの `<state>/guard/bin/<p_N>` を PATH 先頭へ置く。ディレクトリは marker が無い間は空のままで PATH の解決に介入せず、marker が立つと対象コマンドごとの転送スクリプトが置かれて `herdr guard exec` へ回り、marker が外れると取り除かれる。zsh は各起動ファイルを元の ZDOTDIR で連鎖して読み終えるたびに shim を PATH 先頭へ戻し、最後に元の ZDOTDIR を保つ。bash は BASH_ENV の読み込み後と対話 shell の最初の prompt で先頭へ戻す。いずれの wrapper もそのペインの marker ファイルがある時だけ `herdr guard exec` へ回し、無い時はそのまま本物を呼ぶ。
 - **受け入れ条件**:
   - shim はペインごとの `bin/<p_N>` にあり、marker が無い間は空で余分なプロセスを起こさず（1回の呼び出しあたりの差は 1ms 以下）、marker がある間だけ転送スクリプトが置かれて `herdr guard exec` へ回る。`herdr guard exec` は自身の shim ディレクトリを PATH から外して本物を解決する。
   - 生成した `.zshenv` は先に `ZDOTDIR` を `HERDR_GUARD_ZDOTDIR_ORIG`（無ければ unset）へ戻してから利用者の実 `.zshenv` を読み、`HISTFILE` など ZDOTDIR 由来のパスを差し込み前と同じ場所に保つ。`.bashrc` 系は `HERDR_GUARD_BASH_ENV_ORIG` を先に source する。
   - zsh の対象コマンド関数・`command` 通過 wrapper・accept-line の記録、bash の対象コマンド関数・`command` 通過 wrapper は、呼び出し時にそのペインの marker ファイルが存在するときだけ `herdr guard exec` へ回る。利用者の設定で同名の関数やエイリアスが定義済みの名前（ai_guard の wrapper など）は上書きせず、本物の実行が PATH の shim を通ることで記録だけは残る。
+  - zsh は `.zshenv`・`.zprofile`・`.zshrc`・`.zlogin` を利用者の ZDOTDIR で読み、各ファイルとシステムの起動ファイルによる PATH の変更後も shim を先頭に保つ。Claude Code の shell snapshot からの実行でも herdr の判断待ちに届く。
+  - bash の非対話 shell は元の BASH_ENV を読んだ後、対話 shell は全起動ファイルの後の最初の prompt で shim を先頭へ戻す。対話 bash はその確認後に初めて `HERDR_GUARD_ENFORCING=1` を出し、保証できない shell では出さない。
+  - 起動時に見張りが差し込まれていない agent pane、起動後のモード変更、未確認の bash prompt、未対応 shell を `guard status` の stderr と画面の警告で pane ID・理由・新しい pane での起動し直しとともに知らせる。guard の JSON と判断待ち API は変えない。live handoff は起動時の差し込みの事実を保持し、古い runtime には未適用の警告を出す。
   - `[guard].enabled = false` のとき shim・ZDOTDIR・BASH_ENV・marker の環境変数を一切差し込まない。
   - ペイン識別を持たない spawn（popup・overlay の `without_pane_identity` など）には差し込まず、通常のペイン spawn の既存環境変数を壊さない。
 

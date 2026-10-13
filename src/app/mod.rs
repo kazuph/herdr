@@ -612,6 +612,7 @@ impl App {
         let (theme_palette, theme_name) = resolve_effective_theme(&theme_runtime, None);
 
         let mut state = AppState {
+            guard_warnings: Default::default(),
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
@@ -1676,6 +1677,23 @@ impl App {
 
         if !invalid_section("guard") {
             self.state.guard_config = config.guard.clone();
+            let panes: Vec<_> = self
+                .state
+                .workspaces
+                .iter()
+                .enumerate()
+                .flat_map(|(ws_idx, ws)| {
+                    ws.tabs.iter().flat_map(move |tab| {
+                        tab.layout
+                            .pane_ids()
+                            .into_iter()
+                            .map(move |pane| (ws_idx, pane))
+                    })
+                })
+                .collect();
+            for (ws_idx, pane) in panes {
+                self.sync_guard_marker_for_pane(ws_idx, pane);
+            }
         }
 
         if !invalid_section("decisions") {

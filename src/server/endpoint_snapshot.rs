@@ -231,7 +231,15 @@ pub(crate) fn snapshot(
     let snapshot = ClientShellSnapshot {
         boot_id: boot_id.to_owned(),
         revision,
-        config_diagnostic: diagnostic.map(str::to_owned),
+        config_diagnostic: {
+            let message = diagnostic
+                .into_iter()
+                .map(str::to_owned)
+                .chain(app.state.guard_warnings.values().cloned())
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!message.is_empty()).then_some(message)
+        },
         // The fork deliberately removed upstream update and integration flows.
         product_announcement: None,
         update_available: None,

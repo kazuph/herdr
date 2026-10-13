@@ -579,8 +579,16 @@ pub fn render_with_runtime_registry(
 }
 
 fn render_notifications(app: &AppState, frame: &mut Frame, terminal_area: Rect) {
-    let has_config_diagnostic = app.config_diagnostic.is_some();
-    if let Some(message) = &app.config_diagnostic {
+    let diagnostic = app
+        .config_diagnostic
+        .iter()
+        .chain(app.guard_warnings.values())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let has_config_diagnostic = !diagnostic.is_empty();
+    if has_config_diagnostic {
+        let message = &diagnostic;
         let diagnostic_area = if app.view.layout == ViewLayout::Mobile {
             terminal_area
         } else {
