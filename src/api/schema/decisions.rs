@@ -39,6 +39,19 @@ pub struct DecisionOption {
     /// `--option-desc` on `decision ask`). Absent on older wire payloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Monospace preview the prompt drew for this option (Claude Code
+    /// AskUserQuestion option previews — drafts, diffs, diagrams). Claude
+    /// Code only paints the focused option's preview, so a screen capture
+    /// can carry at most one real preview per frame. Absent on older wire
+    /// payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    /// The prompt indicated this option has a preview but it was not on
+    /// screen when the decision was captured (Claude Code paints only the
+    /// focused option's preview). Renders as "プレビューあり（画面で確認）".
+    /// Absent on older wire payloads.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub preview_unavailable: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -63,6 +76,11 @@ pub struct DecisionOrigin {
 pub struct DecisionAnswer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub option_id: Option<String>,
+    /// All options chosen for a `multi_select` decision (Claude Code
+    /// AskUserQuestion multiSelect answers). Absent on older wire payloads;
+    /// single-choice answers keep using `option_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub option_ids: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,6 +97,16 @@ pub struct Decision {
     pub body: Option<String>,
     pub options: Vec<DecisionOption>,
     pub allow_text: bool,
+    /// Multiple options may be chosen (Claude Code AskUserQuestion
+    /// multiSelect): the answer carries `option_ids`. Absent on older wire
+    /// payloads (treated as single-choice).
+    #[serde(default)]
+    pub multi_select: bool,
+    /// Short label plus progress for multi-question prompts (Claude Code
+    /// AskUserQuestion tab header: "質問 1/3 果物", "最終確認"). Shown near
+    /// the dialog header. Absent on older wire payloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<DecisionOrigin>,
     pub created_unix_ms: u64,
@@ -98,6 +126,10 @@ pub struct DecisionCreateParams {
     pub options: Vec<DecisionOption>,
     #[serde(default)]
     pub allow_text: bool,
+    /// The decision accepts several options at once (see
+    /// `Decision::multi_select`). Absent on older wire payloads.
+    #[serde(default)]
+    pub multi_select: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -127,6 +159,10 @@ pub struct DecisionAnswerParams {
     pub decision_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub option_id: Option<String>,
+    /// Multiple choices for a `multi_select` decision. Absent on older wire
+    /// payloads; `option_id` remains the single-choice field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub option_ids: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

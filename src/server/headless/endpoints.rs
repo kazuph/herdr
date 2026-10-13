@@ -36,7 +36,6 @@ pub(super) struct EndpointClient {
     surface_revision: u64,
     snapshot: Option<crate::protocol::endpoint_projection::SnapshotJson>,
     jobs: Option<crate::protocol::endpoint_jobs::EndpointJobsProjection>,
-    decisions: Option<crate::protocol::endpoint_decisions::EndpointDecisionsProjection>,
     pub(super) surface: Option<wire::PaneSurfaceFrame>,
     popup_read_facts: Option<PopupReadFacts>,
     write_pending: bool,
@@ -290,7 +289,6 @@ impl HeadlessServer {
                         surface_revision: 0,
                         snapshot: None,
                         jobs: None,
-                        decisions: None,
                         surface: None,
                         write_pending: true,
                         published_projection_revision: None,
@@ -468,25 +466,7 @@ impl HeadlessServer {
         }
     }
 
-    /// Refresh the server-owned pending-decision set after
-    /// `app.decisions_projection_dirty` was set. Store failures keep the last
-    /// known list rather than publishing an empty one.
-    fn refresh_endpoint_pending_decisions(&mut self) {
-        match crate::decision::DecisionStore::open_active() {
-            Ok(store) => match store.list(Some(crate::api::schema::DecisionStatus::Pending)) {
-                Ok(decisions) => self.endpoint_pending_decisions = decisions,
-                Err(error) => {
-                    warn!(%error, "failed to list pending decisions for endpoint projection")
-                }
-            },
-            Err(error) => warn!(%error, "failed to open decision store for endpoint projection"),
-        }
-    }
-
     pub(super) fn stream_endpoint_views(&mut self) {
-        if std::mem::take(&mut self.app.decisions_projection_dirty) {
-            self.refresh_endpoint_pending_decisions();
-        }
         let topology = self.endpoint_topology();
         for client in self.endpoint_clients.values_mut() {
             client.location.reconcile(&topology);
@@ -526,22 +506,12 @@ impl HeadlessServer {
                 &self.endpoint_boot_id,
                 client.projection_revision,
             );
-            let mut decisions = crate::server::endpoint_decisions::decisions_projection(
-                &self.endpoint_boot_id,
-                client.projection_revision,
-                &self.endpoint_pending_decisions,
-            );
-            if client.snapshot.as_ref() != Some(&snapshot)
-                || client.jobs.as_ref() != Some(&jobs)
-                || client.decisions.as_ref() != Some(&decisions)
-            {
+            if client.snapshot.as_ref() != Some(&snapshot) || client.jobs.as_ref() != Some(&jobs) {
                 client.projection_revision = client.projection_revision.saturating_add(1);
                 snapshot.revision = client.projection_revision;
                 jobs.revision = client.projection_revision;
-                decisions.revision = client.projection_revision;
                 client.snapshot = Some(snapshot);
                 client.jobs = Some(jobs);
-                client.decisions = Some(decisions);
                 client.surface = None;
                 client.write_pending = true;
             }
@@ -577,24 +547,6 @@ impl HeadlessServer {
                     Ok(data) => data,
                     Err(error) => {
                         warn!(client_id, %error, "endpoint job projection serialization failed");
-                        continue;
-                    }
-                },
-            };
-            if let Ok(data) = framed(&message) {
-                batch.extend(data);
-            } else {
-                continue;
-            }
-            let client = self.endpoint_clients.get(&client_id).expect("live client");
-            let message = wire::ServerMessage::EndpointControl {
-                kind: crate::protocol::endpoint_decisions::DECISIONS_PROJECTION_KIND.into(),
-                data: match serde_json::to_string(
-                    client.decisions.as_ref().expect("decisions produced"),
-                ) {
-                    Ok(data) => data,
-                    Err(error) => {
-                        warn!(client_id, %error, "endpoint decision projection serialization failed");
                         continue;
                     }
                 },

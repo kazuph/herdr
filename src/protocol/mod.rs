@@ -1,7 +1,6 @@
 //! Shared wire protocol and presentation encoding code.
 
 pub(crate) mod endpoint;
-pub(crate) mod endpoint_decisions;
 pub(crate) mod endpoint_jobs;
 pub(crate) mod endpoint_projection;
 pub(crate) mod endpoint_wire;

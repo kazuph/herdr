@@ -21,7 +21,6 @@ mod clipboard_images;
 mod context;
 mod copy;
 mod custom;
-mod decisions;
 #[cfg(unix)]
 mod direct;
 mod editor;
@@ -79,7 +78,6 @@ pub(crate) struct ClientFrontend {
     job_indicator_pending: bool,
     last_jobs_redraw: Instant,
     modal: Option<modal::Modal>,
-    decisions: decisions::Decisions,
     worktrees: Option<worktrees::Worktrees>,
     help: Option<help::Help>,
     menu: Option<menu::Menu>,
@@ -199,7 +197,6 @@ impl ClientFrontend {
             job_indicator_pending: false,
             last_jobs_redraw: Instant::now(),
             modal: None,
-            decisions: decisions::Decisions::default(),
             worktrees: None,
             help: None,
             menu: None,
@@ -360,7 +357,6 @@ impl ClientFrontend {
             menu::completed(self, &completed);
             settings::completed(self, &completed);
             modal::completed(self, &completed);
-            decisions::completed(self, &completed);
             context::completed(self, &completed)?;
             copy::completed(self, &completed)?;
             selection::completed(self, &completed);
@@ -378,7 +374,6 @@ impl ClientFrontend {
         notification::observe(self);
         menu::observe(self);
         let machines_changed = machines::observe(self);
-        decisions::observe(self);
         context::observe(self)?;
         notes::observe(self);
         settings::observe(self);
@@ -444,13 +439,7 @@ impl ClientFrontend {
                         &self.chrome.settings.palette,
                     );
                 }
-                if self.machines.is_none() {
-                    decisions::render(self, frame, view.layout.area);
-                }
                 notice::render(self, frame, &view);
-                if self.machines.is_none() {
-                    decisions::render_indicator(self, frame, &view);
-                }
             }),
             (self.runtime.input_lease_current() || self.runtime.awaiting_surface_pair())
                 && self.mobile.is_none()
@@ -466,8 +455,7 @@ impl ClientFrontend {
                 && !self
                     .modal
                     .as_ref()
-                    .is_some_and(modal::Modal::hides_terminal_cursor)
-                && !decisions::hides_terminal_cursor(self),
+                    .is_some_and(modal::Modal::hides_terminal_cursor),
             self.draw_host_cursor,
         );
         let encoded = if self.draw_host_cursor {

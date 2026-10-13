@@ -10,9 +10,9 @@ mod watch;
 
 const DECISION_WAIT_RETRY_DELAY: Duration = Duration::from_millis(300);
 
-const DECISION_ASK_USAGE: &str = "usage: herdr decision ask --kind <command_guard|tool_permission|agent_prompt|ask> --title <text> [--body <text>] --option <id:label[:approve|reject|other]>... [--option-desc <id:text>]... [--allow-text] [--timeout <secs>]";
+const DECISION_ASK_USAGE: &str = "usage: herdr decision ask --kind <command_guard|tool_permission|agent_prompt|ask> --title <text> [--body <text>] --option <id:label[:approve|reject|other]>... [--option-desc <id:text>]... [--allow-text] [--multi-select] [--timeout <secs>]";
 const DECISION_ANSWER_USAGE: &str =
-    "usage: herdr decision answer <decision_id> <option_id> [--text <text>] [--responder <name>] [--machine <label-or-id>]";
+    "usage: herdr decision answer <decision_id> <option_id> [option_id ...] [--text <text>] [--responder <name>] [--machine <label-or-id>]";
 const DECISION_LIST_USAGE: &str =
     "usage: herdr decision list [--status <pending|answered|expired|cancelled>]";
 
@@ -55,6 +55,7 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
     let mut options = Vec::new();
     let mut option_descriptions = Vec::new();
     let mut allow_text = false;
+    let mut multi_select = false;
     let mut timeout_ms = None;
 
     let mut index = 0;
@@ -125,6 +126,10 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
                 allow_text = true;
                 index += 1;
             }
+            "--multi-select" => {
+                multi_select = true;
+                index += 1;
+            }
             "--timeout" => {
                 let Some(value) = args.get(index + 1) else {
                     eprintln!("missing value for --timeout");
@@ -181,6 +186,7 @@ fn decision_ask(args: &[String]) -> std::io::Result<i32> {
             body,
             options,
             allow_text,
+            multi_select,
             timeout_ms,
             origin,
         }),
@@ -266,14 +272,21 @@ fn decision_answer(args: &[String]) -> std::io::Result<i32> {
         eprintln!("{DECISION_ANSWER_USAGE}");
         return Ok(2);
     };
-    let Some(option_id) = args.get(1) else {
+    // Positional option ids until the first `--flag`; multi-select
+    // answers pass several numbers at once.
+    let mut option_ids = Vec::new();
+    let mut index = 1;
+    while index < args.len() && !args[index].starts_with("--") {
+        option_ids.push(args[index].clone());
+        index += 1;
+    }
+    if option_ids.is_empty() {
         eprintln!("{DECISION_ANSWER_USAGE}");
         return Ok(2);
-    };
+    }
 
     let mut text = None;
     let mut responder = None;
-    let mut index = 2;
     while index < args.len() {
         match args[index].as_str() {
             "--text" => {
@@ -304,7 +317,8 @@ fn decision_answer(args: &[String]) -> std::io::Result<i32> {
         id: "cli:decision:answer".into(),
         method: Method::DecisionAnswer(DecisionAnswerParams {
             decision_id: decision_id.clone(),
-            option_id: Some(option_id.clone()),
+            option_id: option_ids.first().cloned(),
+            option_ids: (option_ids.len() > 1).then_some(option_ids),
             text,
             responder,
         }),
@@ -435,6 +449,8 @@ fn parse_decision_option(value: &str) -> std::io::Result<DecisionOption> {
         label: label.to_string(),
         role,
         description: None,
+        preview: None,
+        preview_unavailable: false,
     })
 }
 

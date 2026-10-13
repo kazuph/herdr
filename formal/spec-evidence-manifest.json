@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 513,
+    "active_contract_count": 511,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -8477,7 +8477,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2013"
+        "SPEC.md:2019"
       ],
       "test_status": [
         "unverified"
@@ -8502,7 +8502,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2014"
+        "SPEC.md:2020"
       ],
       "test_status": [
         "unverified"
@@ -8527,7 +8527,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2015"
+        "SPEC.md:2021"
       ],
       "test_status": [
         "unverified"
@@ -8552,7 +8552,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2016"
+        "SPEC.md:2022"
       ],
       "test_status": [
         "unverified"
@@ -8577,7 +8577,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2017"
+        "SPEC.md:2023"
       ],
       "test_status": [
         "unverified"
@@ -8602,7 +8602,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2018"
+        "SPEC.md:2024"
       ],
       "test_status": [
         "unverified"
@@ -8627,7 +8627,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2019"
+        "SPEC.md:2025"
       ],
       "test_status": [
         "unverified"
@@ -8652,7 +8652,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2020"
+        "SPEC.md:2026"
       ],
       "test_status": [
         "unverified"
@@ -8677,7 +8677,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2021"
+        "SPEC.md:2027"
       ],
       "test_status": [
         "unverified"
@@ -8702,7 +8702,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2022"
+        "SPEC.md:2028"
       ],
       "test_status": [
         "unverified"
@@ -8726,7 +8726,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2093",
+        "SPEC.md:2099",
         "src/detect/mod.rs:159"
       ],
       "test_status": [
@@ -8752,7 +8752,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2094",
+        "SPEC.md:2100",
         "src/detect/manifests/muse.toml:35"
       ],
       "test_status": [
@@ -8777,7 +8777,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2095",
+        "SPEC.md:2101",
         "src/detect/manifests/qwen.toml:39"
       ],
       "test_status": [
@@ -8807,7 +8807,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2096",
+        "SPEC.md:2102",
         "src/agent_resume.rs:190"
       ],
       "test_status": [
@@ -8832,7 +8832,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2097",
+        "SPEC.md:2103",
         "src/cli/integration.rs:3"
       ],
       "test_status": [
@@ -8857,7 +8857,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2098",
+        "SPEC.md:2104",
         "src/agent_resume.rs:196"
       ],
       "test_status": [
@@ -8883,7 +8883,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2126",
+        "SPEC.md:2132",
         "src/cli/machine.rs:162",
         "src/machine.rs:251"
       ],
@@ -8909,7 +8909,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2127",
+        "SPEC.md:2133",
         "src/machine.rs:88"
       ],
       "test_status": [
@@ -8934,7 +8934,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2128",
+        "SPEC.md:2134",
         "src/cli/machine.rs:40"
       ],
       "test_status": [
@@ -8961,7 +8961,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2129",
+        "SPEC.md:2135",
         "src/cli/machine.rs:212",
         "src/cli/machine.rs:273",
         "src/machine.rs:155"
@@ -8988,7 +8988,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2130",
+        "SPEC.md:2136",
         "src/machine.rs:219"
       ],
       "test_status": [
@@ -9016,7 +9016,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2148",
+        "SPEC.md:2154",
         "src/machine.rs:367"
       ],
       "test_status": [
@@ -9042,7 +9042,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2149",
+        "SPEC.md:2155",
         "src/main.rs:544",
         "src/machine.rs:419"
       ],
@@ -9069,7 +9069,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2150",
+        "SPEC.md:2156",
         "src/machine.rs:155"
       ],
       "test_status": [
@@ -9095,7 +9095,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2151",
+        "SPEC.md:2157",
         "src/main.rs:544",
         "src/machine.rs:295"
       ],
@@ -9929,7 +9929,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2060",
+        "SPEC.md:2066",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -9959,7 +9959,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2061",
+        "SPEC.md:2067",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -9989,7 +9989,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2062",
+        "SPEC.md:2068",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10019,7 +10019,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2063",
+        "SPEC.md:2069",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10049,7 +10049,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2064",
+        "SPEC.md:2070",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10079,7 +10079,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2065",
+        "SPEC.md:2071",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10109,7 +10109,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2066",
+        "SPEC.md:2072",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ],
@@ -10136,7 +10136,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2167",
+        "SPEC.md:2173",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ],
       "test_status": [
@@ -10162,7 +10162,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2168",
+        "SPEC.md:2174",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ],
       "test_status": [
@@ -10192,7 +10192,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2184",
+        "SPEC.md:2190",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10223,7 +10223,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2185",
+        "SPEC.md:2191",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10254,7 +10254,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2186",
+        "SPEC.md:2192",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10285,7 +10285,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2187",
+        "SPEC.md:2193",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ],
@@ -10314,7 +10314,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2188",
+        "SPEC.md:2194",
         "src/remote/saved.rs:98",
         "src/remote/saved/process.rs:23"
       ],
@@ -10348,7 +10348,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2189",
+        "SPEC.md:2195",
         "src/remote.rs:37",
         "src/client/endpoint/supervisor.rs:181",
         "src/client/endpoint/runtime.rs:162"
@@ -10378,7 +10378,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2190",
+        "SPEC.md:2196",
         "src/remote/saved/process.rs:119",
         "src/client/endpoint/supervisor.rs:181"
       ],
@@ -10405,7 +10405,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2203",
+        "SPEC.md:2209",
         "src/client/endpoint/frontend/machines.rs:129"
       ],
       "test_status": [
@@ -10431,7 +10431,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2204",
+        "SPEC.md:2210",
         "src/client/endpoint/frontend/machines.rs:129"
       ],
       "test_status": [
@@ -10463,7 +10463,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2228",
+        "SPEC.md:2234",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10496,7 +10496,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2235",
+        "SPEC.md:2241",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10529,7 +10529,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2236",
+        "SPEC.md:2242",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10562,7 +10562,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2238",
+        "SPEC.md:2244",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10595,7 +10595,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2239",
+        "SPEC.md:2245",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10753,7 +10753,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2234",
+        "SPEC.md:2240",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10926,7 +10926,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2229",
+        "SPEC.md:2235",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10962,7 +10962,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2233",
+        "SPEC.md:2239",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11140,7 +11140,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2230",
+        "SPEC.md:2236",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11234,7 +11234,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2231",
+        "SPEC.md:2237",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11270,7 +11270,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2232",
+        "SPEC.md:2238",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11306,7 +11306,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2237",
+        "SPEC.md:2243",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11519,173 +11519,6 @@
       ]
     },
     {
-      "contract_id": "G9-f2f62c595c",
-      "dimensions": [
-        "cross-machine pending projection",
-        "queued dialog presentation",
-        "safe input gating",
-        "reopen and auto-removal"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_decisions_follow_generation_boot_and_revision",
-        "rust_test_target:endpoint_decision_shows_oldest_pending_across_machines_with_queue_position",
-        "rust_test_target:endpoint_decision_close_snoozes_and_indicator_click_reopens",
-        "rust_test_target:endpoint_decision_keyboard_stays_on_pane_until_dialog_clicked",
-        "rust_test_target:endpoint_decision_resolved_elsewhere_and_disconnect_remove_it",
-        "rust_test_target:endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1920",
-        "src/client/endpoint/frontend/decisions.rs:111",
-        "src/server/headless/endpoints.rs:474"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Queue, input gating and resolution propagation are unit- and actual-socket-covered; a multi-machine run answering a remote decision from a real terminal is manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G9-87eb4f8028",
-      "dimensions": [
-        "cross-machine pending projection",
-        "queued dialog presentation",
-        "safe input gating",
-        "reopen and auto-removal"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_decisions_follow_generation_boot_and_revision",
-        "rust_test_target:endpoint_decision_shows_oldest_pending_across_machines_with_queue_position",
-        "rust_test_target:endpoint_decision_close_snoozes_and_indicator_click_reopens",
-        "rust_test_target:endpoint_decision_keyboard_stays_on_pane_until_dialog_clicked",
-        "rust_test_target:endpoint_decision_resolved_elsewhere_and_disconnect_remove_it",
-        "rust_test_target:endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process",
-        "rust_test_target:endpoint_decision_option_click_only_selects_confirm_or_enter_sends",
-        "rust_test_target:endpoint_decision_clicked_option_is_visually_selected",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1921",
-        "src/client/endpoint/frontend/decisions.rs:111",
-        "src/server/headless/endpoints.rs:474"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Queue, input gating and resolution propagation are unit- and actual-socket-covered; a multi-machine run answering a remote decision from a real terminal is manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G9-5590f50eff",
-      "dimensions": [
-        "cross-machine pending projection",
-        "queued dialog presentation",
-        "safe input gating",
-        "reopen and auto-removal"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_decisions_follow_generation_boot_and_revision",
-        "rust_test_target:endpoint_decision_shows_oldest_pending_across_machines_with_queue_position",
-        "rust_test_target:endpoint_decision_close_snoozes_and_indicator_click_reopens",
-        "rust_test_target:endpoint_decision_keyboard_stays_on_pane_until_dialog_clicked",
-        "rust_test_target:endpoint_decision_resolved_elsewhere_and_disconnect_remove_it",
-        "rust_test_target:endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1922",
-        "src/client/endpoint/frontend/decisions.rs:111",
-        "src/server/headless/endpoints.rs:474"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Queue, input gating and resolution propagation are unit- and actual-socket-covered; a multi-machine run answering a remote decision from a real terminal is manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G9-c593f2f5b2",
-      "dimensions": [
-        "cross-machine pending projection",
-        "queued dialog presentation",
-        "safe input gating",
-        "reopen and auto-removal"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_decisions_follow_generation_boot_and_revision",
-        "rust_test_target:endpoint_decision_shows_oldest_pending_across_machines_with_queue_position",
-        "rust_test_target:endpoint_decision_close_snoozes_and_indicator_click_reopens",
-        "rust_test_target:endpoint_decision_keyboard_stays_on_pane_until_dialog_clicked",
-        "rust_test_target:endpoint_decision_resolved_elsewhere_and_disconnect_remove_it",
-        "rust_test_target:endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1923",
-        "src/client/endpoint/frontend/decisions.rs:111",
-        "src/server/headless/endpoints.rs:474"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Queue, input gating and resolution propagation are unit- and actual-socket-covered; a multi-machine run answering a remote decision from a real terminal is manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G9-3fe801d351",
-      "dimensions": [
-        "cross-machine pending projection",
-        "queued dialog presentation",
-        "safe input gating",
-        "reopen and auto-removal"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_decisions_follow_generation_boot_and_revision",
-        "rust_test_target:endpoint_decision_shows_oldest_pending_across_machines_with_queue_position",
-        "rust_test_target:endpoint_decision_close_snoozes_and_indicator_click_reopens",
-        "rust_test_target:endpoint_decision_keyboard_stays_on_pane_until_dialog_clicked",
-        "rust_test_target:endpoint_decision_resolved_elsewhere_and_disconnect_remove_it",
-        "rust_test_target:endpoint_frontend_decision_dialog_click_answers_and_external_resolves_actual_process",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1924",
-        "src/client/endpoint/frontend/decisions.rs:111",
-        "src/server/headless/endpoints.rs:474"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Queue, input gating and resolution propagation are unit- and actual-socket-covered; a multi-machine run answering a remote decision from a real terminal is manual evidence"
-      ]
-    },
-    {
       "contract_id": "G9-0715c4d8cc",
       "dimensions": [
         "json-lines stream",
@@ -11699,7 +11532,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1942",
+        "SPEC.md:1944",
         "src/cli/decision/watch.rs:356"
       ],
       "test_status": [
@@ -11725,7 +11558,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1943",
+        "SPEC.md:1945",
         "src/cli/decision/watch.rs:348"
       ],
       "test_status": [
@@ -11751,7 +11584,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1944",
+        "SPEC.md:1946",
         "src/cli/decision/watch.rs:109"
       ],
       "test_status": [
@@ -11778,7 +11611,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1945",
+        "SPEC.md:1947",
         "src/cli/decision/watch.rs:356"
       ],
       "test_status": [
@@ -11806,7 +11639,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1946",
+        "SPEC.md:1948",
         "src/cli/decision/watch.rs:701"
       ],
       "test_status": [
@@ -11836,7 +11669,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1947",
+        "SPEC.md:1949",
         "src/cli/decision/watch.rs:259",
         "src/cli/decision/watch.rs:701"
       ],
@@ -11864,7 +11697,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1948",
+        "SPEC.md:1950",
         "src/machine.rs:301",
         "src/machine.rs:311"
       ],
@@ -11893,7 +11726,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1949",
+        "SPEC.md:1951",
         "src/cli/decision/watch.rs:1110",
         "src/api/subscriptions.rs:738"
       ],
@@ -11922,7 +11755,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1950",
+        "SPEC.md:1952",
         "src/cli/decision/watch.rs:271",
         "src/cli/decision/watch.rs:1509"
       ],
@@ -11948,7 +11781,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1951",
+        "SPEC.md:1953",
         "src/cli/decision/watch.rs:31"
       ],
       "test_status": [
@@ -11975,7 +11808,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2255",
+        "SPEC.md:2261",
         "src/guard/judge.rs:200",
         "src/cli/guard.rs:36"
       ],
@@ -12005,7 +11838,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2256",
+        "SPEC.md:2262",
         "src/guard/judge.rs:507",
         "src/guard/judge.rs:586"
       ],
@@ -12033,7 +11866,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2257",
+        "SPEC.md:2263",
         "src/guard/judge.rs:672",
         "src/guard/judge.rs:740"
       ],
@@ -12063,7 +11896,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2258",
+        "SPEC.md:2264",
         "src/guard/judge.rs:865",
         "src/guard/judge.rs:1158"
       ],
@@ -12091,7 +11924,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2259",
+        "SPEC.md:2265",
         "src/guard/judge.rs:367",
         "src/guard/judge.rs:430"
       ],
@@ -12125,7 +11958,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2260",
+        "SPEC.md:2266",
         "src/guard/judge.rs:1202",
         "src/guard/judge.rs:1643"
       ],
@@ -12153,7 +11986,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2261",
+        "SPEC.md:2267",
         "src/guard/judge.rs:265",
         "src/guard/judge.rs:1524"
       ],
@@ -12180,7 +12013,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2262",
+        "SPEC.md:2268",
         "src/config/model.rs:332",
         "src/guard/judge.rs:359"
       ],
@@ -12206,7 +12039,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2277",
+        "SPEC.md:2283",
         "src/guard/assets.rs:42"
       ],
       "test_status": [
@@ -12234,7 +12067,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2278",
+        "SPEC.md:2284",
         "src/pane.rs:1920",
         "src/guard/assets.rs:42"
       ],
@@ -12263,7 +12096,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2286",
+        "SPEC.md:2292",
         "src/guard/marker.rs:49",
         "src/cli/guard.rs:36"
       ],
@@ -12291,7 +12124,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2287",
+        "SPEC.md:2293",
         "src/app/guard.rs:14",
         "src/guard/marker.rs:93"
       ],
@@ -12318,7 +12151,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2288",
+        "SPEC.md:2294",
         "src/cli/guard.rs:36"
       ],
       "test_status": [
@@ -12345,7 +12178,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2289",
+        "SPEC.md:2295",
         "src/guard/record.rs:142"
       ],
       "test_status": [
@@ -12374,7 +12207,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2297",
+        "SPEC.md:2303",
         "src/config/model.rs:332",
         "src/guard/assets.rs:47",
         "src/cli/guard.rs:150"
@@ -12402,7 +12235,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2298",
+        "SPEC.md:2304",
         "src/cli/guard.rs:188"
       ],
       "test_status": [
@@ -12430,7 +12263,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2299",
+        "SPEC.md:2305",
         "src/guard/enforce.rs:150",
         "src/cli/guard.rs:211"
       ],
@@ -12461,7 +12294,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2300",
+        "SPEC.md:2306",
         "src/guard/enforce.rs:60",
         "src/cli/guard.rs:228"
       ],
@@ -12493,7 +12326,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2301",
+        "SPEC.md:2307",
         "src/guard/enforce.rs:100",
         "src/cli/guard.rs:232",
         "src/cli/decision.rs:60"
@@ -12527,7 +12360,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2302",
+        "SPEC.md:2308",
         "src/guard/enforce.rs:170",
         "src/guard/judge.rs:1550",
         "src/cli/guard.rs:232"
@@ -12555,7 +12388,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2303",
+        "SPEC.md:2309",
         "src/guard/judge.rs:1524",
         "src/cli/guard.rs:240"
       ],
@@ -12582,7 +12415,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2304",
+        "SPEC.md:2310",
         "src/guard/assets.rs:62",
         "src/guard/mod.rs:40"
       ],
@@ -12610,7 +12443,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2312",
+        "SPEC.md:2318",
         "src/guard/compare.rs:49"
       ],
       "test_status": [
@@ -12634,7 +12467,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2313",
+        "SPEC.md:2319",
         "src/guard/compare.rs:173"
       ],
       "test_status": [
@@ -12662,7 +12495,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2314",
+        "SPEC.md:2320",
         "src/guard/record.rs:299"
       ],
       "test_status": [
@@ -12689,7 +12522,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2270",
+        "SPEC.md:2276",
         "src/guard/assets.rs:160",
         "src/guard/assets.rs:244",
         "src/cli/guard.rs:97"
@@ -12720,7 +12553,7 @@
         "rust_test_target:login_zsh_keeps_shim_first_after_startup"
       ],
       "source_anchors": [
-        "SPEC.md:2271",
+        "SPEC.md:2277",
         "src/guard/assets.rs:256",
         "src/guard/assets.rs:331",
         "src/guard/assets.rs:92"
@@ -12751,7 +12584,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2272",
+        "SPEC.md:2278",
         "src/guard/assets.rs:269",
         "src/guard/assets.rs:288",
         "src/guard/assets.rs:337"
@@ -12786,7 +12619,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1968",
+        "SPEC.md:1970",
         "src/screen_prompt.rs:145",
         "src/app/screen_prompts.rs:378"
       ],
@@ -12816,7 +12649,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1969",
+        "SPEC.md:1971",
         "src/app/screen_prompts.rs:533"
       ],
       "test_status": [
@@ -12843,7 +12676,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1970",
+        "SPEC.md:1972",
         "src/app/screen_prompts.rs:299"
       ],
       "test_status": [
@@ -12872,7 +12705,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1971",
+        "SPEC.md:1973",
         "src/app/screen_prompts.rs:378"
       ],
       "test_status": [
@@ -12902,7 +12735,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1972",
+        "SPEC.md:1974",
         "src/app/api/decisions.rs:113",
         "src/app/screen_prompts.rs:160"
       ],
@@ -12931,7 +12764,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1973",
+        "SPEC.md:1975",
         "src/config/model.rs:379",
         "src/app/screen_prompts.rs:696"
       ],
@@ -12958,7 +12791,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1974",
+        "SPEC.md:1976",
         "src/api/schema/server.rs:29",
         "src/cli/status.rs:277"
       ],
@@ -12970,34 +12803,6 @@
       ],
       "unrepresented_dimensions": [
         "The capability flag is serialized by existing ping/status paths; a saberante consumer reading it is manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G9-236b635b79",
-      "dimensions": [
-        "regression containment",
-        "existing decision surfaces"
-      ],
-      "verification_methods": [
-        "rust_test_target:first_answer_wins_and_second_answer_is_already_resolved",
-        "rust_test_target:watch_line_shapes_match_the_contract",
-        "drift_source_anchor:src/app/api/decisions.rs",
-        "drift_source_anchor:src/cli/decision/watch.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1975",
-        "src/app/api/decisions.rs:9",
-        "src/cli/decision/watch.rs:229"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "The full nextest suite re-pins existing decision surfaces; interactive dialog and Slack regression is manual evidence"
       ]
     },
     {
@@ -13013,7 +12818,7 @@
         "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
       ],
       "source_anchors": [
-        "SPEC.md:2273",
+        "SPEC.md:2279",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
@@ -13044,7 +12849,7 @@
         "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
       ],
       "source_anchors": [
-        "SPEC.md:2274",
+        "SPEC.md:2280",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30"
@@ -13078,7 +12883,7 @@
         "rust_test_target:guard_markers_require_effective_launch_coverage"
       ],
       "source_anchors": [
-        "SPEC.md:2275",
+        "SPEC.md:2281",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
@@ -13128,37 +12933,6 @@
       ]
     },
     {
-      "contract_id": "G9-53217ed1cd",
-      "dimensions": [
-        "option description rendering",
-        "options band scrolling",
-        "selection reveal",
-        "answer path preservation"
-      ],
-      "verification_methods": [
-        "rust_test_target:decision_dialog_renders_wrapped_option_descriptions",
-        "rust_test_target:decision_dialog_option_band_scrolls_to_reach_every_description",
-        "rust_test_target:endpoint_decision_option_click_only_selects_confirm_or_enter_sends",
-        "drift_source_anchor:src/ui/dialogs.rs",
-        "drift_source_anchor:src/client/endpoint/frontend/decisions.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1925",
-        "src/ui/dialogs.rs:956",
-        "src/client/endpoint/frontend/decisions.rs:111"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Wrapped rendering, band scroll and selection reveal are unit-covered; reading a real Claude Code question's descriptions in a live dialog remains manual evidence"
-      ]
-    },
-    {
       "contract_id": "G9-953c742f42",
       "dimensions": [
         "option description parse",
@@ -13179,7 +12953,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1976",
+        "SPEC.md:1978",
         "src/screen_prompt.rs:76",
         "src/app/screen_prompts.rs:397"
       ],
@@ -13206,7 +12980,7 @@
         "platform_live_acceptance:macos_legacy_marker_handoff_2026_10_13"
       ],
       "source_anchors": [
-        "SPEC.md:2276",
+        "SPEC.md:2282",
         "src/app/guard.rs:77"
       ],
       "test_status": [
@@ -13218,6 +12992,152 @@
       "unrepresented_dimensions": [
         "Isolated real shell with legacy environment (startup injection disabled in old main d2d9ac57) -> f5039adf 0.2.36 -> fixed build. Saved rm -rf bypass, ai_guard recovery, new-pane pending/reject and cleanup: .local/prd/RESULT-guard-legacy-marker.md. kazuph-v0.2.33 itself and Linux live handoff are not verified.",
         "The current manifest schema has no live verified status; macOS live PASS is documented by the platform acceptance method and RESULT table, while portable live status remains unverified."
+      ]
+    },
+    {
+      "contract_id": "G9-0d35f07815",
+      "dimensions": [
+        "regression containment",
+        "existing decision surfaces"
+      ],
+      "verification_methods": [
+        "rust_test_target:first_answer_wins_and_second_answer_is_already_resolved",
+        "rust_test_target:watch_line_shapes_match_the_contract",
+        "drift_source_anchor:src/app/api/decisions.rs",
+        "drift_source_anchor:src/cli/decision/watch.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1977",
+        "src/app/api/decisions.rs:9",
+        "src/cli/decision/watch.rs:229"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "The full nextest suite re-pins existing decision surfaces; interactive dialog and Slack regression is manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G9-7380e69f01",
+      "dimensions": [
+        "multiselect parse",
+        "multi-option answer delivery",
+        "backward-compatible answer schema"
+      ],
+      "verification_methods": [
+        "rust_test_target:parses_multiselect_checkboxes_and_advance_row",
+        "rust_test_target:create_rejects_empty_and_duplicate_option_ids",
+        "drift_source_anchor:src/screen_prompt.rs",
+        "drift_source_anchor:src/app/screen_prompts.rs",
+        "drift_source_anchor:src/decision.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1979",
+        "src/screen_prompt.rs:96",
+        "src/app/screen_prompts.rs:785"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Unit fixtures cover checkbox parse, option_ids validation and the two-phase key delivery; the isolated-session real Claude Code multiSelect answer is manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G9-c77f2493d7",
+      "dimensions": [
+        "option preview parse",
+        "one-time arrow traversal reads every option's preview",
+        "cursor restored to original position after traversal",
+        "preview unavailable marker",
+        "dialog/Slack preview display"
+      ],
+      "verification_methods": [
+        "rust_test_target:parses_preview_box_beside_focused_option",
+        "rust_test_target:preview_scan_walks_every_option_and_restores_cursor",
+        "rust_test_target:preview_scan_abort_marks_unvisited_options_unavailable",
+        "rust_test_target:preview_scan_suppresses_decision_creation_until_finish",
+        "drift_source_anchor:src/screen_prompt.rs",
+        "drift_source_anchor:src/app/screen_prompts.rs",
+        "drift_source_anchor:src/cli/decision.rs",
+        "platform_live_acceptance:.artifacts/feat-decision-dialog-context/real-preview-scan-decisions.json"
+      ],
+      "source_anchors": [
+        "SPEC.md:1980",
+        "src/screen_prompt.rs:320",
+        "src/app/screen_prompts.rs:956",
+        "src/app/screen_prompts.rs:1005",
+        "src/app/screen_prompts.rs:1171"
+      ],
+      "test_status": [
+        "static_verified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Fixture parsing covers focused-option preview capture and the unavailable marker; the real Claude Code preview flow in the isolated session is manual evidence (.artifacts/feat-decision-dialog-context/real-preview-scan-*)"
+      ]
+    },
+    {
+      "contract_id": "G9-de602f1c11",
+      "dimensions": [
+        "multi-question tab parse",
+        "question progress label",
+        "dialog header display"
+      ],
+      "verification_methods": [
+        "rust_test_target:parses_multi_question_tabs_with_progress",
+        "rust_test_target:multi_question_typing_in_free_text_slot_parses",
+        "drift_source_anchor:src/screen_prompt.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1981",
+        "src/screen_prompt.rs:666"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Unit fixtures cover tab rows and progress labels; narrow panes where the tab row leaves the detection window are manual evidence"
+      ]
+    },
+    {
+      "contract_id": "G9-12aa0cc12e",
+      "dimensions": [
+        "multiselect dialog checkmarks",
+        "free-text last option row"
+      ],
+      "verification_methods": [
+        "rust_test_target:create_rejects_empty_and_duplicate_option_ids",
+        "rust_test_target:parses_multiselect_checkboxes_and_advance_row",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1982",
+        "src/app/screen_prompts.rs:785"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Dialog rendering tests cover the checkbox rows and the last-row free-text input; real dialog interaction is manual evidence"
       ]
     }
   ]
