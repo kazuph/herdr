@@ -24,6 +24,7 @@
 ## Unreleased
 
 ### Fixed
+- The Mac decision panel no longer answers when a one-choice option is clicked: a click only selects it (radio button), and the answer is sent with 回答する or ⌘↩, so a stray click on a panel that appeared mid-task cannot answer a question. ⌘1–⌘9 select options the same way.
 - The Mac decision panel's option cards now follow light and dark mode. Their background and border were fixed at whichever look was active when the card was created, so in light mode the cards stayed dark under dark text and could not be read; they now resolve the system colors for the panel's own appearance and update when the mode changes.
 - `herdr run --completion none` now starts from a pane without an agent. Plugin hooks and actions (for example `herdr plugin action invoke start` for the Slack and Mac dialog decision daemons) run with whatever pane is focused, which is often a plain shell, and failed with `agent_not_found` even though a silent job notifies nobody. Jobs that send a completion notice still require an agent caller, and a caller pane that does not exist is still rejected.
 - A Claude Code question (AskUserQuestion) asked right after a tool call no longer borrows that call's `⏺ Tool(...)` line into its title. The borrowed title changed the question's identity while it was being answered, so the answered question was cancelled and immediately re-issued as a new decision with a wrong title. Call-line recovery now applies only to permission dialogs.

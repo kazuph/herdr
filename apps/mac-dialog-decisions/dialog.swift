@@ -210,7 +210,6 @@ final class OptionCard: NSView {
     addSubview(mark)
     addSubview(stack)
     box.translatesAutoresizingMaskIntoConstraints = false
-    box.isHidden = !multi
     addSubview(box)
     NSLayoutConstraint.activate([
       box.centerXAnchor.constraint(equalTo: mark.centerXAnchor),
@@ -226,7 +225,7 @@ final class OptionCard: NSView {
     addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
     toolTip = multi
       ? "クリックで選ぶ／外す（⌘\(index + 1)）"
-      : "クリックでこの選択肢で回答（⌘\(index + 1)）"
+      : "クリックで選ぶ（⌘\(index + 1)）。送るのは右下の「回答する」"
     refresh()
   }
 
@@ -244,17 +243,16 @@ final class OptionCard: NSView {
   override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 
   private func refresh() {
-    let number = index < 9 ? "\(index + 1)" : "•"
-    if multi {
-      mark.stringValue = ""
-      let name = checked ? "checkmark.square.fill" : "square"
-      let config = NSImage.SymbolConfiguration(pointSize: Look.base + 5, weight: .regular)
-      box.image = NSImage(systemSymbolName: name, accessibilityDescription: checked ? "選択中" : "未選択")?
-        .withSymbolConfiguration(config)
-      box.contentTintColor = checked ? Look.accent : .secondaryLabelColor
-    } else {
-      mark.stringValue = number
-    }
+    // Checkbox for multi-choice, radio button for one-choice. A click only
+    // selects; nothing is sent until 回答する / ⌘↩.
+    mark.stringValue = ""
+    let name = multi
+      ? (checked ? "checkmark.square.fill" : "square")
+      : (checked ? "largecircle.fill.circle" : "circle")
+    let config = NSImage.SymbolConfiguration(pointSize: Look.base + 5, weight: .regular)
+    box.image = NSImage(systemSymbolName: name, accessibilityDescription: checked ? "選択中" : "未選択")?
+      .withSymbolConfiguration(config)
+    box.contentTintColor = checked ? Look.accent : .secondaryLabelColor
     let active = checked || hovering
     mark.textColor = active ? Look.accent : .secondaryLabelColor
     // Layer colors are plain CGColors: resolve the dynamic system colors in
@@ -315,12 +313,14 @@ final class DialogController: NSObject, NSWindowDelegate {
   }
 
   func cardClicked(_ card: OptionCard) {
+    // Selecting never sends: a panel that appears under the pointer while the
+    // user is busy elsewhere must not turn a stray click into an answer.
     if spec.multi_select {
       card.checked.toggle()
-      refreshSubmit()
     } else {
-      answer(ids: [card.option.id])
+      for other in cards { other.checked = other === card }
     }
+    refreshSubmit()
   }
 
   func refreshSubmit() {
@@ -396,8 +396,8 @@ final class DialogController: NSObject, NSWindowDelegate {
 
     if !spec.options.isEmpty {
       let hint = spec.multi_select
-        ? "当てはまるものを選んで（複数可）「回答する」。⌘1〜⌘\(min(spec.options.count, 9)) でも選べます。"
-        : "選択肢をクリックすると、その場で回答します（⌘1〜⌘\(min(spec.options.count, 9)) でも可）。" + (spec.allow_text ? "下の自由入力も一緒に送ります。" : "")
+        ? "当てはまるものを選んで（複数可・⌘1〜⌘\(min(spec.options.count, 9)) でも可）、右下の「回答する」か ⌘↩ で送ります。"
+        : "1つ選んで（⌘1〜⌘\(min(spec.options.count, 9)) でも可）、右下の「回答する」か ⌘↩ で送ります。選んだだけでは送りません。"
       full(label(hint, size: Look.small, color: .secondaryLabelColor, selectable: false))
       for (i, option) in spec.options.enumerated() {
         let card = OptionCard(option: option, index: i, multi: spec.multi_select)
@@ -426,7 +426,7 @@ final class DialogController: NSObject, NSWindowDelegate {
     if spec.allow_text {
       let caption = label(spec.options.isEmpty
         ? "回答（⌘↩ で送信）"
-        : (spec.multi_select ? "自由入力（任意・選択と一緒に送信。⌘↩ で回答）" : "自由入力（任意。選択肢を押すと一緒に送信／文だけ送るなら ⌘↩）"),
+        : "自由入力（任意。選んだ選択肢と一緒に送ります。文だけでも送れます）",
         size: Look.small, color: .secondaryLabelColor, selectable: false)
       bottom.addArrangedSubview(caption)
       let tv = FirstClickTextView()
@@ -466,8 +466,6 @@ final class DialogController: NSObject, NSWindowDelegate {
     submitButton.font = NSFont.systemFont(ofSize: Look.base, weight: .semibold)
     submitButton.keyEquivalent = "\r"
     submitButton.keyEquivalentModifierMask = [.command]
-    let showSubmit = spec.multi_select || spec.allow_text || spec.options.isEmpty
-    submitButton.isHidden = !showSubmit
 
     var info: [String] = []
     if let d = spec.deadline, !d.isEmpty { info.append(d) }
