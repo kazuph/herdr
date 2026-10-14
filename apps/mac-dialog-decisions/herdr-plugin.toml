@@ -1,0 +1,17 @@
+id = "kazuph.mac-dialog-decisions"
+name = "Mac Dialog Decisions"
+version = "0.1.0"
+min_herdr_version = "0.7.4"
+description = "Show pending herdr decisions as a front-most macOS dialog with the full text (origin, question label, every option's label, description and preview, deadline); answers become `herdr decision answer --responder mac-dialog`."
+platforms = ["macos"]
+
+[[events]]
+on = "decision.created"
+command = ["./ensure-daemon"]
+
+[[actions]]
+id = "start"
+title = "Start the Mac dialog decisions daemon"
+description = "Start the background daemon that shows pending decisions as macOS dialogs"
+contexts = ["global"]
+command = ["./ensure-daemon"]
