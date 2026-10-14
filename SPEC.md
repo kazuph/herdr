@@ -2033,6 +2033,29 @@
 - **検証契約**: Rust unit testsで画面固定例のparse・選択肢説明文の読み取りと署名・キー/ショートカット/text+Enter送信・複数タブ遷移・消失2読取消・質問文を含む同一判定・answer時の画面確認（decision_stale）・二重防止・feature flag切替・capabilities値に加え、揮発表示の署名正規化・自動拒否警告のnotice分離（単一行・複数行分割の両形）・scrollback込み検出での題名保持・pending判断待ちのその場更新・洪水歯止め・外部入力中のキー不送出と走査中断・質問文ベースの走査済み判定・確定画面の非判断待ち化と全問herdr回答時の自動Submit・`pane_user_active`拒否・文字入り自由入力欄の位置認識と署名不変・外部入力中の判断待ち凍結（作成も取消もしない）と入力停止後の1回だけの反映を固定し、slack-decisionsのnode:testで取り消し直後の同一質問の投稿使い回しと、決定済み投稿の削除（回答・期限切れ・マシン切断・起動時照合・bot返信の同時削除・取り消しの窓明け削除・復帰時の再投稿）を固定する。隔離sessionの実agentでblocked→判断待ち作成→`decision answer`→pane前進を実地確認し、実機の自動拒否カウントダウン許可確認で判断待ちが1件のままであることを確かめ、人の入力中にpaneへキーが届かないこと・herdr経由で全問回答した複数質問フローの最終確認が自動Submitされることをpaneへの送出バイト記録で確かめ、隔離sessionの実Claude Codeの複数質問で自由入力欄へ1文字ずつ打っている間判断待ちが1件のまま・Slack投稿が1回だけ・Enterで回答した質問の投稿が新しい投稿を出さずに終わることを実地確認する。
 - **デグレ判定**: detection画面ではなくuser viewportを読む、saberanteと同じ画面を二重に判断待ち化する、1回の読み取り異常でcancelする、idleでloopを定期起こし続ける、agent状態判定manifestsの結果を変える。
 
+### 判断待ちペインへの注意表示投影（pending decision attention）
+- **該当コミット**: feat/pending-decision-attentionの実装
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — `origin.pane_id` が手元のペインを指す pending 判断待ちがある間、そのペインを AskUserQuestion の質問画面と同じ「blocked」として扱い、サイドバーの赤い丸と Request 音の既存経路へ乗せる。
+- **目的**: 危険コマンド承認（command_guard）・`herdr decision ask`・画面の質問・その他全kindの判断待ちで、店長の対応待ちがサイドバーの状態表示と音へ出るようにする。判断待ちと画面判定（manifests）をつなぎ、放置に気づけない状態を解消する。
+- **挙動**:
+  - serverは`decision.created`/`decision.resolved`イベントの発行ごと・起動時・live handoff復元時に、SQLiteの判断待ちstoreから pending 中の`origin.pane_id`一覧を読み、ローカルの公開pane idへ解決して対象pane集合を同期する。解決できないid（保存マシンや他serverのpane id）はローカル集合へ入れない。
+  - 対象paneのterminalは`decision_attention`フラグを持ち、立っている間はeffective stateが`AgentState::Blocked`になる。フラグは画面判定・hook authorityの上に重なるoverlayであり、元のfallback state・hook authority・visible blockerの値は書き換えないため、フラグが下りた時点で画面由来の状態へそのまま戻る。
+  - blocked遷移は既存のpane状態更新経路（`PaneAgentStatusChanged`イベント・toast `NeedsAttention`・`Sound::Request`・delayed notification配送・endpoint snapshotの`PaneFacts.state`）を通るため、サイドバーの赤い丸・バックグラウンドspaceのRequest音・保存マシン側の画面表示が既存の仕組みのまま出る。外部APIの`agent_status`・イベントの形・protocol versionは変えず、判断待ちoverlayは`blocked`として外から見える。
+  - すでに画面判定でblockedのペインに判断待ちが重なってもeffective stateは`Blocked`のまま変わらず、追加の遷移・2度目のRequest音・2つ目のtoastは出ない。画面のblockedが先に解けても判断待ちが残る間はblockedのままになる。
+  - エージェントラベルを持たないplain shell pane（`herdr decision ask`等）でも同じblocked遷移が起き、通知配送では空ラベルが「判断待ちoverlay由来」という印として扱われる（freshness判定をバイパスするのはこの印だけ）。
+  - 複数paneのうち`origin.pane_id`が指すpaneだけがmarkedになる。回答・取消・期限切れでpendingが無くなったpaneは直ちにoverlayが下りる。
+- **受け入れ条件**:
+  - pending判断待ちの`origin.pane_id`がローカルpaneを指す間、そのpaneの`agent_status`は`blocked`になり、サイドバーのワークスペース集計が赤い丸（`state_dot`のblocked形）になる。kindを問わない。
+  - 回答・取消・期限切れでpendingが解けたpaneは、元の画面由来状態（unknown/working/idle/blocked）へ戻る。画面由来blockedに重なっていたpaneは、画面側が先に解けても判断待ちが残る限りblockedのまま、画面側が残る限り判断待ちが解けてもblockedのままになる。
+  - 画面由来blockedのpaneへの判断待ち追加では状態遷移が発生せず、Request音・toastは重複しない。
+  - agent未検出のplain shell paneでも判断待ちのblocked遷移でRequest音の配送判断が行われる。
+  - server再起動・live handoff後にもpending判断待ちのattentionが再同期され、対象paneは起動直後からblockedになる。
+  - 保存マシンの判断待ちはそのマシンのserver上で同じ機構によりpaneをblockedにし、手元のherdrへは既存のsaved endpoint snapshot（`PaneFacts.state`）経由で同じ赤い丸として映る。ローカルで解決できない`origin.pane_id`はローカルpaneへ投影しない。
+  - 既存のdecision API・データ形・`decision.created`/`decision.resolved`イベント・画面判定manifestsの結果・Slack/グラス/アプリの動き・protocol version 19は変わらない。
+- **検証契約**: Rust unit testsで、`TerminalState`のoverlay遷移と復元・画面blockedとの重複抑止・hook authority優先・agent無しpaneの通知、`DecisionStore::pending_origin_pane_ids`のpending限定・重複除去・origin無し除外、`App`/`AppState`の作成→blocked・回答/取消/期限切れ→復元・再起動同期・他pane非影響を固定する。隔離したdev server（`XDG_CONFIG_HOME`で隔離）+ 実clientで、`herdr decision ask`・`herdr guard exec`の承認待ちで pane がblocked・サイドバー赤丸・server logの`forwarding sound notification ... sound=Request`（実再生は`HERDR_DISABLE_SOUND`で抑止）・回答後の復元・再起動後の再表明を実地確認する。
+- **デグレ判定**: 判断待ちのAPI・データ形・イベント・protocol versionを変える、画面判定のfallback/hook stateを書き換える、blockedのままのpaneへ2度目のRequest音を出す、解決不能な`origin.pane_id`を誤ってローカルpaneへ当てる、overlay解除時に画面由来状態を復元しない。
+
 ## G10. 本家最新リリース v0.8.0 と現状fork版の差分・段階取込契約
 
 ### 比較基準と差分範囲

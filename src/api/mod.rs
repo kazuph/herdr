@@ -83,6 +83,11 @@ pub(crate) fn request_changes_ui(request: &Request) -> bool {
             | Method::PluginPaneOpen(_)
             | Method::PluginPaneFocus(_)
             | Method::PluginPaneClose(_)
+            // Decision lifecycle changes pending-decision attention on the
+            // origin pane, which redraws its sidebar/status indicator.
+            | Method::DecisionCreate(_)
+            | Method::DecisionAnswer(_)
+            | Method::DecisionCancel(_)
     )
 }
 

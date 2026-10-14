@@ -933,6 +933,7 @@ impl App {
             prefix_input_source: Box::new(crate::platform::RealPrefixInputSource::default()),
         };
         app.sync_guard_markers_for_all_panes();
+        app.sync_pending_decision_attention();
         app
     }
 
@@ -1008,6 +1009,7 @@ impl App {
         };
         app.state.sync_agent_session_ledger_from_terminals();
         app.sync_guard_markers_for_all_panes();
+        app.sync_pending_decision_attention();
         app.last_focus = app.state.active.and_then(|idx| {
             app.state
                 .workspaces
