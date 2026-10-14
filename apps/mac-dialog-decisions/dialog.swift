@@ -256,9 +256,20 @@ final class OptionCard: NSView {
       mark.stringValue = number
     }
     let active = checked || hovering
-    layer?.borderColor = (checked ? Look.accent : (hovering ? Look.accent.withAlphaComponent(0.6) : NSColor.separatorColor)).cgColor
-    layer?.backgroundColor = (active ? Look.accent.withAlphaComponent(checked ? 0.18 : 0.08) : NSColor.controlBackgroundColor).cgColor
     mark.textColor = active ? Look.accent : .secondaryLabelColor
+    // Layer colors are plain CGColors: resolve the dynamic system colors in
+    // this view's own appearance (light or dark), and again whenever it
+    // changes — otherwise the cards keep whichever look was current at
+    // creation and become unreadable in the other mode.
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.borderColor = (checked ? Look.accent : (hovering ? Look.accent.withAlphaComponent(0.6) : NSColor.separatorColor)).cgColor
+      layer?.backgroundColor = (active ? Look.accent.withAlphaComponent(checked ? 0.18 : 0.08) : NSColor.controlBackgroundColor).cgColor
+    }
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    refresh()
   }
 }
 
