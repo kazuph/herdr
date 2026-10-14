@@ -347,6 +347,7 @@ fn apply_terminal_attach_scroll(
                     "failed to encode terminal attach mouse wheel event: {wheel_kind:?}"
                 ));
             };
+            runtime.note_user_input();
             runtime
                 .try_send_bytes(Bytes::from(bytes))
                 .map_err(|err| format!("terminal attach mouse wheel input failed: {err}"))?;
@@ -356,6 +357,7 @@ fn apply_terminal_attach_scroll(
             let Some(bytes) = runtime.encode_alternate_scroll(wheel_kind) else {
                 return Ok(());
             };
+            runtime.note_user_input();
             runtime
                 .try_send_bytes(Bytes::from(bytes))
                 .map_err(|err| format!("terminal attach alternate scroll input failed: {err}"))?;
@@ -373,6 +375,7 @@ fn apply_terminal_attach_input(
     data: Vec<u8>,
 ) -> Result<(), String> {
     runtime.scroll_reset();
+    runtime.note_user_input();
     runtime
         .try_send_bytes(Bytes::from(data))
         .map_err(|err| format!("terminal attach input failed: {err}"))
@@ -1747,6 +1750,7 @@ impl HeadlessServer {
         {
             if let Some(runtime) = self.runtime_for_terminal_id_string(terminal_id) {
                 let payload = paste_payload_for_runtime(runtime, &path);
+                runtime.note_user_input();
                 if let Err(err) = runtime.try_send_bytes(Bytes::from(payload)) {
                     warn!(client_id, terminal_id = %terminal_id, err = %err, "terminal attach clipboard image paste failed");
                 }

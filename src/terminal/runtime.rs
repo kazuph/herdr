@@ -451,6 +451,21 @@ impl TerminalRuntime {
         self.0.try_send_bytes(bytes)
     }
 
+    /// Record that input which did not originate from herdr's screen-prompt
+    /// machinery was pushed into this pane.
+    pub fn note_user_input(&self) {
+        self.0.note_user_input();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn note_user_input_at(&self, at: std::time::Instant) {
+        self.0.note_user_input_at(at);
+    }
+
+    pub fn user_input_at(&self) -> Option<std::time::Instant> {
+        self.0.user_input_at()
+    }
+
     pub fn try_write_mailbox_bytes(
         &self,
         bytes: Bytes,

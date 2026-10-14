@@ -222,6 +222,7 @@ impl App {
                                     ws_idx,
                                     focused,
                                 ) {
+                                    runtime.note_user_input();
                                     let _ =
                                         runtime.try_send_bytes(bytes::Bytes::from_static(b"\n"));
                                 }

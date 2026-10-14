@@ -163,6 +163,7 @@ impl App {
         let Some(agent) = self.agent_info(resolved.ws_idx, resolved.pane_id) else {
             return Err(agent_not_found(id, &params.target));
         };
+        runtime.note_user_input();
         let completion = runtime
             .queue_user_input_submission(
                 Bytes::from(text),
@@ -473,6 +474,7 @@ impl App {
                 return encode_error(id, "invalid_key", format!("unsupported key {key}"));
             }
         };
+        runtime.note_user_input();
         if let Err(err) = runtime.try_send_bytes(Bytes::from(text_bytes)) {
             return encode_error(id, "agent_send_failed", err.to_string());
         }

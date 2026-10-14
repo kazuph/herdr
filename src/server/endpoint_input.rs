@@ -123,12 +123,18 @@ pub(super) fn apply_events(
     let mut failure = None;
     for event in events {
         let result = match &event {
-            ClientPaneInputEvent::Paste(text) => runtime
-                .try_send_paste(text.clone())
-                .map_err(|error| error.to_string()),
-            ClientPaneInputEvent::TextCommit(text) => runtime
-                .try_send_bytes(bytes::Bytes::copy_from_slice(text.as_bytes()))
-                .map_err(|error| error.to_string()),
+            ClientPaneInputEvent::Paste(text) => {
+                runtime.note_user_input();
+                runtime
+                    .try_send_paste(text.clone())
+                    .map_err(|error| error.to_string())
+            }
+            ClientPaneInputEvent::TextCommit(text) => {
+                runtime.note_user_input();
+                runtime
+                    .try_send_bytes(bytes::Bytes::copy_from_slice(text.as_bytes()))
+                    .map_err(|error| error.to_string())
+            }
             ClientPaneInputEvent::Key {
                 code,
                 modifiers,
@@ -166,6 +172,7 @@ pub(super) fn apply_events(
                     }
                 };
                 runtime.scroll_reset();
+                runtime.note_user_input();
                 runtime
                     .try_send_bytes(bytes::Bytes::from(bytes))
                     .map_err(|error| error.to_string())

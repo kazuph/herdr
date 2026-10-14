@@ -146,6 +146,7 @@ impl App {
                 .state
                 .focused_runtime_in_workspace(&self.terminal_runtimes, ws_idx)
             {
+                rt.note_user_input();
                 let _ = rt.send_paste(text).await;
             }
         }

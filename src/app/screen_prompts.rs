@@ -53,6 +53,13 @@ const TOGGLE_KEY_DELAY: Duration = Duration::from_millis(150);
 /// a torn frame, so retry a few times before abandoning the answer.
 const MULTISELECT_SUBMIT_RETRIES: u8 = 4;
 const MULTISELECT_SUBMIT_RETRY_DELAY: Duration = Duration::from_millis(250);
+/// How recent pane-bound input from outside the screen-prompt machinery —
+/// operator keystrokes, pastes, mouse reports, `pane send-*`/`agent send`
+/// API calls, attach/endpoint client input — must be before herdr stops
+/// sending keys into that pane. Preview scans refuse to start, in-flight
+/// scans abort without restore arrows, and decision-answer delivery backs
+/// off until this quiet period passes.
+const PANE_USER_INPUT_QUIET: Duration = Duration::from_secs(3);
 /// Between two arrow keys of a preview scan: long enough for the agent TUI
 /// to redraw the newly focused option's preview box, short enough to finish
 /// a walk through a handful of options before the user notices.
@@ -133,6 +140,27 @@ pub(crate) struct PreviewScan {
     /// refreshing from each clean read, so a torn first frame cannot pin the
     /// resting cursor to the wrong option.
     pub arrows_sent: bool,
+    /// Question-text-and-options identity the scan registers as done: unlike
+    /// the volatile signature, a redraw or a typed character must not turn
+    /// the same question into a new scan.
+    pub scan_key: String,
+}
+
+/// Multi-question (AskUserQuestion) tabs herdr answered through decision
+/// delivery. When the pane reaches the final `Submit answers` confirmation
+/// with every question answered through herdr and no external input since,
+/// the confirmation is submitted automatically instead of surfaced as a
+/// decision.
+#[derive(Debug)]
+pub(crate) struct ScreenPromptFlow {
+    /// Identity of the tab strip the answers belong to (`mq.tabs` joined).
+    pub tabs_key: String,
+    /// When this flow's first answer was recorded. External input timestamped
+    /// after it means a person took over the pane and auto-submit must not
+    /// fire.
+    pub began_at: Instant,
+    /// `mq.index` values answered through decision delivery.
+    pub answered: std::collections::BTreeSet<usize>,
 }
 
 /// Work to perform against a pane once a deadline passes. Typed text and
@@ -294,6 +322,149 @@ impl App {
         }
     }
 
+    /// Operator-activity gate for `decision.answer`: a pending screen-prompt
+    /// decision must not commit while a person's input recently reached the
+    /// pane. Answering anyway would send keys under an active typist.
+    pub(super) fn screen_prompt_pane_has_recent_user_input(&self, decision: &Decision) -> bool {
+        let Some((ws_idx, pane_id)) = self.screen_prompt_pane_ref(decision) else {
+            return false;
+        };
+        self.pane_user_input_recent(ws_idx, pane_id)
+    }
+
+    /// True when input from outside the screen-prompt machinery reached this
+    /// pane inside `PANE_USER_INPUT_QUIET` — operator keystrokes, pastes,
+    /// mouse reports, `pane send-*`/`agent send` calls, attach or endpoint
+    /// client input. While true herdr sends no keys into the pane.
+    fn pane_user_input_recent(&self, ws_idx: usize, pane_id: PaneId) -> bool {
+        self.lookup_runtime_sender(ws_idx, pane_id)
+            .and_then(|runtime| runtime.user_input_at())
+            .is_some_and(|at| at.elapsed() < PANE_USER_INPUT_QUIET)
+    }
+
+    /// Register the pane's in-flight (or just-finished) scan as done so the
+    /// same question is never walked again.
+    fn mark_preview_scan_done(&mut self, pane_id: PaneId) {
+        let Some(scan) = self.preview_scans.get(&pane_id) else {
+            return;
+        };
+        let key = scan.scan_key.clone();
+        self.preview_scan_done
+            .entry(pane_id)
+            .or_default()
+            .insert(key);
+    }
+
+    /// A decision answer landed on a multi-question prompt: record which tab
+    /// herdr answered so the final `Submit answers` confirmation may be
+    /// submitted automatically only when every question went through herdr.
+    fn record_screen_prompt_answer(&mut self, pane_id: PaneId, prompt: &ScreenPrompt) {
+        let Some(mq) = &prompt.mq else {
+            return;
+        };
+        if mq.at_submit {
+            return;
+        }
+        let tabs_key = mq.tabs.join("\u{1f}");
+        match self.screen_prompt_flows.get_mut(&pane_id) {
+            // Question 1 re-answered means the flow restarted — a stale
+            // record from an earlier run must not count the new flow's
+            // later questions as delivered.
+            Some(flow) if flow.tabs_key == tabs_key && mq.index > 0 => {
+                flow.answered.insert(mq.index);
+            }
+            _ => {
+                let mut answered = std::collections::BTreeSet::new();
+                answered.insert(mq.index);
+                self.screen_prompt_flows.insert(
+                    pane_id,
+                    ScreenPromptFlow {
+                        tabs_key,
+                        began_at: Instant::now(),
+                        answered,
+                    },
+                );
+            }
+        }
+    }
+
+    /// A `Submit answers` / `Cancel`-style confirmation never becomes a
+    /// decision and never receives cursor keys. When every question of the
+    /// multi-question flow was answered through decision delivery and no
+    /// external input has touched the pane since, `Submit answers` is picked
+    /// once: by Enter when it is already focused, otherwise by its number
+    /// key — never by arrows, so the cursor can never land on `Cancel`.
+    /// When a person answered the questions themselves the pane saw their
+    /// input and nothing is sent.
+    fn handle_submit_confirmation(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        prompt: &ScreenPrompt,
+        sig: &str,
+    ) -> bool {
+        let Some(mq) = &prompt.mq else {
+            return false;
+        };
+        if self
+            .screen_prompt_auto_submits
+            .get(&pane_id)
+            .is_some_and(|done| done == sig)
+        {
+            return false;
+        }
+        let Some(submit_number) = prompt
+            .choices
+            .iter()
+            .find(|(_, label)| label.trim_start().to_lowercase().starts_with("submit"))
+            .map(|(number, _)| *number)
+        else {
+            return false;
+        };
+        let Some(flow) = self.screen_prompt_flows.get(&pane_id) else {
+            return false;
+        };
+        if flow.tabs_key != mq.tabs.join("\u{1f}") || flow.answered.len() < mq.total {
+            return false;
+        }
+        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+            return false;
+        };
+        if runtime
+            .user_input_at()
+            .is_some_and(|at| at >= flow.began_at || at.elapsed() < PANE_USER_INPUT_QUIET)
+        {
+            return false;
+        }
+        let already_focused = matches!(
+            prompt.focused,
+            Some(crate::screen_prompt::Focused::Option(number)) if number == submit_number
+        );
+        let bytes = if already_focused {
+            Bytes::from(runtime.encode_terminal_key(crate::input::TerminalKey::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            )))
+        } else {
+            Bytes::copy_from_slice(submit_number.to_string().as_bytes())
+        };
+        if let Err(err) = runtime.try_send_bytes(bytes) {
+            warn!(
+                pane_id = ?pane_id,
+                error = %err,
+                "failed to auto-submit answers confirmation"
+            );
+            return false;
+        }
+        debug!(
+            pane_id = ?pane_id,
+            "auto-submitted answers confirmation"
+        );
+        self.screen_prompt_auto_submits
+            .insert(pane_id, sig.to_string());
+        false
+    }
+
     /// Flood brake: the pane rebuilt its pending decision at least
     /// SCREEN_PROMPT_FLOOD_LIMIT times inside the churn window — the latest
     /// rebuild updates in place instead of emitting another cancel pair.
@@ -351,6 +522,16 @@ impl App {
                         );
                         continue;
                     };
+                    if runtime
+                        .user_input_at()
+                        .is_some_and(|at| at.elapsed() < PANE_USER_INPUT_QUIET)
+                    {
+                        warn!(
+                            pane_id = ?pane_id,
+                            "dropping deferred screen prompt write: operator input is recent"
+                        );
+                        continue;
+                    }
                     if let Err(err) = runtime.try_send_bytes(bytes) {
                         warn!(
                             pane_id = ?pane_id,
@@ -367,6 +548,13 @@ impl App {
                     attempts_left,
                     ..
                 } => {
+                    if self.pane_user_input_recent(ws_idx, pane_id) {
+                        warn!(
+                            pane_id = ?pane_id,
+                            "multi-select submit dropped: operator input is recent"
+                        );
+                        continue;
+                    }
                     self.finish_multi_select_submit(
                         ws_idx,
                         pane_id,
@@ -749,10 +937,19 @@ impl App {
         prompt: &ScreenPrompt,
         sig: String,
     ) -> bool {
+        // A send-only confirmation page (`Submit answers` / `Cancel`) never
+        // gets a preview scan and never becomes a decision; it is touched
+        // only to auto-submit a fully herdr-answered multi-question flow.
+        if is_submit_confirmation(prompt) {
+            return self.handle_submit_confirmation(ws_idx, pane_id, prompt, &sig);
+        }
+
         // Claude Code paints only the focused option's preview box. Before
         // creating the decision, walk the cursor through the other options
-        // once so every preview is captured — a prompt is scanned at most
-        // once per signature.
+        // once so every preview is captured. A question is walked at most
+        // once, keyed by its text and option labels — a redraw or typed
+        // character wobbling the volatile signature must not re-arm it.
+        let scan_key = preview_scan_key(prompt);
         if prompt.preview_box
             && matches!(
                 prompt.focused,
@@ -762,11 +959,24 @@ impl App {
                 .choices
                 .keys()
                 .any(|number| !prompt.previews.contains_key(number))
-            && self.preview_scan_done.get(&pane_id) != Some(&sig)
             && !self.preview_scans.contains_key(&pane_id)
+            && !self
+                .preview_scan_done
+                .get(&pane_id)
+                .is_some_and(|done| done.contains(&scan_key))
         {
-            self.start_preview_scan(ws_idx, pane_id, prompt, sig);
-            return false;
+            if self.pane_user_input_recent(ws_idx, pane_id) {
+                // A person is operating the pane: this question is never
+                // walked. The decision still creates; previews stay marked
+                // unavailable for options the walk never reached.
+                self.preview_scan_done
+                    .entry(pane_id)
+                    .or_default()
+                    .insert(scan_key);
+            } else {
+                self.start_preview_scan(ws_idx, pane_id, prompt, sig);
+                return false;
+            }
         }
         if self.preview_scans.contains_key(&pane_id) {
             return false;
@@ -895,11 +1105,13 @@ impl App {
         decision: &Decision,
         answer: Option<&crate::api::schema::DecisionAnswer>,
     ) {
-        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+        let Some(screen) = self
+            .lookup_runtime_sender(ws_idx, pane_id)
+            .map(|runtime| runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS))
+        else {
             warn!(pane_id = ?pane_id, "screen prompt answer dropped: pane gone");
             return;
         };
-        let screen = runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS);
         let prompt = parse_screen_prompt(&screen);
 
         // Same freshness rule as the answer-side gate, kept at the
@@ -922,6 +1134,30 @@ impl App {
                 "screen prompt changed before answer delivery; skipping keys"
             );
             return;
+        }
+
+        // A person's input reached the pane after the answer was committed:
+        // never type over them. The API-side gate refuses to commit answers
+        // during active input, so reaching here means input raced the commit.
+        if self.pane_user_input_recent(ws_idx, pane_id) {
+            warn!(
+                pane_id = ?pane_id,
+                decision_id = %decision.decision_id,
+                "screen prompt answer dropped: operator input is recent"
+            );
+            return;
+        }
+
+        if let (Some(prompt), Some(answer)) = (prompt.as_ref(), answer) {
+            let carries_answer = answer.option_id.is_some()
+                || answer
+                    .option_ids
+                    .as_ref()
+                    .is_some_and(|ids| !ids.is_empty())
+                || answer.text.is_some();
+            if carries_answer {
+                self.record_screen_prompt_answer(pane_id, prompt);
+            }
         }
 
         if decision.multi_select {
@@ -966,6 +1202,10 @@ impl App {
             });
         let bytes = match shortcut {
             Some(OptionShortcut::Escape) => {
+                let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+                    warn!(pane_id = ?pane_id, "screen prompt answer dropped: pane gone");
+                    return;
+                };
                 Bytes::from(runtime.encode_terminal_key(crate::input::TerminalKey::new(
                     crossterm::event::KeyCode::Esc,
                     crossterm::event::KeyModifiers::NONE,
@@ -973,6 +1213,10 @@ impl App {
             }
             Some(OptionShortcut::Char(ch)) => Bytes::copy_from_slice(ch.to_string().as_bytes()),
             None => Bytes::copy_from_slice(number.to_string().as_bytes()),
+        };
+        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+            warn!(pane_id = ?pane_id, "screen prompt answer dropped: pane gone");
+            return;
         };
         if let Err(err) = runtime.try_send_bytes(bytes) {
             warn!(
@@ -1179,6 +1423,7 @@ impl App {
             steps_left: (prompt.choices.len() as u32) * 3 + 4,
             mismatches: 0,
             arrows_sent: false,
+            scan_key: preview_scan_key(prompt),
         };
         debug!(
             pane_id = ?pane_id,
@@ -1204,6 +1449,20 @@ impl App {
             return;
         };
         scan.steps_left = scan.steps_left.saturating_sub(1);
+
+        // A person's input reached the pane mid-walk: stop immediately. No
+        // further arrows and no restore keys — herdr never moves a cursor
+        // the operator is actively using.
+        if self.pane_user_input_recent(ws_idx, pane_id) {
+            self.mark_preview_scan_done(pane_id);
+            warn!(
+                pane_id = ?pane_id,
+                "preview scan aborted: operator input arrived"
+            );
+            self.finish_preview_scan(ws_idx, pane_id);
+            return;
+        }
+
         let Some(screen) = self
             .lookup_runtime_sender(ws_idx, pane_id)
             .map(|runtime| runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS))
@@ -1239,7 +1498,7 @@ impl App {
                     pane_id = ?pane_id,
                     "preview scan aborted: prompt changed or torn"
                 );
-                self.preview_scan_done.insert(pane_id, signature);
+                self.mark_preview_scan_done(pane_id);
                 self.finish_preview_scan(ws_idx, pane_id);
                 return;
             }
@@ -1301,7 +1560,7 @@ impl App {
             (target, scan.steps_left == 0)
         };
         if target.is_none() || target == focused || exhausted {
-            self.preview_scan_done.insert(pane_id, signature);
+            self.mark_preview_scan_done(pane_id);
             self.finish_preview_scan(ws_idx, pane_id);
             return;
         }
@@ -1338,7 +1597,7 @@ impl App {
                 }
                 Some(Err(err)) => {
                     warn!(pane_id = ?pane_id, error = %err, "preview scan arrow failed");
-                    self.preview_scan_done.insert(pane_id, signature);
+                    self.mark_preview_scan_done(pane_id);
                     self.finish_preview_scan(ws_idx, pane_id);
                     return;
                 }
@@ -1528,6 +1787,8 @@ impl App {
         self.deferred_pane_writes.clear();
         self.preview_scans.clear();
         self.preview_scan_done.clear();
+        self.screen_prompt_flows.clear();
+        self.screen_prompt_auto_submits.clear();
         self.screen_prompt_scan_at = None;
     }
 
@@ -1540,6 +1801,42 @@ impl App {
             .and_then(|pane| self.state.terminals.get(&pane.attached_terminal_id))
             .is_some_and(|terminal| terminal.state == AgentState::Blocked)
     }
+}
+
+/// Stable identity for "this question" when deciding whether its preview
+/// walk already ran: the question text and numbered option labels after
+/// volatile-display normalisation. Descriptions, previews, checked state,
+/// cursor position and free-text slots are deliberately excluded — a
+/// redraw, a torn read, or a character typed into a free-text field must
+/// not re-arm the one-time walk.
+fn preview_scan_key(prompt: &ScreenPrompt) -> String {
+    serde_json::to_string(&(
+        normalize_volatile(&prompt.question),
+        prompt
+            .choices
+            .iter()
+            .map(|(number, label)| (*number, normalize_volatile(label)))
+            .collect::<std::collections::BTreeMap<u32, String>>(),
+    ))
+    .unwrap_or_default()
+}
+
+/// The "send the collected answers" page: AskUserQuestion's final
+/// `Submit answers` / `Cancel` screen (`mq.at_submit`), or — when the
+/// multi-question tab row scrolled out of view — a confirm-only prompt
+/// whose question mentions submitting and that offers a `Submit…` option
+/// without a free-text slot. These pages never get a preview scan and are
+/// never surfaced as decisions; see `handle_submit_confirmation`.
+fn is_submit_confirmation(prompt: &ScreenPrompt) -> bool {
+    if prompt.mq.as_ref().is_some_and(|mq| mq.at_submit) {
+        return true;
+    }
+    prompt.free_text.is_none()
+        && prompt.question.to_lowercase().contains("submit")
+        && prompt
+            .choices
+            .values()
+            .any(|label| label.trim_start().to_lowercase().starts_with("submit"))
 }
 
 fn option_role(label: &str) -> DecisionOptionRole {
@@ -2294,6 +2591,364 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
 
         // The same signature is never scanned again.
         assert!(app.preview_scan_done.contains_key(&pane_id));
+    }
+
+    // ── Operator input versus screen-prompt keys ───────────────────────
+
+    /// Every operator/remote/API input path marks the pane runtime before
+    /// pushing bytes; tests go through the same marker.
+    fn note_operator_input(app: &App, pane_id: PaneId) {
+        app.state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .expect("pane runtime")
+            .note_user_input();
+    }
+
+    fn note_operator_input_ago(app: &App, pane_id: PaneId, ago: Duration) {
+        app.state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .expect("pane runtime")
+            .note_user_input_at(Instant::now() - ago);
+    }
+
+    // Two-question AskUserQuestion flow (tab row `☐/☒`, `✔ Submit` marker),
+    // modelled on the verbatim captures in src/screen_prompt.rs tests.
+    const MQ_Q1: &str = "\
+────────────────────────────────────────────────────────────
+←  ☐ 果物  ☐ 動物  ✔ Submit  →
+
+複数質問の確認（1つ目）。「りんご」を選んでください
+
+❯ 1. りんご
+     1つ目の答え
+  2. みかん
+     選ばない
+  3. Type something.
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+";
+
+    const MQ_Q2: &str = "\
+────────────────────────────────────────────────────────────
+←  ☒ 果物  ☐ 動物  ✔ Submit  →
+
+│ 複数質問の確認（2つ目）。「いぬ」を選んでください
+
+❯ 1. ねこ
+     選ばない
+  2. いぬ
+     2つ目の答え
+  3. Type something.
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+";
+
+    const MQ_SUBMIT: &str = "\
+────────────────────────────────────────────────────────────
+←  ☒ 果物  ☒ 動物  ✔ Submit  →
+
+Review your answers
+
+ ● 複数質問の確認（1つ目）。「りんご」を選んでください
+   → りんご
+ ● 複数質問の確認（2つ目）。「いぬ」を選んでください
+   → いぬ
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
+";
+
+    /// Scan until no watch sits on `pane_id` (a replaced screen needs the
+    /// two tolerated mismatches before the old watch releases).
+    fn rescan_until_adopted(app: &mut App) {
+        for _ in 0..4 {
+            app.scan_screen_prompts(Instant::now());
+        }
+    }
+
+    #[tokio::test]
+    async fn preview_scan_never_starts_while_operator_types() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("pvquiet", &crlf(CC_PREVIEW_OPTION_1), true);
+        note_operator_input(&app, pane_id);
+        app.scan_screen_prompts(Instant::now());
+
+        // No walk starts, no keys leave herdr; the decision still goes out
+        // with the visible option's preview and the rest unavailable.
+        assert!(app.preview_scans.is_empty());
+        assert!(rx.try_recv().is_err(), "no keys while operator types");
+        let decisions = pending_decisions();
+        assert_eq!(decisions.len(), 1);
+        assert!(decisions[0].options[0].preview.is_some());
+        assert!(decisions[0].options[1].preview_unavailable);
+        assert!(decisions[0].options[2].preview_unavailable);
+
+        // Once the question was seen under operator input it is done —
+        // the quiet window ending must not retroactively arm a walk, not
+        // even when the prompt redraws under a new signature.
+        note_operator_input_ago(&app, pane_id, PANE_USER_INPUT_QUIET * 3);
+        let mut rx = replace_screen(&mut app, pane_id, &crlf(CC_PREVIEW_OPTION_1_WOBBLE));
+        rescan_until_adopted(&mut app);
+        assert!(app.preview_scans.is_empty());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn preview_scan_aborts_when_operator_types_mid_walk() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("pvabort-in", &crlf(CC_PREVIEW_OPTION_1), true);
+        let mut now = Instant::now();
+        app.scan_screen_prompts(now);
+        assert_eq!(app.preview_scans.len(), 1);
+
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert_eq!(drain_arrow(&mut rx), b'B');
+
+        // The operator starts typing mid-walk: stop right there. No more
+        // arrows — including none of the restore arrows a normal finish
+        // would send.
+        note_operator_input(&app, pane_id);
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert!(app.preview_scans.is_empty());
+        assert!(rx.try_recv().is_err(), "no restore arrows after abort");
+
+        let decisions = pending_decisions();
+        assert_eq!(decisions.len(), 1);
+        assert!(decisions[0].options[0].preview.is_some());
+        assert!(decisions[0].options[1].preview_unavailable);
+    }
+
+    #[tokio::test]
+    async fn signature_wobble_does_not_restart_preview_scan() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("pvwobble", &crlf(CC_PREVIEW_OPTION_1), true);
+        let mut now = Instant::now();
+        app.scan_screen_prompts(now);
+
+        // Drive the walk to completion (cursor moves are simulated by
+        // swapping the fixture the "pane" shows).
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert_eq!(drain_arrow(&mut rx), b'B');
+        rx = replace_screen(&mut app, pane_id, &crlf(CC_PREVIEW_OPTION_2));
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert_eq!(drain_arrow(&mut rx), b'B');
+        rx = replace_screen(&mut app, pane_id, &crlf(CC_PREVIEW_OPTION_3));
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert_eq!(drain_arrow(&mut rx), b'A');
+        rx = replace_screen(&mut app, pane_id, &crlf(CC_PREVIEW_OPTION_2));
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert_eq!(drain_arrow(&mut rx), b'A');
+        let _rx = replace_screen(&mut app, pane_id, &crlf(CC_PREVIEW_OPTION_1));
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert!(app.preview_scans.is_empty());
+        assert_eq!(pending_decisions().len(), 1);
+
+        // The same question redraws differently (a description line
+        // appears while the operator types): signature changes, question
+        // key stays — the walk must not run a second time.
+        let mut rx = replace_screen(&mut app, pane_id, &crlf(CC_PREVIEW_OPTION_1_WOBBLE));
+        rescan_until_adopted(&mut app);
+        assert!(app.preview_scans.is_empty(), "no re-scan for same question");
+        assert!(rx.try_recv().is_err(), "no arrows after wobble");
+    }
+
+    // Same question/options as CC_PREVIEW_OPTION_1 but a description line
+    // appeared under option 1 — the prompt signature differs.
+    const CC_PREVIEW_OPTION_1_WOBBLE: &str = "\
+←  ☐ 方式  ✔ Submit  →
+
+どの方式にする？
+
+❯ 1. 方式A
+     補足説明が増えた
+  2. 方式B                        ┌──────────────────────────────────────────┐
+  3. 方式C                        │ 図A: input → A → out                     │
+                                  └──────────────────────────────────────────┘
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+
+    #[tokio::test]
+    async fn submit_confirmation_screen_is_silent_without_herdr_answers() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("submit-idle", MQ_SUBMIT, true);
+        rescan_until_adopted(&mut app);
+
+        // A confirmation-only screen never becomes a decision, never
+        // starts a preview walk, and never receives keys.
+        assert!(all_decisions().is_empty());
+        assert!(app.preview_scans.is_empty());
+        assert!(!app.screen_prompt_watches.contains_key(&pane_id));
+        assert!(rx.try_recv().is_err(), "no keys on confirmation screen");
+    }
+
+    #[tokio::test]
+    async fn herdr_answered_flow_auto_submits_final_confirmation() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("autosubmit", MQ_Q1, true);
+        rescan_until_adopted(&mut app);
+        assert_eq!(pending_decisions().len(), 1);
+        answer(
+            &mut app,
+            &pending_decisions()[0].decision_id.clone(),
+            Some("1"),
+            None,
+        );
+        assert_eq!(rx.try_recv().expect("q1 answer").as_ref(), b"1");
+
+        rx = replace_screen(&mut app, pane_id, MQ_Q2);
+        rescan_until_adopted(&mut app);
+        assert_eq!(pending_decisions().len(), 1);
+        answer(
+            &mut app,
+            &pending_decisions()[0].decision_id.clone(),
+            Some("2"),
+            None,
+        );
+        assert_eq!(rx.try_recv().expect("q2 answer").as_ref(), b"2");
+
+        // Both questions answered through herdr: the confirmation screen
+        // gets exactly one key — Enter on the already-focused Submit row.
+        rx = replace_screen(&mut app, pane_id, MQ_SUBMIT);
+        rescan_until_adopted(&mut app);
+        assert!(pending_decisions().is_empty());
+        assert!(app.preview_scans.is_empty());
+        assert_eq!(
+            rx.try_recv().expect("auto submit").as_ref(),
+            b"\r",
+            "focused Submit answers gets a bare Enter"
+        );
+        assert!(rx.try_recv().is_err(), "no extra keys after submit");
+
+        // It fires once: rescanning the unchanged confirmation is inert.
+        rescan_until_adopted(&mut app);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn partially_answered_flow_does_not_auto_submit() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("submit-part", MQ_Q1, true);
+        rescan_until_adopted(&mut app);
+        answer(
+            &mut app,
+            &pending_decisions()[0].decision_id.clone(),
+            Some("1"),
+            None,
+        );
+        assert_eq!(rx.try_recv().expect("q1 answer").as_ref(), b"1");
+
+        // Question 2 was answered by the operator in the terminal — the
+        // flow is incomplete, so the confirmation stays untouched.
+        let mut rx = replace_screen(&mut app, pane_id, MQ_SUBMIT);
+        rescan_until_adopted(&mut app);
+        assert!(pending_decisions().is_empty());
+        assert!(rx.try_recv().is_err(), "no submit on incomplete flow");
+    }
+
+    #[tokio::test]
+    async fn operator_takeover_blocks_auto_submit() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("submit-block", MQ_Q1, true);
+        rescan_until_adopted(&mut app);
+        answer(
+            &mut app,
+            &pending_decisions()[0].decision_id.clone(),
+            Some("1"),
+            None,
+        );
+        assert_eq!(rx.try_recv().expect("q1 answer").as_ref(), b"1");
+
+        rx = replace_screen(&mut app, pane_id, MQ_Q2);
+        rescan_until_adopted(&mut app);
+        answer(
+            &mut app,
+            &pending_decisions()[0].decision_id.clone(),
+            Some("2"),
+            None,
+        );
+        assert_eq!(rx.try_recv().expect("q2 answer").as_ref(), b"2");
+
+        // The flow is complete but the operator typed into the pane
+        // afterwards — their keys win, herdr's Enter must not land.
+        rx = replace_screen(&mut app, pane_id, MQ_SUBMIT);
+        note_operator_input(&app, pane_id);
+        rescan_until_adopted(&mut app);
+        assert!(rx.try_recv().is_err(), "no submit while operator types");
+    }
+
+    #[tokio::test]
+    async fn failed_auto_submit_is_not_marked_done() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("autosubmit-fail", MQ_Q1, true);
+        rescan_until_adopted(&mut app);
+        answer(
+            &mut app,
+            &pending_decisions()[0].decision_id.clone(),
+            Some("1"),
+            None,
+        );
+        assert_eq!(rx.try_recv().expect("q1 answer").as_ref(), b"1");
+
+        rx = replace_screen(&mut app, pane_id, MQ_Q2);
+        rescan_until_adopted(&mut app);
+        answer(
+            &mut app,
+            &pending_decisions()[0].decision_id.clone(),
+            Some("2"),
+            None,
+        );
+        assert_eq!(rx.try_recv().expect("q2 answer").as_ref(), b"2");
+
+        // The pane's writer is gone: the submit send fails, gets logged,
+        // and the confirmation is not marked submitted (a later scan may
+        // retry once the writer recovers).
+        let rx = replace_screen(&mut app, pane_id, MQ_SUBMIT);
+        drop(rx);
+        rescan_until_adopted(&mut app);
+        assert!(
+            !app.screen_prompt_auto_submits.contains_key(&pane_id),
+            "failed submit is not recorded as sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn answer_is_refused_while_operator_is_typing() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("gate", CC_QUESTION, true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+
+        note_operator_input(&app, pane_id);
+        let response = answer_response(&mut app, &decision_id, Some("1"), None);
+        assert!(response.contains("pane_user_active"), "{response}");
+        assert_eq!(pending_decisions().len(), 1, "answer stays pending");
+        assert!(rx.try_recv().is_err(), "no keys while operator types");
+    }
+
+    #[tokio::test]
+    async fn deferred_answer_text_drops_when_operator_types() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("drop-deferred", CC_QUESTION, true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+        answer(&mut app, &decision_id, None, Some("ぶどう"));
+        assert_eq!(rx.try_recv().expect("slot").as_ref(), b"3");
+
+        // The operator grabbed the pane before the deferred text/Enter
+        // flushed — herdr must not spray the queued bytes in.
+        note_operator_input(&app, pane_id);
+        app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
+        assert!(rx.try_recv().is_err(), "deferred bytes dropped");
     }
 
     // Real Claude Code 2.1.296 AFK permission dialog (auto mode, dangerous
