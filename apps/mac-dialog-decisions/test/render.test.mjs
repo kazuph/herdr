@@ -1,13 +1,12 @@
-// Spec/text rendering tests: the dialog spec must carry every decision field
-// to the screen with no truncation.
+// Spec rendering tests: the panel spec must carry every decision field to the
+// screen with no truncation, and lead with where the decision comes from.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildDialogSpec,
-  buildDialogText,
   fmtDeadline,
-  originBreadcrumb,
+  locationLabel,
 } from "../mac-dialog-decisions.mjs";
 
 function decision(overrides = {}) {
@@ -43,73 +42,75 @@ function decision(overrides = {}) {
 
 const machine = { id: "local", label: "Local" };
 
-test("dialog text carries every decision field without truncation", () => {
-  const d = decision();
-  const text = buildDialogText(d, machine, 0);
-  for (const required of [
-    "【判断待ち】",
-    "質問 2/3",
-    "■ rm -rf ./dist を実行してよい？",
-    "guard が danger_words に一致しました",
-    "Local › work › t1 › deploy（claude）",
-    "ペインID: p1",
-    "ディレクトリ: /repo",
-    "ブランチ: main",
-    "コマンド: rm -rf ./dist",
-    "理由: danger_words",
-    "マシン: macbook",
-    "1. 承認する",
-    "このコマンドを実行",
-    "$ rm -rf ./dist",
-    "2. 1日許可",
-    "3. 却下する",
-    "プレビューあり（画面で確認）",
-    "期限:",
-    "残り約",
-    "判断待ちID: dec-abc",
-  ]) {
-    assert.ok(text.includes(required), `missing: ${required}`);
-  }
+test("spec carries origin, question and every option field without truncation", () => {
+  const spec = buildDialogSpec(decision(), machine, 0, { daemonPid: 42 });
+  assert.equal(spec.window_title, "herdr 判断待ち — work");
+  assert.equal(spec.source, "🤖 claude");
+  assert.equal(spec.location, "work › t1 › deploy");
+  assert.equal(spec.machine, "");
+  assert.equal(spec.question_label, "質問 2/3");
+  assert.equal(spec.title, "rm -rf ./dist を実行してよい？");
+  assert.equal(spec.body, "guard が danger_words に一致しました");
+  const details = Object.fromEntries(spec.details.map((d) => [d.label, d.value]));
+  assert.deepEqual(details, {
+    コマンド: "rm -rf ./dist",
+    場所: "/repo",
+    ブランチ: "main",
+    理由: "danger_words",
+    ペイン: "p1",
+  });
+  assert.deepEqual(spec.options[0], {
+    id: "approve",
+    label: "承認する",
+    description: "このコマンドを実行",
+    preview: "$ rm -rf ./dist",
+    preview_unavailable: false,
+  });
+  assert.equal(spec.options[1].label, "1日許可");
+  assert.equal(spec.options[2].preview_unavailable, true);
+  assert.match(spec.deadline, /^期限 \d{2}:\d{2}（残り約2分）$/);
+  assert.equal(spec.daemon_pid, 42);
+  assert.equal(spec.later_label, "10分");
 });
 
 test("long body and previews are preserved verbatim", () => {
   const longBody = "あ".repeat(5000) + "\n" + "B".repeat(3000);
   const longPreview = "preview-" + "x".repeat(4000);
-  const d = decision({
-    body: longBody,
-    options: [{ id: "ok", label: "OK", preview: longPreview }],
+  const spec = buildDialogSpec(
+    decision({ body: longBody, options: [{ id: "ok", label: "OK", preview: longPreview }] }),
+    machine,
+  );
+  assert.equal(spec.body, longBody);
+  assert.equal(spec.options[0].preview, longPreview);
+});
+
+test("a saved machine is named; screen prompts hide the internal reason", () => {
+  const remote = buildDialogSpec(
+    decision({ origin: { ...decision().origin, reason: "screen_prompt" } }),
+    { id: "m0e51", label: "仕事Mac" },
+  );
+  assert.equal(remote.machine, "仕事Mac");
+  assert.ok(!remote.details.some((d) => d.label === "理由"));
+});
+
+test("queue count, flags and later minutes reach the spec", () => {
+  const spec = buildDialogSpec(decision({ multi_select: true, allow_text: true }), machine, 2, {
+    laterMs: 5 * 60_000,
   });
-  const text = buildDialogText(d, machine, 0);
-  assert.ok(text.includes(longBody));
-  assert.ok(text.includes(`   ${longPreview}`));
+  assert.equal(spec.queue_remaining, 2);
+  assert.equal(spec.multi_select, true);
+  assert.equal(spec.allow_text, true);
+  assert.equal(spec.later_label, "5分");
+  assert.equal(buildDialogSpec(decision({ expires_unix_ms: null }), machine).deadline, "");
 });
 
-test("multi_select adds the checkbox hint, allow_text the input hint", () => {
-  const multi = buildDialogText(decision({ multi_select: true }), machine, 0);
-  assert.match(multi, /複数選択/);
-  const textable = buildDialogText(decision({ allow_text: true }), machine, 0);
-  assert.match(textable, /自由入力/);
-});
-
-test("queue remaining count appears in text and window title", () => {
-  const d = decision();
-  assert.match(buildDialogText(d, machine, 2), /ほかに 2 件の判断待ち/);
-  const spec = buildDialogSpec(d, machine, 2);
-  assert.match(spec.window_title, /ほか2件/);
-  assert.match(spec.window_title, /質問 2\/3/);
-  assert.equal(spec.options.length, 3);
-  assert.equal(spec.options[0].id, "approve");
-  assert.equal(spec.options[0].title, "1. 承認する");
-  assert.equal(spec.multi_select, false);
-  assert.equal(spec.allow_text, false);
-});
-
-test("origin breadcrumb degrades gracefully when fields are missing", () => {
-  assert.equal(originBreadcrumb(decision(), machine), "Local › work › t1 › deploy（claude）");
-  const bare = decision({ origin: {} });
-  assert.equal(originBreadcrumb(bare, machine), "Local");
-  const agentOnly = decision({ origin: { agent: "codex" } });
-  assert.equal(originBreadcrumb(agentOnly, { id: "m1", label: "M1" }), "M1 › codex");
+test("location falls back to the directory name when there is no space label", () => {
+  assert.equal(locationLabel(decision()), "work › t1 › deploy");
+  assert.equal(locationLabel(decision({ origin: { cwd: "/src/herdr" } })), "herdr");
+  assert.equal(locationLabel(decision({ origin: {} })), "");
+  const bare = buildDialogSpec(decision({ origin: { cwd: "/src/herdr" } }), machine);
+  assert.equal(bare.window_title, "herdr 判断待ち — herdr");
+  assert.equal(bare.source, "🛡 危険コマンドの承認");
 });
 
 test("fmtDeadline shows absolute time and remaining; no deadline when absent", () => {

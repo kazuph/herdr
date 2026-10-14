@@ -125,7 +125,7 @@ function aliveDialogs() {
 }
 
 function specDecisionId(spec) {
-  return /判断待ちID: (\S+)/.exec(spec.text)?.[1] || "";
+  return spec.decision_id || "";
 }
 
 function sleep(ms) {
@@ -219,17 +219,16 @@ async function main() {
   const firstSpec = specFiles()[0].spec;
   step(
     "queue count shown on the first dialog",
-    firstSpec.window_title.includes("ほか1件") &&
-      firstSpec.text.includes("ほかに 1 件の判断待ち"),
-    firstSpec.window_title,
+    firstSpec.queue_remaining === 1,
+    `queue_remaining=${firstSpec.queue_remaining}`,
   );
   const firstId = specDecisionId(firstSpec);
   step("first spec carries the decision id", Boolean(firstId), firstId);
 
   // 4. "press" the dialog: plan entry answers with an option id
-  setPlan({ [firstSpec.window_title]: { action: "answer", option_ids: ["go"] } });
+  setPlan({ [firstSpec.title]: { action: "answer", option_ids: ["go"] } });
   const firstDone =
-    firstSpec.text.includes("e2e-q1") ? askA.done : askB.done;
+    firstSpec.title.includes("e2e-q1") ? askA.done : askB.done;
   const firstResult = await firstDone;
   fs.writeFileSync(path.join(OUT, "ask-first.txt"), firstResult.stdout + firstResult.stderr);
   step(
@@ -245,7 +244,7 @@ async function main() {
   step(
     "queued decision shown after the first resolved",
     Boolean(secondId) && secondId !== firstId,
-    secondSpec.window_title,
+    secondSpec.title,
   );
 
   // 5. free text decision answered with --text only
@@ -257,7 +256,7 @@ async function main() {
     "--timeout", "120",
   ]);
   cleanup.push(() => askT.child.kill("SIGTERM"));
-  const secondDone = secondSpec.text.includes("e2e-q1") ? askA.done : askB.done;
+  const secondDone = secondSpec.title.includes("e2e-q1") ? askA.done : askB.done;
   // the queued second decision is still open; send its answer via CLI so the
   // text decision can take the screen
   const ext = await herdr([
@@ -269,11 +268,11 @@ async function main() {
   const textSpec = specFiles()[2].spec;
   step(
     "free-text decision dialog shown",
-    textSpec.allow_text === true && /e2e-text/.test(textSpec.text),
-    textSpec.window_title,
+    textSpec.allow_text === true && /e2e-text/.test(textSpec.title),
+    textSpec.title,
   );
   setPlan({
-    [textSpec.window_title]: {
+    [textSpec.title]: {
       action: "answer",
       option_ids: [],
       text: "様子見します",

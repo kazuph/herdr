@@ -25,14 +25,14 @@ function decision(id, overrides = {}) {
   };
 }
 
-function makeDaemon({ stateDir } = {}) {
+function makeDaemon({ stateDir, laterMs } = {}) {
   const dir = stateDir || fs.mkdtempSync(path.join(os.tmpdir(), "macd-test-"));
   const watch = new FakeWatch();
   const answers = [];
   const dialogs = [];
   const logs = [];
   const daemon = new MacDialogDecisionsDaemon({
-    config: { stateDir: dir },
+    config: { stateDir: dir, laterMs },
     spawnWatch: () => Promise.resolve(watch),
     runAnswer: (argv) => {
       answers.push(argv);
@@ -59,13 +59,16 @@ test("created decision opens one dialog carrying the full spec", async () => {
   watch.push({ event: "created", machine: MACHINE, decision: decision("dec-1") });
   await waitUntil(() => dialogs.length === 1);
   const spec = dialogs[0].spec;
-  assert.match(spec.text, /dec-1 の題名/);
-  assert.match(spec.text, /1\. 選択A/);
-  assert.match(spec.text, /2\. 選択B/);
-  assert.deepEqual(spec.options, [
-    { id: "a", title: "1. 選択A" },
-    { id: "b", title: "2. 選択B" },
-  ]);
+  assert.equal(spec.title, "dec-1 の題名");
+  assert.deepEqual(
+    spec.options.map((o) => [o.id, o.label]),
+    [
+      ["a", "選択A"],
+      ["b", "選択B"],
+    ],
+  );
+  // the spec on disk is what the panel reads
+  assert.deepEqual(JSON.parse(fs.readFileSync(dialogs[0].specPath, "utf8")).title, "dec-1 の題名");
   await daemon.stop();
 });
 
@@ -126,26 +129,40 @@ test("two decisions are presented one at a time, in order", async () => {
   watch.push({ event: "created", machine: MACHINE, decision: decision("dec-1") });
   watch.push({ event: "created", machine: MACHINE, decision: decision("dec-2") });
   await waitUntil(() => dialogs.length === 1);
-  assert.match(dialogs[0].spec.text, /dec-1 の題名/);
-  assert.match(dialogs[0].spec.window_title, /ほか1件/);
+  assert.match(dialogs[0].spec.title, /dec-1 の題名/);
+  assert.equal(dialogs[0].spec.queue_remaining, 1);
   dialogs[0].answer(["a"]);
   await waitUntil(() => dialogs.length === 2);
-  assert.match(dialogs[1].spec.text, /dec-2 の題名/);
+  assert.match(dialogs[1].spec.title, /dec-2 の題名/);
   await daemon.stop();
 });
 
-test("あとで dismisses without answering and does not reshow", async () => {
-  const { daemon, watch, dialogs, answers } = makeDaemon();
+test("あとで hides the dialog without answering and shows it again later", async () => {
+  const { daemon, watch, dialogs, answers } = makeDaemon({ laterMs: 150 });
   await daemon.start();
   watch.push({ event: "created", machine: MACHINE, decision: decision("dec-1") });
   await waitUntil(() => dialogs.length === 1);
-  dialogs[0].dismiss();
+  dialogs[0].later();
   await new Promise((r) => setTimeout(r, 50));
-  // replay of the same created event (watch reconnect) keeps it dismissed
+  // a watch reconnect replay does not bring it back early
   watch.push({ event: "created", machine: MACHINE, decision: decision("dec-1") });
-  await new Promise((r) => setTimeout(r, 50));
+  await new Promise((r) => setTimeout(r, 30));
   assert.equal(dialogs.length, 1);
   assert.equal(answers.length, 0);
+  await waitUntil(() => dialogs.length === 2);
+  assert.match(dialogs[1].spec.title, /dec-1 の題名/);
+  await daemon.stop();
+});
+
+test("あとで does not come back once the decision is answered elsewhere", async () => {
+  const { daemon, watch, dialogs } = makeDaemon({ laterMs: 120 });
+  await daemon.start();
+  watch.push({ event: "created", machine: MACHINE, decision: decision("dec-1") });
+  await waitUntil(() => dialogs.length === 1);
+  dialogs[0].later();
+  watch.push({ event: "resolved", machine: MACHINE, decision: { ...decision("dec-1"), status: "answered" } });
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(dialogs.length, 1);
   await daemon.stop();
 });
 
@@ -160,7 +177,7 @@ test("machine_down closes the dialog; machine_up replay re-shows still-pending",
   watch.push({ event: "machine_up", machine: remote });
   watch.push({ event: "created", machine: remote, decision: decision("dec-9") });
   await waitUntil(() => dialogs.length === 2);
-  assert.match(dialogs[1].spec.text, /dec-9 の題名/);
+  assert.match(dialogs[1].spec.title, /dec-9 の題名/);
   await daemon.stop();
 });
 

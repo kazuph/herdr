@@ -5,7 +5,7 @@
 //
 // Env:
 //   MAC_DIALOG_FAKE_PLAN   path to a JSON map: spec-substring ->
-//                          { action: "answer"|"dismiss"|"wait", option_ids?, text? }
+//                          { action: "answer"|"later"|"wait", option_ids?, text? }
 //                          Polled every 100ms so the test can "press the button"
 //                          on an already-open dialog.
 //   MAC_DIALOG_FAKE_DIR    directory where spawn/kill evidence files are written
@@ -45,7 +45,7 @@ const timer = setInterval(() => {
   try {
     plan = JSON.parse(fs.readFileSync(planPath, "utf8"));
   } catch {}
-  const haystack = `${spec.window_title}\n${spec.text}`;
+  const haystack = `${spec.title}\n${spec.body || ""}`;
   const action = Object.entries(plan).find(([needle]) =>
     haystack.includes(needle),
   )?.[1];
@@ -58,8 +58,8 @@ const timer = setInterval(() => {
     });
     process.exit(0);
   }
-  if (action.action === "dismiss") {
-    emit({ result: "dismiss" });
+  if (action.action === "later") {
+    emit({ result: "later" });
     process.exit(0);
   }
 }, 100);
