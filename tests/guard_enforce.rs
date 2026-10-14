@@ -168,6 +168,10 @@ fn setup(mode: Option<&str>, extra_config: &str, write_marker: bool) -> (GuardEn
     let mut cmd = CommandBuilder::new(HERDR);
     cmd.arg("server");
     cmd.cwd(&workdir);
+    for (key, _) in inherited_pane_env() {
+        cmd.env_remove(key);
+    }
+    cmd.env("PATH", path_without_guard_shims());
     cmd.env("XDG_CONFIG_HOME", &config_home);
     cmd.env("XDG_STATE_HOME", &state_home);
     cmd.env("XDG_RUNTIME_DIR", &runtime_dir);
@@ -212,6 +216,31 @@ fn setup(mode: Option<&str>, extra_config: &str, write_marker: bool) -> (GuardEn
     )
 }
 
+/// Variables a herdr pane (and the dotfiles ai_guard loader) export into the
+/// shell running `cargo test`. Running the suite from inside a guarded pane
+/// must not leak them: the outer pane's guard marker, mode and shim `PATH`
+/// would route the test's commands to the real server and hang on approval.
+fn inherited_pane_env() -> Vec<(String, String)> {
+    std::env::vars()
+        .filter(|(key, _)| {
+            key.starts_with("HERDR_")
+                || key.starts_with("AI_GUARD")
+                || key == "ZDOTDIR"
+                || key == "BASH_ENV"
+        })
+        .collect()
+}
+
+/// `PATH` with every guard shim directory of the outer pane removed.
+fn path_without_guard_shims() -> String {
+    std::env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .filter(|dir| !dir.contains("/herdr/guard/bin/"))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 /// Spawn `herdr guard exec -- <argv...>` as the pane would run it: inside the
 /// isolated workdir with the marker/socket env the pane launch would set.
 fn guard_exec(env: &GuardEnv, argv: &[&str], request_reason: Option<&str>) -> Child {
@@ -224,6 +253,10 @@ fn guard_exec(env: &GuardEnv, argv: &[&str], request_reason: Option<&str>) -> Ch
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for (key, _) in inherited_pane_env() {
+        cmd.env_remove(key);
+    }
+    cmd.env("PATH", path_without_guard_shims());
     cmd.env("XDG_CONFIG_HOME", env.base.join("config"));
     cmd.env("XDG_STATE_HOME", env.base.join("state"));
     cmd.env("HOME", env.base.join("home"));
