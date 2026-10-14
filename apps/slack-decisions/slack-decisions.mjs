@@ -28,6 +28,10 @@ const SOCKET_RECONNECT_MS = 1_000;
 const RECONCILE_DELAY_MS = 3_000;
 const STALE_POST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const POST_RETRY_MS = 60_000;
+// How long a cancelled decision's Slack post stays adoptable by a
+// recreated copy of the same question (screen-prompt churn rebuilds the
+// decision ~1s apart; the glasses post delay can stretch it to ~180s).
+const RECREATED_POST_REUSE_MS = 10 * 60 * 1000;
 const NUMBER_EMOJIS = [
   "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
 ];
@@ -873,6 +877,27 @@ function decisionIdOf(decision) {
   return String(decision?.decision_id || "");
 }
 
+// Identity of the question a decision carries. A churned decision comes
+// back under a new decision_id while the question — same pane, title,
+// options, question_label — is unchanged, which is what the post-reuse
+// path matches on.
+function questionKey(machineId, decision) {
+  const origin = decision?.origin || {};
+  const options = (decision?.options || [])
+    .map((option) => `${option?.id ?? ""} ${option?.label ?? ""}`)
+    .join("");
+  return JSON.stringify([
+    String(machineId),
+    origin.pane_id || "",
+    decision?.kind || "",
+    decision?.title || "",
+    decision?.question_label || "",
+    options,
+    decision?.allow_text === true,
+    decision?.multi_select === true,
+  ]);
+}
+
 export class SlackDecisionsDaemon {
   constructor({
     config,
@@ -897,6 +922,9 @@ export class SlackDecisionsDaemon {
     this.entries = new Map(); // key -> entry
     this.machinesDown = new Set();
     this.posts = new Map(); // key -> {channel, ts, machineId, decisionId}
+    // questionKey -> {channel, ts, at}: posts of decisions cancelled
+    // moments ago, adoptable by a recreated copy of the same question.
+    this.reusablePosts = new Map();
     this.stopped = false;
     this.pollTimer = null;
     this.socketAbort = new AbortController();
@@ -1084,6 +1112,47 @@ export class SlackDecisionsDaemon {
     if (this.machinesDown.has(entry.machineId)) return;
     if (entry.decision.status && entry.decision.status !== "pending") return;
     const { decision, machine } = entry;
+    // The same question recreated right after a cancel — the
+    // screen-prompt churn this guards against — reuses the cancelled
+    // decision's post instead of stacking a new one.
+    const reuse = this.takeReusablePost(entry);
+    if (reuse) {
+      entry.post = { channel: reuse.channel, ts: reuse.ts };
+      this.posts.set(entry.key, {
+        channel: reuse.channel,
+        ts: reuse.ts,
+        machineId: entry.machineId,
+        decisionId: decision.decision_id,
+      });
+      this.savePostsFile();
+      // Reactions and thread replies left on the old post answered the
+      // cancelled decision; they must not answer the recreated one.
+      try {
+        const [message, replies] = await Promise.all([
+          this.slack.message(reuse.ts),
+          this.slack.replies(reuse.ts),
+        ]);
+        for (const reaction of message?.reactions || []) {
+          for (const user of reaction.users || []) {
+            if (user !== this.botUserId) {
+              entry.seenReactions.add(`${reaction.name}:${user}`);
+            }
+          }
+        }
+        for (const reply of replies || []) {
+          if (reply.ts && reply.ts !== reuse.ts) entry.seenReplies.add(reply.ts);
+        }
+      } catch (error) {
+        this.log(`使い回す投稿の既読化に失敗: ${error.message}`);
+      }
+      await this.renderPending(entry);
+      const emojis = NUMBER_EMOJIS.slice(0, (decision.options || []).length);
+      if (emojis.length > 0) {
+        await this.slack.addReactions(reuse.ts, emojis);
+      }
+      this.log(`Slack 投稿を使い回し: ${decision.decision_id} (${reuse.ts})`);
+      return;
+    }
     const blocks = buildDecisionBlocks({
       decision,
       machine,
@@ -1169,9 +1238,38 @@ export class SlackDecisionsDaemon {
       await this.updatePostStatus(entry, decision.status || "answered", decision);
       this.posts.delete(key);
       this.savePostsFile();
+      // A cancelled question that comes straight back keeps its post
+      // instead of stacking a new one.
+      if ((decision.status || "answered") === "cancelled") {
+        this.rememberReusablePost(mid, decision, entry.post);
+      }
     }
     this.entries.delete(key);
     this.log(`決定済み: ${decision.decision_id} (${decision.status})`);
+  }
+
+  rememberReusablePost(machineId, decision, post) {
+    const now = Date.now();
+    for (const [key, record] of this.reusablePosts) {
+      if (now - record.at > RECREATED_POST_REUSE_MS) {
+        this.reusablePosts.delete(key);
+      }
+    }
+    this.reusablePosts.set(questionKey(machineId, decision), {
+      channel: post.channel,
+      ts: post.ts,
+      at: now,
+    });
+  }
+
+  takeReusablePost(entry) {
+    const record = this.reusablePosts.get(
+      questionKey(entry.machineId, entry.decision),
+    );
+    if (!record) return null;
+    this.reusablePosts.delete(questionKey(entry.machineId, entry.decision));
+    if (Date.now() - record.at > RECREATED_POST_REUSE_MS) return null;
+    return record;
   }
 
   onMachineDown(mid, reason) {

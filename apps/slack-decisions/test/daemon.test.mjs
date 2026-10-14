@@ -404,6 +404,78 @@ test("resolved expired / cancelled also update the post", async () => {
   }
 });
 
+test("recreated same question right after cancel reuses the post", async () => {
+  // Screen-prompt churn rebuilds the pending decision under a new id;
+  // the Slack post must not stack — the cancelled decision's post is
+  // adopted and updated back to pending.
+  const fake = await new FakeSlack().start();
+  const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
+  const daemon = makeDaemon({ slack, glasses: null });
+  try {
+    const question = {
+      kind: "agent_prompt",
+      title: "複数質問の確認（2つ目）。「いぬ」を選んでください",
+      question_label: "質問 2/2 動物",
+      options: [
+        { id: "1", label: "ねこ" },
+        { id: "2", label: "いぬ" },
+      ],
+      allow_text: true,
+      origin: { pane_id: "p2301", agent: "claude", reason: "screen_prompt" },
+    };
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision({ ...question, decision_id: "dec-a" }),
+    });
+    assert.equal(fake.posts.length, 1);
+    const ts = fake.posts[0].ts;
+
+    // Churn: cancelled, then recreated under a new id with the same
+    // question payload.
+    await feedAndSettle(daemon, {
+      event: "resolved",
+      machine: LOCAL,
+      decision: {
+        ...sampleDecision({ ...question, decision_id: "dec-a" }),
+        status: "cancelled",
+      },
+    });
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision({ ...question, decision_id: "dec-b" }),
+    });
+    assert.equal(fake.posts.length, 1, "no second post for the same question");
+    const backToPending = fake.updates.filter((u) => u.ts === ts);
+    assert.ok(
+      backToPending.some((u) => JSON.stringify(u.blocks).match(/取り消し/)),
+      "cancel updated the reused post",
+    );
+    assert.ok(
+      backToPending.some((u) =>
+        JSON.stringify(u.blocks).match(/質問 2\/2 動物/),
+      ),
+      "the reused post renders the recreated decision as pending",
+    );
+
+    // A different question still gets its own post.
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision({
+        ...question,
+        decision_id: "dec-c",
+        title: "別の質問",
+      }),
+    });
+    assert.equal(fake.posts.length, 2, "a different question posts anew");
+  } finally {
+    await daemon.stop();
+    await fake.stop();
+  }
+});
+
 test("machine_down before post -> never posts; after post -> marked down", async () => {
   const fake = await new FakeSlack().start();
   const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
