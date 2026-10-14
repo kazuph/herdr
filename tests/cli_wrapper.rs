@@ -3200,6 +3200,56 @@ fn run_start_rejects_invalid_input_without_creating_a_job() {
 }
 
 #[test]
+fn silent_run_starts_from_a_plain_shell_pane() {
+    // Plugin hooks and actions call `herdr run --completion none` with the
+    // focused pane as caller, which is often a plain shell (no agent).
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let socket_path = runtime_dir.join("herdr.sock");
+
+    let herdr = spawn_herdr(&config_home, &runtime_dir, &socket_path);
+    wait_for_socket(&socket_path, Duration::from_secs(5));
+    let created = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_silent_ws","method":"workspace.create","params":{{"cwd":"{}","focus":true}}}}"#,
+            base.display()
+        ),
+    );
+    assert!(created["result"]["workspace"]["workspace_id"].is_string());
+
+    let start = |caller: &str, completion: &str| {
+        let request = serde_json::json!({
+            "id": "req_silent_run",
+            "method": "run.start",
+            "params": {
+                "caller_pane": caller,
+                "cwd": base.display().to_string(),
+                "label": "silent",
+                "argv": ["true"],
+                "completion": completion,
+            },
+        });
+        send_request(&socket_path, &serde_json::to_string(&request).unwrap())
+    };
+
+    let silent = start("p1", "none");
+    assert!(silent["result"]["job"].is_string(), "{silent}");
+    // A job that notifies still needs an agent to deliver to.
+    let notifying = start("p1", "summary");
+    assert_eq!(notifying["error"]["code"], "agent_not_found", "{notifying}");
+    // And the caller pane must exist.
+    let missing = start("p999", "none");
+    assert!(missing["error"].is_object(), "{missing}");
+
+    let jobs = run_named_cli_json(&config_home, &runtime_dir, &["run", "list"]);
+    assert_eq!(jobs["jobs"].as_array().unwrap().len(), 1, "{jobs}");
+
+    cleanup_spawned_herdr(herdr, base);
+}
+
+#[test]
 fn herdr_run_starts_when_client_config_is_read_only() {
     let base = unique_test_dir();
     let server_config_home = base.join("server-config");
