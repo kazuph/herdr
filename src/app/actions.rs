@@ -3109,6 +3109,40 @@ impl AppState {
         })
     }
 
+    /// Re-assert the pending-decision attention overlay on every pane.
+    /// `pending_panes` holds the pane ids named by pending decision origins;
+    /// panes absent from the set drop the overlay and fall back to their
+    /// screen/hook-derived state. Returns the pane state updates to emit.
+    pub(crate) fn apply_pending_decision_attention(
+        &mut self,
+        pending_panes: &std::collections::HashSet<PaneId>,
+    ) -> Vec<PaneStateUpdate> {
+        let now = std::time::Instant::now();
+        let pane_ids: Vec<PaneId> = self
+            .workspaces
+            .iter()
+            .flat_map(|ws| {
+                ws.tabs
+                    .iter()
+                    .flat_map(|tab| tab.panes.keys().copied().collect::<Vec<_>>())
+            })
+            .collect();
+        pane_ids
+            .into_iter()
+            .filter_map(|pane_id| {
+                self.update_terminal_state(pane_id, |terminal| {
+                    terminal
+                        .set_decision_attention(pending_panes.contains(&pane_id), now)
+                        .map(|effective_state_change| TerminalStateMutation {
+                            effective_state_change: Some(effective_state_change),
+                            session_ref_changed: false,
+                            agent_released: false,
+                        })
+                })
+            })
+            .collect()
+    }
+
     fn apply_pane_state_change(
         &mut self,
         ws_idx: usize,
@@ -3161,7 +3195,25 @@ impl AppState {
             return None;
         }
 
-        let agent_label = change.agent_label.clone()?;
+        let agent_label = match change.agent_label.clone() {
+            Some(label) => label,
+            None => {
+                // A pending decision can block a pane that runs no known
+                // agent (a shell running `herdr decision ask`). It still earns
+                // the attention sound/toast; the empty label bypasses the
+                // agent freshness guard in agent_notification_delivery.
+                let decision_attention = self
+                    .workspaces
+                    .get(ws_idx)
+                    .and_then(|ws| ws.pane_state(pane_id))
+                    .and_then(|pane| self.terminals.get(&pane.attached_terminal_id))
+                    .is_some_and(|terminal| terminal.decision_attention());
+                if !decision_attention || change.state != AgentState::Blocked {
+                    return None;
+                }
+                String::new()
+            }
+        };
         let kind = client_notification_kind.unwrap_or(match sound {
             Some(crate::sound::Sound::Request) => ToastKind::NeedsAttention,
             Some(crate::sound::Sound::Done) | None => ToastKind::Finished,
@@ -3226,7 +3278,11 @@ impl AppState {
         if terminal_state.state != expected_state {
             return None;
         }
-        if terminal_state.effective_agent_label() != Some(agent_label.as_str()) {
+        // An empty label marks a decision-attention delivery for a pane with
+        // no agent identity; there is no agent label to freshness-check.
+        if !agent_label.is_empty()
+            && terminal_state.effective_agent_label() != Some(agent_label.as_str())
+        {
             return None;
         }
 
@@ -5147,6 +5203,94 @@ mod tests {
         assert!(state.pending_agent_notifications.is_empty());
         assert!(state.drain_due_agent_notifications(deadline).is_empty());
         assert!(state.toast.is_none());
+    }
+
+    #[test]
+    fn pending_decision_marks_pane_blocked_and_restores_screen_state() {
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.active = Some(0);
+        let bg_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+        let pending = std::collections::HashSet::from([bg_pane_id]);
+
+        let updates = state.apply_pending_decision_attention(&pending);
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].pane_id, bg_pane_id);
+        assert_eq!(updates[0].previous_state, AgentState::Unknown);
+        assert_eq!(updates[0].state, AgentState::Blocked);
+
+        let (aggregate, _) = state.workspaces[1].aggregate_state(&state.terminals);
+        assert_eq!(aggregate, AgentState::Blocked);
+
+        // Re-asserting the same pending set is a no-op — no second
+        // transition and no second request sound.
+        assert!(state.apply_pending_decision_attention(&pending).is_empty());
+
+        let updates = state.apply_pending_decision_attention(&std::collections::HashSet::new());
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].pane_id, bg_pane_id);
+        assert_eq!(updates[0].previous_state, AgentState::Blocked);
+        assert_eq!(updates[0].state, AgentState::Unknown);
+
+        let (aggregate, _) = state.workspaces[1].aggregate_state(&state.terminals);
+        assert_eq!(aggregate, AgentState::Unknown);
+    }
+
+    #[test]
+    fn pending_decision_on_screen_blocked_pane_emits_no_second_transition() {
+        // A pane already blocked by screen detection (AskUserQuestion) stays
+        // blocked when a pending decision overlaps: no second transition
+        // means no duplicate request sound.
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.active = Some(0);
+        let bg_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id: bg_pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Blocked,
+            visible_blocker: true,
+            visible_idle: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+        state.toast = None;
+
+        let pending = std::collections::HashSet::from([bg_pane_id]);
+        assert!(state.apply_pending_decision_attention(&pending).is_empty());
+        assert!(state.toast.is_none());
+
+        // Resolving the decision while the screen is still blocked keeps the
+        // pane blocked — no transition either way.
+        assert!(state
+            .apply_pending_decision_attention(&std::collections::HashSet::new())
+            .is_empty());
+        let (aggregate, _) = state.workspaces[1].aggregate_state(&state.terminals);
+        assert_eq!(aggregate, AgentState::Blocked);
+    }
+
+    #[test]
+    fn pending_decision_attention_notifies_a_pane_without_an_agent() {
+        // `herdr decision ask` runs in plain shell panes: the pane still earns
+        // the request sound even though it has no agent label.
+        let mut state = app_with_workspaces(&["active", "background"]);
+        state.active = Some(0);
+        state.sound.enabled = true;
+        state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        state.toast_config.delay_seconds = 1;
+        let bg_pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+
+        let updates =
+            state.apply_pending_decision_attention(&std::collections::HashSet::from([bg_pane_id]));
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].state, AgentState::Blocked);
+        assert!(updates[0].agent_label.is_none());
+
+        assert!(state.pending_agent_notifications.contains_key(&bg_pane_id));
+        let deadline = state.next_pending_agent_notification_deadline().unwrap();
+        let deliveries = state.drain_due_agent_notifications(deadline);
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].kind, ToastKind::NeedsAttention);
+        assert_eq!(deliveries[0].sound, Some(crate::sound::Sound::Request));
     }
 
     #[test]

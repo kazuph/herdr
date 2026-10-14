@@ -826,7 +826,15 @@ impl App {
 
     pub(super) fn emit_event(&mut self, event: crate::api::schema::EventEnvelope) {
         self.run_plugin_event_hooks(&event);
+        let is_decision_lifecycle = matches!(
+            event.event,
+            crate::api::schema::EventKind::DecisionCreated
+                | crate::api::schema::EventKind::DecisionResolved
+        );
         self.event_hub.push(event);
+        if is_decision_lifecycle {
+            self.sync_pending_decision_attention();
+        }
     }
 
     pub(crate) fn emit_pane_updated(&mut self, ws_idx: usize, pane_id: crate::layout::PaneId) {

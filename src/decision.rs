@@ -252,6 +252,28 @@ impl DecisionStore {
         Ok(expired)
     }
 
+    /// Public pane ids named by `origin.pane_id` of every pending decision,
+    /// de-duplicated in creation order. Callers resolve the ids against local
+    /// panes to project "waiting for a decision" attention.
+    pub(crate) fn pending_origin_pane_ids(&self) -> DecisionStoreResult<Vec<String>> {
+        let mut stmt = self.store.conn().prepare(
+            "SELECT record_json FROM decisions
+             WHERE status = 'pending'
+             ORDER BY created_unix_ms, decision_id",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut pane_ids: Vec<String> = Vec::new();
+        for row in rows {
+            let decision: Decision = serde_json::from_str(&row?)?;
+            if let Some(pane_id) = decision.origin.and_then(|origin| origin.pane_id) {
+                if !pane_ids.contains(&pane_id) {
+                    pane_ids.push(pane_id);
+                }
+            }
+        }
+        Ok(pane_ids)
+    }
+
     /// Earliest expiry deadline among pending decisions; used to schedule the
     /// next expiry tick.
     pub(crate) fn next_pending_expiry_unix_ms(&self) -> DecisionStoreResult<Option<u64>> {
@@ -571,6 +593,32 @@ mod tests {
         assert_eq!(expired.len(), 1);
         assert_eq!(expired[0].decision_id, "dec-x-2");
         assert_eq!(reopened.next_pending_expiry_unix_ms().unwrap(), Some(3_000));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pending_origin_pane_ids_lists_only_pending_decision_panes() {
+        let (mut store, dir) = temp_store("originpanes");
+        store.insert(&pending_decision("dec-o-1", None)).unwrap();
+        let mut second = pending_decision("dec-o-2", None);
+        second.origin = Some(DecisionOrigin {
+            pane_id: Some("p_2".into()),
+            ..DecisionOrigin::default()
+        });
+        store.insert(&second).unwrap();
+        let mut no_origin = pending_decision("dec-o-3", None);
+        no_origin.origin = None;
+        store.insert(&no_origin).unwrap();
+        // A resolved decision no longer contributes its pane id.
+        store.insert(&pending_decision("dec-o-4", None)).unwrap();
+        store
+            .answer("dec-o-4", Some("yes".into()), None, None, None, 1_000)
+            .unwrap();
+
+        assert_eq!(
+            store.pending_origin_pane_ids().unwrap(),
+            vec!["p_1".to_string(), "p_2".to_string()]
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }

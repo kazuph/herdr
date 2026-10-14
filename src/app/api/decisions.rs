@@ -319,6 +319,39 @@ impl App {
         });
     }
 
+    /// Re-assert pending-decision attention on local panes after any decision
+    /// lifecycle event (create, answer, cancel, expiry) and at startup. A
+    /// pending decision whose `origin.pane_id` resolves to a local pane marks
+    /// that pane's terminal so it presents as waiting-for-decision (blocked)
+    /// until no pending decision names it anymore; the pane then falls back
+    /// to its screen/hook-derived state. Remote decisions never reach the
+    /// local store, so their origins never resolve to local panes.
+    pub(crate) fn sync_pending_decision_attention(&mut self) {
+        let pending_panes = match DecisionStore::open_active() {
+            Ok(store) => match store.pending_origin_pane_ids() {
+                Ok(pane_ids) => pane_ids,
+                Err(err) => {
+                    warn!(error = %err, "failed to read pending decisions for pane attention");
+                    Vec::new()
+                }
+            },
+            Err(err) => {
+                warn!(error = %err, "failed to open decision store for pane attention");
+                Vec::new()
+            }
+        };
+        let pending_panes: std::collections::HashSet<crate::layout::PaneId> = pending_panes
+            .iter()
+            .filter_map(|public_id| {
+                self.parse_pane_id(public_id)
+                    .map(|(_ws_idx, pane_id)| pane_id)
+            })
+            .collect();
+        for update in self.state.apply_pending_decision_attention(&pending_panes) {
+            self.emit_pane_state_update(&update);
+        }
+    }
+
     fn open_decision_store(&self, id: &str) -> Result<DecisionStore, String> {
         DecisionStore::open_active().map_err(|err| {
             responses::encode_error(
@@ -520,5 +553,208 @@ mod tests {
         let mut origin = crate::api::schema::DecisionOrigin::default();
         app.enrich_decision_origin(&mut origin);
         assert!(origin.workspace_label.is_none());
+    }
+
+    fn terminal_id_of(app: &App, pane_id: crate::layout::PaneId) -> crate::terminal::TerminalId {
+        app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone()
+    }
+
+    fn create_decision_for_pane(app: &mut App, public_pane_id: String) -> Decision {
+        let response = app.handle_decision_create(
+            "req-create".into(),
+            DecisionCreateParams {
+                kind: DecisionKind::Ask,
+                title: "continue?".into(),
+                body: None,
+                options: vec![option("yes"), option("no")],
+                allow_text: false,
+                multi_select: false,
+                timeout_ms: None,
+                origin: Some(crate::api::schema::DecisionOrigin {
+                    pane_id: Some(public_pane_id),
+                    ..Default::default()
+                }),
+            },
+        );
+        let success: crate::api::schema::SuccessResponse =
+            serde_json::from_str(&response).expect("decision create succeeds");
+        let ResponseResult::Decision { decision } = success.result else {
+            panic!("expected decision create result");
+        };
+        decision
+    }
+
+    #[test]
+    fn pending_decision_marks_origin_pane_blocked_until_answered() {
+        let (mut app, pane_id) = app_with_pane("attention");
+        let public = app.public_pane_id(0, pane_id).expect("public pane id");
+        let terminal_id = terminal_id_of(&app, pane_id);
+
+        let decision = create_decision_for_pane(&mut app, public);
+
+        assert!(app.state.terminals[&terminal_id].decision_attention());
+        assert_eq!(
+            app.state.terminals[&terminal_id].state,
+            crate::detect::AgentState::Blocked
+        );
+        // The public projection rides the same status AskUserQuestion
+        // produces: pane, tab, workspace and agent entries all show blocked
+        // to TUI and saved-machine endpoint consumers alike.
+        assert_eq!(
+            app.pane_info(0, pane_id).unwrap().agent_status,
+            crate::api::schema::AgentStatus::Blocked
+        );
+        assert_eq!(
+            app.workspace_info(0).agent_status,
+            crate::api::schema::AgentStatus::Blocked
+        );
+        assert_eq!(
+            app.tab_info(0, 0).unwrap().agent_status,
+            crate::api::schema::AgentStatus::Blocked
+        );
+
+        let response = app.handle_decision_answer(
+            "req-answer".into(),
+            DecisionAnswerParams {
+                decision_id: decision.decision_id.clone(),
+                option_id: Some("yes".into()),
+                option_ids: None,
+                text: None,
+                responder: Some("test".into()),
+            },
+        );
+        let success: crate::api::schema::SuccessResponse =
+            serde_json::from_str(&response).expect("decision answer succeeds");
+        assert!(matches!(success.result, ResponseResult::Decision { .. }));
+
+        assert!(!app.state.terminals[&terminal_id].decision_attention());
+        assert_eq!(
+            app.state.terminals[&terminal_id].state,
+            crate::detect::AgentState::Unknown
+        );
+        assert_eq!(
+            app.pane_info(0, pane_id).unwrap().agent_status,
+            crate::api::schema::AgentStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn pending_decision_attention_survives_other_panes_and_cancels() {
+        let (mut app, pane_id) = app_with_pane("two-panes");
+        app.state.workspaces[0].test_split_pane(
+            pane_id,
+            ratatui::layout::Direction::Horizontal,
+            false,
+        );
+        let other_pane = *app.state.workspaces[0].tabs[0]
+            .panes
+            .keys()
+            .find(|id| **id != pane_id)
+            .expect("second pane");
+        app.state.ensure_test_terminals();
+        let public = app.public_pane_id(0, pane_id).expect("public pane id");
+        let terminal_id = terminal_id_of(&app, pane_id);
+        let other_terminal_id = terminal_id_of(&app, other_pane);
+
+        let decision = create_decision_for_pane(&mut app, public);
+
+        assert!(app.state.terminals[&terminal_id].decision_attention());
+        assert!(!app.state.terminals[&other_terminal_id].decision_attention());
+
+        let response = app.handle_decision_cancel(
+            "req-cancel".into(),
+            DecisionCancelParams {
+                decision_id: decision.decision_id,
+            },
+        );
+        let success: crate::api::schema::SuccessResponse =
+            serde_json::from_str(&response).expect("decision cancel succeeds");
+        assert!(matches!(success.result, ResponseResult::Decision { .. }));
+        assert!(!app.state.terminals[&terminal_id].decision_attention());
+    }
+
+    #[test]
+    fn pending_decision_attention_clears_on_expiry() {
+        let (mut app, pane_id) = app_with_pane("expiry");
+        let public = app.public_pane_id(0, pane_id).expect("public pane id");
+        let terminal_id = terminal_id_of(&app, pane_id);
+
+        // A zero timeout writes an `expires_unix_ms` that is already due, so
+        // the server-side expiry pass resolves it on the next tick.
+        let response = app.handle_decision_create(
+            "req-create".into(),
+            DecisionCreateParams {
+                kind: DecisionKind::Ask,
+                title: "continue?".into(),
+                body: None,
+                options: vec![option("yes"), option("no")],
+                allow_text: false,
+                multi_select: false,
+                timeout_ms: Some(0),
+                origin: Some(crate::api::schema::DecisionOrigin {
+                    pane_id: Some(public),
+                    ..Default::default()
+                }),
+            },
+        );
+        let _: crate::api::schema::SuccessResponse =
+            serde_json::from_str(&response).expect("decision create succeeds");
+        assert!(app.state.terminals[&terminal_id].decision_attention());
+
+        app.decision_expiry_deadline = Some(Instant::now() - Duration::from_secs(1));
+
+        assert!(app.expire_due_decisions(Instant::now()));
+        assert!(!app.state.terminals[&terminal_id].decision_attention());
+        assert_eq!(
+            app.state.terminals[&terminal_id].state,
+            crate::detect::AgentState::Unknown
+        );
+    }
+
+    #[test]
+    fn pending_decision_attention_ignores_unresolvable_origin_panes() {
+        let (mut app, pane_id) = app_with_pane("remote-origin");
+        let terminal_id = terminal_id_of(&app, pane_id);
+
+        // A decision whose origin pane id cannot be resolved locally (for
+        // example a pane on a saved machine) must not mark local panes.
+        let _decision = create_decision_for_pane(&mut app, "p999999".into());
+
+        assert!(!app.state.terminals[&terminal_id].decision_attention());
+        assert_eq!(
+            app.state.terminals[&terminal_id].state,
+            crate::detect::AgentState::Unknown
+        );
+    }
+
+    #[test]
+    fn pending_decision_attention_reasserts_on_restart_sync() {
+        let (mut app, pane_id) = app_with_pane("restart");
+        let public = app.public_pane_id(0, pane_id).expect("public pane id");
+        let terminal_id = terminal_id_of(&app, pane_id);
+
+        let decision = create_decision_for_pane(&mut app, public);
+        assert!(app.state.terminals[&terminal_id].decision_attention());
+
+        // Runtime attention flags do not persist: simulate a restart by
+        // clearing the flag on the terminal, then re-running the startup
+        // sync the constructor performs.
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_decision_attention(false, Instant::now());
+        assert!(!app.state.terminals[&terminal_id].decision_attention());
+
+        app.sync_pending_decision_attention();
+        assert!(app.state.terminals[&terminal_id].decision_attention());
+        assert_eq!(
+            app.state.terminals[&terminal_id].state,
+            crate::detect::AgentState::Blocked
+        );
+
+        let _ = decision;
     }
 }

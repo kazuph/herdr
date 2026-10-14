@@ -131,6 +131,7 @@ pub struct TerminalState {
     pub fallback_state: AgentState,
     fallback_visible_blocker: bool,
     fallback_observed_at: Option<Instant>,
+    decision_attention: bool,
     pub hook_authority: Option<HookAuthority>,
     pub agent_metadata: HashMap<String, AgentMetadata>,
     pub metadata_tokens: crate::metadata_tokens::MetadataTokens,
@@ -162,6 +163,7 @@ impl TerminalState {
             fallback_state: AgentState::Unknown,
             fallback_visible_blocker: false,
             fallback_observed_at: None,
+            decision_attention: false,
             hook_authority: None,
             agent_metadata: HashMap::new(),
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
@@ -1418,6 +1420,36 @@ impl TerminalState {
         self.live_full_lifecycle_hook_authority()
     }
 
+    pub fn decision_attention(&self) -> bool {
+        self.decision_attention
+    }
+
+    /// Pending decisions whose origin names this terminal's pane mark it as
+    /// needing a decision regardless of what the agent screen shows. The flag
+    /// sits above screen detection and hook authority in the effective state,
+    /// so the pane presents `Blocked` until every decision resolves.
+    pub fn set_decision_attention(
+        &mut self,
+        attention: bool,
+        now: Instant,
+    ) -> Option<EffectiveStateChange> {
+        if self.decision_attention == attention {
+            return None;
+        }
+        let previous_agent_label = self.effective_agent_label().map(str::to_string);
+        let previous_known_agent = self.effective_known_agent();
+        let previous_state = self.state;
+        let previous_presentation = self.effective_presentation_for_state_at(previous_state, now);
+        self.decision_attention = attention;
+        self.recompute_effective_state(
+            previous_agent_label,
+            previous_known_agent,
+            previous_state,
+            previous_presentation,
+            now,
+        )
+    }
+
     fn visible_blocker_overrides_hook(&self) -> bool {
         if self.live_full_lifecycle_hook_authority() {
             return false;
@@ -1669,7 +1701,7 @@ impl TerminalState {
         previous_presentation: EffectivePresentation,
         now: Instant,
     ) -> Option<EffectiveStateChange> {
-        let state = if self.visible_blocker_overrides_hook() {
+        let state = if self.decision_attention || self.visible_blocker_overrides_hook() {
             AgentState::Blocked
         } else {
             self.hook_authority
@@ -5206,5 +5238,112 @@ mod tests {
             terminal.hook_authority.as_ref().unwrap().source,
             "custom:pi"
         );
+    }
+
+    #[test]
+    fn decision_attention_blocks_and_restores_screen_state() {
+        let mut terminal = test_terminal();
+        let now = Instant::now();
+        terminal.set_detected_state(Some(Agent::Pi), AgentState::Working);
+
+        let change = terminal
+            .set_decision_attention(true, now)
+            .expect("attention changes the effective state");
+        assert_eq!(change.previous_state, AgentState::Working);
+        assert_eq!(change.state, AgentState::Blocked);
+        assert_eq!(terminal.state, AgentState::Blocked);
+        assert!(terminal.decision_attention());
+
+        let change = terminal
+            .set_decision_attention(false, now)
+            .expect("clearing attention restores the screen state");
+        assert_eq!(change.previous_state, AgentState::Blocked);
+        assert_eq!(change.state, AgentState::Working);
+        assert_eq!(terminal.state, AgentState::Working);
+    }
+
+    #[test]
+    fn decision_attention_blocks_a_plain_shell_pane() {
+        let mut terminal = test_terminal();
+        let now = Instant::now();
+        terminal.set_detected_state(None, AgentState::Unknown);
+
+        let change = terminal
+            .set_decision_attention(true, now)
+            .expect("attention changes the effective state");
+        assert_eq!(change.previous_state, AgentState::Unknown);
+        assert_eq!(change.state, AgentState::Blocked);
+        assert_eq!(change.agent_label, None);
+    }
+
+    #[test]
+    fn decision_attention_does_not_reblock_an_already_blocked_pane() {
+        // Screen-blocked (AskUserQuestion) panes already present attention:
+        // a pending decision must not emit a second transition — a second
+        // transition would play a duplicate request sound.
+        let mut terminal = test_terminal();
+        let now = Instant::now();
+        terminal.set_detected_state_with_visible_blocker(
+            Some(Agent::Pi),
+            AgentState::Blocked,
+            true,
+            false,
+            false,
+        );
+        assert_eq!(terminal.state, AgentState::Blocked);
+
+        assert!(terminal.set_decision_attention(true, now).is_none());
+        assert!(terminal.decision_attention());
+
+        // Resolving the decision while the screen is still blocked keeps the
+        // pane blocked: no transition, no new notification.
+        assert!(terminal.set_decision_attention(false, now).is_none());
+        assert_eq!(terminal.state, AgentState::Blocked);
+    }
+
+    #[test]
+    fn decision_attention_overrides_hook_authority_state() {
+        let mut terminal = test_terminal();
+        let now = Instant::now();
+        terminal.set_hook_authority(
+            "herdr:pi".into(),
+            "pi".into(),
+            AgentState::Working,
+            None,
+            None,
+        );
+        assert_eq!(terminal.state, AgentState::Working);
+
+        let change = terminal
+            .set_decision_attention(true, now)
+            .expect("attention overrides the hook state");
+        assert_eq!(change.state, AgentState::Blocked);
+
+        let change = terminal
+            .set_decision_attention(false, now)
+            .expect("clearing attention restores the hook state");
+        assert_eq!(change.state, AgentState::Working);
+    }
+
+    #[test]
+    fn screen_blocker_still_reports_once_decision_attention_clears() {
+        // A decision-attention pane that becomes screen-blocked while waiting
+        // stays blocked after the decision resolves.
+        let mut terminal = test_terminal();
+        let now = Instant::now();
+        terminal.set_detected_state(Some(Agent::Pi), AgentState::Working);
+        terminal.set_decision_attention(true, now);
+
+        terminal.set_detected_state_with_visible_blocker(
+            Some(Agent::Pi),
+            AgentState::Blocked,
+            true,
+            false,
+            false,
+        );
+        assert_eq!(terminal.state, AgentState::Blocked);
+
+        assert!(terminal.set_decision_attention(false, now).is_none());
+        assert_eq!(terminal.state, AgentState::Blocked);
     }
 }
