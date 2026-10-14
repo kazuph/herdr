@@ -13403,7 +13403,7 @@
       ]
     },
     {
-      "contract_id": "G9-3a2d59172c",
+      "contract_id": "G9-94ef582f00",
       "dimensions": [
         "scrollback-extended detection region",
         "tall permission box header recovery",
@@ -13413,6 +13413,7 @@
         "rust_test_target:narrow_pane_permission_keeps_full_command_in_title",
         "rust_test_target:clipped_permission_box_recovers_call_head",
         "rust_test_target:unclipped_permission_box_does_not_duplicate_call",
+        "rust_test_target:question_below_a_tool_call_keeps_its_own_title",
         "drift_source_anchor:src/screen_prompt.rs",
         "drift_source_anchor:src/terminal/runtime.rs",
         "platform_live_acceptance:.artifacts/feat-decision-dialog-context/real-afk-decision.json"

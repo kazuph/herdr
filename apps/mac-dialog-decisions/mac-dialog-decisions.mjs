@@ -1,16 +1,18 @@
 #!/usr/bin/env node
-// herdr plugin daemon: show pending decisions as a front-most macOS dialog.
+// herdr plugin daemon: show pending decisions as a floating macOS panel.
 //
 // A `herdr decision watch --all-machines` subscription feeds `created` /
 // `resolved` / `machine_up` / `machine_down` lines. Each pending decision is
-// presented one at a time in a native dialog (dialog.js, driven through
-// osascript -l JavaScript) that shows the full decision text and returns the
-// picked option(s) and/or free text as a JSON line on stdout. The daemon turns
+// presented one at a time in a native AppKit panel (dialog.swift) that shows
+// where it comes from, the question, every option with its description and
+// preview, and a free-text field, and returns the picked option(s) and/or
+// free text as a JSON line on stdout. The daemon turns
 // that into `herdr decision answer ... --responder mac-dialog`. When the
 // decision resolves anywhere else, the open dialog is killed so a stale answer
 // is never sent.
 
 import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,6 +25,7 @@ const RUN_LABEL = "mac-dialog-decisions";
 const WATCH_RETRY_MS = 2_000;
 const DAEMON_PID_FILE = "daemon.json";
 const RESPONDER = "mac-dialog";
+const DEFAULT_LATER_MS = 10 * 60_000;
 
 function log(...args) {
   const at = new Date().toTimeString().slice(0, 8);
@@ -81,6 +84,12 @@ function loadConfig(env = process.env) {
       env.MAC_DIALOG_PRESENT_DELAY_MS,
       file.present_delay_ms,
       250,
+    ),
+    // あとで: how long a dismissed dialog stays hidden before it comes back.
+    laterMs: pickNumber(
+      env.MAC_DIALOG_LATER_MS,
+      file.later_minutes !== undefined ? Number(file.later_minutes) * 60_000 : undefined,
+      DEFAULT_LATER_MS,
     ),
     stateDir,
     configDir,
@@ -160,102 +169,82 @@ function optionPreview(option) {
   return typeof option?.preview === "string" ? option.preview.trimEnd() : "";
 }
 
-// マシン › スペース › タブ › ペイン（エージェント）— only the parts that exist.
-function originBreadcrumb(decision, machine) {
+function durationLabel(ms) {
+  if (ms >= 60_000) return `${Math.round(ms / 60_000)}分`;
+  return `${Math.max(1, Math.round(ms / 1000))}秒`;
+}
+
+function sourceLabel(decision) {
+  const origin = decision.origin || {};
+  if (origin.agent) return `🤖 ${origin.agent}`;
+  const kinds = {
+    command_guard: "🛡 危険コマンドの承認",
+    tool_permission: "🔐 ツールの許可",
+    agent_prompt: "💬 エージェントの質問",
+    ask: "❓ 確認",
+  };
+  return kinds[decision.kind] || "";
+}
+
+// プロジェクト（スペース） › タブ › ペイン — what the user scans first.
+function locationLabel(decision) {
   const origin = decision.origin || {};
   const parts = [];
-  const machineLabel = machine?.label || machine?.id || origin.machine;
-  if (machineLabel) parts.push(machineLabel);
   if (origin.workspace_label) parts.push(origin.workspace_label);
+  else if (origin.cwd) parts.push(path.basename(origin.cwd));
   if (origin.tab_label) parts.push(origin.tab_label);
-  const pane = origin.pane_label
-    ? origin.agent
-      ? `${origin.pane_label}（${origin.agent}）`
-      : origin.pane_label
-    : origin.agent || "";
-  if (pane) parts.push(pane);
+  if (origin.pane_label) parts.push(origin.pane_label);
   return parts.join(" › ");
 }
 
-// The complete dialog text. Nothing is truncated: every option keeps its
-// label, description and preview (or the "プレビューあり（画面で確認）" marker
-// when herdr could not capture it), and the whole block lives in a scrollable
-// text view.
-function buildDialogText(decision, machine, queueRemaining = 0) {
-  const lines = [];
-  const head = ["【判断待ち】"];
-  if (decision.question_label) head.push(decision.question_label);
-  lines.push(head.join(" "));
-  lines.push(`■ ${decision.title || decision.decision_id}`);
-  if (decision.body) {
-    lines.push("", String(decision.body));
-  }
-
+function projectName(decision) {
   const origin = decision.origin || {};
-  const breadcrumb = originBreadcrumb(decision, machine);
-  const detail = [];
-  if (origin.pane_id) detail.push(`ペインID: ${origin.pane_id}`);
-  if (origin.cwd) detail.push(`ディレクトリ: ${origin.cwd}`);
-  if (origin.branch) detail.push(`ブランチ: ${origin.branch}`);
-  if (origin.command) detail.push(`コマンド: ${origin.command}`);
-  if (origin.reason) detail.push(`理由: ${origin.reason}`);
-  if (origin.machine) detail.push(`マシン: ${origin.machine}`);
-  if (breadcrumb || detail.length > 0) {
-    lines.push("", "── 出どころ ──");
-    if (breadcrumb) lines.push(breadcrumb);
-    lines.push(...detail);
-  }
-
-  const options = Array.isArray(decision.options) ? decision.options : [];
-  if (options.length > 0) {
-    lines.push("", "── 選択肢 ──");
-    options.forEach((option, index) => {
-      const label = option.label || option.id;
-      lines.push(`${index + 1}. ${label}`);
-      const description = optionDescription(option);
-      if (description) {
-        lines.push(...description.split("\n").map((l) => `   ${l}`));
-      }
-      const preview = optionPreview(option);
-      if (preview) {
-        lines.push(...preview.split("\n").map((l) => `   ${l}`));
-      } else if (option?.preview_unavailable) {
-        lines.push("   プレビューあり（画面で確認）");
-      }
-    });
-    if (decision.multi_select === true) {
-      lines.push("", "※ 複数選択できます。チェックしてから「この選択で回答」。");
-    }
-    if (decision.allow_text) {
-      lines.push("※ 下の自由入力に書いた文も一緒に送られます（選択肢なしでも可）。");
-    }
-  } else if (decision.allow_text) {
-    lines.push("", "※ 下の自由入力に書いて「送信」してください。");
-  }
-
-  lines.push("", `期限: ${fmtDeadline(decision)}`);
-  if (queueRemaining > 0) {
-    lines.push(`ほかに ${queueRemaining} 件の判断待ちがあります。`);
-  }
-  lines.push(`判断待ちID: ${decision.decision_id}`);
-  return lines.join("\n");
+  if (origin.workspace_label) return origin.workspace_label;
+  if (origin.cwd) return path.basename(origin.cwd);
+  return "";
 }
 
-function buildDialogSpec(decision, machine, queueRemaining = 0) {
-  const titleBits = ["herdr 判断待ち"];
-  if (decision.question_label) titleBits.push(decision.question_label);
-  if (queueRemaining > 0) titleBits.push(`（ほか${queueRemaining}件）`);
+function buildDialogSpec(decision, machine, queueRemaining = 0, options = {}) {
+  const origin = decision.origin || {};
+  const details = [];
+  if (origin.command) {
+    details.push({ label: "コマンド", value: String(origin.command), monospace: true });
+  }
+  if (origin.cwd) details.push({ label: "場所", value: String(origin.cwd), monospace: true });
+  if (origin.branch) details.push({ label: "ブランチ", value: String(origin.branch), monospace: true });
+  if (origin.reason && origin.reason !== "screen_prompt") {
+    details.push({ label: "理由", value: String(origin.reason) });
+  }
+  if (origin.pane_id) details.push({ label: "ペイン", value: String(origin.pane_id), monospace: true });
+
+  const machineId = machine?.id || origin.machine || "local";
+  const remote = machineId !== "local";
+  const project = projectName(decision);
   return {
-    window_title: titleBits.join(" "),
-    text: buildDialogText(decision, machine, queueRemaining),
+    window_title: project ? `herdr 判断待ち — ${project}` : "herdr 判断待ち",
+    source: sourceLabel(decision),
+    location: locationLabel(decision),
+    machine: remote ? String(machine?.label || machineId) : "",
+    question_label: decision.question_label || "",
+    title: String(decision.title || decision.decision_id || ""),
+    body: decision.body ? String(decision.body) : "",
+    details,
     options: (Array.isArray(decision.options) ? decision.options : []).map(
-      (option, index) => ({
-        id: option.id,
-        title: `${index + 1}. ${String(option.label || option.id).replace(/\s+/g, " ")}`,
+      (option) => ({
+        id: String(option.id),
+        label: String(option.label || option.id),
+        description: optionDescription(option),
+        preview: optionPreview(option),
+        preview_unavailable: option?.preview_unavailable === true,
       }),
     ),
     multi_select: decision.multi_select === true,
     allow_text: decision.allow_text === true,
+    deadline: decision.expires_unix_ms ? `期限 ${fmtDeadline(decision)}` : "",
+    queue_remaining: queueRemaining,
+    later_label: durationLabel(options.laterMs ?? DEFAULT_LATER_MS),
+    daemon_pid: options.daemonPid ?? process.pid,
+    decision_id: String(decision.decision_id || ""),
   };
 }
 
@@ -372,7 +361,7 @@ export class MacDialogDecisionsDaemon {
     const existing = this.entries.get(key);
     if (existing) {
       // Reconnect replay, or a repeat created for a decision whose dialog
-      // crashed. A dismissed dialog stays dismissed for this daemon's lifetime.
+      // crashed. A dialog put off with あとで comes back on its own timer.
       existing.machineDown = false;
       existing.decision = decision;
       if (
@@ -419,6 +408,7 @@ export class MacDialogDecisionsDaemon {
     if (entry) {
       entry.resolved = true;
       entry.queued = false;
+      clearTimeout(entry.snoozeTimer);
       this.queue = this.queue.filter((k) => k !== key);
       if (entry.showing) this._closeDialog();
       this.entries.delete(key);
@@ -432,6 +422,7 @@ export class MacDialogDecisionsDaemon {
       if (entry.machineId !== mid) continue;
       entry.machineDown = true;
       entry.queued = false;
+      clearTimeout(entry.snoozeTimer);
       this.queue = this.queue.filter((k) => k !== entry.key);
       if (entry.showing) this._closeDialog();
       this.entries.delete(entry.key);
@@ -456,11 +447,9 @@ export class MacDialogDecisionsDaemon {
   }
 
   _present(entry) {
-    const spec = buildDialogSpec(
-      entry.decision,
-      entry.machine,
-      this.queue.length,
-    );
+    const spec = buildDialogSpec(entry.decision, entry.machine, this.queue.length, {
+      laterMs: this.config.laterMs,
+    });
     let specPath = "";
     try {
       specPath = this.specFilePath(entry.key);
@@ -525,15 +514,41 @@ export class MacDialogDecisionsDaemon {
       }
       return;
     }
-    if (message.result === "dismiss" || message.result === "closed") {
-      entry.dismissed = true;
-      this.log(`ダイアログを閉じました（あとで）: ${entry.decision.decision_id}`);
+    if (["later", "dismiss", "closed"].includes(message.result)) {
+      this.snooze(entry);
     }
+  }
+
+  // あとで: hide now, show again after laterMs if nobody has answered by then.
+  snooze(entry) {
+    entry.dismissed = true;
+    const laterMs = this.config.laterMs ?? DEFAULT_LATER_MS;
+    this.log(
+      `あとで: ${entry.decision.decision_id} を ${Math.round(laterMs / 60_000)} 分後にもう一度出します`,
+    );
+    clearTimeout(entry.snoozeTimer);
+    entry.snoozeTimer = setTimeout(() => {
+      entry.snoozeTimer = null;
+      if (this.stopped || entry.resolved || entry.machineDown) return;
+      if (this.entries.get(entry.key) !== entry) return;
+      entry.dismissed = false;
+      if (!entry.queued && !entry.showing) {
+        entry.queued = true;
+        this.queue.push(entry.key);
+        this.schedulePump();
+      }
+    }, laterMs);
+    entry.snoozeTimer.unref?.();
   }
 
   _closeDialog() {
     if (!this.child) return;
     this.log(`ダイアログを閉じます: ${this.child.entry.decision.decision_id}`);
+    // The panel watches its spec file and exits as soon as it disappears;
+    // the signal is the fast path.
+    try {
+      fs.unlinkSync(this.child.specPath);
+    } catch {}
     try {
       this.child.kill();
     } catch {}
@@ -636,17 +651,12 @@ function spawnDecisionWatch(config, logFn) {
   };
 }
 
-// Spawns a dialog helper as a plain child process (custom MAC_DIALOG_HELPER_CMD
-// in tests, or `osascript -l JavaScript dialog.js` as a fallback). The helper
-// prints JSON lines on stdout; the first {"result": ...} line is the user's
-// answer and {"event":"shown"} is a heartbeat that the window hit the screen.
+// Runs the dialog as a plain child process: the compiled native panel, or a
+// MAC_DIALOG_HELPER_CMD stand-in in tests. It prints JSON lines on stdout; the
+// first {"result": ...} line is the user's answer and {"event":"shown"} marks
+// that the window is on screen.
 function spawnHelperDialog(config, specPath, logFn = () => {}) {
-  const argv = config.helperCmd || [
-    "osascript",
-    "-l",
-    "JavaScript",
-    path.join(pluginRootDir(), "dialog.js"),
-  ];
+  const argv = config.helperCmd;
   const child = spawn(argv[0], [...argv.slice(1), specPath], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -688,142 +698,73 @@ function spawnHelperDialog(config, specPath, logFn = () => {}) {
   };
 }
 
-// The osacompile applet that hosts dialog.js. A bundled .app launched through
-// `open` is registered with LaunchServices, so unlike a bare osascript child
-// it is allowed to become the active application — which is what makes the
-// dialog steal focus and accept keyboard input.
-function appletPath(config) {
-  return path.join(config.stateDir, "herdr-mac-dialog.app");
+// The native panel (dialog.swift) is compiled once per source version into
+// the plugin state dir and run directly, so its stdout carries the result and
+// a signal closes it. swiftc must use Xcode's default toolchain: a
+// DEVELOPER_DIR pointing at CommandLineTools makes the SDK and compiler
+// disagree and the build fails.
+function nativeDialogPath(config) {
+  const source = path.join(pluginRootDir(), "dialog.swift");
+  const hash = createHash("sha256")
+    .update(fs.readFileSync(source))
+    .digest("hex")
+    .slice(0, 12);
+  return path.join(config.stateDir, "bin", `herdr-decision-dialog-${hash}`);
 }
 
-function ensureApplet(config, logFn = () => {}) {
-  const appPath = appletPath(config);
-  const source = path.join(pluginRootDir(), "dialog.js");
-  try {
-    const srcMtime = fs.statSync(source).mtimeMs;
-    const appMtime = fs.existsSync(path.join(appPath, "Contents", "MacOS", "applet"))
-      ? fs.statSync(path.join(appPath, "Contents", "MacOS", "applet")).mtimeMs
-      : 0;
-    if (appMtime >= srcMtime) return appPath;
-    fs.mkdirSync(config.stateDir, { recursive: true });
-    // osacompile only produces a bundle when the output name ends in .app
-    const tmpApp = `${appPath}.tmp-${process.pid}.app`;
-    const res = spawnSync("osacompile", ["-l", "JavaScript", "-o", tmpApp, source], {
-      encoding: "utf8",
-      timeout: 30_000,
-    });
-    if (res.error || res.status !== 0) {
-      logFn(
-        `アプレットのビルドに失敗 (osascript にフォールバック): ${res.stderr || res.error?.message || res.status}`,
-      );
-      return null;
-    }
-    fs.rmSync(appPath, { recursive: true, force: true });
-    fs.renameSync(tmpApp, appPath);
-    logFn("アプレットをビルドしました: " + appPath);
-    return appPath;
-  } catch (error) {
-    logFn(`アプレットのビルドに失敗 (osascript にフォールバック): ${error.message}`);
+function ensureNativeDialog(config, logFn = () => {}) {
+  const source = path.join(pluginRootDir(), "dialog.swift");
+  const binary = nativeDialogPath(config);
+  if (fs.existsSync(binary)) return binary;
+  fs.mkdirSync(path.dirname(binary), { recursive: true });
+  const tmp = `${binary}.tmp-${process.pid}`;
+  const env = { ...process.env };
+  delete env.DEVELOPER_DIR;
+  logFn("ダイアログをビルドします (swiftc、初回は1〜2分かかります)");
+  const res = spawnSync("swiftc", ["-O", source, "-o", tmp], {
+    encoding: "utf8",
+    env,
+    timeout: 600_000,
+  });
+  if (res.error || res.status !== 0) {
+    logFn(
+      `ダイアログのビルドに失敗: ${(res.stderr || res.error?.message || String(res.status)).slice(0, 2000)}`,
+    );
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {}
     return null;
   }
+  fs.renameSync(tmp, binary);
+  // older builds of the panel are no longer needed
+  for (const name of fs.readdirSync(path.dirname(binary))) {
+    const full = path.join(path.dirname(binary), name);
+    if (full !== binary && name.startsWith("herdr-decision-dialog-")) {
+      try {
+        fs.rmSync(full, { force: true });
+      } catch {}
+    }
+  }
+  logFn(`ダイアログをビルドしました: ${binary}`);
+  return binary;
 }
 
-// Spawns the dialog as a bundled applet via `open`. stdout is not available
-// through LaunchServices, so dialog.js appends the same JSON lines to
-// spec.result_path instead; this polls that file. kill() signals the applet
-// by pid (learned from the "shown" event) — needed when a decision is
-// resolved through another channel.
-function spawnAppletDialog(config, specPath, spec, logFn = () => {}) {
-  const app = ensureApplet(config, logFn);
-  if (!app) return spawnHelperDialog(config, specPath, logFn);
-  const resultPath = spec.result_path;
+function killOrphanDialogs(config) {
   try {
-    fs.rmSync(resultPath, { force: true });
-  } catch {}
-  const child = spawn("open", ["-n", "-W", app, "--args", specPath], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  child.on("error", (error) =>
-    logFn(`open に失敗: ${error.message}`),
-  );
-  child.stderr.on("data", (chunk) => {
-    for (const line of String(chunk).split("\n")) {
-      if (line.trim()) logFn(`open stderr: ${line.trim()}`);
-    }
-  });
-  let exitedFlag = false;
-  let resolveExit;
-  const exited = new Promise((resolve) => {
-    resolveExit = resolve;
-    child.on("exit", (code, signal) => {
-      exitedFlag = true;
-      logFn(`applet が終了: code=${code} signal=${signal}`);
-      resolve();
-    });
-  });
-  let appletPid = null;
-  const appletExe = `${app}/Contents/MacOS/applet`;
-  const findAppletPid = () => {
-    if (appletPid) return appletPid;
-    try {
-      const out = execFileSync("pgrep", ["-f", appletExe], {
-        encoding: "utf8",
-      });
-      appletPid = Number(out.split("\n")[0].trim()) || null;
-    } catch {}
-    return appletPid;
-  };
-  return {
-    lines: (async function* () {
-      let offset = 0;
-      let remainder = "";
-      // outlive the `open` child slightly: the applet may write its final
-      // result just before `open -W` returns
-      for (let i = 0; ; i++) {
-        let stat = null;
-        try {
-          stat = fs.statSync(resultPath);
-        } catch {}
-        if (stat && stat.size > offset) {
-          const fd = fs.openSync(resultPath, "r");
-          const buf = Buffer.alloc(stat.size - offset);
-          fs.readSync(fd, buf, 0, buf.length, offset);
-          fs.closeSync(fd);
-          offset = stat.size;
-          const chunk = remainder + buf.toString("utf8");
-          const parts = chunk.split("\n");
-          remainder = parts.pop() ?? "";
-          for (const line of parts) {
-            if (!line.trim()) continue;
-            try {
-              const message = JSON.parse(line);
-              if (message?.event === "shown" && message.pid) {
-                appletPid = Number(message.pid);
-              }
-            } catch {}
-            yield line;
-          }
-        } else if (exitedFlag) {
-          // applet quit and no new bytes — done after one final drain
-          if (i > 10) break;
-        }
-        await sleep(200);
-      }
-    })(),
-    exited,
-    kill() {
-      const pid = findAppletPid();
-      if (pid) {
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {}
-      }
+    const orphans = execFileSync(
+      "pgrep",
+      ["-f", path.join(config.stateDir, "bin", "herdr-decision-dialog-")],
+      { encoding: "utf8" },
+    )
+      .split("\n")
+      .map((s) => Number(s.trim()))
+      .filter(Boolean);
+    for (const pid of orphans) {
       try {
-        child.kill("SIGTERM");
+        process.kill(pid, "SIGTERM");
       } catch {}
-      resolveExit?.(0);
-    },
-  };
+    }
+  } catch {}
 }
 
 function createRunAnswer(config, logFn = () => {}) {
@@ -1029,32 +970,24 @@ async function main() {
   try {
     fs.rmSync(specDir, { recursive: true, force: true });
   } catch {}
-  try {
-    // only this daemon's applet: the executable path lives under stateDir
-    const orphans = execFileSync(
-      "pgrep",
-      ["-f", `${appletPath(config)}/Contents/MacOS/applet`],
-      { encoding: "utf8" },
-    )
-      .split("\n")
-      .map((s) => Number(s.trim()))
-      .filter(Boolean);
-    for (const pid of orphans) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {}
-    }
-  } catch {}
+  killOrphanDialogs(config);
 
   writeDaemonPid(config.stateDir);
+  const nativeDialog = config.helperCmd ? null : ensureNativeDialog(config, log);
+  if (!config.helperCmd && !nativeDialog) {
+    log("ダイアログを作れないため終了します（上のビルドエラーを確認してください）");
+    process.exit(1);
+  }
   const daemon = new MacDialogDecisionsDaemon({
     config,
     spawnWatch: () => Promise.resolve(spawnDecisionWatch(config, log)),
     runAnswer: createRunAnswer(config, log),
-    spawnDialog: (specPath, spec) =>
-      config.helperCmd
-        ? spawnHelperDialog(config, specPath, log)
-        : spawnAppletDialog(config, specPath, spec, log),
+    spawnDialog: (specPath) =>
+      spawnHelperDialog(
+        { ...config, helperCmd: config.helperCmd || [nativeDialog] },
+        specPath,
+        log,
+      ),
     specFilePath: (key) =>
       path.join(specDir, `${key.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`),
     log,
@@ -1090,13 +1023,12 @@ if (invokedAsScript) {
 
 export {
   buildDialogSpec,
-  buildDialogText,
   createRunAnswer,
   decisionKey,
   fmtDeadline,
   loadConfig,
-  originBreadcrumb,
+  locationLabel,
   resolveHerdrBin,
   spawnHelperDialog,
-  spawnAppletDialog,
+  ensureNativeDialog,
 };

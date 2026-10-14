@@ -29,8 +29,8 @@ export class FakeDialog {
     this.finish();
   }
 
-  dismiss() {
-    this.emit({ result: "dismiss" });
+  later() {
+    this.emit({ result: "later" });
     this.finish();
   }
 

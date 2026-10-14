@@ -788,8 +788,16 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     // above the question box. When the box's top rows are clipped, the
     // command head only survives there; recover it unless the question
     // already carries the same call text.
+    // Only permission dialogs ask about a call; an AskUserQuestion (checkbox
+    // header or free-text slot) never does, and the `⏺` line of whatever tool
+    // ran just before it must not leak into its title — that changed the
+    // prompt's identity mid-answer and re-issued an answered question.
     let mut question_lines: Vec<String> = question_lines.into_iter().map(str::to_string).collect();
-    if let Some(call) = recover_call_lines(&lines, stop_at) {
+    let asks_about_call = header.is_empty() && free.is_none() && mq.is_none();
+    if let Some(call) = asks_about_call
+        .then(|| recover_call_lines(&lines, stop_at))
+        .flatten()
+    {
         let head = call_head(&call).to_string();
         if !question_lines.iter().any(|line| line.contains(&head)) {
             question_lines.insert(0, call);
@@ -1692,6 +1700,40 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         );
         // And the question does not start mid-command anymore.
         assert!(prompt.title().starts_with("Bash("));
+    }
+
+    #[test]
+    fn question_below_a_tool_call_keeps_its_own_title() {
+        // A Bash call ran right before AskUserQuestion; its `⏺` line sits a
+        // few rows above the question. The question must not borrow it.
+        let screen = "\
+⏺ Bash(H=/tmp/x/restart-hub.sh; sed -i '' 's/job-1/job-2/' $H; bash $H)
+  ⎿  {\"id\":null}
+     job-17919 slack-decisions
+
+───────────────────────────────────────────────────────────────
+ ☐ Tailscale承認
+
+ 仕事 Mac の承認ページを開いて承認してほしいな
+
+ ❯ 1. 承認した
+      続きで仕事 Mac と Mac mini を差し替える
+   2. 今はできない
+      仕事 Mac を飛ばす
+   3. Type something.
+───────────────────────────────────────────────────────────────
+   4. Chat about this
+
+ Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+        let prompt = parse_screen_prompt(screen).expect("prompt");
+        assert!(prompt.is_question());
+        assert!(
+            !prompt.title().contains("Bash("),
+            "tool call leaked into the question: {}",
+            prompt.title()
+        );
+        assert!(prompt.title().contains("承認ページを開いて"));
     }
 
     #[test]
