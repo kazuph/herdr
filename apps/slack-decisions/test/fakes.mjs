@@ -14,10 +14,12 @@ export class FakeSlack {
     this.updates = [];
     this.reactionsByTs = new Map(); // injected human reactions
     this.reactionAddCalls = [];
+    this.deletes = [];
     this.calls = [];
     this.socketUrls = 0;
     this.wsUrl = "";
     this.botId = "UBOT";
+    this._postSeq = 0;
     this.uploadMeta = new Map(); // file_id -> {filename, length}
     this.uploadBodies = new Map(); // file_id -> Buffer
     this.completedUploads = [];
@@ -71,7 +73,7 @@ export class FakeSlack {
         return { ok: true, url: this.wsUrl };
       }
       case "chat.postMessage": {
-        const ts = `1000.${String(this.posts.length).padStart(4, "0")}`;
+        const ts = `1000.${String((this._postSeq += 1)).padStart(4, "0")}`;
         if (params.thread_ts) {
           const list = this.threadReplies.get(params.thread_ts) || [];
           list.push({ ts, user: this.botId, text: params.text, bot_id: "B1" });
@@ -97,6 +99,22 @@ export class FakeSlack {
         }
         this.updates.push(params);
         return { ok: true, ts: params.ts };
+      }
+      case "chat.delete": {
+        this.deletes.push(params);
+        const index = this.posts.findIndex((p) => p.ts === params.ts);
+        if (index !== -1) {
+          this.posts.splice(index, 1);
+          return { ok: true, ts: params.ts };
+        }
+        for (const list of this.threadReplies.values()) {
+          const rindex = list.findIndex((m) => m.ts === params.ts);
+          if (rindex !== -1) {
+            list.splice(rindex, 1);
+            return { ok: true, ts: params.ts };
+          }
+        }
+        return { ok: false, error: "message_not_found" };
       }
       case "reactions.add": {
         this.reactionAddCalls.push(params);

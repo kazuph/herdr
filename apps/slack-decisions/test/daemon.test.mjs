@@ -337,7 +337,11 @@ test("free text on a non-allow_text decision is refused in thread", async () => 
   }
 });
 
-test("resolved answered -> post updated with who and what", async () => {
+test("resolved answered -> post and bot thread replies are deleted", async () => {
+  // A resolved decision's post must not linger: Slack keeps only posts
+  // that still need an answer. The bot's own thread replies are deleted
+  // with it; a human's reply cannot be deleted with a bot token (it
+  // leaves the channel view together with the parent post).
   const fake = await new FakeSlack().start();
   const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
   const daemon = makeDaemon({ slack, glasses: null });
@@ -348,6 +352,8 @@ test("resolved answered -> post updated with who and what", async () => {
       decision: sampleDecision(),
     });
     const ts = fake.posts[0].ts;
+    const botNote = await slack.postThreadReply(ts, "ボットの返信");
+    const humanNote = fake.userReply(ts, "店長の返信");
     await feedAndSettle(daemon, {
       event: "resolved",
       machine: LOCAL,
@@ -361,12 +367,14 @@ test("resolved answered -> post updated with who and what", async () => {
         },
       },
     });
-    const update = fake.updates.find((u) => u.ts === ts);
-    assert.ok(update, "chat.update was called for the post");
-    const text = JSON.stringify(update.blocks);
-    assert.match(text, /決定済み/);
-    assert.match(text, /承認/);
-    assert.match(text, /tui/);
+    assert.equal(fake.posts.length, 0, "the resolved post was deleted");
+    const deletedTs = fake.deletes.map((d) => d.ts);
+    assert.ok(deletedTs.includes(ts), "chat.delete called for the post");
+    assert.ok(deletedTs.includes(botNote.ts), "bot reply deleted too");
+    assert.ok(
+      !deletedTs.includes(humanNote),
+      "a human reply is not deleted by the bot",
+    );
     assert.equal(daemon.entries.size, 0);
   } finally {
     await daemon.stop();
@@ -374,37 +382,193 @@ test("resolved answered -> post updated with who and what", async () => {
   }
 });
 
-test("resolved expired / cancelled also update the post", async () => {
+test("answered via a Slack reply -> resolved event deletes the post", async () => {
+  // Answering on Slack itself still ends with the post deleted once the
+  // resolved event arrives — Slack keeps only unanswered posts.
   const fake = await new FakeSlack().start();
   const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
   const daemon = makeDaemon({ slack, glasses: null });
   try {
-    for (const [id, status, match] of [
-      ["dec-exp", "expired", /期限切れ/],
-      ["dec-can", "cancelled", /取り消し/],
-    ]) {
-      await feedAndSettle(daemon, {
-        event: "created",
-        machine: LOCAL,
-        decision: sampleDecision({ decision_id: id }),
-      });
-      const ts = fake.posts.at(-1).ts;
-      await feedAndSettle(daemon, {
-        event: "resolved",
-        machine: LOCAL,
-        decision: { ...sampleDecision({ decision_id: id }), status },
-      });
-      const update = fake.updates.find((u) => u.ts === ts);
-      assert.ok(update);
-      assert.match(JSON.stringify(update.blocks), match);
-    }
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision(),
+    });
+    const ts = fake.posts[0].ts;
+    await daemon.handleSocketPayload({
+      type: "event_callback",
+      event: {
+        type: "message",
+        subtype: undefined,
+        user: "UHUMAN",
+        text: "2",
+        channel: "C1",
+        ts: "1000.9002",
+        thread_ts: ts,
+      },
+    });
+    await waitUntil(() => daemon.testAnswers.length === 1);
+    await feedAndSettle(daemon, {
+      event: "resolved",
+      machine: LOCAL,
+      decision: {
+        ...sampleDecision(),
+        status: "answered",
+        answer: {
+          option_id: "opt-reject",
+          responder: "slack",
+          answered_unix_ms: Date.now(),
+        },
+      },
+    });
+    assert.equal(fake.posts.length, 0);
+    assert.ok(fake.deletes.some((d) => d.ts === ts));
   } finally {
     await daemon.stop();
     await fake.stop();
   }
 });
 
-test("machine_down before post -> never posts; after post -> marked down", async () => {
+test("resolved expired deletes the post; cancelled deletes it after the reuse window", async () => {
+  // Expired posts are deleted immediately. A cancelled post stays
+  // adoptable for the reuse window (churn guard), then is deleted.
+  const fake = await new FakeSlack().start();
+  const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
+  const daemon = makeDaemon({
+    slack,
+    glasses: null,
+    config: { recreatePostReuseMs: 400 },
+  });
+  try {
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision({ decision_id: "dec-exp" }),
+    });
+    const expiredTs = fake.posts.at(-1).ts;
+    await feedAndSettle(daemon, {
+      event: "resolved",
+      machine: LOCAL,
+      decision: { ...sampleDecision({ decision_id: "dec-exp" }), status: "expired" },
+    });
+    await waitUntil(() => !fake.posts.some((p) => p.ts === expiredTs));
+    assert.ok(
+      fake.deletes.some((d) => d.ts === expiredTs),
+      "expired post deleted immediately",
+    );
+
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision({ decision_id: "dec-can" }),
+    });
+    const cancelledTs = fake.posts.at(-1).ts;
+    feed(daemon, {
+      event: "resolved",
+      machine: LOCAL,
+      decision: {
+        ...sampleDecision({ decision_id: "dec-can" }),
+        status: "cancelled",
+      },
+    });
+    await waitUntil(() => fake.updates.some((u) => u.ts === cancelledTs));
+    assert.ok(
+      fake.posts.some((p) => p.ts === cancelledTs),
+      "cancelled post stays adoptable during the reuse window",
+    );
+    assert.match(
+      JSON.stringify(
+        fake.updates.find((u) => u.ts === cancelledTs)?.blocks || [],
+      ),
+      /取り消し/,
+    );
+    await waitUntil(() => !fake.posts.some((p) => p.ts === cancelledTs));
+    assert.ok(
+      fake.deletes.some((d) => d.ts === cancelledTs),
+      "cancelled post deleted once the reuse window ends",
+    );
+  } finally {
+    await daemon.stop();
+    await fake.stop();
+  }
+});
+
+test("recreated same question right after cancel reuses the post", async () => {
+  // Screen-prompt churn rebuilds the pending decision under a new id;
+  // the Slack post must not stack — the cancelled decision's post is
+  // adopted and updated back to pending.
+  const fake = await new FakeSlack().start();
+  const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
+  const daemon = makeDaemon({ slack, glasses: null });
+  try {
+    const question = {
+      kind: "agent_prompt",
+      title: "複数質問の確認（2つ目）。「いぬ」を選んでください",
+      question_label: "質問 2/2 動物",
+      options: [
+        { id: "1", label: "ねこ" },
+        { id: "2", label: "いぬ" },
+      ],
+      allow_text: true,
+      origin: { pane_id: "p2301", agent: "claude", reason: "screen_prompt" },
+    };
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision({ ...question, decision_id: "dec-a" }),
+    });
+    assert.equal(fake.posts.length, 1);
+    const ts = fake.posts[0].ts;
+
+    // Churn: cancelled, then recreated under a new id with the same
+    // question payload.
+    await feedAndSettle(daemon, {
+      event: "resolved",
+      machine: LOCAL,
+      decision: {
+        ...sampleDecision({ ...question, decision_id: "dec-a" }),
+        status: "cancelled",
+      },
+    });
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision({ ...question, decision_id: "dec-b" }),
+    });
+    assert.equal(fake.posts.length, 1, "no second post for the same question");
+    const backToPending = fake.updates.filter((u) => u.ts === ts);
+    assert.ok(
+      backToPending.some((u) => JSON.stringify(u.blocks).match(/取り消し/)),
+      "cancel updated the reused post",
+    );
+    assert.ok(
+      backToPending.some((u) =>
+        JSON.stringify(u.blocks).match(/質問 2\/2 動物/),
+      ),
+      "the reused post renders the recreated decision as pending",
+    );
+
+    // A different question still gets its own post.
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision({
+        ...question,
+        decision_id: "dec-c",
+        title: "別の質問",
+      }),
+    });
+    assert.equal(fake.posts.length, 2, "a different question posts anew");
+  } finally {
+    await daemon.stop();
+    await fake.stop();
+  }
+});
+
+test("machine_down deletes posts; a still-pending decision is re-posted on machine_up", async () => {
+  // A down machine's questions cannot be answered, so their posts are
+  // deleted; when the machine returns and the decision is still pending,
+  // it is posted again.
   const fake = await new FakeSlack().start();
   const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
   const daemon = makeDaemon({ slack, glasses: "connected", config: { postDelayMs: 80 } });
@@ -432,10 +596,75 @@ test("machine_down before post -> never posts; after post -> marked down", async
     await waitUntil(() => fake.posts.length === 1);
     const ts = fake.posts[0].ts;
     feed(daemon, { event: "machine_down", machine: LOCAL, reason: "lost" });
-    await waitUntil(() => fake.updates.some((u) => u.ts === ts));
-    assert.match(JSON.stringify(fake.updates.at(-1).blocks), /マシン切断/);
+    await waitUntil(() => fake.posts.length === 0);
+    assert.ok(
+      fake.deletes.some((d) => d.ts === ts),
+      "the down machine's post is deleted",
+    );
+
+    // machine_up: the created replay re-posts the still-pending decision
+    await feedAndSettle(daemon, {
+      event: "machine_up",
+      machine: LOCAL,
+    });
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision({ decision_id: "dec-up" }),
+    });
+    await waitUntil(() => fake.posts.length === 1);
+    assert.notEqual(
+      fake.posts[0].ts,
+      ts,
+      "a fresh post replaces the deleted one",
+    );
   } finally {
     await daemon.stop();
+    await fake.stop();
+  }
+});
+
+test("restart reconcile deletes restored posts whose decisions already resolved", async () => {
+  // Posts left over from before a restart are checked on machine_up;
+  // ones whose decisions are no longer pending are deleted so Slack
+  // keeps only unanswered posts.
+  const dir = tmpdir("reconcile");
+  const postsFile = path.join(dir, "posts.json");
+  const fake = await new FakeSlack().start();
+  const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
+  const first = makeDaemon({ slack, glasses: null, postsFilePath: postsFile });
+  try {
+    await feedAndSettle(first, {
+      event: "created",
+      machine: LOCAL,
+      decision: sampleDecision({ decision_id: "dec-gone" }),
+    });
+    assert.equal(fake.posts.length, 1);
+    const ts = fake.posts[0].ts;
+    await first.stop();
+
+    const second = makeDaemon({
+      slack,
+      glasses: null,
+      postsFilePath: postsFile,
+      getDecision: async () => ({
+        ...sampleDecision({ decision_id: "dec-gone" }),
+        status: "answered",
+      }),
+    });
+    try {
+      second.loadPostsFile();
+      assert.equal(second.posts.size, 1, "posts file restored");
+      feed(second, { event: "machine_up", machine: LOCAL });
+      await waitUntil(() => fake.posts.length === 0, { timeout: 6_000 });
+      assert.ok(
+        fake.deletes.some((d) => d.ts === ts),
+        "the resolved decision's leftover post is deleted",
+      );
+    } finally {
+      await second.stop();
+    }
+  } finally {
     await fake.stop();
   }
 });

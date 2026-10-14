@@ -666,6 +666,35 @@ impl App {
         let current_sig = prompt.as_ref().map(ScreenPrompt::signature);
         let mut changed = false;
 
+        // A person operating the pane — typing into a free-text field,
+        // moving the cursor, answering on screen — freezes the watch:
+        // no new decisions, no cancels, no in-place refreshes from
+        // mid-edit frames. Once the input settles the next scan
+        // reconciles whatever is on screen exactly once. A
+        // preview-bearing question first seen under their hands still
+        // counts as walked — the scan must never move a cursor the
+        // operator is using, not even retroactively after they stop.
+        if self.pane_user_input_recent(ws_idx, pane_id) {
+            if let Some(prompt) = &prompt {
+                if prompt.preview_box
+                    && matches!(
+                        prompt.focused,
+                        Some(crate::screen_prompt::Focused::Option(_))
+                    )
+                    && prompt
+                        .choices
+                        .keys()
+                        .any(|number| !prompt.previews.contains_key(number))
+                {
+                    self.preview_scan_done
+                        .entry(pane_id)
+                        .or_default()
+                        .insert(preview_scan_key(prompt));
+                }
+            }
+            return false;
+        }
+
         if let Some(watch) = self.screen_prompt_watches.get_mut(&pane_id) {
             if current_sig.as_deref() == Some(watch.signature.as_str()) {
                 watch.mismatches = 0;
@@ -2675,24 +2704,139 @@ Ready to submit your answers?
         note_operator_input(&app, pane_id);
         app.scan_screen_prompts(Instant::now());
 
-        // No walk starts, no keys leave herdr; the decision still goes out
-        // with the visible option's preview and the rest unavailable.
+        // Operator input freezes the pane: no walk starts, no keys leave
+        // herdr, and no decision is created from a mid-edit frame.
         assert!(app.preview_scans.is_empty());
         assert!(rx.try_recv().is_err(), "no keys while operator types");
-        let decisions = pending_decisions();
-        assert_eq!(decisions.len(), 1);
-        assert!(decisions[0].options[0].preview.is_some());
-        assert!(decisions[0].options[1].preview_unavailable);
-        assert!(decisions[0].options[2].preview_unavailable);
+        assert!(pending_decisions().is_empty());
 
-        // Once the question was seen under operator input it is done —
-        // the quiet window ending must not retroactively arm a walk, not
-        // even when the prompt redraws under a new signature.
+        // Once the input settles the decision is created — but the
+        // question seen under operator input stays walked, so the quiet
+        // window ending must not retroactively arm a walk, not even when
+        // the prompt redraws under a new signature.
         note_operator_input_ago(&app, pane_id, PANE_USER_INPUT_QUIET * 3);
         let mut rx = replace_screen(&mut app, pane_id, &crlf(CC_PREVIEW_OPTION_1_WOBBLE));
         rescan_until_adopted(&mut app);
         assert!(app.preview_scans.is_empty());
         assert!(rx.try_recv().is_err());
+        let decisions = pending_decisions();
+        assert_eq!(decisions.len(), 1);
+        assert!(decisions[0].options[0].preview.is_some());
+        assert!(decisions[0].options[1].preview_unavailable);
+        assert!(decisions[0].options[2].preview_unavailable);
+    }
+
+    /// A CC_QUESTION frame whose free-text slot holds a typed draft —
+    /// the layout the churn report produced per keystroke.
+    fn cc_question_typing(draft: &str) -> String {
+        CC_QUESTION
+            .replacen("❯ 1. りんご", "  1. りんご", 1)
+            .replacen("  3. Type something.", &format!("❯ 3. {draft}"), 1)
+    }
+
+    #[tokio::test]
+    async fn typing_in_free_text_slot_does_not_churn_the_decision() {
+        // The incident: each typed character redrew the slot as a new
+        // option, the signature flipped, and the pending decision was
+        // cancelled and recreated roughly once a second.
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("typedraft", &crlf(CC_QUESTION), true);
+        rescan_until_adopted(&mut app);
+        let first = pending_decisions()[0].decision_id.clone();
+
+        // While the operator types into the slot the watch freezes —
+        // and even after the input settles the draft is still the same
+        // free-text question, so nothing rebuilds.
+        for draft in ["そ", "それは", "それは君が判断できるでしょ"] {
+            let _rx = replace_screen(&mut app, pane_id, &crlf(&cc_question_typing(draft)));
+            note_operator_input(&app, pane_id);
+            for _ in 0..3 {
+                app.scan_screen_prompts(Instant::now());
+            }
+            let decisions = all_decisions();
+            assert_eq!(decisions.len(), 1, "no churn while typing {draft:?}");
+            assert_eq!(decisions[0].decision_id, first);
+            assert_eq!(decisions[0].status, DecisionStatus::Pending);
+        }
+
+        note_operator_input_ago(&app, pane_id, PANE_USER_INPUT_QUIET * 2);
+        rescan_until_adopted(&mut app);
+        let decisions = all_decisions();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].decision_id, first);
+        assert_eq!(decisions[0].status, DecisionStatus::Pending);
+        assert!(decisions[0].allow_text);
+        assert!(!decisions[0]
+            .options
+            .iter()
+            .any(|option| option.label.contains("それは")));
+    }
+
+    #[tokio::test]
+    async fn operator_input_freezes_watch_until_input_settles() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("freeze", &crlf(CC_QUESTION), true);
+        rescan_until_adopted(&mut app);
+        let first = pending_decisions()[0].decision_id.clone();
+
+        // While the operator types, reads that do not parse — a torn
+        // frame, the prompt scrolling past — cannot cancel or recreate
+        // the decision.
+        let _rx = replace_screen(&mut app, pane_id, IDLE_SCREEN);
+        note_operator_input(&app, pane_id);
+        for _ in 0..6 {
+            app.scan_screen_prompts(Instant::now());
+        }
+        let decisions = all_decisions();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].decision_id, first);
+        assert_eq!(decisions[0].status, DecisionStatus::Pending);
+        assert!(app.screen_prompt_watches.contains_key(&pane_id));
+
+        // The prompt is truly gone and the input has settled: the usual
+        // two-mismatch cancel applies, exactly once.
+        note_operator_input_ago(&app, pane_id, PANE_USER_INPUT_QUIET * 2);
+        rescan_until_adopted(&mut app);
+        let decisions = all_decisions();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].status, DecisionStatus::Cancelled);
+        assert!(!app.screen_prompt_watches.contains_key(&pane_id));
+    }
+
+    #[tokio::test]
+    async fn new_or_changed_prompt_waits_for_input_to_settle() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("settle", &crlf(CC_QUESTION), true);
+        rescan_until_adopted(&mut app);
+        assert_eq!(pending_decisions().len(), 1);
+
+        // The agent advances to a different prompt while the operator is
+        // still typing: nothing cancels, nothing is created mid-edit.
+        let _rx = replace_screen(&mut app, pane_id, &crlf(CC_PERMISSION));
+        note_operator_input(&app, pane_id);
+        for _ in 0..6 {
+            app.scan_screen_prompts(Instant::now());
+        }
+        let decisions = all_decisions();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].status, DecisionStatus::Pending);
+
+        // Once the input settles the change is reflected exactly once:
+        // the old decision is cancelled and the new prompt gets one.
+        note_operator_input_ago(&app, pane_id, PANE_USER_INPUT_QUIET * 2);
+        rescan_until_adopted(&mut app);
+        let decisions = all_decisions();
+        assert_eq!(decisions.len(), 2);
+        assert_eq!(
+            decisions
+                .iter()
+                .filter(|decision| decision.status == DecisionStatus::Cancelled)
+                .count(),
+            1
+        );
+        let pending = pending_decisions();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].kind, DecisionKind::ToolPermission);
     }
 
     #[tokio::test]

@@ -519,6 +519,12 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     let mut options: BTreeMap<u32, String> = BTreeMap::new();
     let mut descriptions: BTreeMap<u32, String> = BTreeMap::new();
     let mut shortcuts: BTreeMap<u32, OptionShortcut> = BTreeMap::new();
+    // Row of each option and of every rule segment inside the block:
+    // Claude Code's free-text slot sits directly above the divider that
+    // splits off the "Chat about this" row, and typed text replaces the
+    // slot's placeholder label — position is the only stable marker.
+    let mut option_rows: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut rule_rows: Vec<usize> = Vec::new();
     let mut extras = Extras::default();
     let mut first: Option<usize> = None;
     let mq: Option<MqInfo>;
@@ -554,6 +560,7 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
                     if extras.advance && extras.advance_next.is_none() {
                         extras.advance_next = Some(number);
                     }
+                    option_rows.insert(number, i);
                     first = Some(i);
                 } else if ADVANCE_ROW_RE.is_match(segment) {
                     // multiSelect `Next`/`Submit` pseudo-row: selectable but
@@ -562,8 +569,10 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
                     if segment.trim_start().starts_with(['❯', '›']) {
                         extras.focused = Some(Focused::Advance);
                     }
-                } else if segment.trim().is_empty() || RULE_RE.is_match(segment) {
+                } else if segment.trim().is_empty() {
                     continue;
+                } else if RULE_RE.is_match(segment) {
+                    rule_rows.push(i);
                 } else if first.is_some() && (segment.starts_with("     ") || glued) {
                     pending_lines.push(segment.to_string());
                 } else if first.is_some() {
@@ -603,6 +612,7 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
                     if extras.advance && extras.advance_next.is_none() {
                         extras.advance_next = Some(number);
                     }
+                    option_rows.insert(number, i);
                     first = Some(i);
                 } else if ADVANCE_ROW_RE.is_match(segment) {
                     extras.advance = true;
@@ -612,11 +622,15 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
                 } else if first.is_some() {
                     if (segment.starts_with("     ") || glued) && !segment.trim().is_empty() {
                         pending_lines.push(segment.to_string());
-                    } else if !segment.trim().is_empty() && !RULE_RE.is_match(segment) {
+                    } else if RULE_RE.is_match(segment) {
+                        rule_rows.push(i);
+                    } else if !segment.trim().is_empty() {
                         break 'walk;
                     }
                 } else if !segment.trim().is_empty() && !RULE_RE.is_match(segment) {
                     return None;
+                } else if RULE_RE.is_match(segment) {
+                    rule_rows.push(i);
                 }
             }
         }
@@ -626,13 +640,74 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         mq = parse_mq_tabs(&lines, lines.len());
     }
 
-    let free = options
+    // Free-text slots by label first, then by position. Claude Code draws
+    // "Type something." as the last option above a divider with "Chat about
+    // this" alone below it; once text is typed the placeholder labels are
+    // replaced, so a slot still parses as a numbered option and only its
+    // position against that divider identifies it.
+    let label_free = options
         .iter()
         .find(|(_, label)| label.starts_with(FREE_TEXT_LABELS[0]))
         .map(|(number, _)| *number);
+    let chat_slot: Option<u32> = options
+        .iter()
+        .filter(|(_, label)| label.starts_with(FREE_TEXT_LABELS[1]))
+        .map(|(number, _)| *number)
+        .max_by_key(|number| option_rows.get(number).copied().unwrap_or(0))
+        .or_else(|| {
+            // The label was replaced by typed text: the lone option below
+            // the innermost divider inside the option block is the chat
+            // slot.
+            let divider = rule_rows
+                .iter()
+                .copied()
+                .filter(|row| {
+                    option_rows.values().any(|or| *or < *row)
+                        && option_rows.values().any(|or| *or > *row)
+                })
+                .max()?;
+            let below: Vec<u32> = option_rows
+                .iter()
+                .filter(|(_, row)| **row > divider)
+                .map(|(number, _)| *number)
+                .collect();
+            match below.as_slice() {
+                [number] => Some(*number),
+                _ => None,
+            }
+        });
+    let free = label_free.or_else(|| {
+        // The option directly above — or glued onto — the divider that
+        // closes the option block above the chat slot.
+        let chat_row = option_rows.get(&chat_slot?).copied()?;
+        let divider = rule_rows
+            .iter()
+            .copied()
+            .filter(|row| *row < chat_row)
+            .filter(|row| !option_rows.values().any(|or| *row < *or && *or < chat_row))
+            .max()?;
+        option_rows
+            .iter()
+            .filter(|(_, row)| **row <= divider)
+            .max_by_key(|(_, row)| *row)
+            .map(|(number, _)| *number)
+    });
+    let mut free_like: std::collections::BTreeSet<u32> = options
+        .iter()
+        .filter(|(_, label)| FREE_TEXT_LABELS.iter().any(|f| label.starts_with(f)))
+        .map(|(number, _)| *number)
+        .collect();
+    free_like.extend(chat_slot);
+    free_like.extend(free);
+    // Draft text sitting in a free-text slot is never an option: not a
+    // choice, not a description, not a shortcut target.
+    for number in &free_like {
+        descriptions.remove(number);
+        shortcuts.remove(number);
+    }
     let choices: BTreeMap<u32, String> = options
         .into_iter()
-        .filter(|(_, label)| !FREE_TEXT_LABELS.iter().any(|f| label.starts_with(f)))
+        .filter(|(number, _)| !free_like.contains(number))
         .collect();
     if choices.is_empty() && free.is_none() {
         return None;
@@ -724,6 +799,9 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     let notice = (!notice_lines.is_empty()).then(|| notice_lines.join(" "));
 
     // The visible preview belongs to the option under the `❯` cursor.
+    // A cursor on a free-text/chat slot leaves the previously focused
+    // option's box on screen — that box belongs to no visible option, so
+    // it attaches to nothing rather than to the slot's draft text.
     let previews = preview
         .as_ref()
         .filter(|(_, _, _, inner)| inner.iter().any(|line| !line.trim().is_empty()))
@@ -731,8 +809,8 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
             extras
                 .focused
                 .and_then(|focused| match focused {
-                    Focused::Option(number) => Some(number),
-                    Focused::Advance => None,
+                    Focused::Option(number) if choices.contains_key(&number) => Some(number),
+                    _ => None,
                 })
                 .map(|number| (number, inner.join("\n")))
         })
@@ -1371,10 +1449,67 @@ Press enter to confirm or esc to cancel
 
     #[test]
     fn multi_question_typing_in_free_text_slot_parses() {
-        let typing = mq_frame_q1().replace("  3. Type something.", "❯ 3. これ");
+        // The churn report: typing into "Type something" replaces its
+        // placeholder label, and each keystroke used to mint a new
+        // option — a new signature, a new decision. The slot is the
+        // option directly above the divider that closes the box, so
+        // draft text is still free text, never an option.
+        let idle = parse_screen_prompt(&mq_frame_q1()).expect("idle");
+        for typed in ["❯ 3. そ", "  3. それは君が判断できるでしょ"] {
+            let screen = mq_frame_q1().replace("  3. Type something.", typed);
+            let prompt = parse_screen_prompt(&screen).expect("typing");
+            assert_eq!(prompt.free_text, Some(3), "{typed:?}");
+            assert!(!prompt.choices.contains_key(&3));
+            assert!(!prompt
+                .choices
+                .values()
+                .any(|label| label.contains('そ') || label.contains("それは")));
+            assert_eq!(prompt.choices, idle.choices);
+            assert_eq!(prompt.signature(), idle.signature());
+            assert!(!prompt.descriptions.contains_key(&3));
+        }
+        // The label heuristic still wins when the slot is untouched.
+        assert_eq!(idle.free_text, Some(3));
+    }
+
+    #[test]
+    fn typing_in_chat_about_this_slot_keeps_it_out_of_options() {
+        // "Chat about this" typed into drops its placeholder too: the
+        // lone option below the divider inside the block is still the
+        // chat slot, not a new choice.
+        let typing = mq_frame_q1().replace("  4. Chat about this", "  4. これについて話そう");
         let prompt = parse_screen_prompt(&typing).expect("typing");
-        assert_eq!(prompt.free_text, None);
-        assert_eq!(prompt.choices.get(&3).map(String::as_str), Some("これ"));
+        assert_eq!(prompt.free_text, Some(3));
+        assert!(!prompt.choices.contains_key(&4));
+        assert_eq!(prompt.choices.len(), 2);
+    }
+
+    #[test]
+    fn free_text_draft_preview_attaches_to_no_option() {
+        // The preview box left behind while the cursor sits on the
+        // free-text slot belongs to an option the walk did not see —
+        // it must not land on the slot's draft text.
+        let screen = format!(
+            "\
+{DIVIDER}
+←  ☐ 果物  ✔ Submit  →
+
+どの果物？
+
+  1. りんご                        ┌──────────────┐
+  2. みかん                        │ 図: 果物の箱  │
+❯ 3. これは下書き                  └──────────────┘
+{DIVIDER}
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+"
+        );
+        let prompt = parse_screen_prompt(&screen).expect("prompt");
+        assert_eq!(prompt.free_text, Some(3));
+        assert!(!prompt.choices.contains_key(&3));
+        assert!(prompt.previews.is_empty());
+        assert!(prompt.preview_box);
     }
 
     #[test]
