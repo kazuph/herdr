@@ -1924,6 +1924,7 @@ impl AppState {
             return false;
         };
         rt.scroll_reset();
+        rt.note_user_input();
         if let Err(err) = rt.try_send_bytes(Bytes::from(bytes)) {
             warn!(pane = info.id.raw(), err = %err, kind = ?mouse.kind, "failed to forward mouse button event");
         }
@@ -1979,6 +1980,7 @@ impl AppState {
             warn!(pane = info.id.raw(), kind = ?mouse.kind, "failed to encode mouse wheel event");
             return true;
         };
+        rt.note_user_input();
         if let Err(err) = rt.try_send_bytes(Bytes::from(bytes)) {
             warn!(pane = info.id.raw(), err = %err, "failed to forward mouse wheel event");
         }
@@ -2008,6 +2010,7 @@ impl AppState {
                 let Some(bytes) = rt.encode_alternate_scroll(mouse.kind) else {
                     return true;
                 };
+                rt.note_user_input();
                 if let Err(err) = rt.try_send_bytes(Bytes::from(bytes)) {
                     warn!(pane = info.id.raw(), err = %err, "failed to forward alternate-scroll key");
                 }

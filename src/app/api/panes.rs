@@ -2264,6 +2264,7 @@ impl App {
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
+        runtime.note_user_input();
         if let Err(err) = runtime.try_send_bytes(Bytes::from(params.text)) {
             return encode_error(id, "pane_send_failed", err.to_string());
         }
@@ -2288,6 +2289,7 @@ impl App {
         };
         if !params.text.is_empty() {
             let text_bytes = encode_api_text(runtime, &params.text);
+            runtime.note_user_input();
             if let Err(err) = runtime.try_send_bytes(Bytes::from(text_bytes)) {
                 return encode_error(id, "pane_send_failed", err.to_string());
             }
@@ -2391,6 +2393,7 @@ impl App {
             Ok(encoded_keys) => encoded_keys,
             Err(key) => return encode_error(id, "invalid_key", format!("unsupported key {key}")),
         };
+        runtime.note_user_input();
         for bytes in encoded_keys {
             if let Err(err) = runtime.try_send_bytes(Bytes::from(bytes)) {
                 return encode_error(id, "pane_send_failed", err.to_string());

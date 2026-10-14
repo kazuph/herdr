@@ -100,6 +100,7 @@ pub(crate) fn apply(
     if !bytes.is_empty() {
         if kind != MouseEventKind::Moved {
             runtime.scroll_reset();
+            runtime.note_user_input();
         }
         runtime
             .try_send_bytes(Bytes::from(bytes))

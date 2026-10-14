@@ -162,6 +162,23 @@ impl App {
                     ),
                 );
             }
+            // A person typing into the pane takes precedence over a queued
+            // screen-prompt answer: refuse to commit so the answer stays
+            // pending instead of keys silently landing (or getting lost)
+            // under active operator input.
+            if decision.status == DecisionStatus::Pending
+                && Self::is_screen_prompt_decision(&decision)
+                && self.screen_prompt_pane_has_recent_user_input(&decision)
+            {
+                return responses::encode_error(
+                    id,
+                    "pane_user_active",
+                    format!(
+                        "pane for decision {} received operator input moments ago; answer not committed",
+                        params.decision_id
+                    ),
+                );
+            }
         }
         match store.answer(
             &params.decision_id,

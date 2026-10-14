@@ -775,6 +775,7 @@ impl App {
         if bytes.is_empty() || rt.try_send_bytes(Bytes::from(bytes)).is_err() {
             return false;
         }
+        rt.note_user_input();
 
         self.state.mode = Mode::Terminal;
         true

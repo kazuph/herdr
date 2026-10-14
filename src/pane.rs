@@ -1195,6 +1195,12 @@ pub struct PaneRuntime {
     // Only `foreground_cwd` on unix reads it; Windows has no foreground cwd probe.
     #[cfg_attr(not(unix), allow(dead_code))]
     foreground_cwd_cache: Mutex<Option<ForegroundCwdCache>>,
+    /// When input from outside herdr's own screen-prompt machinery last went
+    /// to the PTY: keys typed by the operator, pastes, mouse reports, pane
+    /// `send-*` API calls, and attach/endpoint client input. Screen-prompt
+    /// preview scans and answer delivery check this before sending keys so
+    /// they never type over a person operating the pane.
+    user_input_at: Mutex<Option<std::time::Instant>>,
     // Task handles for deterministic shutdown
     detect_handle: Option<tokio::task::AbortHandle>,
 }
@@ -2152,6 +2158,7 @@ impl PaneRuntime {
             pending_release,
             preserve_processes_on_drop: true,
             foreground_cwd_cache: Mutex::new(None),
+            user_input_at: Mutex::new(None),
             detect_handle: Some(detect_handle),
         })
     }
@@ -2745,6 +2752,7 @@ impl PaneRuntime {
             pending_release,
             preserve_processes_on_drop: false,
             foreground_cwd_cache: Mutex::new(None),
+            user_input_at: Mutex::new(None),
             detect_handle,
         })
     }
@@ -3044,6 +3052,28 @@ impl PaneRuntime {
         self.io.try_send_bytes(bytes)
     }
 
+    /// Record that input which did not originate from herdr's screen-prompt
+    /// machinery was pushed into this pane. Callers mark at the point they
+    /// accept operator/remote-client input for the pane.
+    pub fn note_user_input(&self) {
+        self.note_user_input_at_inner(std::time::Instant::now());
+    }
+
+    fn note_user_input_at_inner(&self, at: std::time::Instant) {
+        if let Ok(mut slot) = self.user_input_at.lock() {
+            *slot = Some(at);
+        }
+    }
+
+    #[cfg(test)]
+    pub fn note_user_input_at(&self, at: std::time::Instant) {
+        self.note_user_input_at_inner(at);
+    }
+
+    pub fn user_input_at(&self) -> Option<std::time::Instant> {
+        self.user_input_at.lock().ok().and_then(|slot| *slot)
+    }
+
     pub fn try_write_mailbox_bytes(
         &self,
         bytes: Bytes,
@@ -3317,6 +3347,7 @@ impl PaneRuntime {
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,
             foreground_cwd_cache: Mutex::new(None),
+            user_input_at: Mutex::new(None),
             detect_handle: Some(tokio::spawn(async {}).abort_handle()),
         };
         (runtime, peer)
@@ -3398,6 +3429,7 @@ impl PaneRuntime {
                 pending_release: Arc::new(Mutex::new(None)),
                 preserve_processes_on_drop: true,
                 foreground_cwd_cache: Mutex::new(None),
+                user_input_at: Mutex::new(None),
                 detect_handle: Some(tokio::spawn(async {}).abort_handle()),
             },
             rx,
@@ -3935,6 +3967,7 @@ mod tests {
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,
             foreground_cwd_cache: Mutex::new(None),
+            user_input_at: Mutex::new(None),
             detect_handle: Some(tokio::spawn(async {}).abort_handle()),
         };
 
@@ -3970,6 +4003,7 @@ mod tests {
             pending_release: Arc::new(Mutex::new(None)),
             preserve_processes_on_drop: true,
             foreground_cwd_cache: Mutex::new(None),
+            user_input_at: Mutex::new(None),
             detect_handle: Some(tokio::spawn(async {}).abort_handle()),
         };
 

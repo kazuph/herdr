@@ -228,6 +228,7 @@ impl HeadlessServer {
             let result = match held.release {
                 event @ ClientPaneInputEvent::Key { .. } => {
                     crate::server::endpoint_keyboard::encode(runtime, &event).and_then(|bytes| {
+                        runtime.note_user_input();
                         runtime
                             .try_send_bytes(Bytes::from(bytes))
                             .map_err(|error| error.to_string())

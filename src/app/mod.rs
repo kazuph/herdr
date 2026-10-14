@@ -182,9 +182,17 @@ pub struct App {
     /// In-progress preview scans walking a prompt's options to capture each
     /// option's preview box before its decision is created.
     pub(crate) preview_scans: HashMap<crate::layout::PaneId, screen_prompts::PreviewScan>,
-    /// Prompt signatures whose preview scan already ran (or was attempted):
-    /// the same prompt is never walked twice.
-    pub(crate) preview_scan_done: HashMap<crate::layout::PaneId, String>,
+    /// Question identities (question text + option labels) whose preview
+    /// scan already ran or was suppressed: the same question is never walked
+    /// twice, and signature wobble from redraws or typed input cannot re-arm
+    /// a walk.
+    pub(crate) preview_scan_done: HashMap<crate::layout::PaneId, std::collections::HashSet<String>>,
+    /// Multi-question flows herdr answered through decision delivery, keyed
+    /// by pane; gates auto-submit on the final `Submit answers` screen.
+    pub(crate) screen_prompt_flows:
+        HashMap<crate::layout::PaneId, screen_prompts::ScreenPromptFlow>,
+    /// Signatures of submit-confirmation screens herdr already submitted.
+    pub(crate) screen_prompt_auto_submits: HashMap<crate::layout::PaneId, String>,
     pub(crate) pending_agent_resume_deadline: Option<Instant>,
     pub(crate) pending_agent_resume_wait: Duration,
     pub(crate) headless_agent_restore_enabled: bool,
@@ -895,6 +903,8 @@ impl App {
             deferred_pane_writes: Vec::new(),
             preview_scans: HashMap::new(),
             preview_scan_done: HashMap::new(),
+            screen_prompt_flows: HashMap::new(),
+            screen_prompt_auto_submits: HashMap::new(),
             pending_agent_resume_deadline: None,
             pending_agent_resume_wait: Duration::from_millis(config.agent_restore.restore_delay_ms)
                 .max(PENDING_AGENT_RESUME_THEME_WAIT),
@@ -1846,6 +1856,7 @@ impl App {
                                     ws_idx,
                                     focused,
                                 ) {
+                                    runtime.note_user_input();
                                     let _ = runtime.try_send_paste(text);
                                 }
                             }
@@ -1868,6 +1879,7 @@ impl App {
                                         ws_idx,
                                         focused,
                                     ) {
+                                        runtime.note_user_input();
                                         let _ = runtime
                                             .try_send_bytes(bytes::Bytes::from_static(b"\n"));
                                     }

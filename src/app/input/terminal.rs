@@ -42,6 +42,7 @@ impl App {
             return;
         };
         if let Some(runtime) = self.lookup_runtime_sender(input.ws_idx, input.pane_id) {
+            runtime.note_user_input();
             let _ = runtime.try_send_bytes(input.bytes);
         }
     }

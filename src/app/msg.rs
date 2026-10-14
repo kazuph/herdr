@@ -377,6 +377,7 @@ fn inject_text_and_enter(
     message: &str,
 ) -> Result<(), ErrorBody> {
     let (text, enter) = encode_text_and_enter(runtime, message)?;
+    runtime.note_user_input();
     runtime
         .try_send_bytes(Bytes::from(text))
         .map_err(|err| ErrorBody {
@@ -402,6 +403,7 @@ fn inject_regular_message_and_enter(
     let (mut input, enter) = encode_text_and_enter(runtime, message)?;
     input.extend(enter);
     let completion_tx = completion_tx.clone();
+    runtime.note_user_input();
     runtime
         .try_write_mailbox_bytes(
             Bytes::from(input),
