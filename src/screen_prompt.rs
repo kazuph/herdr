@@ -803,7 +803,7 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
             question_lines.insert(0, call);
         }
     }
-    let question = question_lines.join(" ");
+    let question = join_wrapped_question(&question_lines);
     let notice = (!notice_lines.is_empty()).then(|| notice_lines.join(" "));
 
     // The visible preview belongs to the option under the `❯` cursor.
@@ -890,6 +890,48 @@ fn attach_option_continuations(
 
 /// Join description rows into one sentence. A break inside CJK text rejoins
 /// without inserting a space; ASCII-to-ASCII boundaries get one.
+/// Rejoin the question rows Claude Code wrapped to the pane width. Japanese
+/// text has no spaces, and a long token (a path, a file name) is broken
+/// mid-word when it reaches the edge — joining every row with a space put
+/// spaces inside words and file names ("report_neck4ey e.png", "かけ ら").
+/// A space goes back only between two ASCII rows where the upper row ended
+/// short of the wrap width, i.e. where an English word wrap removed it.
+fn join_wrapped_question(lines: &[String]) -> String {
+    let width = |line: &str| unicode_width::UnicodeWidthStr::width(line);
+    let wrap_width = lines.iter().map(|line| width(line)).max().unwrap_or(0);
+    let mut out = String::new();
+    let mut prev_width = 0;
+    let mut prev_wide = false;
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let (Some(last), Some(first)) = (out.chars().last(), line.chars().next()) {
+            let both_ascii = last.is_ascii() && first.is_ascii();
+            let word_char = |c: char| c.is_ascii_alphanumeric() || "_-./=;:".contains(c);
+            // A row ends mid-word only where the renderer had no space to
+            // break at: the word is wider than a row, or the row is a run
+            // of Japanese text filled to the edge (one cell short when a
+            // wide character did not fit). An ordinary English word wrap
+            // removed a space, which goes back.
+            let tail = out.rsplit(' ').next().unwrap_or("");
+            let head = line.split(' ').next().unwrap_or("");
+            let long_word = width(tail) + width(head) > wrap_width;
+            let full_japanese_row = prev_wide && prev_width + 1 >= wrap_width;
+            let broke_mid_word =
+                word_char(last) && word_char(first) && (long_word || full_japanese_row);
+            if both_ascii && !broke_mid_word {
+                out.push(' ');
+            }
+        }
+        out.push_str(line);
+        prev_width = width(line);
+        prev_wide = !line.is_ascii();
+    }
+    out
+}
+
 fn join_description_lines(lines: impl Iterator<Item = String>) -> String {
     let mut out = String::new();
     for line in lines {
@@ -1703,6 +1745,62 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
     }
 
     #[test]
+    fn wrapped_question_rejoins_without_spaces_inside_words() {
+        // Claude Code hard-wraps a long Japanese question at the pane edge,
+        // even in the middle of a file name or path.
+        let text = "役者01の直し（ほおの角ばった影とこめかみの赤茶色のかけらを消す）が反映されたよ。画像は work/neck-fix/report_neck4eye.png と work/neckfix-vrm-render-front.png（新しい顔）。進んでいい？";
+        let mut rows = Vec::new();
+        let mut row = String::new();
+        for ch in text.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if unicode_width::UnicodeWidthStr::width(row.as_str()) + w > 40 {
+                rows.push(std::mem::take(&mut row));
+            }
+            row.push(ch);
+        }
+        rows.push(row);
+        let screen = format!(
+            " ☐ 進め方\n\n{}\n\n ❯ 1. 進む\n   2. 止める\n   3. Type something.\n───────────────────────────────────────────────────────────────\n   4. Chat about this\n\n Enter to select · ↑/↓ to navigate · Esc to cancel\n",
+            rows.iter().map(|r| format!(" {r}")).collect::<Vec<_>>().join("\n")
+        );
+        assert!(rows.len() >= 4, "{rows:?}");
+        let title = parse_screen_prompt(&screen).expect("prompt").title();
+        // Words and file names split across rows come back whole. (A space
+        // the renderer trimmed at a row start between a Latin word and
+        // Japanese cannot be recovered and is not asserted.)
+        for whole in [
+            "こめかみの赤茶色のかけらを消す",
+            "画像は work/neck-fix/report_neck4eye.png",
+            "work/neckfix-vrm-render-front.png（新しい顔）",
+        ] {
+            assert!(
+                title.contains(whole),
+                "missing {whole} in {title}; rows: {rows:?}"
+            );
+        }
+        // A short row ending a word keeps its space to the next English word.
+        let english = "\
+ ☐ Plan
+
+ Should we refresh the cache
+ before the deploy starts and keeps everything consistent?
+
+ ❯ 1. Yes
+   2. No
+   3. Type something.
+───────────────────────────────────────────────────────────────
+   4. Chat about this
+
+ Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+        let title = parse_screen_prompt(english).expect("prompt").title();
+        assert_eq!(
+            title,
+            "Should we refresh the cache before the deploy starts and keeps everything consistent?"
+        );
+    }
+
+    #[test]
     fn question_below_a_tool_call_keeps_its_own_title() {
         // A Bash call ran right before AskUserQuestion; its `⏺` line sits a
         // few rows above the question. The question must not borrow it.
@@ -1842,7 +1940,7 @@ Esc to cancel
         assert!(title.contains("Bash command"));
         assert!(title.contains("Delete frames directories for two bench runs"));
         assert!(title.contains(
-            "B=/tmp/hdr-churn/ben ch; for r in light-nano-C mini-C; \
+            "B=/tmp/hdr-churn/bench; for r in light-nano-C mini-C; \
              do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done"
         ));
         assert!(title.contains("Dangerous rm operation on possibly-empty"));

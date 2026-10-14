@@ -24,6 +24,7 @@
 ## Unreleased
 
 ### Fixed
+- Screen-prompt decision titles no longer gain spaces inside words. Claude Code wraps a long question at the pane edge, even in the middle of Japanese text, a file name or a path; every row was joined with a space, so titles read "report_neck4ey e.png" or "かけ ら". Rows are now rejoined without a space inside Japanese text and inside words longer than a row or split at the end of a filled Japanese row; only the space removed by an ordinary English word wrap is restored.
 - The Mac decision panel no longer answers when a one-choice option is clicked: a click only selects it (radio button), and the answer is sent with 回答する or ⌘↩, so a stray click on a panel that appeared mid-task cannot answer a question. ⌘1–⌘9 select options the same way.
 - The Mac decision panel's option cards now follow light and dark mode. Their background and border were fixed at whichever look was active when the card was created, so in light mode the cards stayed dark under dark text and could not be read; they now resolve the system colors for the panel's own appearance and update when the mode changes.
 - `herdr run --completion none` now starts from a pane without an agent. Plugin hooks and actions (for example `herdr plugin action invoke start` for the Slack and Mac dialog decision daemons) run with whatever pane is focused, which is often a plain shell, and failed with `agent_not_found` even though a silent job notifies nobody. Jobs that send a completion notice still require an agent caller, and a caller pane that does not exist is still rejected.
