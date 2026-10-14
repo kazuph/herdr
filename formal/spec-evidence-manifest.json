@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 542,
+    "active_contract_count": 545,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -14026,6 +14026,78 @@
       ],
       "unrepresented_dimensions": [
         "tests/cli_wrapper.rs is Linux-only; on macOS the behaviour was checked against an isolated debug server with `herdr run --completion none` from a plain shell pane"
+      ]
+    },
+    {
+      "contract_id": "G12-2f9d5b3464",
+      "dimensions": [
+        "guard executable lifetime"
+      ],
+      "verification_methods": [
+        "rust_test_target:guard_executable_requires_matching_prefix_link",
+        "platform_live_acceptance:macos_isolated_cellar_upgrade_guard_2026_10_14"
+      ],
+      "source_anchors": [
+        "SPEC.md:2419",
+        "src/guard/assets.rs:321",
+        "src/cli/guard.rs:504"
+      ],
+      "test_status": [
+        "static_verified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Isolated real debug server verifies stable pane injection, removed old Cellar binary, git/gh/curl/herdr launch and block enforcement; actual Homebrew upgrade of installed runtime and existing live-pane shell wrappers are not verified. Evidence: .artifacts/guard-stable-exe-path/dogfood.log."
+      ]
+    },
+    {
+      "contract_id": "G12-e83e6cee20",
+      "dimensions": [
+        "guard executable lifetime"
+      ],
+      "verification_methods": [
+        "rust_test_target:shim_survives_removed_cellar_executable_without_recursion",
+        "platform_live_acceptance:macos_isolated_cellar_upgrade_guard_2026_10_14"
+      ],
+      "source_anchors": [
+        "SPEC.md:2420",
+        "src/guard/assets.rs:321",
+        "src/cli/guard.rs:504"
+      ],
+      "test_status": [
+        "static_verified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Isolated real debug server verifies stable pane injection, removed old Cellar binary, git/gh/curl/herdr launch and block enforcement; actual Homebrew upgrade of installed runtime and existing live-pane shell wrappers are not verified. Evidence: .artifacts/guard-stable-exe-path/dogfood.log."
+      ]
+    },
+    {
+      "contract_id": "G12-9f430a8e1d",
+      "dimensions": [
+        "guard executable lifetime"
+      ],
+      "verification_methods": [
+        "rust_test_target:guard_exec_herdr_recovers_from_removed_executable",
+        "platform_live_acceptance:macos_isolated_cellar_upgrade_guard_2026_10_14"
+      ],
+      "source_anchors": [
+        "SPEC.md:2421",
+        "src/guard/assets.rs:321",
+        "src/cli/guard.rs:504"
+      ],
+      "test_status": [
+        "static_verified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Isolated real debug server verifies stable pane injection, removed old Cellar binary, git/gh/curl/herdr launch and block enforcement; actual Homebrew upgrade of installed runtime and existing live-pane shell wrappers are not verified. Evidence: .artifacts/guard-stable-exe-path/dogfood.log."
       ]
     }
   ]

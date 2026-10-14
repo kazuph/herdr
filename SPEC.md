@@ -2411,3 +2411,11 @@
 ### 起動差し込みの検証記録（2026-10-13）
 
 macOS の本物の Claude Code を default 権限、検証用 rm 一つの許可、一時 HOME・XDG・名前付き session で確認した。手動起動、同じ pane の再起動、判断待ち中の live handoff、server 冷再起動後の実 session 復元、対話 bash は herdr の判断待ちへ届き、ai_guard のログは増えなかった。起動時に未適用の既存 pane は stderr と実 TUI に pane・理由・回復方法を表示し、新しい pane での起動後は判断待ちへ届いた。人の pane は判定・記録なし、record は ask を記録して実行を止めない。未印 pane の実 rm の交互比較で追加時間の中央値は 0.0291ms/回（契約上限 1ms）。詳細・保存出力・途中の失敗と修正はローカルの `.local/prd/RESULT-guard-coverage.md` に記録する。record の実証は ai_guard を読み込まない検証専用起動設定で行い、別系統の ai_guard を無効化する製品機能は追加していない。
+
+### Homebrew 更新後のガード実行パス
+- **分類**: CORE-RUNTIME
+- **status: fork独自・保持 (C)** — 版付きの実体が削除されてもガードを経由して実行する。
+- **受け入れ条件**:
+  - `HERDR_GUARD_HERDR` は実体が `<prefix>/Cellar/herdr/<version>/bin/herdr` で、`<prefix>/bin/herdr` が同じ実体へ解決されるときに安定パスを使い、それ以外は `current_exe` を保つ。
+  - shim に残った旧 Cellar パスが実行できなければ同じ prefix の実行可能な `bin/herdr` へ切り替え、その値を `guard exec` に引き継ぐ。PATH から herdr を検索せず、自身を指すリンクは終了code 127 で止め、復旧先がなければ実行失敗として返す。ガードの判定・承認・ブロック、環境変数名、CLI 出力は変更しない。
+  - `guard exec -- herdr …` は環境に残った実行ファイルが削除済みなら現在実行中の herdr を使い、shim を再起動しない。
