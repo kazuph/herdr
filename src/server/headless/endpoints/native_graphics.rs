@@ -163,6 +163,7 @@ impl NativeGraphics {
         }
         let index = scene.assets.iter().position(eligible)?;
         let asset = &scene.assets[index];
+        tracing::info!("TBTRACE native prepare client={} bytes={} {}x{}", client, asset.key.data_len, asset.key.image_width, asset.key.image_height);
         if self.pending.values().map(|p| p.export.len()).sum::<usize>()
             + asset.key.data_len as usize
             > MAX_BYTES
@@ -271,6 +272,7 @@ impl HeadlessServer {
         if transfer & NATIVE_BIT == 0 || !self.endpoint_native.matches(client, transfer, image) {
             return false;
         }
+        tracing::info!("TBTRACE native result client={} success={}", client, success);
         if success && !self.endpoint_native.disabled.contains(&client) {
             if !self.endpoint_native.pending[&client].written {
                 return false;
@@ -315,6 +317,7 @@ impl HeadlessServer {
         let mut changed = false;
         for (id, transfer_id, image_id) in expired {
             self.endpoint_native.disabled.insert(id);
+            tracing::info!("TBTRACE native expired client={} transfer={}", id, transfer_id);
             let Some(client) = self.endpoint_clients.get_mut(&id) else {
                 continue;
             };

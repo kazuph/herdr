@@ -621,6 +621,13 @@ impl HeadlessServer {
                         None
                     }
                 };
+                tracing::info!(
+                    "TBTRACE frame client={} pane_prepared={} inline_assets={} inline_bytes={}",
+                    client_id,
+                    pane_prepared.is_some(),
+                    graphics.assets.len(),
+                    graphics.assets.iter().map(|a| a.key.data_len).sum::<u64>()
+                );
                 let client = self.endpoint_clients.get(&client_id).expect("live client");
                 #[cfg(unix)]
                 tracing::debug!(
