@@ -677,7 +677,7 @@ impl EndpointRuntime {
             }
             ServerMessage::EndpointControl { .. } => {}
             ServerMessage::PaneSurface(surface) if active || pending_owner => {
-                let received = self.shell.receive_surface(&id, generation, surface.clone());
+                let received = self.shell.receive_surface(&id, generation, surface);
                 self.request_whole_images(&id);
                 if received {
                     if let Some(pending) = self.pending.as_mut().filter(|_| pending_owner) {

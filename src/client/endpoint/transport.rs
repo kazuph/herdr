@@ -67,6 +67,7 @@ fn read_loop(
             stream: &mut stream,
             stopped: &stopped,
         };
+        let mut patches = PatchRebuild::default();
         while !stopped.load(Ordering::Acquire) {
             let message = crate::protocol::read_message(
                 &mut reader,
@@ -84,15 +85,17 @@ fn read_loop(
             } else {
                 message
             };
-            if events
-                .blocking_send(EndpointReaderEvent::Message {
-                    endpoint_id: endpoint_id.clone(),
-                    generation,
-                    message: Box::new(message),
-                })
-                .is_err()
-            {
-                break;
+            for message in patches.receive(message) {
+                if events
+                    .blocking_send(EndpointReaderEvent::Message {
+                        endpoint_id: endpoint_id.clone(),
+                        generation,
+                        message: Box::new(message),
+                    })
+                    .is_err()
+                {
+                    return Ok(());
+                }
             }
         }
         Ok::<(), io::Error>(())
@@ -131,5 +134,92 @@ impl io::Read for EndpointReader<'_> {
                 Err(error) => return Err(error),
             }
         }
+    }
+}
+
+/// Rebuilds large images from their changed-rectangle patches on the reader
+/// thread. Decoding a browser pane's patches takes tens of milliseconds per
+/// frame; doing it on the event loop left clicks and keys waiting behind every
+/// frame of a scrolling page. A patch that cannot be rebuilt here is passed on
+/// unchanged, so the event loop's own rebuild reports it as a miss.
+#[derive(Default)]
+struct PatchRebuild {
+    pending: Vec<(crate::kitty_graphics::patch::GraphicsPatch, ServerMessage)>,
+    boot_id: String,
+    /// Full pixels of the large images the last frame placed or retained.
+    images:
+        std::collections::HashMap<crate::protocol::endpoint_wire::SurfaceGraphicsAssetKey, Vec<u8>>,
+}
+
+impl PatchRebuild {
+    fn receive(&mut self, message: ServerMessage) -> Vec<ServerMessage> {
+        match message {
+            ServerMessage::EndpointControl { ref kind, ref data }
+                if kind == crate::protocol::endpoint::GRAPHICS_PATCH_KIND =>
+            {
+                match serde_json::from_str::<crate::kitty_graphics::patch::GraphicsPatch>(data) {
+                    Ok(patch) => {
+                        self.pending.push((patch, message));
+                        Vec::new()
+                    }
+                    Err(_) => vec![message],
+                }
+            }
+            ServerMessage::PaneSurface(mut surface) => {
+                let mut out = self.rebuild(&mut surface);
+                out.push(ServerMessage::PaneSurface(surface));
+                out
+            }
+            message => vec![message],
+        }
+    }
+
+    /// Adds the rebuilt images to `surface` and returns the patches it could
+    /// not rebuild, to be delivered ahead of the frame.
+    fn rebuild(
+        &mut self,
+        surface: &mut crate::protocol::endpoint_wire::PaneSurfaceFrame,
+    ) -> Vec<ServerMessage> {
+        if self.boot_id != surface.boot_id {
+            self.boot_id.clone_from(&surface.boot_id);
+            self.images.clear();
+        }
+        let mut unbuilt = Vec::new();
+        for (patch, message) in std::mem::take(&mut self.pending) {
+            if surface
+                .graphics
+                .assets
+                .iter()
+                .any(|asset| asset.key == patch.key)
+            {
+                continue;
+            }
+            let base = self.images.get(&patch.base).map(Vec::as_slice);
+            match crate::kitty_graphics::patch::apply(base, &patch) {
+                Some(data) => surface.graphics.assets.push(
+                    crate::protocol::endpoint_wire::SurfaceGraphicsAsset {
+                        key: patch.key,
+                        data,
+                    },
+                ),
+                None => unbuilt.push(message),
+            }
+        }
+        for asset in &surface.graphics.assets {
+            if crate::kitty_graphics::patch::patchable(&asset.key)
+                && asset.data.len() as u64 == asset.key.data_len
+            {
+                self.images.insert(asset.key.clone(), asset.data.clone());
+            }
+        }
+        let graphics = &surface.graphics;
+        self.images.retain(|key, _| {
+            graphics
+                .placements
+                .iter()
+                .any(|placement| placement.asset == *key)
+                || graphics.retained_assets.contains(key)
+        });
+        unbuilt
     }
 }
