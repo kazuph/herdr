@@ -43,6 +43,32 @@ impl DeliveryCache {
     }
 }
 
+/// TBTRACE (investigation only): how much of a new frame differs from the
+/// previous frame of the same source.
+fn tbtrace_diff(key: &SurfaceGraphicsAssetKey, data: &[u8]) {
+    use std::sync::Mutex;
+    static PREV: Mutex<Option<HashMap<String, Vec<u8>>>> = Mutex::new(None);
+    let Ok(mut guard) = PREV.lock() else { return };
+    let map = guard.get_or_insert_with(HashMap::new);
+    let id = format!("{:?}", key.source);
+    let width = key.image_width as usize;
+    if let Some(prev) = map.get(&id).filter(|prev| prev.len() == data.len()) {
+        let bpp = if matches!(key.format, SurfaceGraphicsFormat::Rgb) { 3 } else { 4 };
+        let (mut changed, mut x0, mut y0, mut x1, mut y1) = (0usize, usize::MAX, usize::MAX, 0usize, 0usize);
+        for (i, (a, b)) in data.chunks_exact(bpp).zip(prev.chunks_exact(bpp)).enumerate() {
+            if a != b {
+                changed += 1;
+                let (x, y) = (i % width.max(1), i / width.max(1));
+                x0 = x0.min(x); y0 = y0.min(y); x1 = x1.max(x); y1 = y1.max(y);
+            }
+        }
+        let total = data.len() / bpp;
+        tracing::info!("TBTRACE diff changed={} of {} ({:.2}%) bbox={}x{} at {},{}", changed, total, changed as f64 * 100.0 / total.max(1) as f64,
+            if changed > 0 { x1 - x0 + 1 } else { 0 }, if changed > 0 { y1 - y0 + 1 } else { 0 }, if changed > 0 { x0 } else { 0 }, if changed > 0 { y0 } else { 0 });
+    }
+    map.insert(id, data.to_vec());
+}
+
 fn compressible(key: &SurfaceGraphicsAssetKey) -> bool {
     matches!(
         key.format,
@@ -221,6 +247,7 @@ pub(crate) fn collect(
                 key = png;
             } else if let Some(bytes) = {
                 let started = std::time::Instant::now();
+                tbtrace_diff(&key, &image.data);
                 let out = encode_png(&key, &image.data);
                 tracing::info!("TBTRACE png raw={} png={:?} ms={}", image.data.len(), out.as_ref().map(Vec::len), started.elapsed().as_millis());
                 out
@@ -479,8 +506,7 @@ mod tests {
         let mut next_scene = SurfaceGraphicsScene::default();
         let mut next = DeliveryCache {
             assets: delivery.assets.clone(),
-            offscreen: vec![],
-            pending: false,
+            ..DeliveryCache::default()
         };
         deliver_assets(
             &mut next_scene,
