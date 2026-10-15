@@ -108,6 +108,7 @@ impl HeadlessServer {
                 client.direct_graphics = false;
             }
             client.graphics_delivery = Default::default();
+            tracing::info!("TBTRACE graphics delivery reset at {}:{}", file!(), line!());
             client.write_pending = true;
         }
         sent
@@ -203,6 +204,7 @@ impl HeadlessServer {
             if let Some(client) = self.endpoint_clients.get_mut(&id) {
                 client.direct_graphics = false;
                 client.graphics_delivery = Default::default();
+                tracing::info!("TBTRACE graphics delivery reset at {}:{}", file!(), line!());
                 client.write_pending = true;
             }
         }

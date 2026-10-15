@@ -395,6 +395,7 @@ impl HeadlessServer {
                             height_px: cell_height_px,
                         };
                         client.surface = None;
+                        tracing::info!("TBTRACE surface dropped at {}:{}", file!(), line!());
                         self.claim_endpoint_geometry(client_id);
                         true
                     }
@@ -513,6 +514,7 @@ impl HeadlessServer {
                 client.snapshot = Some(snapshot);
                 client.jobs = Some(jobs);
                 client.surface = None;
+                tracing::info!("TBTRACE surface dropped at {}:{}", file!(), line!());
                 client.write_pending = true;
             }
             let snapshot = client.snapshot.as_ref().expect("snapshot produced").clone();
@@ -847,6 +849,7 @@ impl HeadlessServer {
                         let client = self.endpoint_clients.get_mut(&client_id).expect("checked client");
                         client.location = location;
                         client.surface = None;
+                        tracing::info!("TBTRACE surface dropped at {}:{}", file!(), line!());
                         client.presentation_committed = false;
                         if tab_changed { self.claim_endpoint_geometry(client_id); }
                         request.method = match request.method {
@@ -1316,6 +1319,7 @@ impl HeadlessServer {
                             self.release_endpoint_inputs(viewer, held);
                             if let Some(client) = self.endpoint_clients.get_mut(&viewer) {
                                 client.surface = None;
+                                tracing::info!("TBTRACE surface dropped at {}:{}", file!(), line!());
                                 client.presentation_committed = false;
                             }
                         }
@@ -1325,6 +1329,7 @@ impl HeadlessServer {
                                     == Some(self.app.public_workspace_id(workspace_index).as_str())
                             {
                                 client.surface = None;
+                                tracing::info!("TBTRACE surface dropped at {}:{}", file!(), line!());
                                 client.presentation_committed = false;
                             }
                         }
@@ -1368,6 +1373,7 @@ impl HeadlessServer {
         };
         client.location.focus_pane(workspace, tab, public_id.into());
         client.surface = None;
+        tracing::info!("TBTRACE surface dropped at {}:{}", file!(), line!());
         client.presentation_committed = false;
         if was_focused {
             self.send_endpoint_focus(client_id, true);
@@ -1631,7 +1637,7 @@ impl HeadlessServer {
         events: Vec<ClientPaneInputEvent>,
     ) -> bool {
         let Some(client) = self.endpoint_clients.get(&client_id) else {
-            return false;
+            { tracing::info!("TBTRACE input rejected at {}:{} pane={}", file!(), line!(), public_id); return false; }
         };
         // A viewer's surface is dropped and redrawn whenever its snapshot, geometry or focus
         // changes, including when another viewer claims the tab. Keys typed against the frame
@@ -1645,14 +1651,14 @@ impl HeadlessServer {
                         || !surface.panes.iter().any(|pane| pane.pane_id == public_id))
             })
         {
-            return false;
+            { tracing::info!("TBTRACE input rejected at {}:{} pane={}", file!(), line!(), public_id); return false; }
         }
         let pixel_mouse = client.pixel_mouse;
         let Some(target) = self.endpoint_target(client_id) else {
-            return false;
+            { tracing::info!("TBTRACE input rejected at {}:{} pane={}", file!(), line!(), public_id); return false; }
         };
         let Some((workspace_index, pane)) = self.app.parse_pane_id(public_id) else {
-            return false;
+            { tracing::info!("TBTRACE input rejected at {}:{} pane={}", file!(), line!(), public_id); return false; }
         };
         if self
             .app
@@ -1663,14 +1669,14 @@ impl HeadlessServer {
             || self.app.state.workspaces[workspace_index].find_tab_index_for_pane(pane)
                 != Some(target.tab_index)
         {
-            return false;
+            { tracing::info!("TBTRACE input rejected at {}:{} pane={}", file!(), line!(), public_id); return false; }
         }
         let Some(runtime) = self.app.state.runtime_for_pane_in_workspace(
             &self.app.terminal_runtimes,
             workspace_index,
             pane,
         ) else {
-            return false;
+            { tracing::info!("TBTRACE input rejected at {}:{} pane={}", file!(), line!(), public_id); return false; }
         };
         let page_lines = client
             .surface
@@ -1688,7 +1694,7 @@ impl HeadlessServer {
         }
         if let Some(error) = failure {
             self.endpoint_error(client_id, error);
-            return false;
+            { tracing::info!("TBTRACE input rejected at {}:{} pane={}", file!(), line!(), public_id); return false; }
         }
         if !accepted.is_empty() {
             self.claim_endpoint_geometry(client_id);

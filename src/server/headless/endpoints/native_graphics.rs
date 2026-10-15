@@ -337,6 +337,7 @@ impl HeadlessServer {
         changed
     }
     pub(super) fn retire_endpoint_native(&mut self, client: u64) {
+        tracing::info!("TBTRACE retire native graphics client={}", client);
         if let Some(pending) = self.endpoint_native.pending.get_mut(&client) {
             pending.deadline = Instant::now();
             self.endpoint_native.disabled.insert(client);

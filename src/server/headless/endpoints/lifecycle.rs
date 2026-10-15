@@ -104,6 +104,7 @@ impl HeadlessServer {
         }
         self.endpoint_tab_geometry.insert(tab.into(), client_id);
         client.surface = None;
+        tracing::info!("TBTRACE surface dropped at {}:{}", file!(), line!());
         client.write_pending = true;
         true
     }
@@ -128,6 +129,7 @@ impl HeadlessServer {
             if let Some(tab) = client.location.focused_tab_id() {
                 self.endpoint_tab_geometry.insert(tab.into(), client_id);
                 client.surface = None;
+                tracing::info!("TBTRACE surface dropped at {}:{}", file!(), line!());
                 client.write_pending = true;
             }
         }
@@ -147,6 +149,7 @@ impl HeadlessServer {
         self.retire_direct_graphics_for_client(client_id);
         let client = self.endpoint_clients.get_mut(&client_id)?;
         let changed = client.active != active;
+        tracing::info!("TBTRACE surface active={} changed={} client={}", active, changed, client_id);
         if !changed && !active {
             return Some(client.projection_revision);
         }
@@ -164,9 +167,11 @@ impl HeadlessServer {
         client.presentation_committed = false;
         client.sent_presentation = None;
         client.surface = None;
+        tracing::info!("TBTRACE surface dropped at {}:{}", file!(), line!());
         client.write_pending = true;
         // The host retires the old endpoint's images when switching its active scope.
         client.graphics_delivery = Default::default();
+        tracing::info!("TBTRACE graphics delivery reset at {}:{}", file!(), line!());
         if active {
             client.projection_revision = client.projection_revision.saturating_add(1);
             client.snapshot = None;
