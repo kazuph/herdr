@@ -583,13 +583,18 @@ impl HeadlessServer {
                     continue;
                 }
                 let client = self.endpoint_clients.get(&client_id).expect("live client");
+                // A viewer that cannot read this server's image files (a saved
+                // machine viewed over ssh) receives large images as PNG.
+                let delivered = client
+                    .graphics_delivery
+                    .with_compression(!client.direct_graphics);
                 let (graphics, graphics_delivery) = crate::kitty_graphics::endpoint_scene::collect(
                     &self.app,
                     target,
                     &rendered.panes,
                     rendered.popup.as_deref(),
                     cell_size,
-                    &client.graphics_delivery,
+                    &delivered,
                 );
                 let mut graphics = graphics;
                 #[cfg(unix)]
