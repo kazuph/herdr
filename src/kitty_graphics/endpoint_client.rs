@@ -309,6 +309,24 @@ impl ClientState {
             .collect::<HashSet<_>>();
         for asset in std::mem::take(&mut scene.assets) {
             if asset.data.len() as u64 == asset.key.data_len && placed.contains(&asset.key) {
+                // A new image for a source already on screen goes to the other
+                // of its two host IDs, so the old picture stays up until the
+                // new one is placed instead of blanking while it uploads.
+                if matches!(asset.key.source, SurfaceGraphicsSource::Terminal { .. })
+                    && !self.native_image_ids.contains_key(&asset.key)
+                {
+                    if let Some(shown) = self
+                        .display_scene
+                        .placements
+                        .iter()
+                        .map(|p| &p.asset)
+                        .chain(self.display_scene.retained_assets.iter())
+                        .find(|shown| shown.source == asset.key.source && **shown != asset.key)
+                    {
+                        let other = self.image_id(shown) ^ INLINE_SLOT_BIT;
+                        self.native_image_ids.insert(asset.key.clone(), other);
+                    }
+                }
                 self.assets.insert(asset.key, Arc::from(asset.data));
             }
         }
@@ -417,9 +435,23 @@ impl ClientState {
         let mut bytes = self.take_pending_cleanup();
         self.stale_images.sort_unstable();
         self.stale_images.dedup();
+        // A stale image whose ID the new scene does not reuse is deleted after
+        // the new placements are written, so the old picture covers the gap
+        // while the terminal decodes its replacement.
+        let shown_ids = self
+            .display_scene
+            .placements
+            .iter()
+            .map(|p| self.image_id(&p.asset))
+            .collect::<HashSet<_>>();
+        let mut deferred_deletes = Vec::new();
         for image_id in self.stale_images.drain(..) {
             if self.host.images.remove(&image_id).is_some() {
-                super::encode_delete_image(&mut bytes, image_id);
+                if shown_ids.contains(&image_id) {
+                    super::encode_delete_image(&mut bytes, image_id);
+                } else {
+                    super::encode_delete_image(&mut deferred_deletes, image_id);
+                }
             }
             self.host.placements.retain(|(id, _), _| *id != image_id);
             self.host.sources.retain(|_, id| *id != image_id);
@@ -428,6 +460,7 @@ impl ClientState {
                 .retain(|(id, _)| *id != image_id);
         }
         if !cell_size.is_known() || self.scope.is_empty() {
+            bytes.extend(deferred_deletes);
             bytes.extend(self.host.clear_bytes());
             return bytes;
         }
@@ -480,9 +513,14 @@ impl ClientState {
                 break;
             }
         }
+        bytes.extend(deferred_deletes);
         bytes
     }
 }
+
+/// Second host ID for a source's next inline image (same bit the native
+/// banks use), so a replacement never reuses the ID still on screen.
+const INLINE_SLOT_BIT: u32 = 1 << 29;
 #[cfg(unix)]
 pub(crate) const NATIVE_TRANSFER_BIT: u64 = 1 << 63;
 #[cfg(unix)]
