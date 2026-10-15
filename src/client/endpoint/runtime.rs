@@ -962,28 +962,6 @@ impl EndpointRuntime {
         events: Vec<crate::protocol::endpoint_wire::ClientPaneInputEvent>,
     ) -> EndpointSendOutcome {
         if !self.input_lease_current() || self.endpoints.active_id() != &key.endpoint {
-            let id = self.endpoints.active_id();
-            let coherent = self.endpoints.connection(id).and_then(|connection| {
-                self.shell.endpoint(id).and_then(|endpoint| {
-                    endpoint
-                        .cache
-                        .coherent_surface(connection.generation, self.options.surface_size)
-                })
-            });
-            tracing::info!(
-                "TBTRACE input rejected surface_available={} pending_ok={} frozen={} coherent={} same={} awaiting={} pending={}",
-                self.endpoints.active_surface_available(),
-                self.pending_allows_source_input(),
-                self.presentation_frozen,
-                coherent.is_some(),
-                coherent.is_some_and(|surface| self
-                    .shell
-                    .pane_surface
-                    .as_ref()
-                    .is_some_and(|shown| super::cache::same_surface(shown, surface))),
-                self.awaiting_surface_pair(),
-                self.pending.is_some()
-            );
             tracing::debug!(endpoint = ?key.endpoint, lease_current = self.input_lease_current(), "endpoint input rejected before current presentation lease");
             return EndpointSendOutcome::NotSent;
         }

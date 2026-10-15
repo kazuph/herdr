@@ -244,11 +244,9 @@ fn send_unix_input_chunks(
         if !flush_unix_palette_input(event_tx, pending_palette) {
             return false;
         }
-        let len = data.len();
         let Some(event) = classify_unix_input(data, sgr_pixels, geometry) else {
             continue;
         };
-        tracing::info!("TBTRACE stdin chunk len={len}");
         if event_tx.blocking_send(event).is_err() {
             return false;
         }

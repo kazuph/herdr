@@ -493,19 +493,11 @@ impl ClientFrontend {
             self.graphics.forget_host_images();
         }
         let (next_graphics, graphics_bytes) = graphics::encode(self, &view);
-        let tb_started = Instant::now();
         crate::client::write_encoded_frame_with_graphics(
             &mut stdout,
             &encoded.bytes,
             &graphics_bytes,
         )?;
-        tracing::info!(
-            "TBTRACE draw wrote text={} graphics={} full={} ms={}",
-            encoded.bytes.len(),
-            graphics_bytes.len(),
-            encoded.full,
-            tb_started.elapsed().as_millis()
-        );
         #[cfg(unix)]
         if !graphics_bytes.is_empty() {
             stdout.write_all(crate::client::terminal_pace::PROBE)?;
@@ -579,15 +571,9 @@ impl ClientFrontend {
         // borrow the frontend while the select arms use it.
         let pace = self.pace.clone();
         while !quit.load(Ordering::Acquire) && !self.detach_requested {
-            if self.runtime.awaiting_surface_pair() {
-                tracing::info!("TBTRACE gate closed queued={}", input_events.len());
-            }
             let repaint = tokio::select! {
                 event = self.runtime.reader_events.recv() => {
                     let Some(event) = event else { break };
-                    if let super::transport::EndpointReaderEvent::Message { endpoint_id, message, .. } = &event {
-                        tracing::info!("TBTRACE reader {:?} {:?}", endpoint_id, std::mem::discriminant(message.as_ref()));
-                    }
                     let update = self.runtime.receive(event, Instant::now());
                     self.update(update)?
                 }
@@ -600,7 +586,6 @@ impl ClientFrontend {
                 // surface update instead of consuming it while the lease rejects it.
                 event = input_events.recv(), if !self.runtime.awaiting_surface_pair() => {
                     let Some(event) = event else { break };
-                    tracing::info!("TBTRACE input recv queued={}", input_events.len());
                     input::handle(self, event)?
                 }
                 _ = async {
@@ -659,13 +644,6 @@ impl ClientFrontend {
             if repaint {
                 self.draw_deferred = true;
             }
-            tracing::info!(
-                "TBTRACE loop awaiting={} lease={} deferred={} pace_wait={}",
-                self.runtime.awaiting_surface_pair(),
-                self.runtime.input_lease_current(),
-                self.draw_deferred,
-                self.pace.waiting()
-            );
             if self.draw_deferred && !self.pacing_holds_draw(Instant::now()) {
                 self.draw_deferred = false;
                 self.draw()?;
