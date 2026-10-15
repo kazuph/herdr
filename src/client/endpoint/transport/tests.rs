@@ -126,11 +126,10 @@ mod patch_rebuild {
     use super::super::PatchRebuild;
     use crate::kitty_graphics::patch::{self, GraphicsPatch};
     use crate::protocol::endpoint_wire::{
-        PaneSurfaceFrame, ServerMessage, SurfaceGraphicsAssetKey, SurfaceGraphicsFormat,
+        FrameData, PaneSurfaceFrame, ServerMessage, SurfaceGraphicsAssetKey, SurfaceGraphicsFormat,
         SurfaceGraphicsPlacement, SurfaceGraphicsScene, SurfaceGraphicsSource,
         SurfaceGraphicsTarget,
     };
-    use crate::protocol::FrameData;
 
     const W: u32 = 512;
     const H: u32 = 256;
