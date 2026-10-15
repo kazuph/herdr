@@ -25,7 +25,7 @@
 
 use std::ffi::OsStr;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use portable_pty::CommandBuilder;
 
@@ -56,6 +56,7 @@ pub(crate) fn apply_guard_env(cmd: &mut CommandBuilder, pane_env_id: Option<&str
     let Ok(herdr_exe) = std::env::current_exe() else {
         return;
     };
+    let herdr_exe = stable_guard_executable(&herdr_exe);
     let targets = crate::guard::targets(guard);
 
     if let Err(error) = ensure_assets(&herdr_exe, &targets) {
@@ -309,6 +310,29 @@ fn write_if_changed(path: &Path, content: &[u8], mode: u32) -> std::io::Result<(
     std::fs::rename(&tmp, path)
 }
 
+/// Do not let an unrelated Homebrew installation take over this guard.
+pub(crate) fn stable_guard_executable(exe: &Path) -> PathBuf {
+    fn candidate(exe: &Path) -> Option<PathBuf> {
+        if exe.file_name()? != "herdr" || exe.parent()?.file_name()? != "bin" {
+            return None;
+        }
+        let formula = exe.parent()?.parent()?.parent()?;
+        let cellar = formula.parent()?;
+        if formula.file_name()? != "herdr" || cellar.file_name()? != "Cellar" {
+            return None;
+        }
+        Some(cellar.parent()?.join("bin/herdr"))
+    }
+    if let Some(candidate) = candidate(exe) {
+        if let (Ok(actual), Ok(link)) = (exe.canonicalize(), candidate.canonicalize()) {
+            if actual == link {
+                return candidate;
+            }
+        }
+    }
+    exe.to_path_buf()
+}
+
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -316,15 +340,37 @@ fn shell_quote(value: &str) -> String {
 /// Forwarder placed in the pane's shim directory while its agent marker
 /// exists. It simply hands the command to `herdr guard exec`, which judges
 /// and records (when the marker is still present) and always runs the real
-/// command. Resolution of the real binary happens inside `guard exec` on
-/// the sanitized PATH, so the shim carries no path logic at all.
+/// command. Never look up herdr on PATH here: it starts with these shims.
 fn shim_script(target: &str) -> String {
+    let exe = std::env::current_exe()
+        .map(|exe| stable_guard_executable(&exe))
+        .unwrap_or_default();
+    shim_script_for_executable(target, &exe)
+}
+
+fn shim_script_for_executable(target: &str, exe: &Path) -> String {
     format!(
         r#"#!/bin/sh
 # herdr command guard shim for `{target}`. Generated; do not edit.
-exec "${{{HERDR_EXE_ENV_VAR}:-herdr}}" guard exec -- {} "$@"
+_hg_default={fallback}
+_hg_exe="${{{HERDR_EXE_ENV_VAR}:-$_hg_default}}"
+if [ ! -f "$_hg_exe" ] || [ ! -x "$_hg_exe" ]; then
+  case "$_hg_exe" in
+    */Cellar/herdr/*/bin/herdr)
+      _hg_prefix="${{_hg_exe%/Cellar/herdr/*/bin/herdr}}"
+      _hg_stable="$_hg_prefix/bin/herdr"
+      if [ -f "$_hg_stable" ] && [ -x "$_hg_stable" ]; then
+        _hg_exe="$_hg_stable"
+      fi
+      ;;
+  esac
+fi
+[ "$_hg_exe" -ef "$0" ] && exit 127
+export {HERDR_EXE_ENV_VAR}="$_hg_exe"
+exec "$_hg_exe" guard exec -- {} "$@"
 "#,
         shell_quote(target),
+        fallback = shell_quote(&exe.to_string_lossy()),
         target = target,
         HERDR_EXE_ENV_VAR = HERDR_EXE_ENV_VAR,
     )
@@ -495,6 +541,93 @@ fi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn guard_executable_requires_matching_prefix_link() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("hga-link-{}", std::process::id()));
+        let exe = root.join("Cellar/herdr/old/bin/herdr");
+        let stable = root.join("bin/herdr");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(stable.parent().unwrap()).unwrap();
+        std::fs::copy("/usr/bin/true", &exe).unwrap();
+        assert_eq!(stable_guard_executable(&exe), exe);
+        symlink(&exe, &stable).unwrap();
+        assert_eq!(stable_guard_executable(&exe), stable);
+        std::fs::remove_file(&stable).unwrap();
+        symlink("/usr/bin/true", &stable).unwrap();
+        assert_eq!(stable_guard_executable(&exe), exe);
+        std::fs::remove_file(&stable).unwrap();
+        symlink(root.join("missing"), &stable).unwrap();
+        assert_eq!(stable_guard_executable(&exe), exe);
+        assert_eq!(
+            stable_guard_executable(Path::new("/usr/bin/true")),
+            Path::new("/usr/bin/true")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Exercise the generated launcher with real executable files and links,
+    /// including paths containing shell metacharacters. No PATH lookup is
+    /// allowed, even when the stable link is broken or points at the shim.
+    #[cfg(unix)]
+    #[test]
+    fn shim_survives_removed_cellar_executable_without_recursion() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("hga-upgrade ' $-{}", std::process::id()));
+        let old = root.join("Cellar/herdr/old/bin/herdr");
+        let new = root.join("Cellar/herdr/new/bin/herdr");
+        let stable = root.join("bin/herdr");
+        let shim = root.join("shim/herdr");
+        for path in [&old, &new, &stable, &shim] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        }
+        std::fs::copy("/usr/bin/true", &old).unwrap();
+        std::fs::copy("/usr/bin/true", &new).unwrap();
+        symlink(&old, &stable).unwrap();
+        write_if_changed(
+            &shim,
+            shim_script_for_executable("herdr", &stable).as_bytes(),
+            0o755,
+        )
+        .unwrap();
+        let run = |exe: Option<&Path>| {
+            let mut cmd = std::process::Command::new(&shim);
+            cmd.env_clear().env("PATH", shim.parent().unwrap());
+            if let Some(exe) = exe {
+                cmd.env(HERDR_EXE_ENV_VAR, exe);
+            }
+            let mut child = cmd.spawn().unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status.code();
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("shim recursed instead of exiting");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        assert_eq!(run(Some(&old)), Some(0));
+        std::fs::remove_file(&stable).unwrap();
+        symlink(&new, &stable).unwrap();
+        std::fs::remove_file(&old).unwrap();
+        assert_eq!(run(Some(&old)), Some(0));
+        assert_eq!(run(None), Some(0));
+        std::fs::remove_file(&stable).unwrap();
+        symlink(&shim, &stable).unwrap();
+        assert_eq!(run(Some(&old)), Some(127));
+        assert_eq!(run(Some(&shim)), Some(127));
+        std::fs::remove_file(&stable).unwrap();
+        // /bin/sh reports a missing absolute exec path as 126 on macOS
+        // and 127 on other Unix shells. Preserve that native failure.
+        assert!(matches!(run(Some(&old)), Some(126 | 127)));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn armed_shim_forwards_to_guard_exec() {

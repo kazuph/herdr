@@ -505,8 +505,11 @@ fn exec_real_command(argv: &[String], sanitized_path: &str) -> std::io::Result<i
     let program = if argv[0] == "herdr" {
         std::env::var(crate::guard::HERDR_EXE_ENV_VAR)
             .map(PathBuf::from)
-            .or_else(|_| std::env::current_exe())
-            .unwrap_or_else(|_| PathBuf::from("herdr"))
+            .ok()
+            .filter(|path| path.is_file())
+            .or_else(|| std::env::current_exe().ok())
+            .map(|path| crate::guard::assets::stable_guard_executable(&path))
+            .unwrap_or_else(|| PathBuf::from("herdr"))
     } else {
         PathBuf::from(&argv[0])
     };
