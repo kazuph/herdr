@@ -593,7 +593,13 @@ fn place_workspace_sections(
                         continue;
                     };
                     let expanded = !chrome.collapsed_machines.contains(id);
-                    let new = crate::ui::sidebar::workspace_section_new_button_rect(rect);
+                    // The heading of a machine that is not online shows its
+                    // state instead of `[new]`, so no new-workspace hit.
+                    let new = if endpoint.status == ClientEndpointStatus::Online {
+                        crate::ui::sidebar::workspace_section_new_button_rect(rect)
+                    } else {
+                        Rect::default()
+                    };
                     let label = Rect::new(
                         rect.x,
                         rect.y,
@@ -617,8 +623,12 @@ fn place_workspace_sections(
                             ),
                         });
                     }
-                    view.machine_headers
-                        .push((rect, endpoint.label.clone(), expanded));
+                    view.machine_headers.push((
+                        rect,
+                        endpoint.label.clone(),
+                        endpoint.status,
+                        expanded,
+                    ));
                 }
             }
             WorkspaceHeader::Section(endpoint, section) => {
