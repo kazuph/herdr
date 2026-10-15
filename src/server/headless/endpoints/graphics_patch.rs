@@ -9,6 +9,20 @@ pub(super) struct PatchedFrame {
     pub(super) bases: Vec<(wire::SurfaceGraphicsAssetKey, std::sync::Arc<Vec<u8>>)>,
 }
 
+/// Longest a viewer may take to acknowledge a patched frame before the next
+/// frame is sent anyway.
+const PATCH_ACK_LIMIT: std::time::Duration = std::time::Duration::from_millis(500);
+
+impl EndpointClient {
+    /// True while the last patched frame is unacknowledged and recent: the
+    /// viewer is still receiving or rebuilding it, so another frame would only
+    /// queue in the connection.
+    pub(super) fn waiting_for_patch_ack(&self) -> bool {
+        self.patch_ack_wait
+            .is_some_and(|(_, sent)| sent.elapsed() < PATCH_ACK_LIMIT)
+    }
+}
+
 impl HeadlessServer {
     /// Turn this frame's large raw images into patch messages for a viewer
     /// that accepts them. The images leave the frame's asset list; the viewer
@@ -69,11 +83,31 @@ impl HeadlessServer {
         out
     }
 
+    /// The viewer has the patched frame `data` names: the next one may go.
+    pub(super) fn endpoint_graphics_patch_ack(&mut self, client_id: u64, data: &str) -> bool {
+        let Some(client) = self.endpoint_clients.get_mut(&client_id) else {
+            return false;
+        };
+        let Ok(revision) = data.trim().parse::<u64>() else {
+            return false;
+        };
+        if !client
+            .patch_ack_wait
+            .is_some_and(|(waiting, _)| revision >= waiting)
+        {
+            return false;
+        }
+        client.patch_ack_wait = None;
+        client.write_pending = true;
+        true
+    }
+
     /// The viewer could not rebuild an image: forget every base and resend.
     pub(super) fn endpoint_graphics_patch_miss(&mut self, client_id: u64) -> bool {
         let Some(client) = self.endpoint_clients.get_mut(&client_id) else {
             return false;
         };
+        client.patch_ack_wait = None;
         client.patch_bases.clear();
         client.graphics_delivery = Default::default();
         client.write_pending = true;

@@ -42,6 +42,11 @@ pub const GRAPHICS_PATCH_CODEC: &str = "graphics.patch.v1";
 pub const GRAPHICS_PATCH_KIND: &str = "endpoint.graphics.patch.v1";
 /// Client -> server: a patch could not be applied; send the image whole.
 pub const GRAPHICS_PATCH_MISS_KIND: &str = "endpoint.graphics.patch-miss.v1";
+/// Client -> server: the viewer has the frame with this surface revision and
+/// the images patched into it. The server sends the next patched frame only
+/// after this, so frames never queue up in the connection ahead of the
+/// replies to the viewer's clicks and keys.
+pub const GRAPHICS_PATCH_ACK_KIND: &str = "endpoint.graphics.patch-ack.v1";
 pub const HEALTH_PING_KIND: &str = "endpoint.health.ping.v1";
 pub const HEALTH_PONG_KIND: &str = "endpoint.health.pong.v1";
 pub const AGENT_VIEW_PROJECTION_CAPABILITY: &str = "agent_view_projection";

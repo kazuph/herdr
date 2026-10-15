@@ -677,6 +677,21 @@ impl EndpointRuntime {
             }
             ServerMessage::EndpointControl { .. } => {}
             ServerMessage::PaneSurface(surface) if active || pending_owner => {
+                // The server strips large images out of a frame and sends them as patches,
+                // which the reader rebuilt into it; acknowledging lets the next one go.
+                let patched = surface
+                    .graphics
+                    .assets
+                    .iter()
+                    .any(|asset| crate::kitty_graphics::patch::patchable(&asset.key))
+                    .then_some(surface.surface_revision);
+                if let Some(revision) = patched {
+                    let message = crate::protocol::endpoint_wire::ClientMessage::EndpointControl {
+                        kind: crate::protocol::endpoint::GRAPHICS_PATCH_ACK_KIND.into(),
+                        data: revision.to_string(),
+                    };
+                    let _ = self.endpoints.send_to(&id, &message);
+                }
                 let received = self.shell.receive_surface(&id, generation, surface);
                 self.request_whole_images(&id);
                 if received {

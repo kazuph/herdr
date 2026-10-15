@@ -30,6 +30,9 @@ pub(super) struct EndpointClient {
         wire::SurfaceGraphicsSource,
         (wire::SurfaceGraphicsAssetKey, std::sync::Arc<Vec<u8>>),
     >,
+    /// Surface revision of the last patched frame the viewer has not yet
+    /// acknowledged, and when it was sent.
+    patch_ack_wait: Option<(u64, std::time::Instant)>,
     pixel_mouse: bool,
     mouse_capture: bool,
     outer_focus: Option<bool>,
@@ -289,6 +292,7 @@ impl HeadlessServer {
                             .iter()
                             .any(|codec| codec == crate::protocol::endpoint::GRAPHICS_PATCH_CODEC),
                         patch_bases: HashMap::new(),
+                        patch_ack_wait: None,
                         graphics_delivery: Default::default(),
                         pixel_mouse: hello.pixel_mouse,
                         mouse_capture: hello.mouse_capture,
@@ -445,6 +449,11 @@ impl HeadlessServer {
                     {
                         self.endpoint_graphics_patch_miss(client_id)
                     }
+                    ClientMessage::EndpointControl { kind, data }
+                        if kind == crate::protocol::endpoint::GRAPHICS_PATCH_ACK_KIND =>
+                    {
+                        self.endpoint_graphics_patch_ack(client_id, &data)
+                    }
                     ClientMessage::ClientShellHostTheme { .. }
                     | ClientMessage::EndpointControl { .. } => false,
                     _ => false,
@@ -454,9 +463,10 @@ impl HeadlessServer {
     }
 
     pub(super) fn endpoint_graphics_pending(&self) -> bool {
-        self.endpoint_clients
-            .values()
-            .any(|client| client.active && client.graphics_delivery.has_pending())
+        self.endpoint_clients.values().any(|client| {
+            client.active
+                && (client.graphics_delivery.has_pending() || client.patch_ack_wait.is_some())
+        })
     }
 
     /// A tab shown by a presenting endpoint viewer whose terminal is not known to be unfocused
@@ -511,6 +521,9 @@ impl HeadlessServer {
                 .endpoint_clients
                 .get_mut(&client_id)
                 .expect("live client");
+            if client.waiting_for_patch_ack() {
+                continue;
+            }
             let mut snapshot = crate::server::endpoint_snapshot::snapshot(
                 &self.app,
                 &self.endpoint_boot_id,
@@ -743,6 +756,10 @@ impl HeadlessServer {
                     .get_mut(&client_id)
                     .expect("live client");
                 if client.writer.render.send_ordered(batch).is_ok() {
+                    if !patches.messages.is_empty() {
+                        client.patch_ack_wait =
+                            Some((surface.surface_revision, std::time::Instant::now()));
+                    }
                     // The images these patches carry are the next patches' bases.
                     for (key, data) in patches.bases {
                         client.patch_bases.insert(key.source.clone(), (key, data));

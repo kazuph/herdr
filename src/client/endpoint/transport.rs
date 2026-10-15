@@ -170,6 +170,15 @@ impl PatchRebuild {
                 out.push(ServerMessage::PaneSurface(surface));
                 out
             }
+            message @ ServerMessage::PaneSurfacePatch(_) => {
+                // Not rebuilt here: the event loop applies the patches to this frame.
+                let mut out = std::mem::take(&mut self.pending)
+                    .into_iter()
+                    .map(|(_, message)| message)
+                    .collect::<Vec<_>>();
+                out.push(message);
+                out
+            }
             message => vec![message],
         }
     }
