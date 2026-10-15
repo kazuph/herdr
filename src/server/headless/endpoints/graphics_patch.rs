@@ -91,9 +91,9 @@ impl HeadlessServer {
         let Ok(revision) = data.trim().parse::<u64>() else {
             return false;
         };
-        if !client
+        if client
             .patch_ack_wait
-            .is_some_and(|(waiting, _)| revision >= waiting)
+            .is_none_or(|(waiting, _)| revision < waiting)
         {
             return false;
         }
