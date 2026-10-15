@@ -490,11 +490,19 @@ impl ClientFrontend {
             self.graphics.forget_host_images();
         }
         let (next_graphics, graphics_bytes) = graphics::encode(self, &view);
+        let tb_started = Instant::now();
         crate::client::write_encoded_frame_with_graphics(
             &mut stdout,
             &encoded.bytes,
             &graphics_bytes,
         )?;
+        tracing::info!(
+            "TBTRACE draw wrote text={} graphics={} full={} ms={}",
+            encoded.bytes.len(),
+            graphics_bytes.len(),
+            encoded.full,
+            tb_started.elapsed().as_millis()
+        );
         #[cfg(unix)]
         if !graphics_bytes.is_empty() {
             stdout.write_all(crate::client::terminal_pace::PROBE)?;
