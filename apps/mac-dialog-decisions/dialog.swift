@@ -318,7 +318,10 @@ final class DialogController: NSObject, NSWindowDelegate {
     if spec.multi_select {
       card.checked.toggle()
     } else {
-      for other in cards { other.checked = other === card }
+      // Clicking the chosen option again clears it, so a text-only answer
+      // stays possible after a choice.
+      let clear = card.checked
+      for other in cards { other.checked = !clear && other === card }
     }
     refreshSubmit()
   }
@@ -397,7 +400,7 @@ final class DialogController: NSObject, NSWindowDelegate {
     if !spec.options.isEmpty {
       let hint = spec.multi_select
         ? "当てはまるものを選んで（複数可・⌘1〜⌘\(min(spec.options.count, 9)) でも可）、右下の「回答する」か ⌘↩ で送ります。"
-        : "1つ選んで（⌘1〜⌘\(min(spec.options.count, 9)) でも可）、右下の「回答する」か ⌘↩ で送ります。選んだだけでは送りません。"
+        : "1つ選んで（⌘1〜⌘\(min(spec.options.count, 9)) でも可）、右下の「回答する」か ⌘↩ で送ります。選んだだけでは送りません。もう一度押すと選択を外せます。"
       full(label(hint, size: Look.small, color: .secondaryLabelColor, selectable: false))
       for (i, option) in spec.options.enumerated() {
         let card = OptionCard(option: option, index: i, multi: spec.multi_select)

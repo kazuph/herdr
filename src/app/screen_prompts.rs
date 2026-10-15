@@ -22,7 +22,9 @@ use crate::api::schema::{
 use crate::decision::{new_decision_id, unix_ms_now, DecisionStore, ResolveOutcome};
 use crate::detect::AgentState;
 use crate::layout::PaneId;
-use crate::screen_prompt::{normalize_volatile, parse_screen_prompt, OptionShortcut, ScreenPrompt};
+use crate::screen_prompt::{
+    normalize_volatile, parse_screen_prompt, Focused, OptionShortcut, ScreenPrompt,
+};
 
 /// Decision origin reason marking decisions created from pane screens.
 pub(crate) const SCREEN_PROMPT_REASON: &str = "screen_prompt";
@@ -53,6 +55,10 @@ const TOGGLE_KEY_DELAY: Duration = Duration::from_millis(150);
 /// a torn frame, so retry a few times before abandoning the answer.
 const MULTISELECT_SUBMIT_RETRIES: u8 = 4;
 const MULTISELECT_SUBMIT_RETRY_DELAY: Duration = Duration::from_millis(250);
+/// When a question draws option previews beside the list, Claude Code's
+/// option digits only move the cursor; Enter confirms. The confirm pass
+/// re-reads the prompt and retries torn frames a few times.
+const PREVIEW_CONFIRM_RETRIES: u8 = 4;
 /// How recent pane-bound input from outside the screen-prompt machinery —
 /// operator keystrokes, pastes, mouse reports, `pane send-*`/`agent send`
 /// API calls, attach/endpoint client input — must be before herdr stops
@@ -90,6 +96,27 @@ impl PromptDecisionParts {
         decision.question_label = self.question_label.clone();
         decision.options = self.options.clone();
         decision.origin = Some(self.origin.clone());
+    }
+}
+
+/// `cut` is `full` with its beginning missing: a non-empty strict suffix
+/// once whitespace (rewrapping) and volatile displays are ignored.
+fn title_is_cut_top_of(cut: &str, full: &str) -> bool {
+    let compact = |text: &str| -> String {
+        normalize_volatile(text)
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect()
+    };
+    let (cut, full) = (compact(cut), compact(full));
+    !cut.is_empty() && cut.len() < full.len() && full.ends_with(&cut)
+}
+
+/// An in-place refresh never shortens the question to a cut-off view of
+/// itself; the decision keeps the full text it was created with.
+fn keep_full_title(existing: &Decision, updated: &mut Decision) {
+    if title_is_cut_top_of(&updated.title, &existing.title) {
+        updated.title = existing.title.clone();
     }
 }
 
@@ -187,6 +214,17 @@ pub(crate) enum DeferredPaneWrite {
         /// toggle keys and the submit pass.
         attempts_left: u8,
     },
+    /// Confirm a single-select answer on a question that draws option
+    /// previews: the digit moved the cursor, Enter selects it once the
+    /// cursor sits on the answered option of the same prompt.
+    PreviewConfirm {
+        at: Instant,
+        ws_idx: usize,
+        pane_id: PaneId,
+        signature: String,
+        number: u32,
+        attempts_left: u8,
+    },
     /// One step of a preview scan: re-parse the pane, harvest the focused
     /// option's preview box, then send one arrow toward the next option.
     PreviewScanStep {
@@ -201,6 +239,7 @@ impl DeferredPaneWrite {
         match self {
             Self::Bytes { at, .. }
             | Self::MultiSelectSubmit { at, .. }
+            | Self::PreviewConfirm { at, .. }
             | Self::PreviewScanStep { at, .. } => *at,
         }
     }
@@ -563,6 +602,23 @@ impl App {
                         attempts_left,
                     );
                 }
+                DeferredPaneWrite::PreviewConfirm {
+                    ws_idx,
+                    pane_id,
+                    signature,
+                    number,
+                    attempts_left,
+                    ..
+                } => {
+                    if self.pane_user_input_recent(ws_idx, pane_id) {
+                        warn!(
+                            pane_id = ?pane_id,
+                            "preview answer confirm dropped: operator input is recent"
+                        );
+                        continue;
+                    }
+                    self.finish_preview_confirm(ws_idx, pane_id, signature, number, attempts_left);
+                }
                 DeferredPaneWrite::PreviewScanStep {
                     ws_idx, pane_id, ..
                 } => {
@@ -882,6 +938,31 @@ impl App {
         parts: &PromptDecisionParts,
         prompt: &ScreenPrompt,
     ) -> bool {
+        Self::same_prompt_shape(existing, parts, prompt)
+            && normalize_volatile(&existing.title) == normalize_volatile(&parts.title)
+    }
+
+    /// The same prompt with the top of its question scrolled off: after a
+    /// live handoff an agent pane starts blank and the agent repaints only
+    /// what fits, so a tall question reads from the middle. The pending
+    /// decision keeps the full question instead of being replaced by the
+    /// cut-off one.
+    fn same_prompt_cut_top(
+        existing: &Decision,
+        parts: &PromptDecisionParts,
+        prompt: &ScreenPrompt,
+    ) -> bool {
+        Self::same_prompt_shape(existing, parts, prompt)
+            && title_is_cut_top_of(&parts.title, &existing.title)
+    }
+
+    /// Everything but the question text matches: kind, answer channels and
+    /// option ids+labels+descriptions.
+    fn same_prompt_shape(
+        existing: &Decision,
+        parts: &PromptDecisionParts,
+        prompt: &ScreenPrompt,
+    ) -> bool {
         let same_descriptions = existing
             .options
             .iter()
@@ -895,7 +976,6 @@ impl App {
             && existing.multi_select == prompt.multi_select
             && Self::same_prompt_options(existing, parts)
             && same_descriptions
-            && normalize_volatile(&existing.title) == normalize_volatile(&parts.title)
     }
 
     /// Keep the watched pane's pending decision when the re-parsed prompt is
@@ -934,11 +1014,15 @@ impl App {
         }
         let churned =
             Self::same_prompt_options(&existing, &parts) && self.pane_is_flooding(pane_id);
-        if !Self::same_prompt_family(&existing, &parts, prompt) && !churned {
+        if !Self::same_prompt_family(&existing, &parts, prompt)
+            && !Self::same_prompt_cut_top(&existing, &parts, prompt)
+            && !churned
+        {
             return false;
         }
-        let mut updated = existing;
+        let mut updated = existing.clone();
         parts.apply_to(&mut updated);
+        keep_full_title(&existing, &mut updated);
         match store.update_pending(&updated) {
             Ok(true) => {
                 if let Some(watch) = self.screen_prompt_watches.get_mut(&pane_id) {
@@ -1037,6 +1121,7 @@ impl App {
                     .is_some_and(|origin| origin.pane_id == parts.public_id)
         }) {
             if Self::same_prompt_family(existing, &parts, prompt)
+                || Self::same_prompt_cut_top(existing, &parts, prompt)
                 || (Self::same_prompt_options(existing, &parts) && self.pane_is_flooding(pane_id))
             {
                 // Same prompt still pending — refresh the record in place
@@ -1045,6 +1130,7 @@ impl App {
                 // resolved+created pair per redraw.
                 let mut updated = existing.clone();
                 parts.apply_to(&mut updated);
+                keep_full_title(existing, &mut updated);
                 match store.update_pending(&updated) {
                     Ok(true) => {
                         self.screen_prompt_watches.insert(
@@ -1194,8 +1280,8 @@ impl App {
             return;
         }
 
-        // An explicit option wins over any accompanying text: free-text
-        // answers arrive without an option id and take the typing path.
+        // Free-text answers arrive without an option id and take the typing
+        // path. An option with accompanying text keeps both: see below.
         let Some(number) = answer
             .and_then(|answer| answer.option_id.as_deref())
             .and_then(|option_id| option_id.parse::<u32>().ok())
@@ -1229,6 +1315,61 @@ impl App {
                     })
                     .and_then(|label| crate::screen_prompt::shortcut_hint(label))
             });
+        let note = answer
+            .and_then(|answer| answer.text.as_deref())
+            .map(str::trim)
+            .filter(|text| !text.is_empty());
+        // A question with option previews moves the cursor on a digit and
+        // selects on Enter, so the digit is followed by a confirm pass.
+        let preview_confirm = match (&shortcut, prompt.as_ref()) {
+            (None, Some(prompt))
+                if !prompt.multi_select
+                    && (prompt.preview_box
+                        || decision
+                            .options
+                            .iter()
+                            .any(|option| option.preview.is_some())) =>
+            {
+                Some(prompt.signature())
+            }
+            _ => None,
+        };
+        // An option answered together with text must not drop the text. A
+        // plain question has no place for both, so the free-text slot gets
+        // the chosen option followed by the text.
+        if let (Some(note), None, None) = (note, &shortcut, &preview_confirm) {
+            let label = prompt
+                .as_ref()
+                .and_then(|prompt| prompt.choices.get(&number))
+                .cloned()
+                .or_else(|| {
+                    decision
+                        .options
+                        .iter()
+                        .find(|option| option.id == number.to_string())
+                        .map(|option| option.label.clone())
+                });
+            let has_slot = prompt
+                .as_ref()
+                .and_then(|prompt| prompt.free_text)
+                .is_some()
+                || self
+                    .screen_prompt_watches
+                    .get(&pane_id)
+                    .filter(|watch| watch.decision_id == decision.decision_id)
+                    .and_then(|watch| watch.free_text_slot)
+                    .is_some();
+            if let (Some(label), true) = (label, has_slot) {
+                let combined = format!("「{label}」を選択。{note}");
+                self.deliver_free_text(ws_idx, pane_id, decision, prompt.as_ref(), &combined);
+                return;
+            }
+            warn!(
+                pane_id = ?pane_id,
+                decision_id = %decision.decision_id,
+                "screen prompt has no free-text slot; the answer text is not delivered"
+            );
+        }
         let bytes = match shortcut {
             Some(OptionShortcut::Escape) => {
                 let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
@@ -1252,6 +1393,98 @@ impl App {
                 pane_id = ?pane_id,
                 error = %err,
                 "failed to send screen prompt answer"
+            );
+            return;
+        }
+        if let Some(signature) = preview_confirm {
+            // Preview questions carry a notes field: `n` opens it on the
+            // focused option and the note travels with the selection.
+            let mut confirm_at = Instant::now() + FREE_TEXT_ENTER_DELAY;
+            if let Some(note) = note {
+                let now = Instant::now();
+                self.deferred_pane_writes.push(DeferredPaneWrite::Bytes {
+                    at: now + FREE_TEXT_OPTION_DELAY,
+                    ws_idx,
+                    pane_id,
+                    bytes: Bytes::from_static(b"n"),
+                });
+                self.deferred_pane_writes.push(DeferredPaneWrite::Bytes {
+                    at: now + FREE_TEXT_OPTION_DELAY + FREE_TEXT_ENTER_DELAY,
+                    ws_idx,
+                    pane_id,
+                    bytes: Bytes::copy_from_slice(note.as_bytes()),
+                });
+                confirm_at = now + FREE_TEXT_OPTION_DELAY + FREE_TEXT_ENTER_DELAY * 2;
+            }
+            self.deferred_pane_writes
+                .push(DeferredPaneWrite::PreviewConfirm {
+                    at: confirm_at,
+                    ws_idx,
+                    pane_id,
+                    signature,
+                    number,
+                    attempts_left: PREVIEW_CONFIRM_RETRIES,
+                });
+        }
+    }
+
+    /// Press Enter on a preview-layout question once the cursor sits on the
+    /// answered option. A changed prompt means the answer already advanced
+    /// (or the screen moved on), so nothing is sent.
+    fn finish_preview_confirm(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        signature: String,
+        number: u32,
+        attempts_left: u8,
+    ) {
+        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+            warn!(pane_id = ?pane_id, "preview answer confirm dropped: pane gone");
+            return;
+        };
+        let screen = runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS);
+        let prompt = parse_screen_prompt(&screen);
+        let same_prompt = prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.signature() == signature);
+        let on_answer = same_prompt
+            && prompt
+                .as_ref()
+                .is_some_and(|prompt| prompt.focused == Some(Focused::Option(number)));
+        if on_answer {
+            let enter = Bytes::from(runtime.encode_terminal_key(crate::input::TerminalKey::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            )));
+            if let Err(err) = runtime.try_send_bytes(enter) {
+                warn!(
+                    pane_id = ?pane_id,
+                    error = %err,
+                    "failed to confirm preview answer"
+                );
+            }
+            return;
+        }
+        // A torn read or a cursor still redrawing is retried; a different
+        // parsed prompt is the screen moving on and ends the pass.
+        if (prompt.is_none() || same_prompt) && attempts_left > 0 {
+            self.deferred_pane_writes
+                .push(DeferredPaneWrite::PreviewConfirm {
+                    at: Instant::now() + MULTISELECT_SUBMIT_RETRY_DELAY,
+                    ws_idx,
+                    pane_id,
+                    signature,
+                    number,
+                    attempts_left: attempts_left - 1,
+                });
+            return;
+        }
+        if prompt.is_none() || same_prompt {
+            warn!(
+                pane_id = ?pane_id,
+                number,
+                "preview answer confirm dropped: cursor never reached the answer"
             );
         }
     }
@@ -2258,6 +2491,94 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         );
     }
 
+    const CC_TALL_QUESTION: &str = "\
+レビューで残った点が3つあります。
+① 鍵の更新の書き方が足りない。
+② 古い節番号が残っている。どうしますか？
+
+❯ 1. 直す
+     資料に書き足す
+  2. 直さない
+     このままにする
+  3. Type something.
+───────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+
+    /// The same question after a live handoff: the agent repainted only
+    /// the rows that fit, so the question starts mid-way.
+    const CC_TALL_QUESTION_CUT_TOP: &str = "\
+② 古い節番号が残っている。どうしますか？
+
+❯ 1. 直す
+     資料に書き足す
+  2. 直さない
+     このままにする
+  3. Type something.
+───────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+
+    #[tokio::test]
+    async fn handoff_cut_top_question_keeps_the_full_title_decision() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("cuttop", CC_TALL_QUESTION, true);
+        app.scan_screen_prompts(Instant::now());
+        let first = pending_decisions()[0].clone();
+        assert!(
+            first.title.starts_with("レビューで残った点"),
+            "{}",
+            first.title
+        );
+
+        // A live handoff drops the watches; the new server reads the
+        // repainted lower part of the same question.
+        app.screen_prompt_watches.clear();
+        let _ = replace_screen(&mut app, pane_id, CC_TALL_QUESTION_CUT_TOP);
+        app.scan_screen_prompts(Instant::now());
+        app.scan_screen_prompts(Instant::now());
+
+        let decisions = all_decisions();
+        assert_eq!(decisions.len(), 1, "no replacement decision");
+        assert_eq!(decisions[0].decision_id, first.decision_id);
+        assert_eq!(decisions[0].status, DecisionStatus::Pending);
+        assert_eq!(decisions[0].title, first.title);
+        assert_eq!(
+            app.screen_prompt_watches[&pane_id].decision_id,
+            first.decision_id
+        );
+    }
+
+    #[tokio::test]
+    async fn watched_question_redrawn_with_top_cut_keeps_the_full_title() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, _rx) = test_app("cuttop-watch", CC_TALL_QUESTION, true);
+        app.scan_screen_prompts(Instant::now());
+        let first = pending_decisions()[0].clone();
+
+        let _ = replace_screen(&mut app, pane_id, CC_TALL_QUESTION_CUT_TOP);
+        app.scan_screen_prompts(Instant::now());
+        app.scan_screen_prompts(Instant::now());
+
+        let decisions = all_decisions();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].decision_id, first.decision_id);
+        assert_eq!(decisions[0].title, first.title);
+    }
+
+    #[test]
+    fn cut_top_title_match_requires_a_strict_suffix() {
+        assert!(title_is_cut_top_of("② 古い節番号", "① 鍵\n② 古い節番号"));
+        assert!(title_is_cut_top_of("番号が残る", "古い節\n番号が残る"));
+        assert!(!title_is_cut_top_of("② 古い節番号", "② 古い節番号"));
+        assert!(!title_is_cut_top_of("", "① 鍵"));
+        assert!(!title_is_cut_top_of("別の質問", "① 鍵 ② 古い節番号"));
+    }
+
     #[tokio::test]
     async fn same_options_different_question_creates_new_decision() {
         let _guard = crate::config::lock_test_config_env();
@@ -2586,6 +2907,134 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         assert!(options[2].preview.is_none());
         assert!(!options[2].preview_unavailable);
         assert!(options.iter().all(|o| !o.preview_unavailable));
+    }
+
+    /// Walk a preview scan over the three-option fixture so the decision
+    /// exists, leaving the cursor back on option 1.
+    fn finish_three_option_preview_scan(
+        app: &mut App,
+        pane_id: PaneId,
+        rx: &mut tokio::sync::mpsc::Receiver<Bytes>,
+    ) -> Instant {
+        let mut now = Instant::now();
+        app.scan_screen_prompts(now);
+        for screen in [
+            CC_PREVIEW_OPTION_1,
+            CC_PREVIEW_OPTION_2,
+            CC_PREVIEW_OPTION_3,
+            CC_PREVIEW_OPTION_2,
+            CC_PREVIEW_OPTION_1,
+        ] {
+            *rx = replace_screen(app, pane_id, &crlf(screen));
+            now += Duration::from_secs(1);
+            app.flush_deferred_pane_writes(now);
+            while rx.try_recv().is_ok() {}
+        }
+        assert!(app.preview_scans.is_empty());
+        now
+    }
+
+    #[tokio::test]
+    async fn preview_answer_presses_enter_once_cursor_reaches_option() {
+        // Claude Code's preview layout moves the cursor on a digit and only
+        // selects on Enter; without Enter the question sat answered but
+        // unselected.
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("pvanswer", &crlf(CC_PREVIEW_OPTION_1), true);
+        let mut now = finish_three_option_preview_scan(&mut app, pane_id, &mut rx);
+        let decision_id = pending_decisions()[0].decision_id.clone();
+
+        answer(&mut app, &decision_id, Some("3"), None);
+        assert_eq!(rx.try_recv().expect("digit").as_ref(), b"3");
+
+        // The cursor has not redrawn yet: no Enter, the pass retries.
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert!(rx.try_recv().is_err(), "Enter must wait for the cursor");
+
+        // Cursor on option 3: Enter confirms it.
+        rx = replace_screen(&mut app, pane_id, &crlf(CC_PREVIEW_OPTION_3));
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert_eq!(rx.try_recv().expect("enter").as_ref(), b"\r");
+        assert!(app.deferred_pane_writes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn preview_answer_sends_no_enter_after_prompt_moves_on() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("pvmoved", &crlf(CC_PREVIEW_OPTION_1), true);
+        let mut now = finish_three_option_preview_scan(&mut app, pane_id, &mut rx);
+        let decision_id = pending_decisions()[0].decision_id.clone();
+
+        answer(&mut app, &decision_id, Some("2"), None);
+        assert_eq!(rx.try_recv().expect("digit").as_ref(), b"2");
+
+        // A different prompt is on screen: the confirm pass ends silently.
+        rx = replace_screen(&mut app, pane_id, PERM_LS);
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert!(rx.try_recv().is_err(), "no Enter into a different prompt");
+        assert!(app.deferred_pane_writes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn option_with_text_types_both_into_the_free_text_slot() {
+        // The dialog sends the chosen option together with typed text; a
+        // plain question has no notes field, so both go through the
+        // free-text slot instead of the text being dropped.
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, _pane_id, mut rx) = test_app("opttext", CC_QUESTION, true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+        answer(&mut app, &decision_id, Some("1"), Some("理由も読んで"));
+        assert_eq!(rx.try_recv().expect("slot").as_ref(), b"3");
+        app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
+        assert_eq!(
+            rx.try_recv().expect("text").as_ref(),
+            "「りんご」を選択。理由も読んで".as_bytes()
+        );
+        assert_eq!(rx.try_recv().expect("enter").as_ref(), b"\r");
+    }
+
+    #[tokio::test]
+    async fn preview_option_with_text_adds_a_note_before_enter() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("pvnote", &crlf(CC_PREVIEW_OPTION_1), true);
+        let mut now = finish_three_option_preview_scan(&mut app, pane_id, &mut rx);
+        let decision_id = pending_decisions()[0].decision_id.clone();
+        // Preview questions offer no free-text slot, so the API refuses text
+        // on them; deliver directly to exercise the notes path.
+        let decision = all_decisions()
+            .into_iter()
+            .find(|decision| decision.decision_id == decision_id)
+            .expect("decision");
+        let note = crate::api::schema::DecisionAnswer {
+            option_id: Some("2".to_string()),
+            option_ids: None,
+            text: Some("メモです".to_string()),
+            responder: None,
+            answered_unix_ms: 0,
+        };
+        app.deliver_screen_prompt_answer(0, pane_id, &decision, Some(&note));
+        assert_eq!(rx.try_recv().expect("digit").as_ref(), b"2");
+        rx = replace_screen(&mut app, pane_id, &crlf(CC_PREVIEW_OPTION_2));
+        now += Duration::from_secs(5);
+        app.flush_deferred_pane_writes(now);
+        assert_eq!(rx.try_recv().expect("n").as_ref(), b"n");
+        assert_eq!(rx.try_recv().expect("note").as_ref(), "メモです".as_bytes());
+        assert_eq!(rx.try_recv().expect("enter").as_ref(), b"\r");
+    }
+
+    #[tokio::test]
+    async fn plain_question_answer_sends_only_the_digit() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, _pane_id, mut rx) = test_app("plaindigit", CC_QUESTION, true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+        answer(&mut app, &decision_id, Some("2"), None);
+        assert_eq!(rx.try_recv().expect("digit").as_ref(), b"2");
+        assert!(app.deferred_pane_writes.is_empty());
     }
 
     #[tokio::test]
