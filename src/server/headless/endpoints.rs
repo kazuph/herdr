@@ -9,6 +9,7 @@ use crate::server::endpoint_transport::EndpointTransportEvent;
 mod lifecycle;
 #[cfg(unix)]
 pub(super) mod native_graphics;
+mod graphics_patch;
 mod pane_graphics;
 
 pub(super) struct EndpointClient {
@@ -22,6 +23,13 @@ pub(super) struct EndpointClient {
     surface_delta: bool,
     #[cfg(unix)]
     direct_graphics: bool,
+    /// The viewer rebuilds large images from changed rectangles.
+    graphics_patches: bool,
+    /// Last raw image sent to this viewer per source, the base of the next patch.
+    patch_bases: HashMap<
+        wire::SurfaceGraphicsSource,
+        (wire::SurfaceGraphicsAssetKey, std::sync::Arc<Vec<u8>>),
+    >,
     pixel_mouse: bool,
     mouse_capture: bool,
     outer_focus: Option<bool>,
@@ -276,6 +284,11 @@ impl HeadlessServer {
                         surface_delta: hello.surface_reuse && hello.surface_delta,
                         #[cfg(unix)]
                         direct_graphics: hello.direct_graphics,
+                        graphics_patches: hello
+                            .surface_codecs
+                            .iter()
+                            .any(|codec| codec == crate::protocol::endpoint::GRAPHICS_PATCH_CODEC),
+                        patch_bases: HashMap::new(),
                         graphics_delivery: Default::default(),
                         pixel_mouse: hello.pixel_mouse,
                         mouse_capture: hello.mouse_capture,
@@ -426,6 +439,11 @@ impl HeadlessServer {
                         if kind == crate::protocol::endpoint::PRESENTATION_EFFECTS_SYNC_KIND =>
                     {
                         self.sync_endpoint_presentation(client_id, Some(data))
+                    }
+                    ClientMessage::EndpointControl { kind, .. }
+                        if kind == crate::protocol::endpoint::GRAPHICS_PATCH_MISS_KIND =>
+                    {
+                        self.endpoint_graphics_patch_miss(client_id)
                     }
                     ClientMessage::ClientShellHostTheme { .. }
                     | ClientMessage::EndpointControl { .. } => false,
@@ -585,9 +603,14 @@ impl HeadlessServer {
                 let client = self.endpoint_clients.get(&client_id).expect("live client");
                 // A viewer that cannot read this server's image files (a saved
                 // machine viewed over ssh) receives large images as PNG.
-                let delivered = client
-                    .graphics_delivery
-                    .with_compression(!client.direct_graphics);
+                #[cfg(unix)]
+                let direct = client.direct_graphics;
+                #[cfg(not(unix))]
+                let direct = false;
+                let delivered = client.graphics_delivery.with_large_images(
+                    !direct && !client.graphics_patches,
+                    !direct && client.graphics_patches,
+                );
                 let (graphics, graphics_delivery) = crate::kitty_graphics::endpoint_scene::collect(
                     &self.app,
                     target,
@@ -633,6 +656,7 @@ impl HeadlessServer {
                     graphics.assets.len(),
                     graphics.assets.iter().map(|a| a.key.data_len).sum::<u64>()
                 );
+                let patches = self.endpoint_graphics_patches(client_id, &mut graphics);
                 let client = self.endpoint_clients.get(&client_id).expect("live client");
                 #[cfg(unix)]
                 tracing::debug!(
@@ -690,6 +714,13 @@ impl HeadlessServer {
                 } else {
                     None
                 };
+                // Patches precede the frame that places their images.
+                for patch in &patches.messages {
+                    let Ok(data) = framed(patch) else {
+                        continue;
+                    };
+                    batch.extend(data);
+                }
                 let Ok(data) = framed(&delta.or(reused).unwrap_or(message)) else {
                     continue;
                 };
@@ -712,6 +743,10 @@ impl HeadlessServer {
                     .get_mut(&client_id)
                     .expect("live client");
                 if client.writer.render.send_ordered(batch).is_ok() {
+                    // The images these patches carry are the next patches' bases.
+                    for (key, data) in patches.bases {
+                        client.patch_bases.insert(key.source.clone(), (key, data));
+                    }
                     if let Some((key, image_id, _)) = pane_prepared {
                         if let Some(gate) = self
                             .app

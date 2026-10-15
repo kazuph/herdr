@@ -87,7 +87,10 @@ pub(crate) fn connect(
         surface_delta: true,
         surface_scroll: true,
         snapshot_codecs: vec![endpoint::SNAPSHOT_CODEC_V1.into()],
-        surface_codecs: vec![endpoint::SURFACE_CODEC_V1.into()],
+        surface_codecs: vec![
+            endpoint::SURFACE_CODEC_V1.into(),
+            endpoint::GRAPHICS_PATCH_CODEC.into(),
+        ],
         input_codecs: vec![endpoint::INPUT_CODEC_V1.into()],
         blob_codecs: vec![endpoint::BLOB_CODEC_V1.into()],
     };

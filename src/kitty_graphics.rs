@@ -19,6 +19,7 @@ use crate::terminal::TerminalRuntimeRegistry;
 
 pub(crate) mod endpoint_client;
 pub(crate) mod endpoint_scene;
+pub(crate) mod patch;
 
 const KITTY_CHUNK_BYTES: usize = 3072;
 pub(crate) const HEADLESS_GRAPHICS_TRANSACTION_BUDGET: usize =

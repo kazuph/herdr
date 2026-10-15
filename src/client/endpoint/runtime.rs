@@ -663,9 +663,23 @@ impl EndpointRuntime {
                     message: ServerMessage::EndpointControl { kind, data },
                 });
             }
+            ServerMessage::EndpointControl { kind, data }
+                if kind == crate::protocol::endpoint::GRAPHICS_PATCH_KIND =>
+            {
+                match serde_json::from_str::<crate::kitty_graphics::patch::GraphicsPatch>(&data) {
+                    Ok(patch) => {
+                        if let Some(endpoint) = self.shell.endpoint_mut(&id) {
+                            endpoint.cache.receive_graphics_patch(generation, patch);
+                        }
+                    }
+                    Err(error) => tracing::warn!(%error, "invalid endpoint graphics patch"),
+                }
+            }
             ServerMessage::EndpointControl { .. } => {}
             ServerMessage::PaneSurface(surface) if active || pending_owner => {
-                if self.shell.receive_surface(&id, generation, surface.clone()) {
+                let received = self.shell.receive_surface(&id, generation, surface.clone());
+                self.request_whole_images(&id);
+                if received {
                     if let Some(pending) = self.pending.as_mut().filter(|_| pending_owner) {
                         // Activation must compare the accepted receive-time scene,
                         // including pixels retained from earlier bounded asset batches.
@@ -817,6 +831,27 @@ impl EndpointRuntime {
             );
         }
         update
+    }
+
+    /// Ask the server to resend whole any image whose patch could not be applied.
+    fn request_whole_images(&mut self, id: &ClientEndpointId) {
+        let Some(endpoint) = self.shell.endpoint_mut(id) else {
+            return;
+        };
+        let misses = endpoint.cache.take_graphics_patch_misses();
+        if misses.is_empty() {
+            return;
+        }
+        let Ok(data) = serde_json::to_string(&crate::kitty_graphics::patch::GraphicsPatchMiss {
+            key: misses[0].clone(),
+        }) else {
+            return;
+        };
+        let message = crate::protocol::endpoint_wire::ClientMessage::EndpointControl {
+            kind: crate::protocol::endpoint::GRAPHICS_PATCH_MISS_KIND.into(),
+            data,
+        };
+        let _ = self.endpoints.send_to(id, &message);
     }
 
     fn publish_surface(&mut self, id: &ClientEndpointId, generation: u64) {

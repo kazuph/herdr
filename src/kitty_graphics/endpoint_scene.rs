@@ -27,6 +27,9 @@ pub(crate) struct DeliveryCache {
     /// Raw image key -> the PNG key it was delivered as, so an unchanged image
     /// is not encoded again on every frame.
     compressed: HashMap<SurfaceGraphicsAssetKey, SurfaceGraphicsAssetKey>,
+    /// The viewer takes large raw images as patches; their raw size does not
+    /// count against the per-frame transfer budget.
+    patch_large: bool,
 }
 
 impl DeliveryCache {
@@ -34,12 +37,19 @@ impl DeliveryCache {
         self.pending
     }
 
-    /// The same delivery state, sending large raw images as PNG from now on.
-    pub(crate) fn with_compression(&self, compress_large: bool) -> Self {
+    /// The same delivery state for a viewer that receives large raw images as
+    /// PNG (`compress_large`) or as patches (`patch_large`).
+    pub(crate) fn with_large_images(&self, compress_large: bool, patch_large: bool) -> Self {
         Self {
             compress_large,
+            patch_large,
             ..self.clone()
         }
+    }
+
+    /// The viewer already holds this image.
+    pub(crate) fn contains(&self, key: &SurfaceGraphicsAssetKey) -> bool {
+        self.assets.contains(key)
     }
 }
 
@@ -324,6 +334,7 @@ pub(crate) fn collect(
         pending: false,
         compress_large: delivered.compress_large,
         compressed: HashMap::new(),
+        patch_large: delivered.patch_large,
     };
     deliver_assets(&mut scene, &mut next, data);
     // Remember the PNG form of every image the viewer still holds (shown or
@@ -350,9 +361,14 @@ fn deliver_assets(
         if next.assets.contains(&key) {
             continue;
         }
-        let encoded_size = super::image_transfer_estimated_size(
-            usize::try_from(key.data_len).unwrap_or(usize::MAX),
-        );
+        // A patched image costs its changed tiles, not its raw size.
+        let encoded_size = if next.patch_large && super::patch::patchable(&key) {
+            0
+        } else {
+            super::image_transfer_estimated_size(
+                usize::try_from(key.data_len).unwrap_or(usize::MAX),
+            )
+        };
         if encoded_size > super::HEADLESS_GRAPHICS_TRANSACTION_BUDGET {
             continue;
         }

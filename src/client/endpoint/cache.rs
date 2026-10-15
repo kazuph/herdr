@@ -1,7 +1,9 @@
 use crate::protocol::endpoint_projection::SnapshotJson;
 #[cfg(test)]
 use crate::protocol::endpoint_wire::ClientShellSnapshot;
-use crate::protocol::endpoint_wire::{ClientSurfaceSize, PaneSurfaceFrame};
+use crate::protocol::endpoint_wire::{
+    ClientSurfaceSize, PaneSurfaceFrame, SurfaceGraphicsAsset, SurfaceGraphicsAssetKey,
+};
 
 /// Cached metadata may stay visible offline. Its presence never grants input
 /// authority; only a live generation with an exact replacement pair does.
@@ -24,6 +26,10 @@ pub(crate) struct EndpointCache {
     snapshot: Option<SnapshotJson>,
     surface: Option<PaneSurfaceFrame>,
     boot: Option<String>,
+    /// Large-image patches waiting for the frame that places their image.
+    pending_graphics_patches: Vec<crate::kitty_graphics::patch::GraphicsPatch>,
+    /// Patched images that could not be rebuilt, to be requested whole.
+    graphics_patch_misses: Vec<SurfaceGraphicsAssetKey>,
 }
 
 impl EndpointCache {
@@ -36,6 +42,8 @@ impl EndpointCache {
         // Retain the old snapshot only for dimmed listing, without authority.
         self.boot = None;
         self.surface = None;
+        self.pending_graphics_patches.clear();
+        self.graphics_patch_misses.clear();
         true
     }
 
@@ -45,6 +53,8 @@ impl EndpointCache {
         }
         self.live = false;
         self.surface = None;
+        self.pending_graphics_patches.clear();
+        self.graphics_patch_misses.clear();
         true
     }
 
@@ -149,6 +159,9 @@ impl EndpointCache {
         {
             return false;
         }
+        // Rebuild large images the server sent as patches just before this frame, from
+        // the images the previous frame holds.
+        self.rebuild_patched_images(&mut surface);
         // Bounded uploads can arrive before activation permits a draw. Preserve received
         // pixels still owned by the next scene, as the upstream receive-time bank does.
         if let Some(previous) = self
@@ -184,6 +197,54 @@ impl EndpointCache {
         }
         self.surface = Some(surface);
         true
+    }
+
+    /// Hold a large-image patch until the frame that places its image arrives.
+    pub(crate) fn receive_graphics_patch(
+        &mut self,
+        generation: u64,
+        patch: crate::kitty_graphics::patch::GraphicsPatch,
+    ) {
+        if self.accepts(generation) {
+            self.pending_graphics_patches.push(patch);
+        }
+    }
+
+    /// Images whose patch could not be applied; the server resends them whole.
+    pub(crate) fn take_graphics_patch_misses(&mut self) -> Vec<SurfaceGraphicsAssetKey> {
+        std::mem::take(&mut self.graphics_patch_misses)
+    }
+
+    fn rebuild_patched_images(&mut self, surface: &mut PaneSurfaceFrame) {
+        for patch in std::mem::take(&mut self.pending_graphics_patches) {
+            if surface
+                .graphics
+                .assets
+                .iter()
+                .any(|asset| asset.key == patch.key)
+            {
+                continue;
+            }
+            let base = self
+                .surface
+                .as_ref()
+                .filter(|previous| previous.boot_id == surface.boot_id)
+                .and_then(|previous| {
+                    previous
+                        .graphics
+                        .assets
+                        .iter()
+                        .find(|asset| asset.key == patch.base)
+                })
+                .map(|asset| asset.data.as_slice());
+            match crate::kitty_graphics::patch::apply(base, &patch) {
+                Some(data) => surface.graphics.assets.push(SurfaceGraphicsAsset {
+                    key: patch.key,
+                    data,
+                }),
+                None => self.graphics_patch_misses.push(patch.key),
+            }
+        }
     }
 
     pub(crate) fn received_surface(&self, generation: u64) -> Option<&PaneSurfaceFrame> {
