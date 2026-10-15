@@ -81,6 +81,8 @@ pub(crate) struct ClientFrontend {
     pace_since: Option<Instant>,
     /// A repaint was requested while drawing was held.
     draw_deferred: bool,
+    /// Typed input waiting for a pane switch to settle.
+    held_input: input::HeldInput,
     keybinds: crate::config::LiveKeybindConfig,
     remote_image_paste_key: Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
     prefix: bool,
@@ -197,6 +199,7 @@ impl ClientFrontend {
             pace: crate::client::terminal_pace::TerminalPace::default(),
             pace_since: None,
             draw_deferred: false,
+            held_input: input::HeldInput::default(),
             keybinds: crate::config::LiveKeybindConfig {
                 prefix: config.prefix_key(),
                 keybinds: config.keybinds(),
@@ -652,6 +655,7 @@ impl ClientFrontend {
                     repaint || jobs_due || indicator_just_expired
                 }
             };
+            input::flush_held(self, Instant::now())?;
             if repaint {
                 self.draw_deferred = true;
             }

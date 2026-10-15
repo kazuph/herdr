@@ -910,6 +910,12 @@ impl EndpointRuntime {
         })
     }
 
+    /// True while a switch or a split snapshot/surface update is settling, so
+    /// input the lease rejects now is accepted once it completes.
+    pub(crate) fn input_settling(&self) -> bool {
+        self.pending.is_some() || self.awaiting_surface_pair()
+    }
+
     pub(crate) fn input_lease_current(&self) -> bool {
         if !self.endpoints.active_surface_available()
             || !self.pending_allows_source_input()
