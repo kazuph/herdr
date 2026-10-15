@@ -571,6 +571,9 @@ impl ClientFrontend {
             let repaint = tokio::select! {
                 event = self.runtime.reader_events.recv() => {
                     let Some(event) = event else { break };
+                    if let super::transport::EndpointReaderEvent::Message { endpoint_id, message, .. } = &event {
+                        tracing::info!("TBTRACE reader {:?} {:?}", endpoint_id, std::mem::discriminant(message.as_ref()));
+                    }
                     let update = self.runtime.receive(event, Instant::now());
                     self.update(update)?
                 }
@@ -640,6 +643,13 @@ impl ClientFrontend {
             if repaint {
                 self.draw_deferred = true;
             }
+            tracing::info!(
+                "TBTRACE loop awaiting={} lease={} deferred={} pace_wait={}",
+                self.runtime.awaiting_surface_pair(),
+                self.runtime.input_lease_current(),
+                self.draw_deferred,
+                self.pace.waiting()
+            );
             if self.draw_deferred && !self.pacing_holds_draw(Instant::now()) {
                 self.draw_deferred = false;
                 self.draw()?;
