@@ -1274,7 +1274,9 @@ mod display_regression_tests {
         assert!(runtime.shell.presented_surface_shows_images(&id, &surface));
         let mut other_boot = surface.clone();
         other_boot.boot_id = "another-boot".into();
-        assert!(!runtime.shell.presented_surface_shows_images(&id, &other_boot));
+        assert!(!runtime
+            .shell
+            .presented_surface_shows_images(&id, &other_boot));
         assert!(runtime.awaiting_surface_pair());
         surface.projection_revision = snapshot.revision;
         surface.surface_revision += 1;
