@@ -296,7 +296,7 @@ fn endpoint_selected_workspace_retains_original_accent_band() {
         chrome.collapsed_machines.insert(remote.clone());
         let collapsed = chrome.compute_view(&shell, 160, 60);
         assert_eq!(collapsed.machine_headers.len(), 1);
-        assert!(!collapsed.machine_headers[0].2);
+        assert!(!collapsed.machine_headers[0].3);
         assert!(!collapsed.hits.iter().any(
             |hit| matches!(&hit.target, ChromeTarget::Workspace(key) if key.endpoint == remote)
         ));
@@ -492,4 +492,80 @@ fn transparent_sidebar_cards_leave_the_card_fill_to_the_terminal() {
         0,
         "no card fill when cards are transparent"
     );
+}
+
+/// A machine parked at its Tailscale approval wait shows a red mark and the
+/// state on its heading, so it is visible while another machine is open.
+#[test]
+fn machine_heading_marks_a_machine_awaiting_approval() {
+    let config = crate::config::Config::default();
+    let mut chrome = ClientChrome::new(ChromeSettings::from_config(
+        &config,
+        Palette::catppuccin(),
+        None,
+    ));
+    let snapshot: crate::protocol::endpoint_wire::ClientShellSnapshot =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/upstream-gen1-endpoint-snapshot-v1.json"
+        )))
+        .unwrap();
+    let mut snapshot = crate::protocol::endpoint_projection::SnapshotJson::from(snapshot);
+    for workspace in &snapshot.snapshot.workspaces {
+        snapshot.workspace_facts.insert(
+            workspace.workspace_id.clone(),
+            crate::protocol::endpoint_projection::WorkspaceFacts {
+                git_space: None,
+                section: Some(crate::workspace::WorkspaceSection::ALL[0]),
+            },
+        );
+    }
+    let remote = ClientEndpointId::Ssh("band-owner".into());
+    let mut shell = ClientShellState::new();
+    shell.set_endpoint_catalog(&[crate::machine::MachineProfile {
+        id: "band-owner".into(),
+        label: "Remote".into(),
+        target: "unused".into(),
+        session: "owned".into(),
+        enabled: true,
+    }]);
+    for id in [ClientEndpointId::Local, remote.clone()] {
+        assert!(shell.begin_connection(&id, 1));
+        assert!(shell.receive_snapshot(&id, 1, snapshot.clone()));
+    }
+    let heading = |chrome: &mut ClientChrome, shell: &ClientShellState| {
+        let view = chrome.compute_view(shell, 160, 60);
+        let frame = chrome.render(&view);
+        let rect = view.machine_headers[0].0;
+        (rect.x..rect.right())
+            .map(|x| {
+                frame.cells[usize::from(rect.y) * usize::from(frame.width) + usize::from(x)]
+                    .symbol
+                    .clone()
+            })
+            .collect::<String>()
+    };
+    let online = heading(&mut chrome, &shell);
+    assert!(online.contains("Remote"), "{online:?}");
+    assert!(!online.contains('●'), "{online:?}");
+
+    shell.set_endpoint_status(&remote, ClientEndpointStatus::AwaitingApproval);
+    let parked = heading(&mut chrome, &shell);
+    assert!(parked.contains("● Remote approve"), "{parked:?}");
+    // No `[new]` (and no new-workspace hit) on a machine that is not online.
+    assert!(!parked.contains("[new]"), "{parked:?}");
+    let view = chrome.compute_view(&shell, 160, 60);
+    assert!(!view.hits.iter().any(|hit| matches!(&hit.target,
+        ChromeTarget::NewWorkspaceInSection(id, _) if id == &remote)));
+    // A long name keeps the mark even when the word no longer fits.
+    shell.set_endpoint_catalog(&[crate::machine::MachineProfile {
+        id: "band-owner".into(),
+        label: "とても長い名前の仕事用のマシン".into(),
+        target: "unused".into(),
+        session: "owned".into(),
+        enabled: true,
+    }]);
+    shell.set_endpoint_status(&remote, ClientEndpointStatus::AwaitingApproval);
+    let long = heading(&mut chrome, &shell);
+    assert!(long.starts_with("▾ ●"), "{long:?}");
 }

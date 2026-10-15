@@ -372,6 +372,23 @@ fn mouse_input(
             }
         }
         if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            // A row of a machine parked at its unapproved Tailscale wait has
+            // nothing live to open; the click retries the connection like
+            // the machine heading does.
+            let row_endpoint = match target {
+                ChromeTarget::Workspace(key)
+                | ChromeTarget::WorkspaceGroup(key)
+                | ChromeTarget::Agent(key)
+                | ChromeTarget::Tab(key)
+                | ChromeTarget::Job(key) => Some(key.endpoint.clone()),
+                _ => None,
+            };
+            if let Some(update) = row_endpoint
+                .and_then(|id| frontend.runtime.retry_parked_endpoint(&id, Instant::now()))
+            {
+                frontend.update(update)?;
+                return Ok(());
+            }
             if matches!(
                 target,
                 ChromeTarget::Workspace(_) | ChromeTarget::Tab(_) | ChromeTarget::Agent(_)

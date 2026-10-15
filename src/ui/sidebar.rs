@@ -2,7 +2,7 @@ pub(crate) mod tokens;
 
 use ratatui::{
     layout::{Alignment, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
@@ -210,22 +210,74 @@ pub(crate) fn render_workspace_group_header(
     p: &Palette,
     list_bottom: u16,
 ) {
+    render_workspace_group_header_with_status(frame, rect, label, None, expanded, p, list_bottom);
+}
+
+/// A connection state shown on a machine heading: a colored mark before the
+/// name and a short word after it, so a machine that is not online is
+/// visible without opening it.
+pub(crate) struct GroupHeaderStatus {
+    pub mark: &'static str,
+    pub text: &'static str,
+    pub color: Color,
+}
+
+pub(crate) fn render_workspace_group_header_with_status(
+    frame: &mut Frame,
+    rect: Rect,
+    label: &str,
+    status: Option<&GroupHeaderStatus>,
+    expanded: bool,
+    p: &Palette,
+    list_bottom: u16,
+) {
     let arrow = if expanded { "▾" } else { "▸" };
-    let new_rect = workspace_section_new_button_rect(rect);
+    // A machine that is not online cannot take a new workspace; its state
+    // takes the place of the `[new]` button.
+    let new_rect = if status.is_some() {
+        Rect::default()
+    } else {
+        workspace_section_new_button_rect(rect)
+    };
     let label_width = if new_rect == Rect::default() {
         rect.width
     } else {
         new_rect.x.saturating_sub(rect.x).saturating_sub(1)
     };
+    let mut spans = vec![
+        Span::styled(arrow, Style::default().fg(p.accent)),
+        Span::raw(" "),
+    ];
+    // Room left for the name after the arrow (and the mark).
+    let mut room = (label_width as usize).saturating_sub(2);
+    let mut suffix = None;
+    if let Some(status) = status {
+        spans.push(Span::styled(
+            status.mark,
+            Style::default()
+                .fg(status.color)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+        room = room.saturating_sub(display_width(status.mark) + 1);
+        // The word follows the name only when the name still fits beside
+        // it; the mark alone always stays.
+        let word = display_width(status.text) + 1;
+        if display_width(label) + word <= room {
+            room -= word;
+            suffix = Some(Span::styled(
+                format!(" {}", status.text),
+                Style::default().fg(status.color),
+            ));
+        }
+    }
+    spans.push(Span::styled(
+        truncate_end(label, room),
+        Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
+    ));
+    spans.extend(suffix);
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(arrow, Style::default().fg(p.accent)),
-            Span::raw(" "),
-            Span::styled(
-                truncate_end(label, label_width as usize),
-                Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-            ),
-        ])),
+        Paragraph::new(Line::from(spans)),
         Rect::new(rect.x, rect.y, label_width, rect.height),
     );
     if new_rect != Rect::default() {

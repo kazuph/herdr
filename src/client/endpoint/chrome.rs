@@ -187,7 +187,7 @@ pub(crate) struct ChromeView {
     pub(crate) backgrounds: Vec<(Rect, Style)>,
     pub(crate) surface: Option<crate::protocol::endpoint_wire::PaneSurfaceFrame>,
     workspace_selection_band: Option<Rect>,
-    machine_headers: Vec<(Rect, String, bool)>,
+    machine_headers: Vec<(Rect, String, ClientEndpointStatus, bool)>,
     pub(crate) section_headers: Vec<(crate::app::state::WorkspaceSectionHeaderArea, bool)>,
     pub(crate) pane_actions: crate::ui::PaneActionBarRects,
 }
@@ -649,11 +649,12 @@ impl ClientChrome {
                     facts,
                 );
             }
-            for (rect, label, expanded) in &view.machine_headers {
-                crate::ui::sidebar::render_workspace_group_header(
+            for (rect, label, status, expanded) in &view.machine_headers {
+                crate::ui::sidebar::render_workspace_group_header_with_status(
                     frame,
                     *rect,
                     label,
+                    header_status(*status, &self.settings.palette).as_ref(),
                     *expanded,
                     &self.settings.palette,
                     view.workspace_body.bottom(),
@@ -723,6 +724,24 @@ impl ClientChrome {
             .find(|hit| hit.rect.contains((column, row).into()))
             .map(|hit| &hit.target)
     }
+}
+
+/// The mark a machine heading carries while the machine is not online. A
+/// machine parked at an unapproved Tailscale wait needs the user and is red;
+/// the others are on their way back by themselves.
+fn header_status(
+    status: ClientEndpointStatus,
+    p: &crate::app::state::Palette,
+) -> Option<crate::ui::sidebar::GroupHeaderStatus> {
+    let (mark, text, color) = match status {
+        ClientEndpointStatus::Online => return None,
+        ClientEndpointStatus::AwaitingApproval => ("●", "approve", p.red),
+        ClientEndpointStatus::Connecting => ("◐", "connecting", p.yellow),
+        ClientEndpointStatus::Reconnecting => ("◐", "reconnecting", p.yellow),
+        ClientEndpointStatus::Attention => ("⚠", "attention", p.yellow),
+        ClientEndpointStatus::Disabled => ("·", "off", p.overlay0),
+    };
+    Some(crate::ui::sidebar::GroupHeaderStatus { mark, text, color })
 }
 
 pub(super) fn status_text(status: ClientEndpointStatus) -> &'static str {
