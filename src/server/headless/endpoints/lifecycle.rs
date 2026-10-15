@@ -149,7 +149,12 @@ impl HeadlessServer {
         self.retire_direct_graphics_for_client(client_id);
         let client = self.endpoint_clients.get_mut(&client_id)?;
         let changed = client.active != active;
-        tracing::info!("TBTRACE surface active={} changed={} client={}", active, changed, client_id);
+        tracing::info!(
+            "TBTRACE surface active={} changed={} client={}",
+            active,
+            changed,
+            client_id
+        );
         if !changed && !active {
             return Some(client.projection_revision);
         }

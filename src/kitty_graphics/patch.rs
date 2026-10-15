@@ -101,8 +101,7 @@ pub(crate) fn diff(
     next: &[u8],
 ) -> Option<GraphicsPatch> {
     let bpp = bytes_per_pixel(key.format)?;
-    if !compatible(base_key, key) || base.len() != next.len() || next.len() as u64 != key.data_len
-    {
+    if !compatible(base_key, key) || base.len() != next.len() || next.len() as u64 != key.data_len {
         return None;
     }
     let (width, height) = (key.image_width, key.image_height);
@@ -224,7 +223,8 @@ pub(crate) fn apply(base: Option<&[u8]>, patch: &GraphicsPatch) -> Option<Vec<u8
         let row_bytes = rect.width as usize * bpp;
         for row in 0..rect.height as usize {
             let dst = (rect.y as usize + row) * stride + rect.x as usize * bpp;
-            out[dst..dst + row_bytes].copy_from_slice(&pixels[row * row_bytes..(row + 1) * row_bytes]);
+            out[dst..dst + row_bytes]
+                .copy_from_slice(&pixels[row * row_bytes..(row + 1) * row_bytes]);
         }
     }
     Some(out)
@@ -322,7 +322,11 @@ mod tests {
         let patch = diff(&key(1, w, h), &base, &key(2, w, h), &next).expect("patch");
         assert!(!patch.rects.is_empty());
         let sent: usize = patch.rects.iter().map(|r| r.png.len()).sum();
-        assert!(sent < next.len() / 10, "patch {sent} bytes for {}", next.len());
+        assert!(
+            sent < next.len() / 10,
+            "patch {sent} bytes for {}",
+            next.len()
+        );
         assert_eq!(apply(Some(&base), &patch).expect("applies"), next);
     }
 

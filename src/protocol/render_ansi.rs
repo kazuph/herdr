@@ -80,8 +80,8 @@ impl BlitEncoder {
         suppress_visible_cursor: bool,
     ) -> EncodedBlit {
         let prev = self.last_frame.as_ref();
-        let cleared_screen = needs_screen_clear(frame, prev);
-        let full = force_full || cleared_screen;
+        let cleared_screen = needs_screen_clear(prev);
+        let full = force_full || needs_full_redraw(frame, prev);
         let prof_stats =
             crate::render_prof::enabled().then(|| compute_prof_blit_stats(frame, prev, full));
         let prof_started = crate::render_prof::timer();
@@ -438,9 +438,17 @@ fn blit_frame_to_with_cursor_memory_and_policy(
     );
 }
 
-/// True when painting `frame` over `prev` has to erase the whole screen first:
-/// nothing is known about the screen yet, or its size changed.
-fn needs_screen_clear(frame: &FrameData, prev: Option<&FrameData>) -> bool {
+/// True when painting over `prev` has to erase the whole screen first: nothing
+/// is known about the screen yet. A size change rewrites every cell instead,
+/// because erase-display would also delete the kitty images the terminal
+/// shows and a remote browser pane would stay blank until its next frame.
+fn needs_screen_clear(prev: Option<&FrameData>) -> bool {
+    prev.is_none()
+}
+
+/// True when every cell has to be written: the screen is unknown or its size
+/// changed, so a diff against `prev` would leave cells unwritten.
+fn needs_full_redraw(frame: &FrameData, prev: Option<&FrameData>) -> bool {
     prev.is_none_or(|p| p.width != frame.width || p.height != frame.height)
 }
 
@@ -458,9 +466,9 @@ fn blit_frame(
     repeat_ime_anchor: bool,
     suppress_visible_cursor: bool,
 ) {
-    let clear_screen = needs_screen_clear(frame, prev);
+    let clear_screen = needs_screen_clear(prev);
     // On first frame, size change, or a requested repaint, write every cell.
-    let full_redraw = clear_screen || repaint;
+    let full_redraw = needs_full_redraw(frame, prev) || repaint;
 
     // Ask terminals that support synchronized output to apply the whole frame
     // atomically. This keeps IMEs and cursor trackers from observing the
@@ -478,7 +486,7 @@ fn blit_frame(
 
     if full_redraw {
         // Write all cells, clearing the screen first only when its contents
-        // are unknown or its size changed.
+        // are unknown.
         if clear_screen {
             let _ = writer.write_all(b"\x1b[2J\x1b[H");
         }
@@ -1440,7 +1448,7 @@ mod tests {
     /// terminal shows: erase-display would delete them all (vendored Ghostty
     /// `eraseDisplay(.complete)`), blanking a browser pane until its next frame.
     #[test]
-    fn forced_repaint_keeps_terminal_images_and_only_resizes_clear_them() {
+    fn forced_repaint_and_resize_keep_terminal_images() {
         let mut terminal = crate::ghostty::Terminal::new(4, 2, 0).unwrap();
         let mut encoder = BlitEncoder::new();
         let first = make_frame(4, 2, vec![make_cell("a", 0, 0, 0); 8]);
@@ -1460,11 +1468,13 @@ mod tests {
         encoder.commit(repaint, encoded);
         assert_eq!(terminal.kitty_image_placements().unwrap().len(), 1);
 
+        terminal.resize(3, 2, 0, 0).unwrap();
         let resized = make_frame(3, 2, vec![make_cell("c", 0, 0, 0); 6]);
         let encoded = encoder.encode(&resized, false);
-        assert!(encoded.cleared_screen);
+        assert!(encoded.full && !encoded.cleared_screen);
+        assert!(!String::from_utf8_lossy(&encoded.bytes).contains("\x1b[2J"));
         terminal.write(&encoded.bytes);
-        assert!(terminal.kitty_image_placements().unwrap().is_empty());
+        assert_eq!(terminal.kitty_image_placements().unwrap().len(), 1);
     }
 
     #[test]
@@ -1477,9 +1487,14 @@ mod tests {
         blit_frame_to(&mut output, &curr, Some(&prev));
 
         let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str.matches('B').count(),
+            6,
+            "size change should rewrite every cell"
+        );
         assert!(
-            output_str.contains("\x1b[2J"),
-            "size change should trigger full redraw"
+            !output_str.contains("\x1b[2J"),
+            "size change must not erase the terminal's images"
         );
     }
 
