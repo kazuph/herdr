@@ -22,7 +22,9 @@ use crate::api::schema::{
 use crate::decision::{new_decision_id, unix_ms_now, DecisionStore, ResolveOutcome};
 use crate::detect::AgentState;
 use crate::layout::PaneId;
-use crate::screen_prompt::{normalize_volatile, parse_screen_prompt, OptionShortcut, ScreenPrompt};
+use crate::screen_prompt::{
+    normalize_volatile, parse_screen_prompt, Focused, OptionShortcut, ScreenPrompt,
+};
 
 /// Decision origin reason marking decisions created from pane screens.
 pub(crate) const SCREEN_PROMPT_REASON: &str = "screen_prompt";
@@ -53,6 +55,10 @@ const TOGGLE_KEY_DELAY: Duration = Duration::from_millis(150);
 /// a torn frame, so retry a few times before abandoning the answer.
 const MULTISELECT_SUBMIT_RETRIES: u8 = 4;
 const MULTISELECT_SUBMIT_RETRY_DELAY: Duration = Duration::from_millis(250);
+/// When a question draws option previews beside the list, Claude Code's
+/// option digits only move the cursor; Enter confirms. The confirm pass
+/// re-reads the prompt and retries torn frames a few times.
+const PREVIEW_CONFIRM_RETRIES: u8 = 4;
 /// How recent pane-bound input from outside the screen-prompt machinery —
 /// operator keystrokes, pastes, mouse reports, `pane send-*`/`agent send`
 /// API calls, attach/endpoint client input — must be before herdr stops
@@ -187,6 +193,17 @@ pub(crate) enum DeferredPaneWrite {
         /// toggle keys and the submit pass.
         attempts_left: u8,
     },
+    /// Confirm a single-select answer on a question that draws option
+    /// previews: the digit moved the cursor, Enter selects it once the
+    /// cursor sits on the answered option of the same prompt.
+    PreviewConfirm {
+        at: Instant,
+        ws_idx: usize,
+        pane_id: PaneId,
+        signature: String,
+        number: u32,
+        attempts_left: u8,
+    },
     /// One step of a preview scan: re-parse the pane, harvest the focused
     /// option's preview box, then send one arrow toward the next option.
     PreviewScanStep {
@@ -201,6 +218,7 @@ impl DeferredPaneWrite {
         match self {
             Self::Bytes { at, .. }
             | Self::MultiSelectSubmit { at, .. }
+            | Self::PreviewConfirm { at, .. }
             | Self::PreviewScanStep { at, .. } => *at,
         }
     }
@@ -562,6 +580,23 @@ impl App {
                         text.as_deref(),
                         attempts_left,
                     );
+                }
+                DeferredPaneWrite::PreviewConfirm {
+                    ws_idx,
+                    pane_id,
+                    signature,
+                    number,
+                    attempts_left,
+                    ..
+                } => {
+                    if self.pane_user_input_recent(ws_idx, pane_id) {
+                        warn!(
+                            pane_id = ?pane_id,
+                            "preview answer confirm dropped: operator input is recent"
+                        );
+                        continue;
+                    }
+                    self.finish_preview_confirm(ws_idx, pane_id, signature, number, attempts_left);
                 }
                 DeferredPaneWrite::PreviewScanStep {
                     ws_idx, pane_id, ..
@@ -1229,6 +1264,21 @@ impl App {
                     })
                     .and_then(|label| crate::screen_prompt::shortcut_hint(label))
             });
+        // A question with option previews moves the cursor on a digit and
+        // selects on Enter, so the digit is followed by a confirm pass.
+        let preview_confirm = match (&shortcut, prompt.as_ref()) {
+            (None, Some(prompt))
+                if !prompt.multi_select
+                    && (prompt.preview_box
+                        || decision
+                            .options
+                            .iter()
+                            .any(|option| option.preview.is_some())) =>
+            {
+                Some(prompt.signature())
+            }
+            _ => None,
+        };
         let bytes = match shortcut {
             Some(OptionShortcut::Escape) => {
                 let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
@@ -1252,6 +1302,79 @@ impl App {
                 pane_id = ?pane_id,
                 error = %err,
                 "failed to send screen prompt answer"
+            );
+            return;
+        }
+        if let Some(signature) = preview_confirm {
+            self.deferred_pane_writes
+                .push(DeferredPaneWrite::PreviewConfirm {
+                    at: Instant::now() + FREE_TEXT_ENTER_DELAY,
+                    ws_idx,
+                    pane_id,
+                    signature,
+                    number,
+                    attempts_left: PREVIEW_CONFIRM_RETRIES,
+                });
+        }
+    }
+
+    /// Press Enter on a preview-layout question once the cursor sits on the
+    /// answered option. A changed prompt means the answer already advanced
+    /// (or the screen moved on), so nothing is sent.
+    fn finish_preview_confirm(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        signature: String,
+        number: u32,
+        attempts_left: u8,
+    ) {
+        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+            warn!(pane_id = ?pane_id, "preview answer confirm dropped: pane gone");
+            return;
+        };
+        let screen = runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS);
+        let prompt = parse_screen_prompt(&screen);
+        let same_prompt = prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.signature() == signature);
+        let on_answer = same_prompt
+            && prompt
+                .as_ref()
+                .is_some_and(|prompt| prompt.focused == Some(Focused::Option(number)));
+        if on_answer {
+            let enter = Bytes::from(runtime.encode_terminal_key(crate::input::TerminalKey::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            )));
+            if let Err(err) = runtime.try_send_bytes(enter) {
+                warn!(
+                    pane_id = ?pane_id,
+                    error = %err,
+                    "failed to confirm preview answer"
+                );
+            }
+            return;
+        }
+        // A torn read or a cursor still redrawing is retried; a different
+        // parsed prompt is the screen moving on and ends the pass.
+        if (prompt.is_none() || same_prompt) && attempts_left > 0 {
+            self.deferred_pane_writes
+                .push(DeferredPaneWrite::PreviewConfirm {
+                    at: Instant::now() + MULTISELECT_SUBMIT_RETRY_DELAY,
+                    ws_idx,
+                    pane_id,
+                    signature,
+                    number,
+                    attempts_left: attempts_left - 1,
+                });
+            return;
+        }
+        if prompt.is_none() || same_prompt {
+            warn!(
+                pane_id = ?pane_id,
+                number,
+                "preview answer confirm dropped: cursor never reached the answer"
             );
         }
     }
@@ -2586,6 +2709,86 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         assert!(options[2].preview.is_none());
         assert!(!options[2].preview_unavailable);
         assert!(options.iter().all(|o| !o.preview_unavailable));
+    }
+
+    /// Walk a preview scan over the three-option fixture so the decision
+    /// exists, leaving the cursor back on option 1.
+    fn finish_three_option_preview_scan(
+        app: &mut App,
+        pane_id: PaneId,
+        rx: &mut tokio::sync::mpsc::Receiver<Bytes>,
+    ) -> Instant {
+        let mut now = Instant::now();
+        app.scan_screen_prompts(now);
+        for screen in [
+            CC_PREVIEW_OPTION_1,
+            CC_PREVIEW_OPTION_2,
+            CC_PREVIEW_OPTION_3,
+            CC_PREVIEW_OPTION_2,
+            CC_PREVIEW_OPTION_1,
+        ] {
+            *rx = replace_screen(app, pane_id, &crlf(screen));
+            now += Duration::from_secs(1);
+            app.flush_deferred_pane_writes(now);
+            while rx.try_recv().is_ok() {}
+        }
+        assert!(app.preview_scans.is_empty());
+        now
+    }
+
+    #[tokio::test]
+    async fn preview_answer_presses_enter_once_cursor_reaches_option() {
+        // Claude Code's preview layout moves the cursor on a digit and only
+        // selects on Enter; without Enter the question sat answered but
+        // unselected.
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("pvanswer", &crlf(CC_PREVIEW_OPTION_1), true);
+        let mut now = finish_three_option_preview_scan(&mut app, pane_id, &mut rx);
+        let decision_id = pending_decisions()[0].decision_id.clone();
+
+        answer(&mut app, &decision_id, Some("3"), None);
+        assert_eq!(rx.try_recv().expect("digit").as_ref(), b"3");
+
+        // The cursor has not redrawn yet: no Enter, the pass retries.
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert!(rx.try_recv().is_err(), "Enter must wait for the cursor");
+
+        // Cursor on option 3: Enter confirms it.
+        rx = replace_screen(&mut app, pane_id, &crlf(CC_PREVIEW_OPTION_3));
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert_eq!(rx.try_recv().expect("enter").as_ref(), b"\r");
+        assert!(app.deferred_pane_writes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn preview_answer_sends_no_enter_after_prompt_moves_on() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane_id, mut rx) = test_app("pvmoved", &crlf(CC_PREVIEW_OPTION_1), true);
+        let mut now = finish_three_option_preview_scan(&mut app, pane_id, &mut rx);
+        let decision_id = pending_decisions()[0].decision_id.clone();
+
+        answer(&mut app, &decision_id, Some("2"), None);
+        assert_eq!(rx.try_recv().expect("digit").as_ref(), b"2");
+
+        // A different prompt is on screen: the confirm pass ends silently.
+        rx = replace_screen(&mut app, pane_id, PERM_LS);
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert!(rx.try_recv().is_err(), "no Enter into a different prompt");
+        assert!(app.deferred_pane_writes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn plain_question_answer_sends_only_the_digit() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, _pane_id, mut rx) = test_app("plaindigit", CC_QUESTION, true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+        answer(&mut app, &decision_id, Some("2"), None);
+        assert_eq!(rx.try_recv().expect("digit").as_ref(), b"2");
+        assert!(app.deferred_pane_writes.is_empty());
     }
 
     #[tokio::test]
