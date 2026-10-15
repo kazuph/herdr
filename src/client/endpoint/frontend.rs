@@ -576,6 +576,9 @@ impl ClientFrontend {
         // borrow the frontend while the select arms use it.
         let pace = self.pace.clone();
         while !quit.load(Ordering::Acquire) && !self.detach_requested {
+            if self.runtime.awaiting_surface_pair() {
+                tracing::info!("TBTRACE gate closed queued={}", input_events.len());
+            }
             let repaint = tokio::select! {
                 event = self.runtime.reader_events.recv() => {
                     let Some(event) = event else { break };
@@ -594,6 +597,7 @@ impl ClientFrontend {
                 // surface update instead of consuming it while the lease rejects it.
                 event = input_events.recv(), if !self.runtime.awaiting_surface_pair() => {
                     let Some(event) = event else { break };
+                    tracing::info!("TBTRACE input recv queued={}", input_events.len());
                     input::handle(self, event)?
                 }
                 _ = async {
