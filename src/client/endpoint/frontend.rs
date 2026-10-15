@@ -46,6 +46,7 @@ mod right_click;
 mod selection;
 mod settings;
 mod startup;
+mod tab_drag;
 mod workspace_drag;
 mod worktrees;
 
@@ -103,6 +104,8 @@ pub(crate) struct ClientFrontend {
     sidebar_section_drag: bool,
     workspace_drag: Option<workspace_drag::WorkspaceDrag>,
     pending_workspace_drop: Option<(super::ResourceKey, workspace_drag::Drop, std::time::Instant)>,
+    tab_drag: Option<tab_drag::TabDrag>,
+    pending_tab_drop: Option<(super::ResourceKey, tab_drag::Drop, std::time::Instant)>,
     right_click: Option<right_click::Gesture>,
     host_theme: crate::terminal_theme::TerminalTheme,
     pointer_selection: selection::PointerSelection,
@@ -221,6 +224,8 @@ impl ClientFrontend {
             sidebar_section_drag: false,
             workspace_drag: None,
             pending_workspace_drop: None,
+            tab_drag: None,
+            pending_tab_drop: None,
             right_click: None,
             host_theme: crate::terminal_theme::TerminalTheme::default(),
             pointer_selection: selection::PointerSelection::default(),
@@ -387,6 +392,7 @@ impl ClientFrontend {
         right_click::observe(self)?;
         worktrees::observe(self);
         workspace_drag::observe(self)?;
+        tab_drag::observe(self)?;
         ascii::sync(self);
         Ok(repaint || machines_changed)
     }
@@ -424,6 +430,7 @@ impl ClientFrontend {
                 navigator::render(self, frame);
                 notification::render(self, frame);
                 workspace_drag::render(self, frame, &view);
+                tab_drag::render(self, frame, &view);
                 menu::render(self, frame, view.menu_launcher);
                 context::render(self, frame);
                 machines::render(self, frame);

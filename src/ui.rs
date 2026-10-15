@@ -142,7 +142,7 @@ pub(crate) use self::{
         MobileHeaderWorkspace, MobileSwitcherAreas, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
-    tabs::{compute_tab_bar_view, compute_tab_bar_view_for_widths, tab_chip_width},
+    tabs::{compute_tab_bar_view, compute_tab_bar_view_for_widths, tab_chip_line, tab_chip_width},
     widgets::{centered_popup_rect, modal_stack_areas},
 };
 use crate::app::state::ViewLayout;
@@ -1219,8 +1219,9 @@ mod tests {
 
         let auto_rect = app.view.tab_hit_areas[0];
         let custom_rect = app.view.tab_hit_areas[1];
-        let auto_style = buffer[(auto_rect.x + 1, auto_rect.y)].style();
-        let custom_style = buffer[(custom_rect.x + 1, custom_rect.y)].style();
+        // x+1 is the state icon; the name starts at x+3.
+        let auto_style = buffer[(auto_rect.x + 3, auto_rect.y)].style();
+        let custom_style = buffer[(custom_rect.x + 3, custom_rect.y)].style();
 
         assert_eq!(auto_style.fg, Some(app.palette.overlay0));
         assert!(auto_style.add_modifier.contains(Modifier::DIM));
@@ -1249,7 +1250,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
 
         let custom_rect = app.view.tab_hit_areas[1];
-        let custom_style = buffer[(custom_rect.x + 1, custom_rect.y)].style();
+        let custom_style = buffer[(custom_rect.x + 3, custom_rect.y)].style();
 
         assert_eq!(custom_style.bg, Some(app.palette.accent));
         assert_eq!(custom_style.fg, Some(app.palette.surface_dim));

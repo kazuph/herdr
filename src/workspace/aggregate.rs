@@ -26,6 +26,23 @@ pub struct PaneDetail {
 }
 
 impl Tab {
+    /// The tab's most urgent pane state, by the same priority the sidebar
+    /// uses for a whole space (blocked > done unseen > working > idle).
+    pub fn aggregate_state(
+        &self,
+        terminals: &HashMap<TerminalId, TerminalState>,
+    ) -> (AgentState, bool) {
+        self.panes
+            .values()
+            .filter_map(|pane| {
+                terminals
+                    .get(&pane.attached_terminal_id)
+                    .map(|terminal| (terminal.state, pane.seen))
+            })
+            .max_by_key(|(state, seen)| pane_attention_priority(*state, *seen))
+            .unwrap_or((AgentState::Unknown, true))
+    }
+
     pub fn has_working_pane(&self, terminals: &HashMap<TerminalId, TerminalState>) -> bool {
         self.panes.values().any(|pane| {
             terminals
