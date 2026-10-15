@@ -7,6 +7,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use super::catalog::{self, LiveCatalog};
+
+/// Longest wait for the host terminal to answer a pace probe before drawing
+/// anyway. Large images can take a terminal hundreds of milliseconds.
+const PACE_TIMEOUT: Duration = Duration::from_secs(1);
 use super::chrome::{ChromeSettings, ClientChrome};
 use super::handshake::EndpointConnectOptions;
 use super::runtime::{EndpointRuntime, RuntimeUpdate};
@@ -71,6 +75,12 @@ pub(crate) struct ClientFrontend {
     #[cfg(unix)]
     direct: direct::Direct,
     force_redraw: bool,
+    /// Holds draws while the host terminal is still decoding an image frame.
+    pace: crate::client::terminal_pace::TerminalPace,
+    /// When the unanswered pace probe was written.
+    pace_since: Option<Instant>,
+    /// A repaint was requested while drawing was held.
+    draw_deferred: bool,
     keybinds: crate::config::LiveKeybindConfig,
     remote_image_paste_key: Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
     prefix: bool,
@@ -184,6 +194,9 @@ impl ClientFrontend {
             #[cfg(unix)]
             direct: direct::Direct::default(),
             force_redraw: true,
+            pace: crate::client::terminal_pace::TerminalPace::default(),
+            pace_since: None,
+            draw_deferred: false,
             keybinds: crate::config::LiveKeybindConfig {
                 prefix: config.prefix_key(),
                 keybinds: config.keybinds(),
@@ -482,6 +495,12 @@ impl ClientFrontend {
             &encoded.bytes,
             &graphics_bytes,
         )?;
+        #[cfg(unix)]
+        if !graphics_bytes.is_empty() {
+            stdout.write_all(crate::client::terminal_pace::PROBE)?;
+            self.pace.sent();
+            self.pace_since.get_or_insert_with(Instant::now);
+        }
         stdout.flush()?;
         self.graphics = next_graphics;
         self.blit.commit(frame, encoded);
@@ -508,6 +527,26 @@ impl ClientFrontend {
         })
     }
 
+    /// True while the terminal has not answered the probe written after the
+    /// last image frame. A terminal that never answers is released after
+    /// [`PACE_TIMEOUT`] so drawing cannot stall.
+    fn pacing_holds_draw(&mut self, now: Instant) -> bool {
+        if !self.pace.waiting() {
+            self.pace_since = None;
+            return false;
+        }
+        if self
+            .pace_since
+            .is_some_and(|since| now.duration_since(since) >= PACE_TIMEOUT)
+        {
+            tracing::debug!("host terminal did not answer the pace probe; drawing anyway");
+            self.pace.give_up();
+            self.pace_since = None;
+            return false;
+        }
+        true
+    }
+
     async fn event_loop(
         &mut self,
         mut input_events: mpsc::Receiver<super::super::ClientLoopEvent>,
@@ -525,6 +564,9 @@ impl ClientFrontend {
         let mut animation = tokio::time::interval(crate::app::HEADLESS_ANIMATION_INTERVAL);
         animation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         self.draw()?;
+        // Probe replies wake the loop through this shared handle, which does not
+        // borrow the frontend while the select arms use it.
+        let pace = self.pace.clone();
         while !quit.load(Ordering::Acquire) && !self.detach_requested {
             let repaint = tokio::select! {
                 event = self.runtime.reader_events.recv() => {
@@ -579,6 +621,7 @@ impl ClientFrontend {
                         })
                     })
                 }
+                _ = pace.answered(), if self.draw_deferred => false,
                 _ = maintenance.tick() => {
                     let now = Instant::now();
                     let update = self.runtime.tick(now);
@@ -595,6 +638,10 @@ impl ClientFrontend {
                 }
             };
             if repaint {
+                self.draw_deferred = true;
+            }
+            if self.draw_deferred && !self.pacing_holds_draw(Instant::now()) {
+                self.draw_deferred = false;
                 self.draw()?;
             }
         }

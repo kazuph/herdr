@@ -16,6 +16,7 @@
 mod direct_graphics;
 pub(crate) mod endpoint;
 mod input;
+pub(crate) mod terminal_pace;
 
 use std::collections::HashSet;
 #[cfg(unix)]
@@ -1418,6 +1419,8 @@ async fn run_client_loop(
             stdin_direct_response,
             #[cfg(unix)]
             stdin_direct_response_active,
+            #[cfg(unix)]
+            terminal_pace::TerminalPace::default(),
         );
     });
 
