@@ -938,8 +938,16 @@ impl App {
         parts: &PromptDecisionParts,
         prompt: &ScreenPrompt,
     ) -> bool {
+        // Whitespace is layout, not content: decisions created before line
+        // breaks were kept still match their redrawn prompt.
+        let compact = |title: &str| -> String {
+            normalize_volatile(title)
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect()
+        };
         Self::same_prompt_shape(existing, parts, prompt)
-            && normalize_volatile(&existing.title) == normalize_volatile(&parts.title)
+            && compact(&existing.title) == compact(&parts.title)
     }
 
     /// The same prompt with the top of its question scrolled off: after a

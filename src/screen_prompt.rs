@@ -744,7 +744,15 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
             stop_at = j;
             break;
         }
-        if !stripped.is_empty() && !stripped.starts_with(['☐', '☒', '✔']) {
+        if stripped.is_empty() {
+            // A blank row inside the question is a paragraph break; keep one
+            // marker so the join can restore it.
+            if question_lines.first().is_some_and(|line| !line.is_empty()) {
+                question_lines.insert(0, "");
+            }
+            continue;
+        }
+        if !stripped.starts_with(['☐', '☒', '✔']) {
             if AUTO_DENY_RE.is_match(stripped) {
                 // The warning may wrap so its tail word (`session`) lands on
                 // its own row below; that fragment was already collected into
@@ -894,21 +902,43 @@ fn attach_option_continuations(
 /// text has no spaces, and a long token (a path, a file name) is broken
 /// mid-word when it reaches the edge — joining every row with a space put
 /// spaces inside words and file names ("report_neck4ey e.png", "かけ ら").
-/// A space goes back only between two ASCII rows where the upper row ended
-/// short of the wrap width, i.e. where an English word wrap removed it.
+/// A space goes back only between two ASCII rows where an English word wrap
+/// removed it. A row that ended while the next row's first word would still
+/// have fitted ended at a line break the agent wrote, and blank rows are
+/// paragraph breaks; both stay as `\n` so the question keeps its layout.
 fn join_wrapped_question(lines: &[String]) -> String {
     let width = |line: &str| unicode_width::UnicodeWidthStr::width(line);
     let wrap_width = lines.iter().map(|line| width(line)).max().unwrap_or(0);
     let mut out = String::new();
     let mut prev_width = 0;
     let mut prev_wide = false;
+    let mut paragraph_break = false;
     for line in lines {
         let line = line.trim();
         if line.is_empty() {
+            paragraph_break = !out.is_empty();
             continue;
         }
-        if let (Some(last), Some(first)) = (out.chars().last(), line.chars().next()) {
+        if paragraph_break {
+            // A blank row is a paragraph break the agent wrote.
+            out.push_str("\n\n");
+            paragraph_break = false;
+        } else if let (Some(last), Some(first)) = (out.chars().last(), line.chars().next()) {
             let both_ascii = last.is_ascii() && first.is_ascii();
+            // Claude Code wraps at spaces: a space-free run (a Japanese
+            // sentence included) moves to the next row whole, and one wider
+            // than a row is then broken at the edge. When the next row's
+            // first run would have fitted on the upper row, that row ended at
+            // a line break the agent wrote: keep it.
+            let head = line.split(' ').next().unwrap_or("");
+            let gap = usize::from(both_ascii);
+            if prev_width + gap + width(head) <= wrap_width {
+                out.push('\n');
+                out.push_str(line);
+                prev_width = width(line);
+                prev_wide = !line.is_ascii();
+                continue;
+            }
             let word_char = |c: char| c.is_ascii_alphanumeric() || "_-./=;:".contains(c);
             // A row ends mid-word only where the renderer had no space to
             // break at: the word is wider than a row, or the row is a run
@@ -1592,7 +1622,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
             .is_some_and(|label| label.starts_with("Yes, trust")));
         assert_eq!(
             trust.title(),
-            "Do you trust the authors of this directory? For security, devin should not be run in directories with untrusted content."
+            "Do you trust the authors of this directory?\nFor security, devin should not be run in directories with untrusted content."
         );
     }
 
@@ -1744,6 +1774,59 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         assert!(prompt.title().starts_with("Bash("));
     }
 
+    /// Verbatim Claude Code 2.1.300 frame (54-column pane) of a question
+    /// written with line breaks and blank lines.
+    const CC_MULTILINE_QUESTION: &str = "\
+ ☐ 改行
+
+│ gtx で tb (terminal-browser)
+│ が本当に動くかを確かめますか？ 今の状態: gtx
+│ には画像を外の端末へ中継する仕組みが入っています。
+│ ① 右に案の欄がある形の質問で止まる件。
+│
+│ ② 選択肢を選んだまま自由入力に書いても送られない件:
+│ 原因は herdr 側だったの。ダイアログは両方送ってたけ
+│ ど、ペインに打ち込むときに文を捨ててた。
+│
+│ ③ short line
+│ This is an English sentence that should wrap across
+│ several rows of the pane nicely.
+
+❯ 1. はい
+  2. いいえ
+  3. Type something.
+──────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+
+    #[test]
+    fn question_keeps_line_breaks_the_agent_wrote() {
+        let prompt = parse_screen_prompt(CC_MULTILINE_QUESTION).expect("prompt");
+        let title = prompt.title();
+        // Paragraph breaks (blank rows) and a short row followed by a word
+        // that would have fitted stay as line breaks.
+        assert!(
+            title.contains("① 右に案の欄がある形の質問で止まる件。\n\n② 選択肢"),
+            "{title:?}"
+        );
+        assert!(
+            title.contains("文を捨ててた。\n\n③ short line\nThis is an English"),
+            "{title:?}"
+        );
+        // Rows the renderer wrapped still join back into one line.
+        assert!(
+            title.contains("gtx で tb (terminal-browser)が本当に動くか"),
+            "{title:?}"
+        );
+        assert!(title.contains("送ってたけど、ペインに"), "{title:?}");
+        assert!(
+            title.contains("should wrap across several rows"),
+            "{title:?}"
+        );
+    }
+
     #[test]
     fn wrapped_question_rejoins_without_spaces_inside_words() {
         // Claude Code hard-wraps a long Japanese question at the pane edge,
@@ -1782,8 +1865,8 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         let english = "\
  ☐ Plan
 
- Should we refresh the cache
- before the deploy starts and keeps everything consistent?
+ Should we refresh the cache before the deploy starts and
+ keeps everything consistent?
 
  ❯ 1. Yes
    2. No
@@ -1944,7 +2027,7 @@ Esc to cancel
              do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done"
         ));
         assert!(title.contains("Dangerous rm operation on possibly-empty"));
-        assert!(title.contains("or use a literal path) Do you want to proceed?"));
+        assert!(title.contains("or use a literal path)\n\nDo you want to proceed?"));
         assert!(!title.contains("automatically deny"));
         assert!(!title.contains("unattended"));
         assert_eq!(
