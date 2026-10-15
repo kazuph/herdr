@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 543,
+    "active_contract_count": 544,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -9042,7 +9042,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2244",
+        "SPEC.md:2245",
         "src/main.rs:544",
         "src/machine.rs:419"
       ],
@@ -9069,7 +9069,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2245",
+        "SPEC.md:2246",
         "src/machine.rs:155"
       ],
       "test_status": [
@@ -9095,7 +9095,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2246",
+        "SPEC.md:2247",
         "src/main.rs:544",
         "src/machine.rs:295"
       ],
@@ -10136,7 +10136,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2262",
+        "SPEC.md:2263",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ],
       "test_status": [
@@ -10162,7 +10162,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2263",
+        "SPEC.md:2264",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ],
       "test_status": [
@@ -10177,37 +10177,6 @@
     },
     {
       "contract_id": "G11-b0e1f9ac00",
-      "dimensions": [
-        "reconnect backoff",
-        "target-first activation rollback",
-        "notice placement",
-        "resize without handoff"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_supervisor_flapping_backoff_attention_and_local_recovery_are_independent",
-        "rust_test_target:switching_to_an_unresponsive_machine_keeps_the_source_presenting_and_typing",
-        "rust_test_target:notice_area_sits_between_copy_and_layout_buttons",
-        "rust_test_target:a_resize_is_sent_to_the_presenting_endpoint_without_a_handoff",
-        "drift_source_anchor:src/client/endpoint/supervisor.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:2279",
-        "src/client/endpoint/supervisor.rs:310",
-        "src/client/endpoint/activation.rs:14"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "unrepresented_dimensions": [
-        "Timing and rollback are unit-covered; the 2026-10-07 harness screenshots of a hung machine are manual evidence"
-      ]
-    },
-    {
-      "contract_id": "G11-ab6a60904a",
       "dimensions": [
         "reconnect backoff",
         "target-first activation rollback",
@@ -10238,7 +10207,7 @@
       ]
     },
     {
-      "contract_id": "G11-9174eaff1d",
+      "contract_id": "G11-ab6a60904a",
       "dimensions": [
         "reconnect backoff",
         "target-first activation rollback",
@@ -10269,7 +10238,7 @@
       ]
     },
     {
-      "contract_id": "G11-8990717e9b",
+      "contract_id": "G11-9174eaff1d",
       "dimensions": [
         "reconnect backoff",
         "target-first activation rollback",
@@ -10300,6 +10269,37 @@
       ]
     },
     {
+      "contract_id": "G11-8990717e9b",
+      "dimensions": [
+        "reconnect backoff",
+        "target-first activation rollback",
+        "notice placement",
+        "resize without handoff"
+      ],
+      "verification_methods": [
+        "rust_test_target:endpoint_supervisor_flapping_backoff_attention_and_local_recovery_are_independent",
+        "rust_test_target:switching_to_an_unresponsive_machine_keeps_the_source_presenting_and_typing",
+        "rust_test_target:notice_area_sits_between_copy_and_layout_buttons",
+        "rust_test_target:a_resize_is_sent_to_the_presenting_endpoint_without_a_handoff",
+        "drift_source_anchor:src/client/endpoint/supervisor.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2283",
+        "src/client/endpoint/supervisor.rs:310",
+        "src/client/endpoint/activation.rs:14"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Timing and rollback are unit-covered; the 2026-10-07 harness screenshots of a hung machine are manual evidence"
+      ]
+    },
+    {
       "contract_id": "G11-dbef70a87c",
       "dimensions": [
         "saved ssh reconnect keeps one ssh process through a tailscale check",
@@ -10314,7 +10314,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2283",
+        "SPEC.md:2284",
         "src/remote/saved.rs:98",
         "src/remote/saved/process.rs:23"
       ],
@@ -10355,7 +10355,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2284",
+        "SPEC.md:2285",
         "src/remote.rs:37",
         "src/remote/saved/approval.rs:45",
         "src/client/endpoint/supervisor.rs:181",
@@ -10387,7 +10387,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2285",
+        "SPEC.md:2286",
         "src/remote/saved/process.rs:119",
         "src/client/endpoint/supervisor.rs:181"
       ],
@@ -10414,7 +10414,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2298",
+        "SPEC.md:2299",
         "src/client/endpoint/frontend/machines.rs:129"
       ],
       "test_status": [
@@ -10440,7 +10440,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2299",
+        "SPEC.md:2300",
         "src/client/endpoint/frontend/machines.rs:129"
       ],
       "test_status": [
@@ -10472,7 +10472,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2323",
+        "SPEC.md:2324",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10505,7 +10505,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2330",
+        "SPEC.md:2331",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10538,7 +10538,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2331",
+        "SPEC.md:2332",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10571,7 +10571,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2333",
+        "SPEC.md:2334",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10604,7 +10604,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2334",
+        "SPEC.md:2335",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10762,7 +10762,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2329",
+        "SPEC.md:2330",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10935,7 +10935,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2324",
+        "SPEC.md:2325",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -10971,7 +10971,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2328",
+        "SPEC.md:2329",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11149,7 +11149,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2325",
+        "SPEC.md:2326",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11243,7 +11243,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2326",
+        "SPEC.md:2327",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11279,7 +11279,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2327",
+        "SPEC.md:2328",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11315,7 +11315,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2332",
+        "SPEC.md:2333",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ],
@@ -11817,7 +11817,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2350",
+        "SPEC.md:2351",
         "src/guard/judge.rs:200",
         "src/cli/guard.rs:36"
       ],
@@ -11847,7 +11847,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2351",
+        "SPEC.md:2352",
         "src/guard/judge.rs:507",
         "src/guard/judge.rs:586"
       ],
@@ -11875,7 +11875,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2352",
+        "SPEC.md:2353",
         "src/guard/judge.rs:672",
         "src/guard/judge.rs:740"
       ],
@@ -11905,7 +11905,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2353",
+        "SPEC.md:2354",
         "src/guard/judge.rs:865",
         "src/guard/judge.rs:1158"
       ],
@@ -11933,7 +11933,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2354",
+        "SPEC.md:2355",
         "src/guard/judge.rs:367",
         "src/guard/judge.rs:430"
       ],
@@ -11967,7 +11967,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2355",
+        "SPEC.md:2356",
         "src/guard/judge.rs:1202",
         "src/guard/judge.rs:1643"
       ],
@@ -11995,7 +11995,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2356",
+        "SPEC.md:2357",
         "src/guard/judge.rs:265",
         "src/guard/judge.rs:1524"
       ],
@@ -12022,7 +12022,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2357",
+        "SPEC.md:2358",
         "src/config/model.rs:332",
         "src/guard/judge.rs:359"
       ],
@@ -12048,7 +12048,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2372",
+        "SPEC.md:2373",
         "src/guard/assets.rs:42"
       ],
       "test_status": [
@@ -12076,7 +12076,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2373",
+        "SPEC.md:2374",
         "src/pane.rs:1920",
         "src/guard/assets.rs:42"
       ],
@@ -12105,7 +12105,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2381",
+        "SPEC.md:2382",
         "src/guard/marker.rs:49",
         "src/cli/guard.rs:36"
       ],
@@ -12133,7 +12133,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2382",
+        "SPEC.md:2383",
         "src/app/guard.rs:14",
         "src/guard/marker.rs:93"
       ],
@@ -12160,7 +12160,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2383",
+        "SPEC.md:2384",
         "src/cli/guard.rs:36"
       ],
       "test_status": [
@@ -12187,7 +12187,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2384",
+        "SPEC.md:2385",
         "src/guard/record.rs:142"
       ],
       "test_status": [
@@ -12216,7 +12216,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2392",
+        "SPEC.md:2393",
         "src/config/model.rs:332",
         "src/guard/assets.rs:47",
         "src/cli/guard.rs:150"
@@ -12244,7 +12244,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2393",
+        "SPEC.md:2394",
         "src/cli/guard.rs:188"
       ],
       "test_status": [
@@ -12272,7 +12272,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2394",
+        "SPEC.md:2395",
         "src/guard/enforce.rs:150",
         "src/cli/guard.rs:211"
       ],
@@ -12303,7 +12303,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2395",
+        "SPEC.md:2396",
         "src/guard/enforce.rs:60",
         "src/cli/guard.rs:228"
       ],
@@ -12335,7 +12335,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2396",
+        "SPEC.md:2397",
         "src/guard/enforce.rs:100",
         "src/cli/guard.rs:232",
         "src/cli/decision.rs:60"
@@ -12369,7 +12369,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2397",
+        "SPEC.md:2398",
         "src/guard/enforce.rs:170",
         "src/guard/judge.rs:1550",
         "src/cli/guard.rs:232"
@@ -12397,7 +12397,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2398",
+        "SPEC.md:2399",
         "src/guard/judge.rs:1524",
         "src/cli/guard.rs:240"
       ],
@@ -12424,7 +12424,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2399",
+        "SPEC.md:2400",
         "src/guard/assets.rs:62",
         "src/guard/mod.rs:40"
       ],
@@ -12452,7 +12452,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2407",
+        "SPEC.md:2408",
         "src/guard/compare.rs:49"
       ],
       "test_status": [
@@ -12476,7 +12476,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2408",
+        "SPEC.md:2409",
         "src/guard/compare.rs:173"
       ],
       "test_status": [
@@ -12504,7 +12504,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2409",
+        "SPEC.md:2410",
         "src/guard/record.rs:299"
       ],
       "test_status": [
@@ -12531,7 +12531,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2365",
+        "SPEC.md:2366",
         "src/guard/assets.rs:160",
         "src/guard/assets.rs:244",
         "src/cli/guard.rs:97"
@@ -12562,7 +12562,7 @@
         "rust_test_target:login_zsh_keeps_shim_first_after_startup"
       ],
       "source_anchors": [
-        "SPEC.md:2366",
+        "SPEC.md:2367",
         "src/guard/assets.rs:256",
         "src/guard/assets.rs:331",
         "src/guard/assets.rs:92"
@@ -12593,7 +12593,7 @@
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2367",
+        "SPEC.md:2368",
         "src/guard/assets.rs:269",
         "src/guard/assets.rs:288",
         "src/guard/assets.rs:337"
@@ -12827,7 +12827,7 @@
         "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
       ],
       "source_anchors": [
-        "SPEC.md:2368",
+        "SPEC.md:2369",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
@@ -12858,7 +12858,7 @@
         "platform_live_acceptance:macos_real_claude_guard_coverage_2026_10_13"
       ],
       "source_anchors": [
-        "SPEC.md:2369",
+        "SPEC.md:2370",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30"
@@ -12892,7 +12892,7 @@
         "rust_test_target:guard_markers_require_effective_launch_coverage"
       ],
       "source_anchors": [
-        "SPEC.md:2370",
+        "SPEC.md:2371",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
@@ -12989,7 +12989,7 @@
         "platform_live_acceptance:macos_legacy_marker_handoff_2026_10_13"
       ],
       "source_anchors": [
-        "SPEC.md:2371",
+        "SPEC.md:2372",
         "src/app/guard.rs:77"
       ],
       "test_status": [
@@ -14049,6 +14049,29 @@
       ],
       "unrepresented_dimensions": [
         "Fixture hard-wraps the question at 40 cells like Claude Code; a live narrow-pane capture is not part of the test"
+      ]
+    },
+    {
+      "contract_id": "G11-7431759321",
+      "dimensions": [
+        "shared ssh connection per machine"
+      ],
+      "verification_methods": [
+        "rust_test_target:routed_argv_shape_is_exact",
+        "drift_source_anchor:src/machine.rs"
+      ],
+      "source_anchors": [
+        "SPEC.md:2244",
+        "src/machine.rs:420"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Tailscale SSH re-approval cannot be forced in tests; connection sharing was checked live against a saved machine (second command rode the first connection), and answer resend on a Tailscale approval URL is covered by the Slack and Mac dialog plugin tests"
       ]
     }
   ]

@@ -407,15 +407,46 @@ pub(crate) fn build_routed_argv(
         profile.session.clone(),
     ];
     remote_argv.extend(subcommand_args.iter().cloned());
-    vec![
+    let mut argv = vec![
         "ssh".to_string(),
         "-o".to_string(),
         "BatchMode=yes".to_string(),
         "-o".to_string(),
         format!("ConnectTimeout={SSH_CONNECT_TIMEOUT_SECS}"),
+    ];
+    argv.extend(ssh_multiplex_options());
+    argv.extend([
         "--".to_string(),
         profile.target.clone(),
         posix_shell_join(&remote_argv),
+    ]);
+    argv
+}
+
+/// Routed commands share one SSH connection per saved machine. The
+/// long-lived `decision watch --all-machines` stream holds it open, so a
+/// `decision answer --machine` rides the already-authenticated connection
+/// instead of dialing a new one — a new connection to a Tailscale SSH host
+/// in `check` mode can demand re-approval and fail while the watch stays
+/// connected, which dropped answers given in Slack. No ControlPersist: a
+/// backgrounded master would keep the caller's output pipes open, so the
+/// shared connection lives exactly as long as the command that opened it.
+fn ssh_multiplex_options() -> Vec<String> {
+    let dir = crate::config::config_dir().join("ssh-mux");
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(%error, dir = %dir.display(), "cannot create the shared SSH connection directory");
+        return Vec::new();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    vec![
+        "-o".to_string(),
+        "ControlMaster=auto".to_string(),
+        "-o".to_string(),
+        format!("ControlPath={}/%C", dir.display()),
     ]
 }
 
@@ -995,18 +1026,14 @@ mod tests {
         let profile = test_route_profile();
         let argv = build_routed_argv(&profile, &["agent".to_string(), "list".to_string()]);
         assert_eq!(
-            &argv[..7],
-            [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=15",
-                "--",
-                "ssh.example.com",
-            ]
+            &argv[..5],
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
         );
-        assert_eq!(argv.len(), 8);
+        // One shared connection per machine (see ssh_multiplex_options).
+        assert_eq!(&argv[5..7], ["-o", "ControlMaster=auto"]);
+        assert!(argv[8].starts_with("ControlPath=") && argv[8].ends_with("/ssh-mux/%C"));
+        assert_eq!(&argv[9..11], ["--", "ssh.example.com"]);
+        assert_eq!(argv.len(), 12);
         let remote = posix_shell_split(argv.last().expect("remote command")).unwrap();
         assert_eq!(remote, ["herdr", "--session", "work", "agent", "list"]);
         assert!(ROUTABLE_SUBCOMMANDS.contains(&"agent"));
@@ -1143,7 +1170,7 @@ mod tests {
                 body.to_string(),
             ];
             let argv = build_routed_argv(&profile, &subcommand);
-            assert_eq!(argv.len(), 8, "remote command must be one ssh argument");
+            assert_eq!(argv.len(), 12, "remote command must be one ssh argument");
             let remote_command = argv.last().expect("remote command");
             let expected = ["herdr", "--session", "work", "agent", "send", "p1", body];
             assert_eq!(posix_shell_split(remote_command).unwrap(), expected);

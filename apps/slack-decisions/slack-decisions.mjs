@@ -17,6 +17,10 @@ import process from "node:process";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
+// Resending an answer a saved machine could not take yet (Tailscale SSH
+// re-approval): every 15 s for up to 30 minutes, until the decision resolves.
+const ANSWER_RETRY_MS = 15_000;
+const ANSWER_RETRY_LIMIT = 120;
 const PLUGIN_ID = "kazuph.slack-decisions";
 const RUN_LABEL = "slack-decisions";
 const DEFAULT_ALLOWED_USER = "kazuph";
@@ -1258,6 +1262,7 @@ export class SlackDecisionsDaemon {
         postTimer: null,
       };
     entry.resolved = true;
+    clearTimeout(entry.answerRetryTimer);
     if (entry.postTimer) clearTimeout(entry.postTimer);
     const status = decision.status || "answered";
     if (entry.post) {
@@ -1464,6 +1469,32 @@ export class SlackDecisionsDaemon {
     const combined = `${result.stdout}\n${result.stderr}`;
     if (combined.includes("decision_already_resolved")) {
       await this.postThreadNote(entry, "ほかの窓口で決定済みでした。");
+      return;
+    }
+    const approvalUrl = combined.match(/https:\/\/login\.tailscale\.com\/\S+/)?.[0];
+    if (approvalUrl && !entry.resolved) {
+      // The saved machine wants a Tailscale SSH re-approval for a new
+      // connection. Keep the answer and resend it until it goes through or
+      // the decision resolves, and tell the user where to approve.
+      entry.answerRetries = (entry.answerRetries || 0) + 1;
+      this.log(`回答を送れません (${did}): Tailscale の承認待ち ${approvalUrl}（${entry.answerRetries}回目）`);
+      if (entry.lastApprovalUrl !== approvalUrl) {
+        entry.lastApprovalUrl = approvalUrl;
+        const machine = entry.machine?.label || entry.machineId;
+        await this.postThreadNote(
+          entry,
+          `回答はまだ ${machine} に届いていません。${machine} への接続に Tailscale の承認が必要です: ${approvalUrl}\n承認すると、この回答を自動で送り直します。`,
+        );
+      }
+      if (entry.answerRetries < ANSWER_RETRY_LIMIT) {
+        clearTimeout(entry.answerRetryTimer);
+        entry.answerRetryTimer = setTimeout(() => {
+          if (!entry.resolved) {
+            void this.submitAnswer(entry, { optionId, optionIds, text, via: `${via} (resend)` });
+          }
+        }, this.config.answerRetryMs ?? ANSWER_RETRY_MS);
+        entry.answerRetryTimer.unref?.();
+      }
       return;
     }
     const detail =
