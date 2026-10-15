@@ -109,6 +109,7 @@ fn dispatch_inner(
             frontend.split_drag = None;
             frontend.sidebar_drag = false;
             frontend.workspace_drag = None;
+            frontend.tab_drag = None;
             selection::clear(frontend);
             popup_selection::clear(frontend);
             if popup_target(frontend).is_none() && !frontend.prefix && copy::key(frontend, key)? {
@@ -252,6 +253,9 @@ fn mouse_input(
     if workspace_drag::mouse(frontend, view, mouse)? {
         return Ok(());
     }
+    if tab_drag::mouse(frontend, view, mouse)? {
+        return Ok(());
+    }
     if popup::mouse(frontend, view.layout.pane_surface, mouse, pixels)? {
         return Ok(());
     }
@@ -377,6 +381,9 @@ fn mouse_input(
             }
             if let ChromeTarget::Workspace(key) = target {
                 workspace_drag::press(frontend, key, mouse.column, mouse.row);
+            }
+            if let ChromeTarget::Tab(key) = target {
+                tab_drag::press(frontend, key, mouse.column, mouse.row);
             }
             let update = match target {
                 ChromeTarget::WorkspaceGroup(key) => {

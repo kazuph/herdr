@@ -4647,3 +4647,152 @@ async fn endpoint_frontend_workspace_drag_reorders_and_moves_sections_actual_soc
     assert!(frontend.workspace_drag.is_none());
     server.stop();
 }
+
+#[tokio::test]
+async fn endpoint_frontend_tab_drag_reorders_tabs_actual_socket() {
+    let id = ClientEndpointId::Local;
+    let root = std::env::current_dir()
+        .unwrap()
+        .join(".local")
+        .join(format!("tab-drag-{}", std::process::id()));
+    let mut server = OwnedServer::start(root, "TAB-DRAG");
+    let workspace = api(
+        &server.socket,
+        "workspace.create",
+        json!({"label": "tabs", "focus": true, "cwd": server.root}),
+    )["workspace"]["workspace_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for label in ["second", "third"] {
+        api(
+            &server.socket,
+            "tab.create",
+            json!({"workspace_id": workspace, "label": label, "focus": false}),
+        );
+    }
+    let tab_order = |server: &OwnedServer| {
+        api(
+            &server.socket,
+            "tab.list",
+            json!({"workspace_id": workspace}),
+        )["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tab| tab["tab_id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let before = tab_order(&server);
+    assert_eq!(before.len(), 3);
+
+    let config = crate::config::Config::default();
+    let settings =
+        ChromeSettings::from_config(&config, crate::app::state::Palette::catppuccin(), None);
+    let shell = ClientShellState::new();
+    let view = ClientChrome::new(ChromeSettings::from_config(
+        &config,
+        crate::app::state::Palette::catppuccin(),
+        None,
+    ))
+    .compute_view(&shell, SIZE.0, SIZE.1);
+    let options = EndpointConnectOptions {
+        surface_size: wire::ClientSurfaceSize {
+            cols: view.layout.pane_surface.width,
+            rows: view.layout.pane_surface.height,
+        },
+        cell_width_px: 0,
+        cell_height_px: 0,
+        pixel_geometry_exact: false,
+        endpoint_keybindings: false,
+        mouse_capture: true,
+        surface_active: false,
+    };
+    let runtime = EndpointRuntime::new(
+        shell,
+        EndpointRegistry::empty(),
+        EndpointSupervisors::new(&[], Instant::now()),
+        options,
+    );
+    let mut frontend = ClientFrontend::from_runtime(runtime, &config, settings, SIZE, options);
+    install(&mut frontend, &id, 1, &server);
+    let wanted = workspace.clone();
+    pump(&mut frontend, move |f| {
+        f.runtime
+            .shell
+            .endpoint(&ClientEndpointId::Local)
+            .and_then(|endpoint| endpoint.cache.live_snapshot(1))
+            .is_some_and(|snapshot| {
+                snapshot.focused_workspace_id.as_deref() == Some(wanted.as_str())
+                    && snapshot
+                        .tabs
+                        .iter()
+                        .filter(|tab| tab.workspace_id == wanted)
+                        .count()
+                        == 3
+            })
+    })
+    .await;
+    let update = frontend.runtime.activate(id.clone(), None, Instant::now());
+    frontend.update(update).unwrap();
+    pump(&mut frontend, |f| f.runtime.input_lease_current()).await;
+
+    let chip = |frontend: &mut ClientFrontend, tab: &str| {
+        let view = frontend
+            .chrome
+            .compute_view(&frontend.runtime.shell, SIZE.0, SIZE.1);
+        view.hits
+            .iter()
+            .find(|hit| matches!(&hit.target, ChromeTarget::Tab(key) if key.id == tab))
+            .map(|hit| hit.rect)
+            .unwrap_or_else(|| panic!("no chip for {tab}"))
+    };
+    // Drag the third tab onto the left half of the first.
+    let first = chip(&mut frontend, &before[0]);
+    let third = chip(&mut frontend, &before[2]);
+    let event = |kind, column| {
+        RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind,
+            column,
+            row: first.y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        })
+    };
+    use crossterm::event::{MouseButton::Left, MouseEventKind::*};
+    frontend
+        .dispatch_input(event(Down(Left), third.x + 2))
+        .unwrap();
+    let mut column = third.x + 2;
+    while column > first.x + 1 {
+        column -= 1;
+        frontend.dispatch_input(event(Drag(Left), column)).unwrap();
+    }
+    frontend.dispatch_input(event(Up(Left), column)).unwrap();
+    assert!(
+        frontend.notice.is_none(),
+        "drop notice: {:?}",
+        frontend.notice
+    );
+
+    let expected = vec![before[2].clone(), before[0].clone(), before[1].clone()];
+    let wanted = expected.clone();
+    pump(&mut frontend, move |f| {
+        f.runtime
+            .shell
+            .endpoint(&ClientEndpointId::Local)
+            .and_then(|endpoint| endpoint.cache.snapshot())
+            .is_some_and(|snapshot| {
+                let order = snapshot
+                    .tabs
+                    .iter()
+                    .filter(|tab| wanted.contains(&tab.tab_id))
+                    .map(|tab| tab.tab_id.clone())
+                    .collect::<Vec<_>>();
+                order == wanted
+            })
+    })
+    .await;
+    assert_eq!(tab_order(&server), expected);
+    assert!(frontend.tab_drag.is_none());
+    server.stop();
+}

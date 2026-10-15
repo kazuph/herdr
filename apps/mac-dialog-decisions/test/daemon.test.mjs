@@ -25,18 +25,18 @@ function decision(id, overrides = {}) {
   };
 }
 
-function makeDaemon({ stateDir, laterMs } = {}) {
+function makeDaemon({ stateDir, laterMs, answerRetryMs, runAnswer } = {}) {
   const dir = stateDir || fs.mkdtempSync(path.join(os.tmpdir(), "macd-test-"));
   const watch = new FakeWatch();
   const answers = [];
   const dialogs = [];
   const logs = [];
   const daemon = new MacDialogDecisionsDaemon({
-    config: { stateDir: dir, laterMs },
+    config: { stateDir: dir, laterMs, answerRetryMs },
     spawnWatch: () => Promise.resolve(watch),
     runAnswer: (argv) => {
       answers.push(argv);
-      return Promise.resolve({ code: 0, stdout: "{}", stderr: "" });
+      return runAnswer ? runAnswer(argv) : Promise.resolve({ code: 0, stdout: "{}", stderr: "" });
     },
     spawnDialog: (specPath, spec) => {
       const d = new FakeDialog();
@@ -233,5 +233,26 @@ test("non-JSON dialog lines are skipped", async () => {
   dialogs[0].answer(["b"]);
   await waitUntil(() => answers.length === 1);
   assert.equal(answers[0][3], "b");
+  await daemon.stop();
+});
+
+test("answer blocked by Tailscale re-approval is resent until it lands", async () => {
+  let calls = 0;
+  const { daemon, watch, dialogs, answers } = makeDaemon({
+    answerRetryMs: 40,
+    runAnswer: async () => {
+      calls += 1;
+      return calls < 3
+        ? { code: 255, stdout: "", stderr: "# To authenticate, visit: https://login.tailscale.com/a/xyz" }
+        : { code: 0, stdout: "{}", stderr: "" };
+    },
+  });
+  await daemon.start();
+  const remote = { id: "m0e51", label: "仕事Mac" };
+  watch.push({ event: "created", machine: remote, decision: decision("dec-r") });
+  await waitUntil(() => dialogs.length === 1);
+  dialogs[0].answer(["a"]);
+  await waitUntil(() => calls === 3);
+  assert.ok(answers.every((argv) => argv.includes("m0e51")));
   await daemon.stop();
 });

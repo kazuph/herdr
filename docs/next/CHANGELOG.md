@@ -23,7 +23,12 @@
 
 ## Unreleased
 
+### Added
+- Each tab name now starts with the same state icon the sidebar shows for a space — red while a pane in that tab waits on a question or approval, a spinner while working, teal when done but unseen — so the tab that needs you is visible without opening it. Shown in both the local view and the saved-machine (endpoint) view.
+- Tabs can be reordered by dragging in the saved-machine (endpoint) view too: an insertion line follows the pointer and the drop issues `tab.move`.
+
 ### Fixed
+- Answers to a saved machine's decisions (from Slack, the Mac dialog, the phone app or the glasses) no longer get lost when the machine wants a Tailscale SSH re-approval. Machine-routed commands now share one SSH connection per machine (`ControlMaster=auto`, no `ControlPersist`), so `decision answer --machine` rides the connection the `decision watch --all-machines` stream already holds instead of dialing a new one that Tailscale stops for approval. If an answer still cannot be delivered, the Slack and Mac dialog plugins keep it and resend it every 15 seconds (up to 30 minutes) until it lands or the decision resolves, and Slack posts the approval link once in the decision's thread.
 - Screen-prompt decision titles no longer gain spaces inside words. Claude Code wraps a long question at the pane edge, even in the middle of Japanese text, a file name or a path; every row was joined with a space, so titles read "report_neck4ey e.png" or "かけ ら". Rows are now rejoined without a space inside Japanese text and inside words longer than a row or split at the end of a filled Japanese row; only the space removed by an ordinary English word wrap is restored.
 - The Mac decision panel no longer answers when a one-choice option is clicked: a click only selects it (radio button), and the answer is sent with 回答する or ⌘↩, so a stray click on a panel that appeared mid-task cannot answer a question. ⌘1–⌘9 select options the same way.
 - The Mac decision panel's option cards now follow light and dark mode. Their background and border were fixed at whichever look was active when the card was created, so in light mode the cards stayed dark under dark text and could not be read; they now resolve the system colors for the panel's own appearance and update when the mode changes.

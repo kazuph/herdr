@@ -1789,6 +1789,19 @@
   - JSONで`next`は既存keyの後に出る。
 - **デグレ判定**: pollを促す案内に戻る、または既存keyの名前・順序を変える。
 
+### タブの状態アイコンとドラッグでの並べ替え
+- **該当コミット**: 本PR
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — どのタブが質問・承認待ちかをタブ名だけで分かるようにし、タブをドラッグで並べ替える。
+- **目的**: 質問や承認で止まっているペインがどのタブにあるかを、タブを開かずに見つけて素早く移る。
+- **挙動**:
+  - 各タブ名の前に、スペースのサイドバーと同じ状態アイコンを出す（タブ内のペインのうち最も注意が要る状態。質問・承認待ちは赤、作業中は回るアイコン、終わって未確認は青緑、確認済みは緑、エージェントなしは`·`）。手元の画面と、保存マシンを表示する画面の両方で同じ。
+  - 保存マシンを表示する画面でも、タブをドラッグすると挿入位置に縦線を出し、離すと`tab.move`でその位置へ並べ替える。同じ位置へ落としたときは何もしない。
+- **受け入れ条件**:
+  - タブ内に質問・承認待ちのペインがあると、そのタブ名の前に赤い状態アイコンが出る。
+  - 保存マシンを表示する画面でタブを別のタブの左半分へドラッグして離すと、サーバー側のタブの順番がその前へ入る。
+- **デグレ判定**: タブの状態アイコンがサイドバーと違う状態を示す、またはドラッグしてもタブの順番が変わらない。
+
 ### 通知なしのherdr runはエージェントのいないペインからも起動できる
 - **該当コミット**: 本PR
 - **分類**: CORE-UI
@@ -2236,11 +2249,12 @@
 - **status: 本家基盤＋fork差分保持 (B)** — 保存マシンへのCLI転送と失敗時Local fallback禁止を`semantic_port`し、本家のclient-endpoint転送基盤（別packetのmulticlient層）は使わず、OpenSSH stdio execで再実装する。
 - **目的**: Herdrウィンドウを開かずに保存マシン上のagent・pane・workspace・worktreeを操作する。失敗はlocalへ逃がさない。
 - **UI挙動**:
-  - `herdr --machine <label-or-id> <agent|pane|workspace|worktree> ...` はprofile解決（無効・未知・曖昧は拒否）後、`ssh -o BatchMode=yes -o ConnectTimeout=15 -- <target> <remote-bin> --session <session> <args...>`をstdio継承で実行し、remoteのexit codeをそのまま返す。`<remote-bin>`はenv `HERDR_MACHINE_REMOTE_BINARY`（既定`herdr`）で上書きできる。
+  - `herdr --machine <label-or-id> <agent|pane|workspace|worktree> ...` はprofile解決（無効・未知・曖昧は拒否）後、`ssh -o BatchMode=yes -o ConnectTimeout=15 -o ControlMaster=auto -o ControlPath=<config dir>/ssh-mux/%C -- <target> <remote-bin> --session <session> <args...>`をstdio継承で実行し、remoteのexit codeをそのまま返す。同じマシンへの転送は1本のSSH接続を共有し（`ControlPersist`なし。開いたcommandが終わると接続も閉じる）、常駐する`decision watch --all-machines`の接続が開いている間は、`decision answer --machine`などが新しい接続を張らずにその接続に乗る。`<remote-bin>`はenv `HERDR_MACHINE_REMOTE_BINARY`（既定`herdr`）で上書きできる。
   - ssh起動・接続失敗時はexit 1でerrorを出し、local実行へfallbackしない。対象外subcommandとの併用、`--remote`との併用、`machine` subcommand自体との併用はexit 2で拒否する。
   - `--help`/`-h`併用時は転送せずlocal helpを出す。
 - **受け入れ条件**:
   - 転送対象4 subcommand（agent/pane/workspace/worktree）が規定のssh argvで実行され、remote exit codeが継承される。
+  - 同じマシンへの`decision watch`が開いている間の`decision answer --machine`は、その接続を共有して新しいSSH認証（Tailscale SSHの再承認を含む）を求めない。
   - ssh失敗時にlocal実行が起きず非ゼロexitになる（回帰テスト化）。
   - 無効・未知・曖昧マシン指定がlocal実行せずexit 2またはexit 1になる。
   - 対象外subcommand・`--remote`併用・`machine`併用がexit 2で拒否される。
