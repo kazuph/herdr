@@ -1270,6 +1270,11 @@ mod display_regression_tests {
             .coherent_surface(1, size)
             .is_none());
         assert!(!runtime.shell.endpoint_surface_matches(&id, 1, &surface));
+        // The kept surface's images stay with its text instead of blinking out.
+        assert!(runtime.shell.presented_surface_shows_images(&id, &surface));
+        let mut other_boot = surface.clone();
+        other_boot.boot_id = "another-boot".into();
+        assert!(!runtime.shell.presented_surface_shows_images(&id, &other_boot));
         assert!(runtime.awaiting_surface_pair());
         surface.projection_revision = snapshot.revision;
         surface.surface_revision += 1;

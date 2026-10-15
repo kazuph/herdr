@@ -473,6 +473,9 @@ impl ClientFrontend {
         };
         use std::io::Write as _;
         let mut stdout = io::stdout().lock();
+        if encoded.cleared_screen {
+            self.graphics.forget_host_images();
+        }
         let (next_graphics, graphics_bytes) = graphics::encode(self, &view);
         crate::client::write_encoded_frame_with_graphics(
             &mut stdout,

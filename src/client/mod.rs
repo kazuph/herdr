@@ -2229,15 +2229,31 @@ fn write_encoded_frame_with_graphics(
     encoded: &[u8],
     graphics: &[u8],
 ) -> io::Result<()> {
-    writer.write_all(encoded)?;
     if graphics.is_empty() {
-        return Ok(());
+        return writer.write_all(encoded);
     }
 
     record_received_kitty_graphics(graphics);
+    // Images go inside the frame's synchronized-output block, so the terminal
+    // never presents the new text without its images (or a deleted image
+    // before its replacement is placed).
+    const SYNC_END: &[u8] = b"\x1b[?2026l";
+    let (head, tail) = match encoded
+        .windows(SYNC_END.len())
+        .rposition(|window| window == SYNC_END)
+    {
+        Some(end) => encoded.split_at(end),
+        None => {
+            writer.write_all(encoded)?;
+            writer.write_all(b"\x1b[?2026h")?;
+            (&[][..], SYNC_END)
+        }
+    };
+    writer.write_all(head)?;
     writer.write_all(b"\x1b7")?;
     writer.write_all(graphics)?;
-    writer.write_all(b"\x1b8")
+    writer.write_all(b"\x1b8")?;
+    writer.write_all(tail)
 }
 
 fn contains_kitty_graphics_bytes(bytes: &[u8]) -> bool {
@@ -2672,7 +2688,7 @@ mod tests {
     }
 
     #[test]
-    fn graphics_bytes_are_written_after_blit_with_saved_cursor() {
+    fn graphics_bytes_are_written_inside_the_blit_sync_block_with_saved_cursor() {
         let mut output = Vec::new();
         write_encoded_frame_with_graphics(
             &mut output,
@@ -2683,8 +2699,16 @@ mod tests {
 
         assert_eq!(
             output,
-            b"\x1b[?2026htext\x1b[?2026lcursor\x1b7graphics\x1b8"
+            b"\x1b[?2026htext\x1b7graphics\x1b8\x1b[?2026lcursor"
         );
+    }
+
+    #[test]
+    fn graphics_without_a_text_frame_get_their_own_synchronized_block() {
+        let mut output = Vec::new();
+        write_encoded_frame_with_graphics(&mut output, b"", b"graphics").unwrap();
+
+        assert_eq!(output, b"\x1b[?2026h\x1b7graphics\x1b8\x1b[?2026l");
     }
 
     #[test]

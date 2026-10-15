@@ -31,14 +31,7 @@ pub(super) fn encode(
             && frontend
                 .runtime
                 .shell
-                .endpoint(endpoint)
-                .and_then(|entry| entry.generation)
-                .is_some_and(|generation| {
-                    frontend
-                        .runtime
-                        .shell
-                        .endpoint_surface_matches(endpoint, generation, surface)
-                })
+                .presented_surface_shows_images(endpoint, surface)
     }) {
         next.set_scene(surface.graphics.clone());
         visibility = Visibility::Main;

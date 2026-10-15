@@ -927,12 +927,19 @@ impl HostGraphicsCache {
         for id in self.images.keys().copied().collect::<Vec<_>>() {
             encode_delete_image(&mut bytes, id);
         }
+        self.forget_all();
+        bytes
+    }
+
+    /// The terminal already dropped every image (an erase-display deletes
+    /// them all), so forget them without sending deletes; the next update
+    /// transmits whatever is still shown.
+    pub(crate) fn forget_all(&mut self) {
         self.images.clear();
         self.placements.clear();
         self.sources.clear();
         self.reset_incremental_state();
         self.view = None;
-        bytes
     }
 
     pub(crate) fn clear_next(&mut self) -> EncodedGraphics {

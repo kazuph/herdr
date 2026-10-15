@@ -217,6 +217,19 @@ impl ClientShellState {
             .is_some_and(|current| super::cache::same_surface(current, surface))
     }
 
+    /// Whether the presented `surface` may show its images. They follow its
+    /// text: the surface stays presented while its snapshot pair is pending, so
+    /// only a surface from another boot than the endpoint's live one is refused.
+    pub(crate) fn presented_surface_shows_images(
+        &self,
+        id: &ClientEndpointId,
+        surface: &PaneSurfaceFrame,
+    ) -> bool {
+        self.endpoint(id)
+            .and_then(|endpoint| endpoint.cache.live_snapshot(endpoint.generation?))
+            .is_some_and(|snapshot| snapshot.boot_id == surface.boot_id)
+    }
+
     pub(crate) fn endpoint_projection_available(&self, id: &ClientEndpointId) -> bool {
         self.endpoint(id).is_some_and(|endpoint| {
             endpoint.status == ClientEndpointStatus::Online

@@ -266,6 +266,12 @@ impl ClientState {
             .retain(|_, trusted| *trusted != image_id);
         self.forced_delete_images.push(image_id);
     }
+    /// The terminal erased its screen, which deletes every image it held.
+    /// Forget them so the next encode transmits the shown images again
+    /// instead of placing IDs the terminal no longer has.
+    pub(crate) fn forget_host_images(&mut self) {
+        self.host.forget_all();
+    }
     pub(crate) fn take_pending_cleanup(&mut self) -> Vec<u8> {
         let mut bytes = if self.reset_pending {
             self.reset_pending = false;
@@ -1025,6 +1031,31 @@ mod tests {
         assert!(!second.contains("a=t,t=d"));
         assert!(second.contains("a=p"));
         assert!(second.contains("\u{1b}[8;12H"));
+    }
+
+    #[test]
+    fn an_erased_screen_retransmits_the_shown_image_instead_of_placing_a_gone_id() {
+        let mut state = ClientState::default();
+        state.set_scope("endpoint-a:boot-1");
+        let image = asset(
+            SurfaceGraphicsTarget::Pane {
+                pane_id: "w1:p1".into(),
+            },
+            13,
+            vec![5, 6, 7, 8],
+        );
+        state.set_scene(scene(image, 0, 0));
+        let cell = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let _ = state.encode(Visibility::Main, (4, 2), None, cell, &Occlusion::default());
+
+        state.forget_host_images();
+        let again = state.encode(Visibility::Main, (4, 2), None, cell, &Occlusion::default());
+        let again = String::from_utf8_lossy(&again);
+        assert!(again.contains("a=t,t=d"));
+        assert!(!again.contains("a=d"));
     }
 
     #[test]
