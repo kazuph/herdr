@@ -707,6 +707,52 @@ test("decision_already_resolved -> thread note, no retry loop", async () => {
   }
 });
 
+test("answer blocked by Tailscale re-approval -> link in thread, resent until it lands", async () => {
+  const fake = await new FakeSlack().start();
+  const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
+  let calls = 0;
+  const daemon = makeDaemon({
+    slack,
+    glasses: null,
+    config: { answerRetryMs: 60 },
+    runAnswer: async () => {
+      calls += 1;
+      if (calls < 3) {
+        return {
+          code: 255,
+          stdout: "",
+          stderr: "# Tailscale SSH requires an additional check.\n# To authenticate, visit: https://login.tailscale.com/a/abc123",
+        };
+      }
+      return { code: 0, stdout: "{}", stderr: "" };
+    },
+  });
+  try {
+    await feedAndSettle(daemon, {
+      event: "created",
+      machine: { id: "m0e51", label: "仕事Mac" },
+      decision: sampleDecision(),
+    });
+    const ts = fake.posts[0].ts;
+    await daemon.handleSocketPayload({
+      type: "event_callback",
+      event: { type: "reaction_added", user: "UHUMAN", reaction: "one", item: { type: "message", ts } },
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(calls, 3, "resent until the machine took it");
+    const sent = daemon.testAnswers;
+    assert.ok(sent.every((argv) => argv.includes("m0e51") && argv.includes("--machine")));
+    const notes = (fake.threadReplies.get(ts) || []).filter((m) => m.bot_id);
+    assert.equal(notes.length, 1, "one note per approval link");
+    assert.match(notes[0].text, /仕事Mac/);
+    assert.match(notes[0].text, /https:\/\/login\.tailscale\.com\/a\/abc123/);
+    assert.match(notes[0].text, /自動で送り直します/);
+  } finally {
+    await daemon.stop();
+    await fake.stop();
+  }
+});
+
 test("history poll recovers a reaction that Socket Mode missed", async () => {
   const fake = await new FakeSlack().start();
   const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });

@@ -1,6 +1,7 @@
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
+    text::{Line, Span},
     widgets::Paragraph,
     Frame,
 };
@@ -26,8 +27,37 @@ pub(crate) struct TabBarView {
 /// the minimum. Shared by the in-process and endpoint client tab bars.
 pub(crate) fn tab_chip_width(label: &str) -> u16 {
     display_width_u16(label)
-        .saturating_add(4)
+        .saturating_add(4 + TAB_STATE_ICON_WIDTH)
         .max(MIN_TAB_WIDTH)
+}
+
+/// Cells for the state icon in front of each tab name (icon + space).
+const TAB_STATE_ICON_WIDTH: u16 = 2;
+
+/// One tab chip: the space's sidebar state icon (spinner while working,
+/// red while waiting on a question or approval, …) in front of the name, so
+/// the tab that needs attention is visible without opening it. Shared by the
+/// in-process and endpoint client tab bars.
+pub(crate) fn tab_chip_line(
+    label: &str,
+    width: usize,
+    icon: (&'static str, Style),
+    style: Style,
+) -> Line<'static> {
+    let (glyph, icon_style) = icon;
+    let icon_style = match icon_style.fg {
+        Some(fg) => style.fg(fg),
+        None => style,
+    };
+    // " " + icon + " " + name, padded to the chip width.
+    let name_width = width.saturating_sub(1 + TAB_STATE_ICON_WIDTH as usize);
+    let name = super::truncate_end(label, name_width);
+    let pad = name_width.saturating_sub(super::text::display_width_u16(&name) as usize);
+    Line::from(vec![
+        Span::styled(" ", style),
+        Span::styled(glyph, icon_style),
+        Span::styled(format!(" {name}{}", " ".repeat(pad)), style),
+    ])
 }
 
 fn tab_widths(ws: &crate::workspace::Workspace) -> Vec<u16> {
@@ -366,8 +396,12 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         };
         let width = rect.width as usize;
         let name = tab_chrome_label(ws, idx);
-        let text = format!(" {:width$}", name, width = width.saturating_sub(1));
-        frame.render_widget(Paragraph::new(text).style(style), rect);
+        let (state, seen) = tab.aggregate_state(&app.terminals);
+        let icon = super::status::state_summary_icon(state, seen, app.spinner_tick, p);
+        frame.render_widget(
+            Paragraph::new(tab_chip_line(&name, width, icon, style)).style(style),
+            rect,
+        );
     }
 
     if let Some(crate::app::state::DragState {
@@ -497,7 +531,8 @@ mod tests {
         ws.tabs[0].set_custom_name("abcdefgh".into());
         ws.tabs[0].zoomed = true;
 
-        assert_eq!(tab_widths(&ws)[0], 14);
+        // name + " Z" + padding + state icon
+        assert_eq!(tab_widths(&ws)[0], 16);
     }
 
     #[test]
@@ -507,8 +542,40 @@ mod tests {
 
         assert_eq!(
             tab_widths(&ws)[0],
-            display_width_u16("提交 herdr 的反馈") + 4
+            display_width_u16("提交 herdr 的反馈") + 4 + TAB_STATE_ICON_WIDTH
         );
+    }
+
+    #[test]
+    fn tab_bar_shows_the_sidebar_state_icon_in_front_of_each_tab() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("boss".into());
+        let pane_id = *ws.tabs[0].panes.keys().next().expect("pane");
+        let terminal_id = ws.terminal_id(pane_id).expect("terminal").clone();
+        let mut terminal_state =
+            crate::terminal::TerminalState::new(terminal_id.clone(), "/tmp".into());
+        terminal_state.state = crate::detect::AgentState::Blocked;
+        app.terminals.insert(terminal_id, terminal_state);
+        app.active = Some(0);
+        app.workspaces = vec![ws];
+        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
+        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        app.view.tab_hit_areas = view.tab_hit_areas;
+
+        let backend = TestBackend::new(30, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let rect = app.view.tab_hit_areas[0];
+        assert_eq!(buffer_row_text(buffer, rect, rect.y), " ● boss");
+        // Same red as the sidebar's blocked (question / approval) state, on
+        // the tab's own background.
+        let icon = &buffer[(rect.x + 1, rect.y)];
+        assert_eq!(icon.style().fg, Some(app.palette.red));
+        assert_eq!(icon.style().bg, Some(app.palette.accent));
     }
 
     #[test]

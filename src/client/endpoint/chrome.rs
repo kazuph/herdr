@@ -353,10 +353,12 @@ impl ClientChrome {
                     .add_modifier(Modifier::DIM)
             };
             let width = rect.width as usize;
-            let text = format!(" {:width$}", labels[idx], width = width.saturating_sub(1));
-            let text = crate::ui::truncate_end(&text, width);
-            view.lines
-                .push((rect, Line::from(Span::styled(text, style))));
+            let (state, seen) = super::sidebar::state(tab.agent_status);
+            let icon = crate::ui::state_summary_icon(state, seen, self.spinner_tick, &p);
+            view.lines.push((
+                rect,
+                crate::ui::tab_chip_line(&labels[idx], width, icon, style),
+            ));
             view.hits.push(ChromeHit {
                 rect,
                 target: ChromeTarget::Tab(ResourceKey {

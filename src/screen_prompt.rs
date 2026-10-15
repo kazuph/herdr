@@ -744,7 +744,15 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
             stop_at = j;
             break;
         }
-        if !stripped.is_empty() && !stripped.starts_with(['☐', '☒', '✔']) {
+        if stripped.is_empty() {
+            // A blank row inside the question is a paragraph break; keep one
+            // marker so the join can restore it.
+            if question_lines.first().is_some_and(|line| !line.is_empty()) {
+                question_lines.insert(0, "");
+            }
+            continue;
+        }
+        if !stripped.starts_with(['☐', '☒', '✔']) {
             if AUTO_DENY_RE.is_match(stripped) {
                 // The warning may wrap so its tail word (`session`) lands on
                 // its own row below; that fragment was already collected into
@@ -803,7 +811,7 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
             question_lines.insert(0, call);
         }
     }
-    let question = question_lines.join(" ");
+    let question = join_wrapped_question(&question_lines);
     let notice = (!notice_lines.is_empty()).then(|| notice_lines.join(" "));
 
     // The visible preview belongs to the option under the `❯` cursor.
@@ -890,6 +898,70 @@ fn attach_option_continuations(
 
 /// Join description rows into one sentence. A break inside CJK text rejoins
 /// without inserting a space; ASCII-to-ASCII boundaries get one.
+/// Rejoin the question rows Claude Code wrapped to the pane width. Japanese
+/// text has no spaces, and a long token (a path, a file name) is broken
+/// mid-word when it reaches the edge — joining every row with a space put
+/// spaces inside words and file names ("report_neck4ey e.png", "かけ ら").
+/// A space goes back only between two ASCII rows where an English word wrap
+/// removed it. A row that ended while the next row's first word would still
+/// have fitted ended at a line break the agent wrote, and blank rows are
+/// paragraph breaks; both stay as `\n` so the question keeps its layout.
+fn join_wrapped_question(lines: &[String]) -> String {
+    let width = |line: &str| unicode_width::UnicodeWidthStr::width(line);
+    let wrap_width = lines.iter().map(|line| width(line)).max().unwrap_or(0);
+    let mut out = String::new();
+    let mut prev_width = 0;
+    let mut prev_wide = false;
+    let mut paragraph_break = false;
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() {
+            paragraph_break = !out.is_empty();
+            continue;
+        }
+        if paragraph_break {
+            // A blank row is a paragraph break the agent wrote.
+            out.push_str("\n\n");
+            paragraph_break = false;
+        } else if let (Some(last), Some(first)) = (out.chars().last(), line.chars().next()) {
+            let both_ascii = last.is_ascii() && first.is_ascii();
+            // Claude Code wraps at spaces: a space-free run (a Japanese
+            // sentence included) moves to the next row whole, and one wider
+            // than a row is then broken at the edge. When the next row's
+            // first run would have fitted on the upper row, that row ended at
+            // a line break the agent wrote: keep it.
+            let head = line.split(' ').next().unwrap_or("");
+            let gap = usize::from(both_ascii);
+            if prev_width + gap + width(head) <= wrap_width {
+                out.push('\n');
+                out.push_str(line);
+                prev_width = width(line);
+                prev_wide = !line.is_ascii();
+                continue;
+            }
+            let word_char = |c: char| c.is_ascii_alphanumeric() || "_-./=;:".contains(c);
+            // A row ends mid-word only where the renderer had no space to
+            // break at: the word is wider than a row, or the row is a run
+            // of Japanese text filled to the edge (one cell short when a
+            // wide character did not fit). An ordinary English word wrap
+            // removed a space, which goes back.
+            let tail = out.rsplit(' ').next().unwrap_or("");
+            let head = line.split(' ').next().unwrap_or("");
+            let long_word = width(tail) + width(head) > wrap_width;
+            let full_japanese_row = prev_wide && prev_width + 1 >= wrap_width;
+            let broke_mid_word =
+                word_char(last) && word_char(first) && (long_word || full_japanese_row);
+            if both_ascii && !broke_mid_word {
+                out.push(' ');
+            }
+        }
+        out.push_str(line);
+        prev_width = width(line);
+        prev_wide = !line.is_ascii();
+    }
+    out
+}
+
 fn join_description_lines(lines: impl Iterator<Item = String>) -> String {
     let mut out = String::new();
     for line in lines {
@@ -1550,7 +1622,7 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
             .is_some_and(|label| label.starts_with("Yes, trust")));
         assert_eq!(
             trust.title(),
-            "Do you trust the authors of this directory? For security, devin should not be run in directories with untrusted content."
+            "Do you trust the authors of this directory?\nFor security, devin should not be run in directories with untrusted content."
         );
     }
 
@@ -1702,6 +1774,115 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         assert!(prompt.title().starts_with("Bash("));
     }
 
+    /// Verbatim Claude Code 2.1.300 frame (54-column pane) of a question
+    /// written with line breaks and blank lines.
+    const CC_MULTILINE_QUESTION: &str = "\
+ ☐ 改行
+
+│ gtx で tb (terminal-browser)
+│ が本当に動くかを確かめますか？ 今の状態: gtx
+│ には画像を外の端末へ中継する仕組みが入っています。
+│ ① 右に案の欄がある形の質問で止まる件。
+│
+│ ② 選択肢を選んだまま自由入力に書いても送られない件:
+│ 原因は herdr 側だったの。ダイアログは両方送ってたけ
+│ ど、ペインに打ち込むときに文を捨ててた。
+│
+│ ③ short line
+│ This is an English sentence that should wrap across
+│ several rows of the pane nicely.
+
+❯ 1. はい
+  2. いいえ
+  3. Type something.
+──────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+
+    #[test]
+    fn question_keeps_line_breaks_the_agent_wrote() {
+        let prompt = parse_screen_prompt(CC_MULTILINE_QUESTION).expect("prompt");
+        let title = prompt.title();
+        // Paragraph breaks (blank rows) and a short row followed by a word
+        // that would have fitted stay as line breaks.
+        assert!(
+            title.contains("① 右に案の欄がある形の質問で止まる件。\n\n② 選択肢"),
+            "{title:?}"
+        );
+        assert!(
+            title.contains("文を捨ててた。\n\n③ short line\nThis is an English"),
+            "{title:?}"
+        );
+        // Rows the renderer wrapped still join back into one line.
+        assert!(
+            title.contains("gtx で tb (terminal-browser)が本当に動くか"),
+            "{title:?}"
+        );
+        assert!(title.contains("送ってたけど、ペインに"), "{title:?}");
+        assert!(
+            title.contains("should wrap across several rows"),
+            "{title:?}"
+        );
+    }
+
+    #[test]
+    fn wrapped_question_rejoins_without_spaces_inside_words() {
+        // Claude Code hard-wraps a long Japanese question at the pane edge,
+        // even in the middle of a file name or path.
+        let text = "役者01の直し（ほおの角ばった影とこめかみの赤茶色のかけらを消す）が反映されたよ。画像は work/neck-fix/report_neck4eye.png と work/neckfix-vrm-render-front.png（新しい顔）。進んでいい？";
+        let mut rows = Vec::new();
+        let mut row = String::new();
+        for ch in text.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if unicode_width::UnicodeWidthStr::width(row.as_str()) + w > 40 {
+                rows.push(std::mem::take(&mut row));
+            }
+            row.push(ch);
+        }
+        rows.push(row);
+        let screen = format!(
+            " ☐ 進め方\n\n{}\n\n ❯ 1. 進む\n   2. 止める\n   3. Type something.\n───────────────────────────────────────────────────────────────\n   4. Chat about this\n\n Enter to select · ↑/↓ to navigate · Esc to cancel\n",
+            rows.iter().map(|r| format!(" {r}")).collect::<Vec<_>>().join("\n")
+        );
+        assert!(rows.len() >= 4, "{rows:?}");
+        let title = parse_screen_prompt(&screen).expect("prompt").title();
+        // Words and file names split across rows come back whole. (A space
+        // the renderer trimmed at a row start between a Latin word and
+        // Japanese cannot be recovered and is not asserted.)
+        for whole in [
+            "こめかみの赤茶色のかけらを消す",
+            "画像は work/neck-fix/report_neck4eye.png",
+            "work/neckfix-vrm-render-front.png（新しい顔）",
+        ] {
+            assert!(
+                title.contains(whole),
+                "missing {whole} in {title}; rows: {rows:?}"
+            );
+        }
+        // A short row ending a word keeps its space to the next English word.
+        let english = "\
+ ☐ Plan
+
+ Should we refresh the cache before the deploy starts and
+ keeps everything consistent?
+
+ ❯ 1. Yes
+   2. No
+   3. Type something.
+───────────────────────────────────────────────────────────────
+   4. Chat about this
+
+ Enter to select · ↑/↓ to navigate · Esc to cancel
+";
+        let title = parse_screen_prompt(english).expect("prompt").title();
+        assert_eq!(
+            title,
+            "Should we refresh the cache before the deploy starts and keeps everything consistent?"
+        );
+    }
+
     #[test]
     fn question_below_a_tool_call_keeps_its_own_title() {
         // A Bash call ran right before AskUserQuestion; its `⏺` line sits a
@@ -1842,11 +2023,11 @@ Esc to cancel
         assert!(title.contains("Bash command"));
         assert!(title.contains("Delete frames directories for two bench runs"));
         assert!(title.contains(
-            "B=/tmp/hdr-churn/ben ch; for r in light-nano-C mini-C; \
+            "B=/tmp/hdr-churn/bench; for r in light-nano-C mini-C; \
              do printf \"%s\\n\" \"$r\"; /bin/rm -rf $B/$r/frames; done"
         ));
         assert!(title.contains("Dangerous rm operation on possibly-empty"));
-        assert!(title.contains("or use a literal path) Do you want to proceed?"));
+        assert!(title.contains("or use a literal path)\n\nDo you want to proceed?"));
         assert!(!title.contains("automatically deny"));
         assert!(!title.contains("unattended"));
         assert_eq!(

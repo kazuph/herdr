@@ -26,6 +26,10 @@ const WATCH_RETRY_MS = 2_000;
 const DAEMON_PID_FILE = "daemon.json";
 const RESPONDER = "mac-dialog";
 const DEFAULT_LATER_MS = 10 * 60_000;
+// Resending an answer a saved machine could not take yet (Tailscale SSH
+// re-approval): every 15 s for up to 30 minutes, until the decision resolves.
+const ANSWER_RETRY_MS = 15_000;
+const ANSWER_RETRY_LIMIT = 120;
 
 function log(...args) {
   const at = new Date().toTimeString().slice(0, 8);
@@ -409,6 +413,7 @@ export class MacDialogDecisionsDaemon {
       entry.resolved = true;
       entry.queued = false;
       clearTimeout(entry.snoozeTimer);
+      clearTimeout(entry.answerRetryTimer);
       this.queue = this.queue.filter((k) => k !== key);
       if (entry.showing) this._closeDialog();
       this.entries.delete(key);
@@ -580,6 +585,22 @@ export class MacDialogDecisionsDaemon {
     const combined = `${result.stdout}\n${result.stderr}`;
     if (combined.includes("decision_already_resolved")) {
       this.log(`ほかの窓口で決定済みでした: ${did}`);
+      return;
+    }
+    const approvalUrl = combined.match(/https:\/\/login\.tailscale\.com\/\S+/)?.[0];
+    if (approvalUrl && !entry.resolved) {
+      // The saved machine wants a Tailscale SSH re-approval for a new
+      // connection: keep the answer and resend it until it lands or the
+      // decision resolves elsewhere.
+      entry.answerRetries = (entry.answerRetries || 0) + 1;
+      this.log(`回答を送れません (${did}): Tailscale の承認待ち ${approvalUrl}（${entry.answerRetries}回目）`);
+      if (entry.answerRetries < ANSWER_RETRY_LIMIT) {
+        clearTimeout(entry.answerRetryTimer);
+        entry.answerRetryTimer = setTimeout(() => {
+          if (!entry.resolved) void this.submitAnswer(entry, { optionIds, text });
+        }, this.config.answerRetryMs ?? ANSWER_RETRY_MS);
+        entry.answerRetryTimer.unref?.();
+      }
       return;
     }
     const detail =
