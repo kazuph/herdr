@@ -27,7 +27,7 @@ pub struct PaneDetail {
 
 impl Tab {
     /// The tab's most urgent pane state, by the same priority the sidebar
-    /// uses for a whole space (blocked > done unseen > working > idle).
+    /// uses for a whole space (blocked > working > done unseen > idle).
     pub fn aggregate_state(
         &self,
         terminals: &HashMap<TerminalId, TerminalState>,
@@ -97,11 +97,17 @@ impl Tab {
     }
 }
 
-fn pane_attention_priority(state: AgentState, seen: bool) -> u8 {
+/// Which pane state a tab or space indicator shows: a question waiting on
+/// the user first, then a pane still working, then finished work not yet
+/// looked at, then finished work already seen. A space with something still
+/// running keeps showing it as running even when another pane has finished.
+/// The agent panel's attention ordering is separate
+/// (`ui::workspace_attention_priority`).
+pub(crate) fn pane_attention_priority(state: AgentState, seen: bool) -> u8 {
     match (state, seen) {
         (AgentState::Blocked, _) => 4,
-        (AgentState::Idle, false) => 3,
-        (AgentState::Working, _) => 2,
+        (AgentState::Working, _) => 3,
+        (AgentState::Idle, false) => 2,
         (AgentState::Idle, true) => 1,
         (AgentState::Unknown, _) => 0,
     }
@@ -197,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_state_done_unseen_beats_working() {
+    fn aggregate_state_working_beats_done_unseen() {
         let mut ws = Workspace::test_new("test");
         let id2 = ws.test_split(Direction::Horizontal);
         let root_id = ws.tabs[0]
@@ -216,10 +222,27 @@ mod tests {
         let root = ws.tabs[0].panes.get_mut(&root_id).unwrap();
         root.seen = false;
 
-        let (state, seen) = ws.aggregate_state(&terminals);
+        let (state, _) = ws.aggregate_state(&terminals);
+        assert_eq!(state, AgentState::Working);
+        let (state, _) = ws.tabs[0].aggregate_state(&terminals);
+        assert_eq!(state, AgentState::Working);
 
+        // Once nothing runs, the unseen finished pane shows.
+        terminals
+            .get_mut(ws.terminal_id(id2).unwrap())
+            .unwrap()
+            .state = AgentState::Idle;
+        let (state, seen) = ws.aggregate_state(&terminals);
         assert_eq!(state, AgentState::Idle);
         assert!(!seen);
+
+        // A question waiting on the user beats everything.
+        terminals
+            .get_mut(ws.terminal_id(id2).unwrap())
+            .unwrap()
+            .state = AgentState::Blocked;
+        let (state, _) = ws.aggregate_state(&terminals);
+        assert_eq!(state, AgentState::Blocked);
     }
 
     #[test]
