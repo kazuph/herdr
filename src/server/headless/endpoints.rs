@@ -6,6 +6,7 @@ use crate::server::client_transport::ClientWriter;
 use crate::server::client_view::{ClientShellLocation, ClientShellTopology};
 use crate::server::endpoint_transport::EndpointTransportEvent;
 
+mod graphics_patch;
 mod lifecycle;
 #[cfg(unix)]
 pub(super) mod native_graphics;
@@ -22,6 +23,16 @@ pub(super) struct EndpointClient {
     surface_delta: bool,
     #[cfg(unix)]
     direct_graphics: bool,
+    /// The viewer rebuilds large images from changed rectangles.
+    graphics_patches: bool,
+    /// Last raw image sent to this viewer per source, the base of the next patch.
+    patch_bases: HashMap<
+        wire::SurfaceGraphicsSource,
+        (wire::SurfaceGraphicsAssetKey, std::sync::Arc<Vec<u8>>),
+    >,
+    /// Surface revision of the last patched frame the viewer has not yet
+    /// acknowledged, and when it was sent.
+    patch_ack_wait: Option<(u64, std::time::Instant)>,
     pixel_mouse: bool,
     mouse_capture: bool,
     outer_focus: Option<bool>,
@@ -276,6 +287,12 @@ impl HeadlessServer {
                         surface_delta: hello.surface_reuse && hello.surface_delta,
                         #[cfg(unix)]
                         direct_graphics: hello.direct_graphics,
+                        graphics_patches: hello
+                            .surface_codecs
+                            .iter()
+                            .any(|codec| codec == crate::protocol::endpoint::GRAPHICS_PATCH_CODEC),
+                        patch_bases: HashMap::new(),
+                        patch_ack_wait: None,
                         graphics_delivery: Default::default(),
                         pixel_mouse: hello.pixel_mouse,
                         mouse_capture: hello.mouse_capture,
@@ -426,6 +443,16 @@ impl HeadlessServer {
                     {
                         self.sync_endpoint_presentation(client_id, Some(data))
                     }
+                    ClientMessage::EndpointControl { kind, .. }
+                        if kind == crate::protocol::endpoint::GRAPHICS_PATCH_MISS_KIND =>
+                    {
+                        self.endpoint_graphics_patch_miss(client_id)
+                    }
+                    ClientMessage::EndpointControl { kind, data }
+                        if kind == crate::protocol::endpoint::GRAPHICS_PATCH_ACK_KIND =>
+                    {
+                        self.endpoint_graphics_patch_ack(client_id, &data)
+                    }
                     ClientMessage::ClientShellHostTheme { .. }
                     | ClientMessage::EndpointControl { .. } => false,
                     _ => false,
@@ -435,9 +462,10 @@ impl HeadlessServer {
     }
 
     pub(super) fn endpoint_graphics_pending(&self) -> bool {
-        self.endpoint_clients
-            .values()
-            .any(|client| client.active && client.graphics_delivery.has_pending())
+        self.endpoint_clients.values().any(|client| {
+            client.active
+                && (client.graphics_delivery.has_pending() || client.patch_ack_wait.is_some())
+        })
     }
 
     /// A tab shown by a presenting endpoint viewer whose terminal is not known to be unfocused
@@ -492,6 +520,9 @@ impl HeadlessServer {
                 .endpoint_clients
                 .get_mut(&client_id)
                 .expect("live client");
+            if client.waiting_for_patch_ack() {
+                continue;
+            }
             let mut snapshot = crate::server::endpoint_snapshot::snapshot(
                 &self.app,
                 &self.endpoint_boot_id,
@@ -581,13 +612,23 @@ impl HeadlessServer {
                     continue;
                 }
                 let client = self.endpoint_clients.get(&client_id).expect("live client");
+                // A viewer that cannot read this server's image files (a saved
+                // machine viewed over ssh) receives large images as PNG.
+                #[cfg(unix)]
+                let direct = client.direct_graphics;
+                #[cfg(not(unix))]
+                let direct = false;
+                let delivered = client.graphics_delivery.with_large_images(
+                    !direct && !client.graphics_patches,
+                    !direct && client.graphics_patches,
+                );
                 let (graphics, graphics_delivery) = crate::kitty_graphics::endpoint_scene::collect(
                     &self.app,
                     target,
                     &rendered.panes,
                     rendered.popup.as_deref(),
                     cell_size,
-                    &client.graphics_delivery,
+                    &delivered,
                 );
                 let mut graphics = graphics;
                 #[cfg(unix)]
@@ -619,6 +660,7 @@ impl HeadlessServer {
                         None
                     }
                 };
+                let patches = self.endpoint_graphics_patches(client_id, &mut graphics);
                 let client = self.endpoint_clients.get(&client_id).expect("live client");
                 #[cfg(unix)]
                 tracing::debug!(
@@ -676,6 +718,13 @@ impl HeadlessServer {
                 } else {
                     None
                 };
+                // Patches precede the frame that places their images.
+                for patch in &patches.messages {
+                    let Ok(data) = framed(patch) else {
+                        continue;
+                    };
+                    batch.extend(data);
+                }
                 let Ok(data) = framed(&delta.or(reused).unwrap_or(message)) else {
                     continue;
                 };
@@ -698,6 +747,14 @@ impl HeadlessServer {
                     .get_mut(&client_id)
                     .expect("live client");
                 if client.writer.render.send_ordered(batch).is_ok() {
+                    if !patches.messages.is_empty() {
+                        client.patch_ack_wait =
+                            Some((surface.surface_revision, std::time::Instant::now()));
+                    }
+                    // The images these patches carry are the next patches' bases.
+                    for (key, data) in patches.bases {
+                        client.patch_bases.insert(key.source.clone(), (key, data));
+                    }
                     if let Some((key, image_id, _)) = pane_prepared {
                         if let Some(gate) = self
                             .app

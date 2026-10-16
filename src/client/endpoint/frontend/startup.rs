@@ -97,6 +97,9 @@ pub(crate) fn run() -> io::Result<()> {
         .lock()
         .map(|matcher| matcher.active_handle())
         .unwrap_or_default();
+    let pace = client::terminal_pace::TerminalPace::default();
+    #[cfg(unix)]
+    let input_pace = pace.clone();
     let query_theme = client::should_query_host_terminal_theme();
     std::thread::spawn(move || {
         client::input::stdin_reader_loop(
@@ -109,6 +112,8 @@ pub(crate) fn run() -> io::Result<()> {
             matcher,
             #[cfg(unix)]
             matcher_active,
+            #[cfg(unix)]
+            input_pace,
         )
     });
     if query_theme {
@@ -187,6 +192,7 @@ pub(crate) fn run() -> io::Result<()> {
         {
             frontend.direct.matcher = frontend_matcher;
         }
+        frontend.pace = pace;
         frontend.host.mouse_capture = mouse_capture;
         frontend.host.pixel_mouse = pixel_mouse;
         frontend.event_loop(rx, quit.clone()).await

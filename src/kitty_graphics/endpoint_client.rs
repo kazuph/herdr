@@ -266,6 +266,12 @@ impl ClientState {
             .retain(|_, trusted| *trusted != image_id);
         self.forced_delete_images.push(image_id);
     }
+    /// The terminal erased its screen, which deletes every image it held.
+    /// Forget them so the next encode transmits the shown images again
+    /// instead of placing IDs the terminal no longer has.
+    pub(crate) fn forget_host_images(&mut self) {
+        self.host.forget_all();
+    }
     pub(crate) fn take_pending_cleanup(&mut self) -> Vec<u8> {
         let mut bytes = if self.reset_pending {
             self.reset_pending = false;
@@ -309,6 +315,24 @@ impl ClientState {
             .collect::<HashSet<_>>();
         for asset in std::mem::take(&mut scene.assets) {
             if asset.data.len() as u64 == asset.key.data_len && placed.contains(&asset.key) {
+                // A new image for a source already on screen goes to the other
+                // of its two host IDs, so the old picture stays up until the
+                // new one is placed instead of blanking while it uploads.
+                if matches!(asset.key.source, SurfaceGraphicsSource::Terminal { .. })
+                    && !self.native_image_ids.contains_key(&asset.key)
+                {
+                    if let Some(shown) = self
+                        .display_scene
+                        .placements
+                        .iter()
+                        .map(|p| &p.asset)
+                        .chain(self.display_scene.retained_assets.iter())
+                        .find(|shown| shown.source == asset.key.source && **shown != asset.key)
+                    {
+                        let other = self.image_id(shown) ^ INLINE_SLOT_BIT;
+                        self.native_image_ids.insert(asset.key.clone(), other);
+                    }
+                }
                 self.assets.insert(asset.key, Arc::from(asset.data));
             }
         }
@@ -417,9 +441,23 @@ impl ClientState {
         let mut bytes = self.take_pending_cleanup();
         self.stale_images.sort_unstable();
         self.stale_images.dedup();
+        // A stale image whose ID the new scene does not reuse is deleted after
+        // the new placements are written, so the old picture covers the gap
+        // while the terminal decodes its replacement.
+        let shown_ids = self
+            .display_scene
+            .placements
+            .iter()
+            .map(|p| self.image_id(&p.asset))
+            .collect::<HashSet<_>>();
+        let mut deferred_deletes = Vec::new();
         for image_id in self.stale_images.drain(..) {
             if self.host.images.remove(&image_id).is_some() {
-                super::encode_delete_image(&mut bytes, image_id);
+                if shown_ids.contains(&image_id) {
+                    super::encode_delete_image(&mut bytes, image_id);
+                } else {
+                    super::encode_delete_image(&mut deferred_deletes, image_id);
+                }
             }
             self.host.placements.retain(|(id, _), _| *id != image_id);
             self.host.sources.retain(|_, id| *id != image_id);
@@ -428,6 +466,7 @@ impl ClientState {
                 .retain(|(id, _)| *id != image_id);
         }
         if !cell_size.is_known() || self.scope.is_empty() {
+            bytes.extend(deferred_deletes);
             bytes.extend(self.host.clear_bytes());
             return bytes;
         }
@@ -480,9 +519,14 @@ impl ClientState {
                 break;
             }
         }
+        bytes.extend(deferred_deletes);
         bytes
     }
 }
+
+/// Second host ID for a source's next inline image (same bit the native
+/// banks use), so a replacement never reuses the ID still on screen.
+const INLINE_SLOT_BIT: u32 = 1 << 29;
 #[cfg(unix)]
 pub(crate) const NATIVE_TRANSFER_BIT: u64 = 1 << 63;
 #[cfg(unix)]
@@ -987,6 +1031,31 @@ mod tests {
         assert!(!second.contains("a=t,t=d"));
         assert!(second.contains("a=p"));
         assert!(second.contains("\u{1b}[8;12H"));
+    }
+
+    #[test]
+    fn an_erased_screen_retransmits_the_shown_image_instead_of_placing_a_gone_id() {
+        let mut state = ClientState::default();
+        state.set_scope("endpoint-a:boot-1");
+        let image = asset(
+            SurfaceGraphicsTarget::Pane {
+                pane_id: "w1:p1".into(),
+            },
+            13,
+            vec![5, 6, 7, 8],
+        );
+        state.set_scene(scene(image, 0, 0));
+        let cell = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let _ = state.encode(Visibility::Main, (4, 2), None, cell, &Occlusion::default());
+
+        state.forget_host_images();
+        let again = state.encode(Visibility::Main, (4, 2), None, cell, &Occlusion::default());
+        let again = String::from_utf8_lossy(&again);
+        assert!(again.contains("a=t,t=d"));
+        assert!(!again.contains("a=d"));
     }
 
     #[test]

@@ -41,6 +41,9 @@ pub(crate) struct EncodedBlit {
     pub(crate) bytes: Vec<u8>,
     /// Whether this frame was encoded as a full redraw.
     pub(crate) full: bool,
+    /// Whether this frame erases the screen, which also deletes every kitty
+    /// image the terminal holds.
+    pub(crate) cleared_screen: bool,
     next_last_visible_cursor: Option<(u16, u16)>,
     next_last_cursor_shape: u8,
 }
@@ -76,26 +79,23 @@ impl BlitEncoder {
         force_full: bool,
         suppress_visible_cursor: bool,
     ) -> EncodedBlit {
-        let prev = if force_full {
-            None
-        } else {
-            self.last_frame.as_ref()
-        };
-        let full = force_full
-            || prev.is_none()
-            || prev.is_some_and(|p| p.width != frame.width || p.height != frame.height);
+        let prev = self.last_frame.as_ref();
+        let cleared_screen = needs_screen_clear(prev);
+        let full = force_full || needs_full_redraw(frame, prev);
         let prof_stats =
             crate::render_prof::enabled().then(|| compute_prof_blit_stats(frame, prev, full));
         let prof_started = crate::render_prof::timer();
         let mut bytes = Vec::new();
         let mut next_last_visible_cursor = self.last_visible_cursor;
         let mut next_last_cursor_shape = self.last_cursor_shape;
-        blit_frame_to_with_cursor_memory(
+        blit_frame(
             &mut bytes,
             frame,
             prev,
+            force_full,
             &mut next_last_visible_cursor,
             &mut next_last_cursor_shape,
+            repeat_ime_anchor_after_sync(),
             suppress_visible_cursor,
         );
         if let Some(stats) = prof_stats {
@@ -113,6 +113,7 @@ impl BlitEncoder {
         EncodedBlit {
             bytes,
             full,
+            cleared_screen,
             next_last_visible_cursor,
             next_last_cursor_shape,
         }
@@ -395,6 +396,7 @@ fn blit_frame_to(writer: impl Write, frame: &FrameData, prev: Option<&FrameData>
     );
 }
 
+#[cfg(test)]
 fn blit_frame_to_with_cursor_memory(
     mut writer: impl Write,
     frame: &FrameData,
@@ -414,8 +416,9 @@ fn blit_frame_to_with_cursor_memory(
     );
 }
 
+#[cfg(test)]
 fn blit_frame_to_with_cursor_memory_and_policy(
-    mut writer: impl Write,
+    writer: impl Write,
     frame: &FrameData,
     prev: Option<&FrameData>,
     last_visible_cursor: &mut Option<(u16, u16)>,
@@ -423,9 +426,49 @@ fn blit_frame_to_with_cursor_memory_and_policy(
     repeat_ime_anchor: bool,
     suppress_visible_cursor: bool,
 ) {
-    // On first frame or size change, do a full redraw.
-    let full_redraw =
-        prev.is_none() || prev.is_some_and(|p| p.width != frame.width || p.height != frame.height);
+    blit_frame(
+        writer,
+        frame,
+        prev,
+        false,
+        last_visible_cursor,
+        last_cursor_shape,
+        repeat_ime_anchor,
+        suppress_visible_cursor,
+    );
+}
+
+/// True when painting over `prev` has to erase the whole screen first: nothing
+/// is known about the screen yet. A size change rewrites every cell instead,
+/// because erase-display would also delete the kitty images the terminal
+/// shows and a remote browser pane would stay blank until its next frame.
+fn needs_screen_clear(prev: Option<&FrameData>) -> bool {
+    prev.is_none()
+}
+
+/// True when every cell has to be written: the screen is unknown or its size
+/// changed, so a diff against `prev` would leave cells unwritten.
+fn needs_full_redraw(frame: &FrameData, prev: Option<&FrameData>) -> bool {
+    prev.is_none_or(|p| p.width != frame.width || p.height != frame.height)
+}
+
+/// `repaint` rewrites every cell over a same-size previous frame without
+/// erasing the screen. Erase-display also deletes every kitty image the
+/// terminal holds, so a repaint must not use it while images are shown.
+#[allow(clippy::too_many_arguments)] // Mirrors the policy wrapper plus the repaint mode.
+fn blit_frame(
+    mut writer: impl Write,
+    frame: &FrameData,
+    prev: Option<&FrameData>,
+    repaint: bool,
+    last_visible_cursor: &mut Option<(u16, u16)>,
+    last_cursor_shape: &mut u8,
+    repeat_ime_anchor: bool,
+    suppress_visible_cursor: bool,
+) {
+    let clear_screen = needs_screen_clear(prev);
+    // On first frame, size change, or a requested repaint, write every cell.
+    let full_redraw = needs_full_redraw(frame, prev) || repaint;
 
     // Ask terminals that support synchronized output to apply the whole frame
     // atomically. This keeps IMEs and cursor trackers from observing the
@@ -442,12 +485,14 @@ fn blit_frame_to_with_cursor_memory_and_policy(
     let _ = writer.write_all(b"\x1b]8;;\x1b\\");
 
     if full_redraw {
-        // Clear the screen and write all cells.
-        let _ = writer.write_all(b"\x1b[2J\x1b[H");
+        // Write all cells, clearing the screen first only when its contents
+        // are unknown.
+        if clear_screen {
+            let _ = writer.write_all(b"\x1b[2J\x1b[H");
+        }
         write_all_cells(&mut writer, frame);
-    } else {
+    } else if let Some(prev) = prev {
         // Diff-based update: only write changed cells.
-        let prev = prev.unwrap();
         write_changed_cells(&mut writer, frame, prev);
     }
 
@@ -1399,6 +1444,39 @@ mod tests {
         assert!(output_str.contains('X'), "should contain changed cell 'X'");
     }
 
+    /// A requested repaint rewrites every cell but must keep the images the
+    /// terminal shows: erase-display would delete them all (vendored Ghostty
+    /// `eraseDisplay(.complete)`), blanking a browser pane until its next frame.
+    #[test]
+    fn forced_repaint_and_resize_keep_terminal_images() {
+        let mut terminal = crate::ghostty::Terminal::new(4, 2, 0).unwrap();
+        let mut encoder = BlitEncoder::new();
+        let first = make_frame(4, 2, vec![make_cell("a", 0, 0, 0); 8]);
+        let encoded = encoder.encode(&first, false);
+        assert!(encoded.cleared_screen);
+        terminal.write(&encoded.bytes);
+        encoder.commit(first.clone(), encoded);
+        terminal.write(b"\x1b_Ga=T,f=32,t=d,i=7,p=3,s=1,v=1,c=2,r=1,q=2;/wAA/w==\x1b\\");
+        assert_eq!(terminal.kitty_image_placements().unwrap().len(), 1);
+
+        let mut repaint = first.clone();
+        repaint.cells[0].symbol = "b".into();
+        let encoded = encoder.encode(&repaint, true);
+        assert!(encoded.full && !encoded.cleared_screen);
+        assert!(!String::from_utf8_lossy(&encoded.bytes).contains("\x1b[2J"));
+        terminal.write(&encoded.bytes);
+        encoder.commit(repaint, encoded);
+        assert_eq!(terminal.kitty_image_placements().unwrap().len(), 1);
+
+        terminal.resize(3, 2, 0, 0).unwrap();
+        let resized = make_frame(3, 2, vec![make_cell("c", 0, 0, 0); 6]);
+        let encoded = encoder.encode(&resized, false);
+        assert!(encoded.full && !encoded.cleared_screen);
+        assert!(!String::from_utf8_lossy(&encoded.bytes).contains("\x1b[2J"));
+        terminal.write(&encoded.bytes);
+        assert_eq!(terminal.kitty_image_placements().unwrap().len(), 1);
+    }
+
     #[test]
     fn blit_frame_size_change_triggers_full_redraw() {
         let prev = make_frame(2, 2, vec![make_cell("A", 0, 0, 0); 4]);
@@ -1409,9 +1487,14 @@ mod tests {
         blit_frame_to(&mut output, &curr, Some(&prev));
 
         let output_str = String::from_utf8(output).unwrap();
+        assert_eq!(
+            output_str.matches('B').count(),
+            6,
+            "size change should rewrite every cell"
+        );
         assert!(
-            output_str.contains("\x1b[2J"),
-            "size change should trigger full redraw"
+            !output_str.contains("\x1b[2J"),
+            "size change must not erase the terminal's images"
         );
     }
 

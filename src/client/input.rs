@@ -43,6 +43,7 @@ pub fn stdin_reader_loop(
     host_sgr_pixels_active: Arc<AtomicBool>,
     #[cfg(unix)] direct_response: Arc<std::sync::Mutex<super::direct_graphics::ResponseMatcher>>,
     #[cfg(unix)] direct_response_active: Arc<AtomicBool>,
+    #[cfg(unix)] pace: super::terminal_pace::TerminalPace,
 ) {
     #[cfg(windows)]
     {
@@ -63,6 +64,7 @@ pub fn stdin_reader_loop(
         host_sgr_pixels_active,
         direct_response,
         direct_response_active,
+        pace,
     );
 }
 
@@ -75,6 +77,7 @@ fn unix_stdin_reader_loop(
     host_sgr_pixels_active: Arc<AtomicBool>,
     direct_response: Arc<std::sync::Mutex<super::direct_graphics::ResponseMatcher>>,
     direct_response_active: Arc<AtomicBool>,
+    pace: super::terminal_pace::TerminalPace,
 ) {
     let stdin = io::stdin();
     let mut reader = stdin.lock();
@@ -111,6 +114,8 @@ fn unix_stdin_reader_loop(
         match reader.read(&mut scratch) {
             Ok(0) => break,
             Ok(n) => {
+                let stripped = pace.strip_replies(&scratch[..n]);
+                let read = stripped.as_deref().unwrap_or(&scratch[..n]);
                 let sgr_pixels = *pending_mode
                     .get_or_insert_with(|| host_sgr_pixels_active.load(Ordering::Acquire));
                 if sgr_pixels {
@@ -120,7 +125,7 @@ fn unix_stdin_reader_loop(
                     );
                 }
                 let filtered = filter_direct_input(
-                    &scratch[..n],
+                    read,
                     &mut direct_filter,
                     &direct_response,
                     &direct_response_active,
@@ -139,7 +144,7 @@ fn unix_stdin_reader_loop(
                         .flat_map(|chunk| framer.push(&chunk))
                         .collect()
                 } else {
-                    framer.push(&scratch[..n])
+                    framer.push(read)
                 };
                 if !framer.has_pending_input() {
                     pending_mode = None;

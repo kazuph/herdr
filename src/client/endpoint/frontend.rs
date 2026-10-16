@@ -7,6 +7,12 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use super::catalog::{self, LiveCatalog};
+
+/// Longest wait for the host terminal to answer a pace probe before drawing
+/// anyway. Large images can take a terminal hundreds of milliseconds.
+const PACE_TIMEOUT: Duration = Duration::from_secs(1);
+/// Most queued input events handled before the next draw.
+const INPUT_BATCH: usize = 512;
 use super::chrome::{ChromeSettings, ClientChrome};
 use super::handshake::EndpointConnectOptions;
 use super::runtime::{EndpointRuntime, RuntimeUpdate};
@@ -71,6 +77,16 @@ pub(crate) struct ClientFrontend {
     #[cfg(unix)]
     direct: direct::Direct,
     force_redraw: bool,
+    /// Holds draws while the host terminal is still decoding an image frame.
+    pace: crate::client::terminal_pace::TerminalPace,
+    /// When the unanswered pace probe was written.
+    pace_since: Option<Instant>,
+    /// A repaint was requested while drawing was held.
+    draw_deferred: bool,
+    /// Typed input waiting for a pane switch to settle.
+    held_input: input::HeldInput,
+    /// A pane clicked on screen whose focus change is still in flight.
+    clicked_pane: Option<(super::ResourceKey, Instant)>,
     keybinds: crate::config::LiveKeybindConfig,
     remote_image_paste_key: Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
     prefix: bool,
@@ -184,6 +200,11 @@ impl ClientFrontend {
             #[cfg(unix)]
             direct: direct::Direct::default(),
             force_redraw: true,
+            pace: crate::client::terminal_pace::TerminalPace::default(),
+            pace_since: None,
+            draw_deferred: false,
+            held_input: input::HeldInput::default(),
+            clicked_pane: None,
             keybinds: crate::config::LiveKeybindConfig {
                 prefix: config.prefix_key(),
                 keybinds: config.keybinds(),
@@ -473,12 +494,21 @@ impl ClientFrontend {
         };
         use std::io::Write as _;
         let mut stdout = io::stdout().lock();
+        if encoded.cleared_screen {
+            self.graphics.forget_host_images();
+        }
         let (next_graphics, graphics_bytes) = graphics::encode(self, &view);
         crate::client::write_encoded_frame_with_graphics(
             &mut stdout,
             &encoded.bytes,
             &graphics_bytes,
         )?;
+        #[cfg(unix)]
+        if !graphics_bytes.is_empty() {
+            stdout.write_all(crate::client::terminal_pace::PROBE)?;
+            self.pace.sent();
+            self.pace_since.get_or_insert_with(Instant::now);
+        }
         stdout.flush()?;
         self.graphics = next_graphics;
         self.blit.commit(frame, encoded);
@@ -505,6 +535,26 @@ impl ClientFrontend {
         })
     }
 
+    /// True while the terminal has not answered the probe written after the
+    /// last image frame. A terminal that never answers is released after
+    /// [`PACE_TIMEOUT`] so drawing cannot stall.
+    fn pacing_holds_draw(&mut self, now: Instant) -> bool {
+        if !self.pace.waiting() {
+            self.pace_since = None;
+            return false;
+        }
+        if self
+            .pace_since
+            .is_some_and(|since| now.duration_since(since) >= PACE_TIMEOUT)
+        {
+            tracing::debug!("host terminal did not answer the pace probe; drawing anyway");
+            self.pace.give_up();
+            self.pace_since = None;
+            return false;
+        }
+        true
+    }
+
     async fn event_loop(
         &mut self,
         mut input_events: mpsc::Receiver<super::super::ClientLoopEvent>,
@@ -522,6 +572,9 @@ impl ClientFrontend {
         let mut animation = tokio::time::interval(crate::app::HEADLESS_ANIMATION_INTERVAL);
         animation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         self.draw()?;
+        // Probe replies wake the loop through this shared handle, which does not
+        // borrow the frontend while the select arms use it.
+        let pace = self.pace.clone();
         while !quit.load(Ordering::Acquire) && !self.detach_requested {
             let repaint = tokio::select! {
                 event = self.runtime.reader_events.recv() => {
@@ -538,7 +591,22 @@ impl ClientFrontend {
                 // surface update instead of consuming it while the lease rejects it.
                 event = input_events.recv(), if !self.runtime.awaiting_surface_pair() => {
                     let Some(event) = event else { break };
-                    input::handle(self, event)?
+                    let mut repaint = input::handle(self, event)?;
+                    // A trackpad sends well over a hundred scroll events a second.
+                    // Taking them one per loop turn, each followed by a draw, let
+                    // them pile up while a page streams frames, and a click waited
+                    // behind every queued scroll. Handle everything already queued
+                    // before drawing once.
+                    for _ in 0..INPUT_BATCH {
+                        if self.runtime.awaiting_surface_pair() {
+                            break;
+                        }
+                        let Ok(event) = input_events.try_recv() else {
+                            break;
+                        };
+                        repaint |= input::handle(self, event)?;
+                    }
+                    repaint
                 }
                 _ = async {
                     match self.pointer_selection.deadline.into_iter().chain(self.popup_selection.deadline).min() {
@@ -576,6 +644,7 @@ impl ClientFrontend {
                         })
                     })
                 }
+                _ = pace.answered(), if self.draw_deferred => false,
                 _ = maintenance.tick() => {
                     let now = Instant::now();
                     let update = self.runtime.tick(now);
@@ -591,7 +660,12 @@ impl ClientFrontend {
                     repaint || jobs_due || indicator_just_expired
                 }
             };
+            input::flush_held(self, Instant::now())?;
             if repaint {
+                self.draw_deferred = true;
+            }
+            if self.draw_deferred && !self.pacing_holds_draw(Instant::now()) {
+                self.draw_deferred = false;
                 self.draw()?;
             }
         }
