@@ -19,6 +19,7 @@ use crate::terminal::TerminalRuntimeRegistry;
 
 pub(crate) mod endpoint_client;
 pub(crate) mod endpoint_scene;
+pub(crate) mod patch;
 
 const KITTY_CHUNK_BYTES: usize = 3072;
 pub(crate) const HEADLESS_GRAPHICS_TRANSACTION_BUDGET: usize =
@@ -926,12 +927,19 @@ impl HostGraphicsCache {
         for id in self.images.keys().copied().collect::<Vec<_>>() {
             encode_delete_image(&mut bytes, id);
         }
+        self.forget_all();
+        bytes
+    }
+
+    /// The terminal already dropped every image (an erase-display deletes
+    /// them all), so forget them without sending deletes; the next update
+    /// transmits whatever is still shown.
+    pub(crate) fn forget_all(&mut self) {
         self.images.clear();
         self.placements.clear();
         self.sources.clear();
         self.reset_incremental_state();
         self.view = None;
-        bytes
     }
 
     pub(crate) fn clear_next(&mut self) -> EncodedGraphics {
@@ -1611,7 +1619,83 @@ fn kitty_format_code(format: KittyImageFormat) -> u32 {
     }
 }
 
+/// Images at least this large go to a local terminal as a file.
+#[cfg(unix)]
+const FILE_UPLOAD_MIN_BYTES: usize = 1024 * 1024;
+#[cfg(unix)]
+static FILE_UPLOADS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Hand large images to the terminal as files (it reads them directly) rather
+/// than as base64 escapes. Only for a terminal on this machine that reads
+/// kitty file transmissions.
+pub(crate) fn enable_file_uploads(enabled: bool) {
+    #[cfg(unix)]
+    FILE_UPLOADS.store(enabled, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(unix))]
+    let _ = enabled;
+}
+
+/// Write `data` to a private upload file the terminal reads; the newest few
+/// stay on disk (a terminal reads a file when it parses the command, which is
+/// long before several more images follow) and older ones are removed.
+#[cfg(unix)]
+fn upload_file(data: &[u8]) -> Option<std::path::PathBuf> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::sync::Mutex;
+    const KEEP: usize = 8;
+    static RECENT: Mutex<std::collections::VecDeque<std::path::PathBuf>> =
+        Mutex::new(std::collections::VecDeque::new());
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    // SAFETY: getuid has no preconditions.
+    let uid = unsafe { libc::getuid() };
+    let dir = std::path::PathBuf::from(format!(
+        "/var/tmp/herdr-client-uploads-{uid}/{}",
+        std::process::id()
+    ));
+    if !dir.is_dir() {
+        std::fs::create_dir_all(&dir).ok()?;
+        if let Some(parent) = dir.parent() {
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).ok()?;
+        }
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).ok()?;
+    }
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = dir.join(format!("image-{n}.bin"));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&path)
+        .ok()?;
+    file.write_all(data).ok()?;
+    drop(file);
+    if let Ok(mut recent) = RECENT.lock() {
+        recent.push_back(path.clone());
+        while recent.len() > KEEP {
+            if let Some(old) = recent.pop_front() {
+                let _ = std::fs::remove_file(old);
+            }
+        }
+    }
+    Some(path)
+}
+
 fn encode_kitty_data(out: &mut Vec<u8>, control: &str, data: &[u8]) {
+    #[cfg(unix)]
+    if data.len() >= FILE_UPLOAD_MIN_BYTES
+        && FILE_UPLOADS.load(std::sync::atomic::Ordering::Relaxed)
+        && control.contains("t=d")
+    {
+        if let Some(path) = upload_file(data) {
+            let control = control.replacen("t=d", "t=f", 1);
+            let payload = base64::engine::general_purpose::STANDARD
+                .encode(path.as_os_str().as_encoded_bytes());
+            let _ = write!(out, "\x1b_G{control};{payload}\x1b\\");
+            return;
+        }
+    }
     let mut chunks = data.chunks(KITTY_CHUNK_BYTES).peekable();
     let Some(first) = chunks.next() else {
         return;

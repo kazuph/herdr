@@ -34,6 +34,19 @@ pub const PRESENTATION_EFFECTS_FENCE_CAPABILITY: &str = "presentation_effects_fe
 pub const PRESENTATION_EFFECTS_SYNC_KIND: &str = "endpoint.presentation.sync.v1";
 pub const PRESENTATION_EFFECTS_READY_KIND: &str = "endpoint.presentation.ready.v1";
 pub const HEALTH_CHECK_CAPABILITY: &str = "health_check";
+/// Surface codec a client lists when it can rebuild a large image from a
+/// previous one plus the changed rectangles (`GRAPHICS_PATCH_KIND`).
+pub const GRAPHICS_PATCH_CODEC: &str = "graphics.patch.v1";
+/// Server -> client: the changed rectangles of a large image, sent just before
+/// the surface frame that places it.
+pub const GRAPHICS_PATCH_KIND: &str = "endpoint.graphics.patch.v1";
+/// Client -> server: a patch could not be applied; send the image whole.
+pub const GRAPHICS_PATCH_MISS_KIND: &str = "endpoint.graphics.patch-miss.v1";
+/// Client -> server: the viewer has the frame with this surface revision and
+/// the images patched into it. The server sends the next patched frame only
+/// after this, so frames never queue up in the connection ahead of the
+/// replies to the viewer's clicks and keys.
+pub const GRAPHICS_PATCH_ACK_KIND: &str = "endpoint.graphics.patch-ack.v1";
 pub const HEALTH_PING_KIND: &str = "endpoint.health.ping.v1";
 pub const HEALTH_PONG_KIND: &str = "endpoint.health.pong.v1";
 pub const AGENT_VIEW_PROJECTION_CAPABILITY: &str = "agent_view_projection";

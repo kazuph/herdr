@@ -24,22 +24,23 @@ pub(super) fn encode(
     let mut visibility = Visibility::Hidden;
     let mut occlusion = Occlusion::default();
     let mut popup_origin = None;
-    if let Some(surface) = view.surface.as_ref().filter(|surface| {
-        // A frame kept on screen across a resize has no valid image placement geometry.
-        surface.frame.width == view.layout.pane_surface.width
-            && surface.frame.height == view.layout.pane_surface.height
-            && frontend
-                .runtime
-                .shell
-                .endpoint(endpoint)
-                .and_then(|entry| entry.generation)
-                .is_some_and(|generation| {
-                    frontend
-                        .runtime
-                        .shell
-                        .endpoint_surface_matches(endpoint, generation, surface)
-                })
+    let shown = view.surface.as_ref().filter(|surface| {
+        frontend
+            .runtime
+            .shell
+            .presented_surface_shows_images(endpoint, surface)
+    });
+    if shown.is_some_and(|surface| {
+        surface.frame.width != view.layout.pane_surface.width
+            || surface.frame.height != view.layout.pane_surface.height
     }) {
+        // A frame kept on screen across a resize has no valid placement
+        // geometry for the new size. Leave the images the terminal shows
+        // untouched until the resized frame arrives: deleting them here
+        // blanks a browser pane for the whole round trip.
+        return (frontend.graphics.clone(), Vec::new());
+    }
+    if let Some(surface) = shown {
         next.set_scene(surface.graphics.clone());
         visibility = Visibility::Main;
         if let Some(geometry) = surface

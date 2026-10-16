@@ -12,17 +12,76 @@ const MAX_SURFACE_GRAPHICS_PLACEMENTS: usize = 4_096;
 const MAX_OFFSCREEN_IMAGES: usize = 16;
 const MAX_OFFSCREEN_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Raw images at least this large are sent as PNG to a viewer that cannot read
+/// the server's image files, so a remote viewer gets a fraction of the bytes.
+const COMPRESS_MIN_BYTES: u64 = 512 * 1024;
+
 #[derive(Default, Clone)]
 pub(crate) struct DeliveryCache {
     assets: HashSet<SurfaceGraphicsAssetKey>,
     offscreen: Vec<SurfaceGraphicsAssetKey>,
     pending: bool,
+    /// Large raw images go out as PNG (the viewer cannot take the server's
+    /// files, e.g. over a saved-machine connection).
+    compress_large: bool,
+    /// Raw image key -> the PNG key it was delivered as, so an unchanged image
+    /// is not encoded again on every frame.
+    compressed: HashMap<SurfaceGraphicsAssetKey, SurfaceGraphicsAssetKey>,
+    /// The viewer takes large raw images as patches; their raw size does not
+    /// count against the per-frame transfer budget.
+    patch_large: bool,
 }
 
 impl DeliveryCache {
     pub(crate) fn has_pending(&self) -> bool {
         self.pending
     }
+
+    /// The same delivery state for a viewer that receives large raw images as
+    /// PNG (`compress_large`) or as patches (`patch_large`).
+    pub(crate) fn with_large_images(&self, compress_large: bool, patch_large: bool) -> Self {
+        Self {
+            compress_large,
+            patch_large,
+            ..self.clone()
+        }
+    }
+
+    /// The viewer already holds this image.
+    pub(crate) fn contains(&self, key: &SurfaceGraphicsAssetKey) -> bool {
+        self.assets.contains(key)
+    }
+}
+
+fn compressible(key: &SurfaceGraphicsAssetKey) -> bool {
+    matches!(
+        key.format,
+        SurfaceGraphicsFormat::Rgba | SurfaceGraphicsFormat::Rgb
+    ) && key.data_len >= COMPRESS_MIN_BYTES
+}
+
+/// PNG-encode a raw RGB/RGBA image for delivery. `None` keeps it raw.
+fn encode_png(key: &SurfaceGraphicsAssetKey, data: &[u8]) -> Option<Vec<u8>> {
+    let (color, bytes_per_pixel) = match key.format {
+        SurfaceGraphicsFormat::Rgba => (png::ColorType::Rgba, 4u64),
+        SurfaceGraphicsFormat::Rgb => (png::ColorType::Rgb, 3u64),
+        SurfaceGraphicsFormat::Png => return None,
+    };
+    let expected = u64::from(key.image_width) * u64::from(key.image_height) * bytes_per_pixel;
+    if expected != data.len() as u64 || expected == 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(data.len() / 4);
+    let mut encoder = png::Encoder::new(&mut out, key.image_width, key.image_height);
+    encoder.set_color(color);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Fast);
+    encoder.set_filter(png::FilterType::Sub);
+    let mut writer = encoder.write_header().ok()?;
+    writer.write_image_data(data).ok()?;
+    writer.finish().ok()?;
+    // Keep the raw image when PNG does not make it meaningfully smaller.
+    (out.len() < data.len() / 2).then_some(out)
 }
 
 pub(crate) fn collect(
@@ -107,6 +166,7 @@ pub(crate) fn collect(
     }
     let mut scene = SurfaceGraphicsScene::default();
     let mut data = HashMap::<SurfaceGraphicsAssetKey, Vec<u8>>::new();
+    let mut compressed = HashMap::<SurfaceGraphicsAssetKey, SurfaceGraphicsAssetKey>::new();
     for mut placement in placements {
         if scene.placements.len() == MAX_SURFACE_GRAPHICS_PLACEMENTS {
             break;
@@ -148,7 +208,7 @@ pub(crate) fn collect(
             }
         };
         let image = &placement.placement;
-        let key = SurfaceGraphicsAssetKey {
+        let mut key = SurfaceGraphicsAssetKey {
             source,
             image_width: image.image_width,
             image_height: image.image_height,
@@ -160,7 +220,27 @@ pub(crate) fn collect(
             data_len: image.data_len as u64,
             data_fingerprint: image.data_fingerprint,
         };
-        if !delivered.assets.contains(&key) && image.data.is_empty() {
+        if delivered.compress_large && compressible(&key) {
+            let known = compressed
+                .get(&key)
+                .or_else(|| delivered.compressed.get(&key))
+                .cloned()
+                .filter(|png| delivered.assets.contains(png) || data.contains_key(png));
+            if let Some(png) = known {
+                compressed.insert(key.clone(), png.clone());
+                key = png;
+            } else if let Some(bytes) = encode_png(&key, &image.data) {
+                let png = SurfaceGraphicsAssetKey {
+                    format: SurfaceGraphicsFormat::Png,
+                    data_len: bytes.len() as u64,
+                    ..key.clone()
+                };
+                compressed.insert(key.clone(), png.clone());
+                data.entry(png.clone()).or_insert(bytes);
+                key = png;
+            }
+        }
+        if !delivered.assets.contains(&key) && image.data.is_empty() && !data.contains_key(&key) {
             continue;
         }
         if !delivered.assets.contains(&key) {
@@ -220,8 +300,20 @@ pub(crate) fn collect(
             .collect(),
         offscreen: scene.retained_assets.clone(),
         pending: false,
+        compress_large: delivered.compress_large,
+        compressed: HashMap::new(),
+        patch_large: delivered.patch_large,
     };
     deliver_assets(&mut scene, &mut next, data);
+    // Remember the PNG form of every image the viewer still holds (shown or
+    // kept offscreen), so the next frame reuses it without encoding again.
+    next.compressed = delivered
+        .compressed
+        .iter()
+        .chain(&compressed)
+        .filter(|(_, png)| next.assets.contains(*png))
+        .map(|(raw, png)| (raw.clone(), png.clone()))
+        .collect();
     (scene, next)
 }
 
@@ -237,9 +329,14 @@ fn deliver_assets(
         if next.assets.contains(&key) {
             continue;
         }
-        let encoded_size = super::image_transfer_estimated_size(
-            usize::try_from(key.data_len).unwrap_or(usize::MAX),
-        );
+        // A patched image costs its changed tiles, not its raw size.
+        let encoded_size = if next.patch_large && super::patch::patchable(&key) {
+            0
+        } else {
+            super::image_transfer_estimated_size(
+                usize::try_from(key.data_len).unwrap_or(usize::MAX),
+            )
+        };
         if encoded_size > super::HEADLESS_GRAPHICS_TRANSACTION_BUDGET {
             continue;
         }
@@ -393,8 +490,7 @@ mod tests {
         let mut next_scene = SurfaceGraphicsScene::default();
         let mut next = DeliveryCache {
             assets: delivery.assets.clone(),
-            offscreen: vec![],
-            pending: false,
+            ..DeliveryCache::default()
         };
         deliver_assets(
             &mut next_scene,

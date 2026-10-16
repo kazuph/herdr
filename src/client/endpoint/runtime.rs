@@ -663,9 +663,38 @@ impl EndpointRuntime {
                     message: ServerMessage::EndpointControl { kind, data },
                 });
             }
+            ServerMessage::EndpointControl { kind, data }
+                if kind == crate::protocol::endpoint::GRAPHICS_PATCH_KIND =>
+            {
+                match serde_json::from_str::<crate::kitty_graphics::patch::GraphicsPatch>(&data) {
+                    Ok(patch) => {
+                        if let Some(endpoint) = self.shell.endpoint_mut(&id) {
+                            endpoint.cache.receive_graphics_patch(generation, patch);
+                        }
+                    }
+                    Err(error) => tracing::warn!(%error, "invalid endpoint graphics patch"),
+                }
+            }
             ServerMessage::EndpointControl { .. } => {}
             ServerMessage::PaneSurface(surface) if active || pending_owner => {
-                if self.shell.receive_surface(&id, generation, surface.clone()) {
+                // The server strips large images out of a frame and sends them as patches,
+                // which the reader rebuilt into it; acknowledging lets the next one go.
+                let patched = surface
+                    .graphics
+                    .assets
+                    .iter()
+                    .any(|asset| crate::kitty_graphics::patch::patchable(&asset.key))
+                    .then_some(surface.surface_revision);
+                if let Some(revision) = patched {
+                    let message = crate::protocol::endpoint_wire::ClientMessage::EndpointControl {
+                        kind: crate::protocol::endpoint::GRAPHICS_PATCH_ACK_KIND.into(),
+                        data: revision.to_string(),
+                    };
+                    let _ = self.endpoints.send_to(&id, &message);
+                }
+                let received = self.shell.receive_surface(&id, generation, surface);
+                self.request_whole_images(&id);
+                if received {
                     if let Some(pending) = self.pending.as_mut().filter(|_| pending_owner) {
                         // Activation must compare the accepted receive-time scene,
                         // including pixels retained from earlier bounded asset batches.
@@ -819,6 +848,27 @@ impl EndpointRuntime {
         update
     }
 
+    /// Ask the server to resend whole any image whose patch could not be applied.
+    fn request_whole_images(&mut self, id: &ClientEndpointId) {
+        let Some(endpoint) = self.shell.endpoint_mut(id) else {
+            return;
+        };
+        let misses = endpoint.cache.take_graphics_patch_misses();
+        if misses.is_empty() {
+            return;
+        }
+        let Ok(data) = serde_json::to_string(&crate::kitty_graphics::patch::GraphicsPatchMiss {
+            key: misses[0].clone(),
+        }) else {
+            return;
+        };
+        let message = crate::protocol::endpoint_wire::ClientMessage::EndpointControl {
+            kind: crate::protocol::endpoint::GRAPHICS_PATCH_MISS_KIND.into(),
+            data,
+        };
+        let _ = self.endpoints.send_to(id, &message);
+    }
+
     fn publish_surface(&mut self, id: &ClientEndpointId, generation: u64) {
         let surface = self
             .shell
@@ -875,6 +925,12 @@ impl EndpointRuntime {
         })
     }
 
+    /// True while a switch or a split snapshot/surface update is settling, so
+    /// input the lease rejects now is accepted once it completes.
+    pub(crate) fn input_settling(&self) -> bool {
+        self.pending.is_some() || self.awaiting_surface_pair()
+    }
+
     pub(crate) fn input_lease_current(&self) -> bool {
         if !self.endpoints.active_surface_available()
             || !self.pending_allows_source_input()
@@ -897,6 +953,29 @@ impl EndpointRuntime {
                         .as_ref()
                         .is_some_and(|shown| super::cache::same_surface(shown, surface))
                 })
+        })
+    }
+
+    /// Sends input to a pane of the frame on screen while a click on it is
+    /// still moving focus there. The presentation lease is withheld until the
+    /// refocused frame arrives, which takes a round trip behind whatever the
+    /// server is streaming; the server accepts input typed against the frame
+    /// the viewer still shows, so the keys need not wait for it.
+    pub(crate) fn input_to_shown_pane(
+        &mut self,
+        key: &ResourceKey,
+        events: Vec<crate::protocol::endpoint_wire::ClientPaneInputEvent>,
+    ) -> EndpointSendOutcome {
+        let shown = self.endpoints.active_id() == &key.endpoint
+            && self.shell.pane_surface.as_ref().is_some_and(|surface| {
+                surface.popup.is_none() && surface.panes.iter().any(|pane| pane.pane_id == key.id)
+            });
+        if !shown {
+            return EndpointSendOutcome::NotSent;
+        }
+        self.endpoints.send(&ClientMessage::ClientShellPaneInput {
+            pane_id: key.id.clone(),
+            events,
         })
     }
 
@@ -1235,6 +1314,13 @@ mod display_regression_tests {
             .coherent_surface(1, size)
             .is_none());
         assert!(!runtime.shell.endpoint_surface_matches(&id, 1, &surface));
+        // The kept surface's images stay with its text instead of blinking out.
+        assert!(runtime.shell.presented_surface_shows_images(&id, &surface));
+        let mut other_boot = surface.clone();
+        other_boot.boot_id = "another-boot".into();
+        assert!(!runtime
+            .shell
+            .presented_surface_shows_images(&id, &other_boot));
         assert!(runtime.awaiting_surface_pair());
         surface.projection_revision = snapshot.revision;
         surface.surface_revision += 1;

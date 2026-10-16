@@ -129,6 +129,20 @@ fn dispatch_inner(
             if clipboard_images::host_paste_key(frontend, key) {
                 return Ok(());
             }
+            if let Some(target) = clicked_pane(frontend) {
+                if popup_target(frontend).is_none() {
+                    if let Some(event) = key_event(key) {
+                        frontend.runtime.input_to_shown_pane(&target, vec![event]);
+                    }
+                    return Ok(());
+                }
+            }
+            if frontend
+                .held_input
+                .hold(&frontend.runtime, RawInputEvent::Key(key))
+            {
+                return Ok(());
+            }
             if let Some(popup) = popup_target(frontend) {
                 if let Some(event) = key_event(key) {
                     frontend.runtime.popup_input(&popup, vec![event]);
@@ -142,6 +156,21 @@ fn dispatch_inner(
             }
         }
         RawInputEvent::LineFeed => {
+            if let Some(target) =
+                clicked_pane(frontend).filter(|_| popup_target(frontend).is_none())
+            {
+                frontend.runtime.input_to_shown_pane(
+                    &target,
+                    vec![wire::ClientPaneInputEvent::TextCommit("\n".into())],
+                );
+                return Ok(());
+            }
+            if frontend
+                .held_input
+                .hold(&frontend.runtime, RawInputEvent::LineFeed)
+            {
+                return Ok(());
+            }
             if let Some(popup) = popup_target(frontend) {
                 frontend.runtime.popup_input(
                     &popup,
@@ -161,6 +190,13 @@ fn dispatch_inner(
         }
         RawInputEvent::Paste(text) => {
             selection::clear(frontend);
+            if !copy::active(frontend)
+                && frontend
+                    .held_input
+                    .hold(&frontend.runtime, RawInputEvent::Paste(text.clone()))
+            {
+                return Ok(());
+            }
             if let Some(popup) = popup_target(frontend) {
                 frontend
                     .runtime
@@ -189,6 +225,96 @@ fn dispatch_inner(
             frontend.force_redraw |= focused;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Longest typed input follows a clicked pane before its focus is confirmed.
+const CLICKED_PANE_LIMIT: Duration = Duration::from_secs(3);
+
+/// The pane the user just clicked while the focus change is in flight: typed
+/// input goes straight to it instead of waiting for the refocused frame.
+/// Cleared once the frame shows it focused, when it leaves the screen, or
+/// when the change takes too long.
+fn clicked_pane(frontend: &mut ClientFrontend) -> Option<ResourceKey> {
+    let (key, since) = frontend.clicked_pane.clone()?;
+    let shown = frontend.runtime.shell.active_endpoint_id == key.endpoint
+        && frontend
+            .runtime
+            .shell
+            .pane_surface
+            .as_ref()
+            .and_then(|surface| surface.panes.iter().find(|pane| pane.pane_id == key.id))
+            .is_some_and(|pane| !pane.focused);
+    if !shown || since.elapsed() >= CLICKED_PANE_LIMIT {
+        frontend.clicked_pane = None;
+        return None;
+    }
+    Some(key)
+}
+
+/// Longest a switch may hold typed input before it is given up.
+const HELD_INPUT_LIMIT: Duration = Duration::from_secs(3);
+/// Most input events held while a switch settles.
+const HELD_INPUT_MAX: usize = 1024;
+
+/// Terminal input typed while a pane or endpoint switch is still settling.
+/// The presentation lease rejects input until the switched-to surface is
+/// current, so a key typed right after clicking another pane used to be
+/// dropped. It waits here instead and is dispatched, in order, to the pane
+/// that is focused once the switch completes.
+#[derive(Default)]
+pub(super) struct HeldInput {
+    events: std::collections::VecDeque<RawInputEvent>,
+    since: Option<Instant>,
+}
+
+impl HeldInput {
+    /// Holds `event` when it cannot be delivered now but will be shortly, or
+    /// when earlier input is already waiting, so order is kept.
+    fn hold(
+        &mut self,
+        runtime: &super::super::runtime::EndpointRuntime,
+        event: RawInputEvent,
+    ) -> bool {
+        let waiting = !self.events.is_empty();
+        if !waiting && (runtime.input_lease_current() || !runtime.input_settling()) {
+            return false;
+        }
+        if self.events.len() >= HELD_INPUT_MAX {
+            tracing::warn!("held input limit reached; dropping typed input");
+            return true;
+        }
+        self.since.get_or_insert_with(Instant::now);
+        self.events.push_back(event);
+        true
+    }
+}
+
+/// Sends held input once the switch has settled, or gives it up when the
+/// switch failed or took too long.
+pub(super) fn flush_held(frontend: &mut ClientFrontend, now: Instant) -> io::Result<()> {
+    if frontend.held_input.events.is_empty() {
+        return Ok(());
+    }
+    if frontend.runtime.input_lease_current() {
+        let events = std::mem::take(&mut frontend.held_input.events);
+        frontend.held_input.since = None;
+        for event in events {
+            dispatch(frontend, event, None)?;
+        }
+        return Ok(());
+    }
+    let expired = frontend
+        .held_input
+        .since
+        .is_some_and(|since| now.duration_since(since) >= HELD_INPUT_LIMIT);
+    if expired || !frontend.runtime.input_settling() {
+        tracing::warn!(
+            count = frontend.held_input.events.len(),
+            "typed input dropped: the switch did not settle"
+        );
+        frontend.held_input = HeldInput::default();
     }
     Ok(())
 }
@@ -566,6 +692,7 @@ fn mouse_input(
         return Ok(());
     }
     if !pane.focused && mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+        frontend.clicked_pane = Some((key.clone(), Instant::now()));
         let update = frontend.runtime.activate(
             key.endpoint.clone(),
             Some(FocusTarget::Pane(key.id.clone())),

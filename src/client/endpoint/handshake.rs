@@ -68,6 +68,10 @@ pub(crate) fn connect(
     local_transport: bool,
 ) -> io::Result<EndpointServerWelcome> {
     stream.set_nonblocking(false)?;
+    // Large images go to a local terminal as files instead of base64 escapes.
+    crate::kitty_graphics::enable_file_uploads(super::super::direct_graphics_profile_allowed(
+        false,
+    ));
     let hello = EndpointClientHello {
         generation: endpoint::ENDPOINT_PROTOCOL_GENERATION,
         min_generation: endpoint::ENDPOINT_PROTOCOL_MIN_GENERATION,
@@ -87,7 +91,10 @@ pub(crate) fn connect(
         surface_delta: true,
         surface_scroll: true,
         snapshot_codecs: vec![endpoint::SNAPSHOT_CODEC_V1.into()],
-        surface_codecs: vec![endpoint::SURFACE_CODEC_V1.into()],
+        surface_codecs: vec![
+            endpoint::SURFACE_CODEC_V1.into(),
+            endpoint::GRAPHICS_PATCH_CODEC.into(),
+        ],
         input_codecs: vec![endpoint::INPUT_CODEC_V1.into()],
         blob_codecs: vec![endpoint::BLOB_CODEC_V1.into()],
     };
