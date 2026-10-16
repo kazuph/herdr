@@ -85,6 +85,11 @@ pub(super) fn render(
         return;
     };
     let text = truncate(text.lines().next().unwrap_or_default(), area.width);
+    // The notice takes over the span the footer version uses; clear it so no
+    // version text is left beside a shorter notice.
+    if view.layout.pane_actions.width > 0 {
+        frame.render_widget(ratatui::widgets::Clear, area);
+    }
     // Only the text cells take the error colour; the rest of the row keeps its own styling.
     frame.render_widget(
         ratatui::widgets::Paragraph::new(ratatui::text::Span::styled(
