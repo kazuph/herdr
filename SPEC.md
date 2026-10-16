@@ -174,6 +174,7 @@
   - action bar左端はcopy buttonで、通常` COPY `、copy mode中` PHONE COPY `、fullscreen copy中` EXIT COPY `を表示する。fullscreen判定を優先し、hit areaは現在labelの全幅と一致する（`2d6e8ea`）。` PANES `は表示しない。
   - action bar の button は右寄せで、左から ` CYCLE LAYOUT `、1 桁 gap、` ROTATE PANES `、1 桁 gap、` EQUALIZE ` の順。右端には 1 桁 margin を置く。幅が足りない button は描画せず hit area も無効にする。
   - action bar 全体と左ラベルは背景 `Color::Reset`、前景 `overlay0`。button は背景 `Color::Reset`、前景 `accent`、太字 + 下線。
+  - action bar の COPY と ` CYCLE LAYOUT ` の間の空きの中央に、その画面を描いている herdr の版を `herdr v<版>` として薄い文字色で出す（サーバーだけを新しい版へ引き継いだ後も、画面を開き直すまでは画面側の古い版が出る）。左右に 1 桁ずつ空けて収まらない幅では出さない。接続の通知がこの空きに出ている間は通知が優先し、版の文字は消える。
   - ` CYCLE LAYOUT ` のクリックは `Cycle pane layout` と同じ操作、` ROTATE PANES ` は `Rotate panes` と同じ forward rotation、` EQUALIZE ` は `Equalize pane sizes` と同じ操作。
   - copy buttonは通常 → 通常layout内copy mode → 対象pane fullscreen copy mode → 通常の3状態をcycleし、終了時に元layoutへ戻す（`2d6e8ea`）。
   - action bar hit areaが重なる座標ではcopy → cycle → rotate → equalizeの順で判定し、最初の1操作だけを発火する（`2d6e8ea`, `8cb716c`）。
@@ -190,12 +191,14 @@
   - action bar の背景が塗りつぶし surface / panel 色ではなく reset 背景になり、button は accent 色の太字下線で表示される。
   - copy buttonの3文言、状態cycle、labelとhit area幅、重複時の発火順が一致する。
   - 本家copy modeへ移行後も、`2d6e8ea` のbottom action bar ` COPY ` buttonからcopy modeへ入れる。
+  - 幅の足りる action bar では COPY と ` CYCLE LAYOUT ` の間の中央に `herdr v<画面側の版>` が出て、左右の空きの差は 1 桁以内に収まる。収まらない幅では出ず、接続の通知が出ている間は通知だけが見える。
   - `Copied 1 line` / `Copied N lines` はsidebar最下行に表示され、clipboard write成功から2秒で消える。この位置と期限をgeneric toastへ変更しない。
 - **実装方針**: 本家の render pipeline に、terminal area の下 1 行を予約する view geometry と hit area を追加する。action bar のクリックは本家の mouse input dispatcher から core の cycle / rotate / equalize action に接続する。plugin v1 では terminal area の persistent 1 行 UI と pane title hit area を安全に差し込めないため core UI として実装する。
 - **デグレ判定**:
   - action bar が active workspace なし、mobile layout、または高さ不足で表示される。
   - action bar が terminal area と重なり、terminal 内容を隠す。
   - button label が ` CYCLE LAYOUT ` / ` ROTATE PANES ` / ` EQUALIZE ` から変わる。
+  - 版の表示が COPY・` CYCLE LAYOUT ` のボタンや接続の通知に重なる、またはボタンの位置やクリック範囲を変える。
   - 左端が非clickの` PANES `になる、copy状態とlabelが一致しない、またはCOPYを3回押して元layoutへ戻らない。
   - 狭幅でlabelの一部だけが描画される、非表示buttonにhit areaが残る、または重複座標で複数actionが発火する。
   - button 背景が panel / surface で塗られ、現 fork の reset 背景 + accent 強調より目立つ配色に戻る。

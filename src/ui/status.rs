@@ -101,10 +101,37 @@ pub(crate) fn render_pane_action_bar_with_palette(
     frame.render_widget(Paragraph::new("").style(bar_style), area);
 
     let rects = pane_action_bar_rects(area, copy_label.len() as u16);
+    let version = footer_version_label();
+    if let Some(rect) = footer_version_rect(rects, &version) {
+        frame.render_widget(Paragraph::new(version).style(bar_style), rect);
+    }
     render_action_button(frame, rects.copy, copy_label, p);
     render_action_button(frame, rects.cycle_layout, PANE_ACTION_CYCLE_LAYOUT_LABEL, p);
     render_action_button(frame, rects.rotate, PANE_ACTION_ROTATE_LABEL, p);
     render_action_button(frame, rects.equalize, PANE_ACTION_EQUALIZE_LABEL, p);
+}
+
+/// The version of the herdr drawing this screen, shown in the middle of the
+/// footer so a screen still running an older build after a server-only
+/// update is easy to spot.
+pub(crate) fn footer_version_label() -> String {
+    format!("herdr v{}", crate::build_info::version())
+}
+
+/// Centered in the free space between COPY and CYCLE LAYOUT, keeping one
+/// blank cell on each side; `None` when the label does not fit.
+pub(crate) fn footer_version_rect(rects: PaneActionBarRects, label: &str) -> Option<Rect> {
+    if rects.copy.width == 0 || rects.cycle_layout.width == 0 {
+        return None;
+    }
+    let left = rects.copy.x + rects.copy.width + 1;
+    let right = rects.cycle_layout.x.checked_sub(1)?;
+    let width = display_width_u16(label);
+    if right <= left || right - left < width {
+        return None;
+    }
+    let x = left + (right - left - width) / 2;
+    Some(Rect::new(x, rects.copy.y, width, 1))
 }
 
 fn button_rect(area: Rect, x: &mut u16, width: u16, right: u16, gap: u16) -> Rect {
@@ -370,6 +397,33 @@ pub(crate) fn state_label_color(state: AgentState, seen: bool, p: &Palette) -> C
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn footer_version_sits_centered_between_copy_and_cycle_layout() {
+        let area = Rect::new(0, 30, 120, 1);
+        let rects = pane_action_bar_rects(area, PANE_ACTION_COPY_LABEL.len() as u16);
+        let label = footer_version_label();
+        assert!(label.starts_with("herdr v"));
+        let rect = footer_version_rect(rects, &label).expect("fits");
+        assert_eq!(rect.y, area.y);
+        assert_eq!(rect.width, label.len() as u16);
+        // Clear of both buttons, with a blank cell on each side.
+        assert!(rect.x > rects.copy.x + rects.copy.width);
+        assert!(rect.x + rect.width < rects.cycle_layout.x);
+        let left_gap = rect.x - (rects.copy.x + rects.copy.width);
+        let right_gap = rects.cycle_layout.x - (rect.x + rect.width);
+        assert!(
+            left_gap.abs_diff(right_gap) <= 1,
+            "{left_gap} vs {right_gap}"
+        );
+    }
+
+    #[test]
+    fn footer_version_is_omitted_when_the_footer_is_too_narrow() {
+        let area = Rect::new(0, 0, 54, 1);
+        let rects = pane_action_bar_rects(area, PANE_ACTION_COPY_LABEL.len() as u16);
+        assert_eq!(footer_version_rect(rects, &footer_version_label()), None);
+    }
+
     use super::*;
     use crate::config::{ToastClipboardPosition, ToastHerdrPosition};
 
