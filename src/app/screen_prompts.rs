@@ -54,6 +54,9 @@ const TOGGLE_KEY_DELAY: Duration = Duration::from_millis(150);
 /// The submit pass re-reads the prompt after toggle keys; redraws can leave
 /// a torn frame, so retry a few times before abandoning the answer.
 const MULTISELECT_SUBMIT_RETRIES: u8 = 4;
+/// Retry budget for a permission answer with a note: arrow keys and torn
+/// reads spend it.
+const AMEND_ATTEMPTS: u8 = 16;
 const MULTISELECT_SUBMIT_RETRY_DELAY: Duration = Duration::from_millis(250);
 /// When a question draws option previews beside the list, Claude Code's
 /// option digits only move the cursor; Enter confirms. The confirm pass
@@ -232,6 +235,29 @@ pub(crate) enum DeferredPaneWrite {
         ws_idx: usize,
         pane_id: PaneId,
     },
+    /// One step of a permission answer that carries a note (Claude Code
+    /// `Tab to amend`): walk the cursor to the option, open its note with
+    /// Tab, type the note, then Enter. Every step re-reads the pane first.
+    AmendStep {
+        at: Instant,
+        ws_idx: usize,
+        pane_id: PaneId,
+        question: String,
+        number: u32,
+        note: String,
+        phase: AmendPhase,
+        attempts_left: u8,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AmendPhase {
+    /// Move the cursor onto the option, then press Tab.
+    Aim,
+    /// The note field is open on the option: type the note.
+    Type,
+    /// The note is typed: press Enter.
+    Submit,
 }
 
 impl DeferredPaneWrite {
@@ -240,7 +266,8 @@ impl DeferredPaneWrite {
             Self::Bytes { at, .. }
             | Self::MultiSelectSubmit { at, .. }
             | Self::PreviewConfirm { at, .. }
-            | Self::PreviewScanStep { at, .. } => *at,
+            | Self::PreviewScanStep { at, .. }
+            | Self::AmendStep { at, .. } => *at,
         }
     }
 }
@@ -624,6 +651,33 @@ impl App {
                 } => {
                     self.preview_scan_step(ws_idx, pane_id);
                 }
+                DeferredPaneWrite::AmendStep {
+                    ws_idx,
+                    pane_id,
+                    question,
+                    number,
+                    note,
+                    phase,
+                    attempts_left,
+                    ..
+                } => {
+                    if self.pane_user_input_recent(ws_idx, pane_id) {
+                        warn!(
+                            pane_id = ?pane_id,
+                            "permission note answer dropped: operator input is recent"
+                        );
+                        continue;
+                    }
+                    self.amend_step(
+                        ws_idx,
+                        pane_id,
+                        question,
+                        number,
+                        note,
+                        phase,
+                        attempts_left,
+                    );
+                }
             }
         }
         true
@@ -858,7 +912,9 @@ impl App {
                     && !prompt.preview_none.contains(number),
             })
             .collect();
-        let allow_text = prompt.free_text.is_some();
+        // Claude Code permission prompts take a note on any option.
+        let allow_text =
+            prompt.free_text.is_some() || (kind == DecisionKind::ToolPermission && prompt.amend);
         if options.is_empty() && !allow_text {
             return None;
         }
@@ -1288,6 +1344,11 @@ impl App {
             return;
         }
 
+        // Claude Code permission prompts take a note per option (`Tab to
+        // amend`); such decisions are the only tool permissions that allow
+        // text.
+        let amend = decision.kind == DecisionKind::ToolPermission && decision.allow_text;
+
         // Free-text answers arrive without an option id and take the typing
         // path. An option with accompanying text keeps both: see below.
         let Some(number) = answer
@@ -1295,6 +1356,29 @@ impl App {
             .and_then(|option_id| option_id.parse::<u32>().ok())
         else {
             if let Some(text) = answer.and_then(|answer| answer.text.as_deref()) {
+                // A permission prompt has no free-text slot: a note on its
+                // own rides on the reject option ("No, <note>"), the same
+                // place Claude Code's "tell Claude what to do differently"
+                // text goes.
+                if amend {
+                    let reject = decision
+                        .options
+                        .iter()
+                        .rev()
+                        .find(|option| option.role == DecisionOptionRole::Reject)
+                        .and_then(|option| option.id.parse::<u32>().ok());
+                    match (reject, prompt.as_ref()) {
+                        (Some(number), Some(prompt)) => {
+                            self.start_amend(ws_idx, pane_id, prompt, number, text);
+                        }
+                        _ => warn!(
+                            pane_id = ?pane_id,
+                            decision_id = %decision.decision_id,
+                            "permission note dropped: no reject option or live prompt"
+                        ),
+                    }
+                    return;
+                }
                 self.deliver_free_text(ws_idx, pane_id, decision, prompt.as_ref(), text);
             } else {
                 debug!(
@@ -1304,6 +1388,16 @@ impl App {
             }
             return;
         };
+        if amend {
+            let note = answer
+                .and_then(|answer| answer.text.as_deref())
+                .map(str::trim)
+                .filter(|text| !text.is_empty());
+            if let (Some(note), Some(live)) = (note, prompt.as_ref()) {
+                self.start_amend(ws_idx, pane_id, live, number, note);
+                return;
+            }
+        }
         // Prefer the live screen: the prompt may have moved (multi-question
         // tabs) since the decision was created.
         let shortcut = prompt
@@ -1495,6 +1589,160 @@ impl App {
                 "preview answer confirm dropped: cursor never reached the answer"
             );
         }
+    }
+
+    /// Begin a permission answer with a note: the first step runs right
+    /// away and schedules the rest.
+    fn start_amend(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        prompt: &ScreenPrompt,
+        number: u32,
+        note: &str,
+    ) {
+        // The note field is a single line: a newline would submit early.
+        let note = note.split_whitespace().collect::<Vec<_>>().join(" ");
+        self.amend_step(
+            ws_idx,
+            pane_id,
+            normalize_volatile(&prompt.question),
+            number,
+            note,
+            AmendPhase::Aim,
+            AMEND_ATTEMPTS,
+        );
+    }
+
+    /// One step of a permission answer with a note. Each step re-reads the
+    /// pane and only acts when the same prompt is on screen with the cursor
+    /// on the answered option, so a wrong option is never confirmed.
+    #[allow(clippy::too_many_arguments)] // mirrors the AmendStep fields
+    fn amend_step(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        question: String,
+        number: u32,
+        note: String,
+        phase: AmendPhase,
+        attempts_left: u8,
+    ) {
+        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+            warn!(pane_id = ?pane_id, "permission note answer dropped: pane gone");
+            return;
+        };
+        let screen = runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS);
+        let prompt = parse_screen_prompt(&screen);
+        let same_prompt = prompt
+            .as_ref()
+            .is_some_and(|prompt| normalize_volatile(&prompt.question) == question);
+        let focused = prompt.as_ref().and_then(|prompt| prompt.focused);
+        let key = |code| {
+            Bytes::from(runtime.encode_terminal_key(crate::input::TerminalKey::new(
+                code,
+                crossterm::event::KeyModifiers::NONE,
+            )))
+        };
+        // The footer shows `Tab to amend` only while the cursor sits on an
+        // option that takes a note ("Yes, and always allow …" does not), and
+        // drops it once the note is open.
+        let note_open = prompt.as_ref().is_some_and(|prompt| !prompt.amend);
+        let (send, next) = match phase {
+            AmendPhase::Aim if same_prompt => match focused {
+                // On the option but no hint (yet): the redraw may lag, so the
+                // step retries; an option that never offers a note stops.
+                Some(Focused::Option(at)) if at == number && note_open => (None, None),
+                Some(Focused::Option(at)) if at == number => (
+                    Some(key(crossterm::event::KeyCode::Tab)),
+                    Some((AmendPhase::Type, FREE_TEXT_OPTION_DELAY)),
+                ),
+                Some(Focused::Option(at)) if attempts_left > 0 => (
+                    Some(key(if number > at {
+                        crossterm::event::KeyCode::Down
+                    } else {
+                        crossterm::event::KeyCode::Up
+                    })),
+                    Some((AmendPhase::Aim, TOGGLE_KEY_DELAY)),
+                ),
+                Some(Focused::Option(_)) => {
+                    warn!(
+                        pane_id = ?pane_id,
+                        number,
+                        "permission note answer dropped: the cursor never reached the option"
+                    );
+                    return;
+                }
+                _ => (None, None),
+            },
+            AmendPhase::Type
+                if same_prompt && note_open && focused == Some(Focused::Option(number)) =>
+            {
+                (
+                    Some(Bytes::copy_from_slice(note.as_bytes())),
+                    Some((AmendPhase::Submit, FREE_TEXT_ENTER_DELAY)),
+                )
+            }
+            AmendPhase::Submit
+                if same_prompt && note_open && focused == Some(Focused::Option(number)) =>
+            {
+                (Some(key(crossterm::event::KeyCode::Enter)), None)
+            }
+            _ => (None, None),
+        };
+        if let Some(bytes) = send {
+            if let Err(err) = runtime.try_send_bytes(bytes) {
+                warn!(
+                    pane_id = ?pane_id,
+                    error = %err,
+                    "failed to send permission note answer"
+                );
+                return;
+            }
+            if let Some((next_phase, delay)) = next {
+                // Arrow steps spend the budget so a cursor that never moves
+                // cannot loop forever.
+                let attempts_left = if next_phase == phase {
+                    attempts_left - 1
+                } else {
+                    attempts_left
+                };
+                self.deferred_pane_writes
+                    .push(DeferredPaneWrite::AmendStep {
+                        at: Instant::now() + delay,
+                        ws_idx,
+                        pane_id,
+                        question,
+                        number,
+                        note,
+                        phase: next_phase,
+                        attempts_left,
+                    });
+            }
+            return;
+        }
+        // A torn read or a screen still redrawing is retried; anything else
+        // means the prompt moved on, and nothing more is typed.
+        if (prompt.is_none() || same_prompt) && attempts_left > 0 {
+            self.deferred_pane_writes
+                .push(DeferredPaneWrite::AmendStep {
+                    at: Instant::now() + MULTISELECT_SUBMIT_RETRY_DELAY,
+                    ws_idx,
+                    pane_id,
+                    question,
+                    number,
+                    note,
+                    phase,
+                    attempts_left: attempts_left - 1,
+                });
+            return;
+        }
+        warn!(
+            pane_id = ?pane_id,
+            number,
+            phase = ?phase,
+            "permission note answer dropped: the prompt never reached the expected state"
+        );
     }
 
     /// Free-text answers select the "Type something" slot when one is on
@@ -2160,6 +2408,48 @@ Do you want to proceed?
 Esc to cancel
 ";
 
+    // Claude Code 2.1.301 permission prompt captured from a live pane: the
+    // footer offers a per-option note on Tab.
+    fn cc_amend_permission(options: &str, footer: &str) -> String {
+        format!(
+            "\
+ Bash command
+ Delete *x.png files in ./probe
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ D=./probe; rm -f $D/*x.png
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ │ Glob patterns are not allowed in write operations.
+
+ Do you want to proceed?
+{options}
+
+ {footer}
+"
+        )
+    }
+
+    const AMEND_ON_YES: &str = "\
+ ❯ 1. Yes
+   2. Yes, and always allow access to probe from this project
+   3. No";
+    const AMEND_ON_ALLOW: &str = "\
+   1. Yes
+ ❯ 2. Yes, and always allow access to probe from this project
+   3. No";
+    const AMEND_ON_NO: &str = "\
+   1. Yes
+   2. Yes, and always allow access to probe from this project
+ ❯ 3. No";
+    const AMEND_NO_OPEN: &str = "\
+   1. Yes
+   2. Yes, and always allow access to probe from this project
+ ❯ 3. No, and tell Claude what to do differently";
+    const AMEND_NO_TYPED: &str = "\
+   1. Yes
+   2. Yes, and always allow access to probe from this project
+ ❯ 3. No, 代わりに ls だけして";
+    const AMEND_HINT: &str = "Esc to cancel · Tab to amend";
+
     const CODEX_PERMISSION: &str = "\
   Would you like to run the following command?
 
@@ -2412,6 +2702,120 @@ Esc to cancel
         assert!(!decisions[0].allow_text);
         assert_eq!(decisions[0].options.len(), 2);
         assert_eq!(decisions[0].options[0].role, DecisionOptionRole::Approve);
+    }
+
+    #[tokio::test]
+    async fn amend_permission_allows_a_note() {
+        let _guard = crate::config::lock_test_config_env();
+        let screen = cc_amend_permission(AMEND_ON_YES, AMEND_HINT);
+        let (mut app, _pane_id, _rx) = test_app("amend", &crlf(&screen), true);
+        app.scan_screen_prompts(Instant::now());
+        let decisions = pending_decisions();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].kind, DecisionKind::ToolPermission);
+        assert!(decisions[0].allow_text);
+        assert_eq!(decisions[0].options.len(), 3);
+        assert_eq!(decisions[0].options[2].role, DecisionOptionRole::Reject);
+    }
+
+    #[tokio::test]
+    async fn note_alone_rides_on_no_through_tab_amend() {
+        let _guard = crate::config::lock_test_config_env();
+        let screen = cc_amend_permission(AMEND_ON_YES, AMEND_HINT);
+        let (mut app, pane_id, mut rx) = test_app("amendno", &crlf(&screen), true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+        let later = || Instant::now() + Duration::from_secs(60);
+
+        answer(&mut app, &decision_id, None, Some("代わりに\nls だけして"));
+        // Cursor on Yes, answer is No: the first arrow goes out at once.
+        let down = rx.try_recv().expect("arrow");
+        assert!(down.as_ref().starts_with(b"\x1b"), "{down:?}");
+        assert!(rx.try_recv().is_err(), "no digit: a digit would select");
+
+        // The cursor has not moved yet: another arrow.
+        app.flush_deferred_pane_writes(later());
+        assert_eq!(rx.try_recv().expect("arrow again"), down);
+
+        // Passing "always allow", which takes no note: the footer loses its
+        // hint there, and the walk keeps going.
+        rx = replace_screen(
+            &mut app,
+            pane_id,
+            &crlf(&cc_amend_permission(AMEND_ON_ALLOW, "Esc to cancel")),
+        );
+        app.flush_deferred_pane_writes(later());
+        assert_eq!(rx.try_recv().expect("arrow past allow"), down);
+
+        // Cursor on No: Tab opens the note.
+        rx = replace_screen(
+            &mut app,
+            pane_id,
+            &crlf(&cc_amend_permission(AMEND_ON_NO, AMEND_HINT)),
+        );
+        app.flush_deferred_pane_writes(later());
+        assert_eq!(rx.try_recv().expect("tab").as_ref(), b"\t");
+
+        // The note field has not opened yet: nothing is typed.
+        app.flush_deferred_pane_writes(later());
+        assert!(
+            rx.try_recv().is_err(),
+            "typing must wait for the note field"
+        );
+
+        // Note field open (footer lost its Tab hint): the note, one line.
+        rx = replace_screen(
+            &mut app,
+            pane_id,
+            &crlf(&cc_amend_permission(AMEND_NO_OPEN, "Esc to cancel")),
+        );
+        app.flush_deferred_pane_writes(later());
+        assert_eq!(
+            rx.try_recv().expect("note").as_ref(),
+            "代わりに ls だけして".as_bytes()
+        );
+
+        rx = replace_screen(
+            &mut app,
+            pane_id,
+            &crlf(&cc_amend_permission(AMEND_NO_TYPED, "Esc to cancel")),
+        );
+        app.flush_deferred_pane_writes(later());
+        assert_eq!(rx.try_recv().expect("enter").as_ref(), b"\r");
+        assert!(app.deferred_pane_writes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn option_with_note_tabs_on_the_focused_option() {
+        let _guard = crate::config::lock_test_config_env();
+        let screen = cc_amend_permission(AMEND_ON_YES, AMEND_HINT);
+        let (mut app, _pane_id, mut rx) = test_app("amendyes", &crlf(&screen), true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+        answer(&mut app, &decision_id, Some("1"), Some("結果を一言で"));
+        // Already on Yes: Tab, never the digit (which would answer at once
+        // and drop the note).
+        assert_eq!(rx.try_recv().expect("tab").as_ref(), b"\t");
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn note_answer_stops_when_the_prompt_moves_on() {
+        let _guard = crate::config::lock_test_config_env();
+        let screen = cc_amend_permission(AMEND_ON_NO, AMEND_HINT);
+        let (mut app, pane_id, mut rx) = test_app("amendgone", &crlf(&screen), true);
+        app.scan_screen_prompts(Instant::now());
+        let decision_id = pending_decisions()[0].decision_id.clone();
+        answer(&mut app, &decision_id, Some("3"), Some("やめて"));
+        assert_eq!(rx.try_recv().expect("tab").as_ref(), b"\t");
+
+        // A different prompt replaced it: nothing more is typed.
+        rx = replace_screen(&mut app, pane_id, &crlf(CC_PERMISSION));
+        for _ in 0..20 {
+            app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
+        }
+        assert!(rx.try_recv().is_err());
+        assert!(app.deferred_pane_writes.is_empty());
     }
 
     #[tokio::test]
