@@ -158,6 +158,11 @@ pub(crate) struct ScreenPrompt {
     /// The `❯` cursor position, used to attribute the visible preview and to
     /// plan arrow keys for multiSelect delivery.
     pub focused: Option<Focused>,
+    /// The footer offers `Tab to amend` / `Tab to add context` (Claude Code
+    /// permission prompts): Tab on the focused option opens a note that
+    /// travels with that option. Excluded from the signature — the footer
+    /// drops the hint while a note is being typed.
+    pub amend: bool,
 }
 
 impl ScreenPrompt {
@@ -491,6 +496,20 @@ fn preview_inner(row: &str, box_col: usize) -> String {
     let inner = row[start..].trim_end();
     let inner = inner.strip_suffix(['│', '┤']).unwrap_or(inner).trim_end();
     inner.to_string()
+}
+
+/// Claude Code's permission footer advertises a per-option note on Tab.
+/// The footer may wrap, so the hint is matched across the footer row and the
+/// row below it.
+fn footer_offers_amend(footer: &[&str]) -> bool {
+    let joined = footer
+        .iter()
+        .take(2)
+        .flat_map(|line| line.split_whitespace())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    joined.contains("tab to amend") || joined.contains("tab to add context")
 }
 
 /// Port of saberante's `parse_prompt`. Returns `None` when the screen holds no
@@ -860,6 +879,7 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         advance: extras.advance,
         advance_after,
         focused: extras.focused,
+        amend: end.is_some_and(|end| footer_offers_amend(&lines[end..])),
     };
     if let Some(mq) = mq {
         // Progress + tab name become the header so the review tab (no
@@ -1654,6 +1674,23 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
  Esc to cancel · Tab to amend
 "
         )
+    }
+
+    #[test]
+    fn tab_to_amend_footer_marks_the_prompt() {
+        let prompt = parse_screen_prompt(&afk_permission("1:48")).expect("prompt");
+        assert!(prompt.amend);
+        assert!(!prompt.is_question());
+        // The hint wrapped onto the next row still counts.
+        let wrapped =
+            parse_screen_prompt(&afk_permission("1:48").replace("Tab to amend", "Tab to\n amend"))
+                .expect("wrapped");
+        assert!(wrapped.amend);
+        // Older Claude Code and Codex footers offer no note.
+        assert!(!parse_screen_prompt(CODEX_PERMISSION).expect("codex").amend);
+        // While the note is open the footer drops the hint.
+        let open = afk_permission("1:48").replace("Esc to cancel · Tab to amend", "Esc to cancel");
+        assert!(!parse_screen_prompt(&open).expect("open").amend);
     }
 
     #[test]
