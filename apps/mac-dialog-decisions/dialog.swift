@@ -341,7 +341,26 @@ final class DialogController: NSObject, NSWindowDelegate {
     if cmd, let ch = event.charactersIgnoringModifiers, let n = Int(ch), n >= 1, n <= cards.count {
       cardClicked(cards[n - 1]); return nil
     }
+    // The dialog has no menu bar, and ⌘V / ⌘C / ⌘X / ⌘A / ⌘Z reach a text
+    // field only through the Edit menu's key equivalents. Send the same
+    // standard edit actions to the focused field directly.
+    if cmd, let action = editAction(event) {
+      if NSApp.sendAction(action, to: nil, from: panel) { return nil }
+    }
     return event
+  }
+
+  func editAction(_ event: NSEvent) -> Selector? {
+    let mods = event.modifierFlags.intersection([.command, .shift, .option, .control])
+    switch (event.charactersIgnoringModifiers?.lowercased(), mods) {
+    case ("v", [.command]): return #selector(NSText.paste(_:))
+    case ("c", [.command]): return #selector(NSText.copy(_:))
+    case ("x", [.command]): return #selector(NSText.cut(_:))
+    case ("a", [.command]): return #selector(NSText.selectAll(_:))
+    case ("z", [.command]): return Selector(("undo:"))
+    case ("z", [.command, .shift]): return Selector(("redo:"))
+    default: return nil
+    }
   }
 
   func build() {
@@ -435,6 +454,7 @@ final class DialogController: NSObject, NSWindowDelegate {
       let tv = FirstClickTextView()
       tv.font = NSFont.systemFont(ofSize: Look.base)
       tv.isRichText = false
+      tv.allowsUndo = true
       tv.isAutomaticQuoteSubstitutionEnabled = false
       tv.textContainerInset = NSSize(width: 6, height: 6)
       tv.onCommandReturn = { [weak self] in self?.submit() }
