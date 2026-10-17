@@ -955,6 +955,19 @@ mod tests {
         }
     }
 
+    /// The status line shows the URL before the shared record is written, so
+    /// a test that has just seen the URL waits for the record as well.
+    fn wait_for_approval_record(machine: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while approval::recorded(machine).is_none() {
+            assert!(
+                Instant::now() < deadline,
+                "the approval record for {machine:?} was never written"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     fn wait_for_status(messages: &Arc<Mutex<Vec<String>>>, needle: &str, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         loop {
@@ -1081,7 +1094,7 @@ mod tests {
             );
             assert!(!worker.is_finished());
             // The open was claimed in the shared record while the wait runs.
-            assert!(approval::recorded("fake-host").is_some());
+            wait_for_approval_record("fake-host", Duration::from_secs(10));
             fake.approve();
             let (stream, bridge) = worker
                 .join()
@@ -1126,7 +1139,7 @@ mod tests {
                 "https://login.tailscale.com/a/again",
                 Duration::from_secs(10),
             );
-            assert!(approval::recorded("fake-host").is_some());
+            wait_for_approval_record("fake-host", Duration::from_secs(10));
             fake.approve();
             worker
                 .join()
