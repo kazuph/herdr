@@ -977,18 +977,32 @@ mod tests {
         cell
     }
 
-    fn terminal_screen(frame: &FrameData, initial: &[u8], bytes: &[u8]) -> String {
+    fn terminal_screen(
+        frame: &FrameData,
+        initial: &[u8],
+        bytes: &[u8],
+    ) -> Vec<(String, crate::ghostty::CellBasicData)> {
+        use crate::ghostty::{RenderState, RowCells, RowIterator};
         let mut terminal = crate::ghostty::Terminal::new(frame.width, frame.height, 0).unwrap();
         terminal.write(initial);
         terminal.write(bytes);
-        terminal
-            .read_ansi_screen(
-                (0, 0),
-                (frame.width - 1, u32::from(frame.height - 1)),
-                true,
-                false,
-            )
-            .unwrap()
+        let mut state = RenderState::new().unwrap();
+        state.update(&terminal).unwrap();
+        let mut iterator = RowIterator::new().unwrap();
+        let mut rows = state.populate_row_iterator(&mut iterator).unwrap();
+        let mut row_cells = RowCells::new().unwrap();
+        let mut grid = Vec::new();
+        while rows.next() {
+            let mut cells = rows.populate_cells(&mut row_cells).unwrap();
+            while cells.next() {
+                grid.push((cells.grapheme_text().unwrap(), cells.basic_data().unwrap()));
+            }
+        }
+        assert_eq!(
+            grid.len(),
+            usize::from(frame.width) * usize::from(frame.height)
+        );
+        grid
     }
 
     #[test]
@@ -1024,6 +1038,9 @@ mod tests {
         next.cells[14].modifier = 1;
         next.cells[15].modifier = 1 << 6;
         next.cells[17].modifier = 1 << 3;
+        next.cells[18].fg = 0x02_12_34_56;
+        next.cells[19].modifier = 1 << 3;
+        next.cells[20].bg = 0x02_65_43_21;
         let mut initial = Vec::new();
         legacy_write_all_cells(&mut initial, &prev);
         for full in [false, true] {
@@ -2098,10 +2115,13 @@ mod tests {
         let output_str = String::from_utf8(output).unwrap();
 
         assert!(output_str.contains("\x1b[1;1H"));
-        assert!(
-            output_str.contains("\x1b[1;2H"),
-            "cells hidden by a previous wide grapheme must be redrawn when they become visible"
-        );
+        let mut initial = Vec::new();
+        legacy_write_all_cells(&mut initial, &prev);
+        let grid = terminal_screen(&curr, &initial, output_str.as_bytes());
+        assert_eq!(grid[0].0, "A");
+        assert!(grid[1].0.trim().is_empty());
+        assert_eq!(grid[1].1.wide, crate::ghostty::CellWide::Narrow);
+        assert_eq!(grid[2].0, "Z");
     }
 
     #[test]
