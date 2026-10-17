@@ -43,6 +43,26 @@ fn patch_count(messages: &[ServerMessage]) -> usize {
         .count()
 }
 
+fn assert_image_generation(messages: &[ServerMessage], generation: u8) {
+    let patch: crate::kitty_graphics::patch::GraphicsPatch = messages
+        .iter()
+        .find_map(|message| match message {
+            ServerMessage::EndpointControl { kind, data }
+                if kind == crate::protocol::endpoint::GRAPHICS_PATCH_KIND =>
+            {
+                Some(serde_json::from_str(data).unwrap())
+            }
+            _ => None,
+        })
+        .expect("latest image patch");
+    assert_eq!(patch.key, surface(messages).graphics.placements[0].asset);
+    let base = vec![1; 512 * 256 * 4];
+    assert_eq!(
+        crate::kitty_graphics::patch::apply(Some(&base), &patch).unwrap(),
+        vec![generation; 512 * 256 * 4]
+    );
+}
+
 fn set_image(server: &mut HeadlessServer, generation: u8) {
     let pane = server.app.state.workspaces[0].focused_pane_id().unwrap();
     let key = (pane, api::schema::PANE_GRAPHICS_PRIMARY_LAYER_ID.into());
@@ -102,6 +122,10 @@ async fn type_text(
 
 #[tokio::test]
 async fn receipt_text_frames_keep_image_state_and_original_ack_then_deliver_latest_image() {
+    let tracing_child = std::env::var_os("HERDR_RECEIPT_TRACE_TEST_CHILD").is_some();
+    if tracing_child {
+        crate::logging::init_file_logging("herdr-server.log");
+    }
     let (mut server, terminal, id, mut stream, first) = receipt_server().await;
     set_image(&mut server, 2);
     type_text(&mut server, &terminal, "typed-during-receipt").await;
@@ -161,6 +185,7 @@ async fn receipt_text_frames_keep_image_state_and_original_ack_then_deliver_late
     server.stream_endpoint_views();
     let latest = drain(&server, id, &mut stream);
     assert_eq!(patch_count(&latest), 1);
+    assert_image_generation(&latest, 3);
     let latest = surface(&latest);
     assert_ne!(
         latest.graphics.placements[0].asset,
@@ -182,6 +207,60 @@ async fn receipt_text_frames_keep_image_state_and_original_ack_then_deliver_late
         latest.surface_revision
     );
     shutdown_test_runtimes(&mut server);
+    if tracing_child {
+        let log =
+            std::fs::read_to_string(crate::session::data_dir().join("herdr-server.log")).unwrap();
+        let queued = log
+            .lines()
+            .filter(|line| line.contains("surface.queued"))
+            .collect::<Vec<_>>();
+        if crate::logging::latency_trace_enabled() {
+            assert_eq!(
+                queued
+                    .iter()
+                    .filter(|line| line.contains("text_only=true")
+                        && line.contains("with_images=false"))
+                    .count(),
+                2
+            );
+            assert_eq!(
+                queued
+                    .iter()
+                    .filter(|line| line.contains("text_only=false")
+                        && line.contains("with_images=true"))
+                    .count(),
+                2
+            );
+            assert_eq!(
+                log.lines()
+                    .filter(|line| line.contains("surface.ack_started"))
+                    .count(),
+                2
+            );
+        } else {
+            assert!(queued.is_empty());
+        }
+    }
+}
+
+#[test]
+fn receipt_trace_marks_text_only_only_when_enabled() {
+    let root = std::env::temp_dir().join(format!(
+        "herdr-receipt-trace-{}-{}",
+        std::process::id(),
+        crate::logging::latency_trace_time_us()
+    ));
+    for value in ["0", "1"] {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "server::headless::endpoints::text_receipt_tests::receipt_text_frames_keep_image_state_and_original_ack_then_deliver_latest_image", "--nocapture"])
+            .env("HERDR_RECEIPT_TRACE_TEST_CHILD", "1")
+            .env("XDG_CONFIG_HOME", root.join(value))
+            .env("HERDR_LATENCY_TRACE",value)
+            .env("HERDR_LOG","herdr=info")
+            .status().unwrap();
+        assert!(status.success(), "receipt trace mode {value}");
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
@@ -215,6 +294,7 @@ async fn receipt_timeout_and_miss_resume_latest_image_after_text() {
         server.stream_endpoint_views();
         let latest = drain(&server, id, &mut stream);
         assert_eq!(patch_count(&latest), 1);
+        assert_image_generation(&latest, 2);
         assert_ne!(
             surface(&latest).graphics.placements[0].asset,
             first.graphics.placements[0].asset

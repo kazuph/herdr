@@ -14744,12 +14744,13 @@
         "rust_test_target:receipt_incompatible_geometry_and_failed_send_do_not_commit",
         "drift_source_anchor:src/server/headless/endpoints/text_receipt.rs",
         "drift_source_anchor:src/server/headless/tests/text_receipt.rs",
-        "drift_source_anchor:src/client/endpoint/transport/tests.rs"
+        "drift_source_anchor:src/client/endpoint/transport/tests.rs",
+        "rust_test_target:receipt_trace_marks_text_only_only_when_enabled"
       ],
       "source_anchors": [
         "SPEC.md:2376",
         "src/server/headless/endpoints/text_receipt.rs:102",
-        "src/server/headless/tests/text_receipt.rs:104",
+        "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
       ],
       "test_status": [
@@ -14777,7 +14778,7 @@
       "source_anchors": [
         "SPEC.md:2377",
         "src/server/headless/endpoints/text_receipt.rs:102",
-        "src/server/headless/tests/text_receipt.rs:104",
+        "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
       ],
       "test_status": [
@@ -14805,7 +14806,7 @@
       "source_anchors": [
         "SPEC.md:2378",
         "src/server/headless/endpoints/text_receipt.rs:102",
-        "src/server/headless/tests/text_receipt.rs:104",
+        "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
       ],
       "test_status": [
@@ -14832,7 +14833,7 @@
       "source_anchors": [
         "SPEC.md:2379",
         "src/server/headless/endpoints/text_receipt.rs:102",
-        "src/server/headless/tests/text_receipt.rs:104",
+        "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
       ],
       "test_status": [

@@ -288,6 +288,14 @@ mod patch_rebuild {
                 height_px: 16,
             };
             let mut terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+            let mut text_encoder = crate::protocol::render_ansi::BlitEncoder::new();
+            let terminal_frame = crate::protocol::FrameData::from_ratatui_buffer(
+                &held.frame.to_ratatui_buffer().unwrap(),
+                None,
+            );
+            let encoded_text = text_encoder.encode(&terminal_frame, false);
+            terminal.write(&encoded_text.bytes);
+            text_encoder.commit(terminal_frame, encoded_text);
             terminal.write(&host.encode(
                 Visibility::Main,
                 (0, 0),
@@ -364,7 +372,16 @@ mod patch_rebuild {
                     !ansi.contains("a=t,") && !ansi.contains("a=T,") && !ansi.contains("a=d,"),
                     "{ansi}"
                 );
+                let terminal_frame = crate::protocol::FrameData::from_ratatui_buffer(
+                    &held.frame.to_ratatui_buffer().unwrap(),
+                    None,
+                );
+                let encoded_text = text_encoder.encode(&terminal_frame, false);
+                assert!(!encoded_text.cleared_screen);
+                terminal.write(&encoded_text.bytes);
+                text_encoder.commit(terminal_frame, encoded_text);
                 terminal.write(&graphics);
+                assert_eq!(terminal.screen_cell(0, 0).unwrap().1, vec![u32::from('T')]);
                 let shown = terminal.kitty_image_placements().unwrap();
                 assert_eq!(shown.len(), 1);
                 assert_eq!(shown[0].data_fingerprint, initial[0].data_fingerprint);
