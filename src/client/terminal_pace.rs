@@ -34,6 +34,13 @@ struct Inner {
 impl TerminalPace {
     /// Records a probe the caller just wrote to the terminal.
     pub(crate) fn sent(&self) {
+        if crate::logging::latency_trace_enabled() {
+            tracing::info!(target: "herdr_latency", event = "terminal.probe_sent",
+                time_us = crate::logging::latency_trace_time_us(),
+                pace_id = Arc::as_ptr(&self.0) as usize,
+                outstanding = self.0.outstanding.load(Ordering::Acquire),
+                "terminal processing probe written");
+        }
         self.0.enabled.store(true, Ordering::Release);
         self.0.outstanding.fetch_add(1, Ordering::AcqRel);
     }
@@ -62,6 +69,13 @@ impl TerminalPace {
         let (rest, replies) = strip(bytes);
         if replies == 0 {
             return None;
+        }
+        if crate::logging::latency_trace_enabled() {
+            tracing::info!(target: "herdr_latency", event = "terminal.probe_reply",
+                time_us = crate::logging::latency_trace_time_us(),
+                pace_id = Arc::as_ptr(&self.0) as usize, replies,
+                outstanding = self.0.outstanding.load(Ordering::Acquire),
+                "terminal processing replies received");
         }
         let _ = self
             .0

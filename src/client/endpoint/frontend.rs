@@ -510,6 +510,16 @@ impl ClientFrontend {
             self.pace_since.get_or_insert_with(Instant::now);
         }
         stdout.flush()?;
+        if crate::logging::latency_trace_enabled() {
+            if let Some(surface) = &self.runtime.shell.pane_surface {
+                tracing::info!(target: "herdr_latency", event = "surface.terminal_written",
+                    time_us = crate::logging::latency_trace_time_us(),
+                    boot_id = %surface.boot_id, surface_revision = surface.surface_revision,
+                    bytes = encoded.bytes.len() + graphics_bytes.len(),
+                    with_images = !graphics_bytes.is_empty(),
+                    "surface flushed to host terminal");
+            }
+        }
         self.graphics = next_graphics;
         self.blit.commit(frame, encoded);
         mobile::commit_presentation(self, mobile_presentation);

@@ -521,6 +521,13 @@ impl HeadlessServer {
                 .get_mut(&client_id)
                 .expect("live client");
             if client.waiting_for_patch_ack() {
+                if crate::logging::latency_trace_enabled() {
+                    tracing::info!(target: "herdr_latency", event = "surface.ack_wait",
+                        time_us = crate::logging::latency_trace_time_us(),
+                        boot_id = %self.endpoint_boot_id, client_id = ?client_id,
+                        surface_revision = client.surface_revision, bytes = 0,
+                        with_images = true, "surface withheld pending graphics acknowledgement");
+                }
                 continue;
             }
             let mut snapshot = crate::server::endpoint_snapshot::snapshot(
@@ -746,7 +753,20 @@ impl HeadlessServer {
                     .endpoint_clients
                     .get_mut(&client_id)
                     .expect("live client");
+                let trace_bytes = if crate::logging::latency_trace_enabled() {
+                    batch.len()
+                } else {
+                    0
+                };
                 if client.writer.render.send_ordered(batch).is_ok() {
+                    if crate::logging::latency_trace_enabled() {
+                        tracing::info!(target: "herdr_latency", event = "surface.queued",
+                            time_us = crate::logging::latency_trace_time_us(),
+                            boot_id = %surface.boot_id, client_id = ?client_id,
+                            surface_revision = surface.surface_revision, bytes = trace_bytes,
+                            with_images = !surface.graphics.assets.is_empty() || !patches.messages.is_empty(),
+                            "surface registered in ordered send queue");
+                    }
                     if !patches.messages.is_empty() {
                         client.patch_ack_wait =
                             Some((surface.surface_revision, std::time::Instant::now()));
