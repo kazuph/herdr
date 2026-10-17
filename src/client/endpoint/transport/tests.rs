@@ -123,7 +123,9 @@ async fn endpoint_reader_fragmented_frame_keeps_generation_and_cancels_partial_o
 }
 
 mod patch_rebuild {
-    use super::super::PatchRebuild;
+    use super::super::{EndpointReaderEvent, PatchRebuild};
+    use super::pair;
+    use crate::client::endpoint::{ClientEndpointId, EndpointNegotiation};
     use crate::kitty_graphics::patch::{self, GraphicsPatch};
     use crate::protocol::endpoint_wire::{
         FrameData, PaneSurfaceFrame, ServerMessage, SurfaceGraphicsAssetKey, SurfaceGraphicsFormat,
@@ -190,6 +192,196 @@ mod patch_rebuild {
                 retained_assets: Vec::new(),
             },
         })
+    }
+
+    #[tokio::test]
+    async fn receipt_text_updates_and_reuse_keep_pixels_without_ack_miss_or_upload() {
+        use crate::client::endpoint::{
+            handshake::EndpointConnectOptions, runtime::EndpointRuntime, shell::ClientShellState,
+            supervisor::EndpointSupervisors, writer::NativeEndpointTransport, EndpointRegistry,
+        };
+        use crate::kitty_graphics::endpoint_client::{ClientState, Occlusion, Visibility};
+        use crate::kitty_graphics::HostCellSize;
+        use std::time::Instant;
+        for delta in [false, true] {
+            let (client, mut peer, _socket) = pair();
+            let writer = NativeEndpointTransport::with_lifetime(client, ()).unwrap();
+            let options = EndpointConnectOptions {
+                surface_size: crate::protocol::endpoint_wire::ClientSurfaceSize {
+                    cols: 80,
+                    rows: 24,
+                },
+                cell_width_px: 8,
+                cell_height_px: 16,
+                pixel_geometry_exact: false,
+                endpoint_keybindings: false,
+                mouse_capture: true,
+                surface_active: true,
+            };
+            let local = ClientEndpointId::Local;
+            let mut runtime = EndpointRuntime::new(
+                ClientShellState::new(),
+                EndpointRegistry::new(writer, 1, EndpointNegotiation::default()),
+                EndpointSupervisors::new(&[], Instant::now()),
+                options,
+            );
+            assert!(runtime.shell.begin_connection(&local, 1));
+            let mut snapshot: crate::protocol::endpoint_wire::ClientShellSnapshot =
+                serde_json::from_str(include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/upstream-gen1-endpoint-snapshot-v1.json"
+                )))
+                .unwrap();
+            snapshot.boot_id = "boot".into();
+            let feed = |runtime: &mut EndpointRuntime, message: ServerMessage| {
+                runtime.receive(
+                    EndpointReaderEvent::Message {
+                        endpoint_id: local.clone(),
+                        generation: 1,
+                        message: Box::new(message),
+                    },
+                    Instant::now(),
+                )
+            };
+            feed(
+                &mut runtime,
+                crate::protocol::endpoint::snapshot_message(&snapshot).unwrap(),
+            );
+            let ServerMessage::PaneSurface(mut first) = frame(&key(1)) else {
+                unreachable!()
+            };
+            first.projection_revision = snapshot.revision;
+            first.frame = FrameData::from_ratatui_buffer(
+                &ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 24)),
+                None,
+            );
+            first.graphics.retained_assets = vec![key(1)];
+            let mut decoder = crate::protocol::surface_reuse::Decoder::new(true, false);
+            let mut rebuild = PatchRebuild::default();
+            let data = vec![200; (W * H * 4) as usize];
+            assert!(rebuild
+                .receive(message(&GraphicsPatch::whole(&key(1), &data).unwrap()))
+                .is_empty());
+            let decoded = decoder
+                .decode(ServerMessage::PaneSurface(first.clone()))
+                .unwrap();
+            for message in rebuild.receive(decoded) {
+                feed(&mut runtime, message);
+            }
+            let ack: crate::protocol::endpoint_wire::ClientMessage =
+                crate::protocol::read_message(&mut peer, crate::protocol::MAX_FRAME_SIZE).unwrap();
+            assert!(
+                matches!(ack, crate::protocol::endpoint_wire::ClientMessage::EndpointControl {kind,..} if kind==crate::protocol::endpoint::GRAPHICS_PATCH_ACK_KIND)
+            );
+            let mut host = ClientState::default();
+            host.set_scope("receipt-image");
+            let held = runtime
+                .shell
+                .endpoint(&local)
+                .unwrap()
+                .cache
+                .received_surface(1)
+                .unwrap();
+            host.set_scene(held.graphics.clone());
+            let cell = HostCellSize {
+                width_px: 8,
+                height_px: 16,
+            };
+            let mut terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+            terminal.write(&host.encode(
+                Visibility::Main,
+                (0, 0),
+                None,
+                cell,
+                &Occlusion::default(),
+            ));
+            let initial = terminal.kitty_image_placements().unwrap();
+            assert_eq!(initial.len(), 1);
+            let mut text = first.clone();
+            text.surface_revision += 1;
+            text.frame.cells[0].symbol = "T".into();
+            let mut full = ServerMessage::PaneSurface(text.clone());
+            let encoded = if delta {
+                crate::protocol::surface_delta::message(&first, &mut full)
+                    .unwrap()
+                    .expect("text delta")
+            } else {
+                full
+            };
+            for (step, wire) in [encoded, {
+                let mut reuse = text.clone();
+                reuse.surface_revision += 1;
+                crate::protocol::surface_reuse::message(text.surface_revision, &mut reuse)
+                    .unwrap()
+                    .expect("reuse")
+            }]
+            .into_iter()
+            .enumerate()
+            {
+                let mut bytes = Vec::new();
+                crate::protocol::write_message(&mut bytes, &wire).unwrap();
+                let wire = crate::protocol::read_message(
+                    &mut bytes.as_slice(),
+                    crate::protocol::MAX_GRAPHICS_FRAME_SIZE,
+                )
+                .unwrap();
+                let decoded = decoder.decode(wire).unwrap();
+                assert!(
+                    matches!(&decoded,ServerMessage::PaneSurface(s) if s.graphics.assets.is_empty())
+                );
+                for message in rebuild.receive(decoded) {
+                    feed(&mut runtime, message);
+                }
+                let held = runtime
+                    .shell
+                    .endpoint(&local)
+                    .unwrap()
+                    .cache
+                    .received_surface(1)
+                    .unwrap();
+                assert_eq!(held.frame.cells[0].symbol, "T");
+                assert_eq!(held.surface_revision, text.surface_revision + step as u64);
+                assert_eq!(held.graphics.assets[0].data, data);
+                assert!(runtime
+                    .shell
+                    .endpoint_mut(&local)
+                    .unwrap()
+                    .cache
+                    .take_graphics_patch_misses()
+                    .is_empty());
+                let held = runtime
+                    .shell
+                    .endpoint(&local)
+                    .unwrap()
+                    .cache
+                    .received_surface(1)
+                    .unwrap();
+                host.set_scene(held.graphics.clone());
+                let graphics =
+                    host.encode(Visibility::Main, (0, 0), None, cell, &Occlusion::default());
+                let ansi = String::from_utf8_lossy(&graphics);
+                assert!(
+                    !ansi.contains("a=t,") && !ansi.contains("a=T,") && !ansi.contains("a=d,"),
+                    "{ansi}"
+                );
+                terminal.write(&graphics);
+                let shown = terminal.kitty_image_placements().unwrap();
+                assert_eq!(shown.len(), 1);
+                assert_eq!(shown[0].data_fingerprint, initial[0].data_fingerprint);
+                // Ordered real socket marker: any extra ACK or MISS would precede it.
+                let marker = crate::protocol::endpoint_wire::ClientMessage::ClientShellFocus {
+                    focused: false,
+                };
+                assert_eq!(
+                    runtime.endpoints.send_to(&local, &marker),
+                    crate::client::endpoint::EndpointSendOutcome::Sent
+                );
+                let outgoing: crate::protocol::endpoint_wire::ClientMessage =
+                    crate::protocol::read_message(&mut peer, crate::protocol::MAX_FRAME_SIZE)
+                        .unwrap();
+                assert_eq!(outgoing, marker);
+            }
+        }
     }
 
     fn image_of(messages: &[ServerMessage], key: &SurfaceGraphicsAssetKey) -> Option<Vec<u8>> {

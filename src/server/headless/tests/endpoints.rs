@@ -958,7 +958,7 @@ async fn endpoint_supervisor_actual_server_local_recovery_never_bootstraps_missi
     shutdown_test_runtimes(&mut server);
 }
 
-async fn owned_activation_pty(
+pub(in crate::server::headless) async fn owned_activation_pty(
     server: &mut HeadlessServer,
     label: &str,
 ) -> crate::terminal::TerminalId {
@@ -1236,7 +1236,7 @@ async fn next_event(server: &mut HeadlessServer) -> EndpointTransportEvent {
         .unwrap()
 }
 
-async fn dispatch_input(server: &mut HeadlessServer) -> bool {
+pub(in crate::server::headless) async fn dispatch_input(server: &mut HeadlessServer) -> bool {
     loop {
         let event = next_event(server).await;
         let input = matches!(event, EndpointTransportEvent::Message { .. });
@@ -1247,7 +1247,7 @@ async fn dispatch_input(server: &mut HeadlessServer) -> bool {
     }
 }
 
-fn receive(stream: &mut crate::ipc::LocalStream) -> ServerMessage {
+pub(in crate::server::headless) fn receive(stream: &mut crate::ipc::LocalStream) -> ServerMessage {
     protocol::read_message(stream, MAX_GRAPHICS_FRAME_SIZE).unwrap()
 }
 
@@ -1332,6 +1332,19 @@ async fn connect_with_surface_encoding(
     crate::ipc::LocalStream,
     crate::protocol::endpoint::EndpointServerWelcome,
 ) {
+    connect_with_graphics_receipt(server, active, compact, false).await
+}
+
+pub(in crate::server::headless) async fn connect_with_graphics_receipt(
+    server: &mut HeadlessServer,
+    active: bool,
+    compact: bool,
+    graphics_patches: bool,
+) -> (
+    u64,
+    crate::ipc::LocalStream,
+    crate::protocol::endpoint::EndpointServerWelcome,
+) {
     let mut stream = crate::ipc::connect_local_stream(&server.client_socket_path).unwrap();
     stream.set_recv_timeout(Some(TIMEOUT)).unwrap();
     let handshake = tokio::task::spawn_blocking(move || {
@@ -1352,7 +1365,14 @@ async fn connect_with_surface_encoding(
             surface_delta: compact,
             surface_scroll: false,
             snapshot_codecs: vec![endpoint::SNAPSHOT_CODEC_V1.into()],
-            surface_codecs: vec![endpoint::SURFACE_CODEC_V1.into()],
+            surface_codecs: if graphics_patches {
+                vec![
+                    endpoint::SURFACE_CODEC_V1.into(),
+                    endpoint::GRAPHICS_PATCH_CODEC.into(),
+                ]
+            } else {
+                vec![endpoint::SURFACE_CODEC_V1.into()]
+            },
             input_codecs: vec![endpoint::INPUT_CODEC_V1.into()],
             blob_codecs: vec![endpoint::BLOB_CODEC_V1.into()],
         };
@@ -1403,7 +1423,7 @@ async fn connect_with_surface_encoding(
     }
 }
 
-async fn wait_output(
+pub(in crate::server::headless) async fn wait_output(
     server: &HeadlessServer,
     terminal: &crate::terminal::TerminalId,
     marker: &str,
