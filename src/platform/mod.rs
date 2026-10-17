@@ -244,14 +244,11 @@ impl PrefixInputSource for RealPrefixInputSource {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn endpoint_peer_pid(stream: &crate::ipc::LocalStream) -> Option<u32> {
-    use interprocess::local_socket::traits::Stream as _;
-    stream
-        .peer_creds()
-        .ok()?
-        .pid()
-        .and_then(|pid| u32::try_from(pid).ok())
+/// Peer process ids are only read where the OS exposes them (macOS, Linux);
+/// latency traces record no peer pid elsewhere.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub(crate) fn endpoint_peer_pid(_stream: &crate::ipc::LocalStream) -> Option<u32> {
+    None
 }
 
 #[cfg(all(test, unix))]
