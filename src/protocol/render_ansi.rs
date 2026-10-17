@@ -631,6 +631,7 @@ fn write_ime_anchor_cursor_state(writer: &mut impl Write, cursor: HostCursorStat
 
 fn write_all_cells(writer: &mut impl Write, frame: &FrameData) {
     let mut active_hyperlink = None;
+    let mut output = CellOutput::default();
     for row in 0..frame.height {
         let mut to_skip = 0usize;
         for col in 0..frame.width {
@@ -646,21 +647,15 @@ fn write_all_cells(writer: &mut impl Write, frame: &FrameData) {
                 continue;
             }
 
-            // Move cursor to position (1-based).
-            let _ = write!(writer, "\x1b[{};{}H", row + 1, col + 1);
-
-            // Set style.
-            let sgr = build_sgr(cell.fg, cell.bg, cell.modifier);
-            let _ = writer.write_all(sgr.as_bytes());
-
-            write_hyperlink_if_changed(
+            write_cell(
                 writer,
+                row,
+                col,
+                cell,
+                &mut output,
                 &mut active_hyperlink,
-                cell_hyperlink_uri(frame, cell),
+                frame,
             );
-
-            // Write the symbol.
-            let _ = writer.write_all(cell.symbol.as_bytes());
             to_skip = cell_width(cell).saturating_sub(1);
         }
     }
@@ -725,12 +720,18 @@ fn close_hyperlink(writer: &mut impl Write, active: &mut Option<String>) {
     }
 }
 
+#[derive(Default)]
+struct CellOutput {
+    style: Option<(u32, u32, u16)>,
+    next_ascii_position: Option<(u16, u16)>,
+}
+
 fn write_cell(
     writer: &mut impl Write,
     row: u16,
     col: u16,
     cell: &CellData,
-    last_sgr: &mut String,
+    output: &mut CellOutput,
     active_hyperlink: &mut Option<String>,
     frame: &FrameData,
 ) {
@@ -738,16 +739,22 @@ fn write_cell(
         return;
     }
 
-    let _ = write!(writer, "\x1b[{};{}H", row + 1, col + 1);
-
-    let sgr = build_sgr(cell.fg, cell.bg, cell.modifier);
-    if sgr != *last_sgr {
-        let _ = writer.write_all(sgr.as_bytes());
-        *last_sgr = sgr;
+    if output.next_ascii_position != Some((row, col)) || col + 1 == frame.width {
+        let _ = write!(writer, "\x1b[{};{}H", row + 1, col + 1);
+    }
+    let style = (cell.fg, cell.bg, cell.modifier);
+    if output.style != Some(style) {
+        let _ = writer.write_all(build_sgr(cell.fg, cell.bg, cell.modifier).as_bytes());
+        output.style = Some(style);
     }
 
     write_hyperlink_if_changed(writer, active_hyperlink, cell_hyperlink_uri(frame, cell));
     let _ = writer.write_all(cell.symbol.as_bytes());
+    // Non-ASCII widths can differ in the host terminal; never carry their cursor forward.
+    output.next_ascii_position = (cell.symbol.len() == 1
+        && matches!(cell.symbol.as_bytes()[0], b' '..=b'~')
+        && col + 1 < frame.width)
+        .then_some((row, col + 1));
 }
 
 /// Writes only the cells that changed between the previous and current frame.
@@ -767,7 +774,7 @@ fn cells_visually_equal(
 }
 
 fn write_changed_cells(writer: &mut impl Write, frame: &FrameData, prev: &FrameData) {
-    let mut last_sgr = String::new(); // Track last SGR to avoid redundant style changes.
+    let mut output = CellOutput::default();
     let mut active_hyperlink = None;
     let sanitized_hyperlinks = sanitized_frame_hyperlinks(frame);
     let prev_sanitized_hyperlinks = sanitized_frame_hyperlinks(prev);
@@ -795,7 +802,7 @@ fn write_changed_cells(writer: &mut impl Write, frame: &FrameData, prev: &FrameD
                     row,
                     col,
                     cell,
-                    &mut last_sgr,
+                    &mut output,
                     &mut active_hyperlink,
                     frame,
                 );
@@ -810,7 +817,7 @@ fn write_changed_cells(writer: &mut impl Write, frame: &FrameData, prev: &FrameD
     close_hyperlink(writer, &mut active_hyperlink);
 
     // Reset style if we wrote anything.
-    if !last_sgr.is_empty() {
+    if output.style.is_some() {
         let _ = writer.write_all(b"\x1b[0m");
     }
 }
@@ -825,6 +832,122 @@ mod tests {
     use crate::protocol::{CellData, CursorState};
 
     const WIDE_GRAPHEME: &str = "💡";
+
+    fn legacy_write_all_cells(writer: &mut impl Write, frame: &FrameData) {
+        let mut active_hyperlink = None;
+        for row in 0..frame.height {
+            let mut to_skip = 0usize;
+            for col in 0..frame.width {
+                if to_skip > 0 {
+                    to_skip -= 1;
+                    continue;
+                }
+
+                let idx = (row as usize) * (frame.width as usize) + (col as usize);
+                let cell = &frame.cells[idx];
+
+                if cell.skip {
+                    continue;
+                }
+
+                // Move cursor to position (1-based).
+                let _ = write!(writer, "\x1b[{};{}H", row + 1, col + 1);
+
+                // Set style.
+                let sgr = build_sgr(cell.fg, cell.bg, cell.modifier);
+                let _ = writer.write_all(sgr.as_bytes());
+
+                write_hyperlink_if_changed(
+                    writer,
+                    &mut active_hyperlink,
+                    cell_hyperlink_uri(frame, cell),
+                );
+
+                // Write the symbol.
+                let _ = writer.write_all(cell.symbol.as_bytes());
+                to_skip = cell_width(cell).saturating_sub(1);
+            }
+        }
+
+        close_hyperlink(writer, &mut active_hyperlink);
+
+        // Reset style at the end.
+        let _ = writer.write_all(b"\x1b[0m");
+    }
+
+    fn legacy_write_cell(
+        writer: &mut impl Write,
+        row: u16,
+        col: u16,
+        cell: &CellData,
+        last_sgr: &mut String,
+        active_hyperlink: &mut Option<String>,
+        frame: &FrameData,
+    ) {
+        if cell.skip {
+            return;
+        }
+
+        let _ = write!(writer, "\x1b[{};{}H", row + 1, col + 1);
+
+        let sgr = build_sgr(cell.fg, cell.bg, cell.modifier);
+        if sgr != *last_sgr {
+            let _ = writer.write_all(sgr.as_bytes());
+            *last_sgr = sgr;
+        }
+
+        write_hyperlink_if_changed(writer, active_hyperlink, cell_hyperlink_uri(frame, cell));
+        let _ = writer.write_all(cell.symbol.as_bytes());
+    }
+
+    fn legacy_write_changed_cells(writer: &mut impl Write, frame: &FrameData, prev: &FrameData) {
+        let mut last_sgr = String::new(); // Track last SGR to avoid redundant style changes.
+        let mut active_hyperlink = None;
+        let sanitized_hyperlinks = sanitized_frame_hyperlinks(frame);
+        let prev_sanitized_hyperlinks = sanitized_frame_hyperlinks(prev);
+
+        for row in 0..frame.height {
+            let mut invalidated = 0usize;
+            let mut to_skip = 0usize;
+
+            for col in 0..frame.width {
+                let idx = (row as usize) * (frame.width as usize) + (col as usize);
+                let cell = &frame.cells[idx];
+                let prev_cell = &prev.cells[idx];
+
+                if !cell.skip
+                    && (!cells_visually_equal(
+                        &sanitized_hyperlinks,
+                        cell,
+                        &prev_sanitized_hyperlinks,
+                        prev_cell,
+                    ) || invalidated > 0)
+                    && to_skip == 0
+                {
+                    legacy_write_cell(
+                        writer,
+                        row,
+                        col,
+                        cell,
+                        &mut last_sgr,
+                        &mut active_hyperlink,
+                        frame,
+                    );
+                }
+
+                to_skip = cell_width(cell).saturating_sub(1);
+                let affected_width = cmp::max(cell_width(cell), cell_width(prev_cell));
+                invalidated = cmp::max(affected_width, invalidated).saturating_sub(1);
+            }
+        }
+
+        close_hyperlink(writer, &mut active_hyperlink);
+
+        // Reset style if we wrote anything.
+        if !last_sgr.is_empty() {
+            let _ = writer.write_all(b"\x1b[0m");
+        }
+    }
 
     fn make_cell(symbol: &str, fg: u32, bg: u32, modifier: u16) -> CellData {
         CellData {
@@ -852,6 +975,144 @@ mod tests {
         let mut cell = make_cell(symbol, 0, 0, 0);
         cell.hyperlink = Some(index);
         cell
+    }
+
+    fn terminal_screen(frame: &FrameData, initial: &[u8], bytes: &[u8]) -> String {
+        let mut terminal = crate::ghostty::Terminal::new(frame.width, frame.height, 0).unwrap();
+        terminal.write(initial);
+        terminal.write(bytes);
+        terminal
+            .read_ansi_screen(
+                (0, 0),
+                (frame.width - 1, u32::from(frame.height - 1)),
+                true,
+                false,
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn lean_encoding_preserves_terminal_grid_and_links() {
+        let mut prev = make_frame(12, 3, vec![make_cell(" ", 0, 0, 0); 36]);
+        prev.hyperlinks = vec!["https://old.example".into()];
+        prev.cells[0] = linked_cell("A", 0);
+        prev.cells[4] = make_cell("全", 0, 0, 0);
+        let mut next = prev.clone();
+        next.hyperlinks = vec!["https://new.example".into()];
+        for (i, symbol) in [
+            (1, "B"),
+            (2, "C"),
+            (4, "D"),
+            (5, "E"),
+            (6, "💡"),
+            (8, "e\u{301}"),
+            (9, "F"),
+            (10, "G"),
+            (11, "H"),
+            (12, "界"),
+            (14, "I"),
+            (15, "J"),
+            (17, "K"),
+            (35, "Z"),
+        ] {
+            next.cells[i].symbol = symbol.into();
+        }
+        next.cells[3].skip = true;
+        next.cells[16].skip = true;
+        next.cells[9].fg = 0x02_ff_80_40;
+        next.cells[10].bg = 0x01_00_00_7b;
+        next.cells[14].modifier = 1;
+        next.cells[15].modifier = 1 << 6;
+        next.cells[17].modifier = 1 << 3;
+        let mut initial = Vec::new();
+        legacy_write_all_cells(&mut initial, &prev);
+        for full in [false, true] {
+            let mut old = Vec::new();
+            let mut new = Vec::new();
+            if full {
+                legacy_write_all_cells(&mut old, &next);
+                write_all_cells(&mut new, &next);
+            } else {
+                legacy_write_changed_cells(&mut old, &next, &prev);
+                write_changed_cells(&mut new, &next, &prev);
+            }
+            assert_eq!(
+                terminal_screen(&next, &initial, &old),
+                terminal_screen(&next, &initial, &new)
+            );
+            let links = |bytes: &[u8]| {
+                String::from_utf8(bytes.to_vec())
+                    .unwrap()
+                    .split("\x1b]8;;")
+                    .skip(1)
+                    .map(|s| s.split("\x1b\\").next().unwrap().to_owned())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(links(&old), links(&new));
+            assert_eq!(links(&new), vec!["https://new.example", ""]);
+        }
+    }
+
+    #[test]
+    fn lean_encoding_only_elides_safe_ascii_positions_and_repeated_styles() {
+        let mut frame = make_frame(10, 1, vec![make_cell("a", 0, 0, 0); 10]);
+        frame.cells[2].symbol = "全".into();
+        frame.cells[5].skip = true;
+        frame.cells[7].modifier = 1;
+        frame.cells[8].fg = 2;
+        let mut bytes = Vec::new();
+        write_all_cells(&mut bytes, &frame);
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains("\x1b[1;2H"));
+        assert!(text.contains("\x1b[1;5H")); // after a wide glyph
+        assert!(text.contains("\x1b[1;7H")); // after an unwritten hole
+        assert!(text.contains("\x1b[1;10H")); // right edge
+        assert_eq!(text.matches("\x1b[0;").count(), 4); // default, bold, color, default
+        let prev = make_frame(10, 1, vec![make_cell("b", 0, 0, 0); 10]);
+        let mut diff = Vec::new();
+        write_changed_cells(&mut diff, &frame, &prev);
+        assert_eq!(text, String::from_utf8(diff).unwrap());
+    }
+
+    #[tokio::test]
+    async fn lean_full_redraw_reduces_real_ui_bytes() {
+        use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+        let mut app = crate::app::state::AppState::test_new();
+        let mut ws = crate::workspace::Workspace::test_new("performance workspace");
+        let pane = ws.tabs[0].root_pane;
+        ws.insert_test_runtime(
+            pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(
+                80,
+                20,
+                b"herdr render measurement\r\nASCII terminal output\r\n$ cargo test",
+            ),
+        );
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = crate::app::state::Mode::Terminal;
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render(&app, frame))
+            .unwrap();
+        let frame = FrameData::from_ratatui_buffer(terminal.backend().buffer(), None);
+        let mut old = Vec::new();
+        let mut new = Vec::new();
+        legacy_write_all_cells(&mut old, &frame);
+        write_all_cells(&mut new, &frame);
+        println!(
+            "real_ui_full_redraw old={} new={} ratio={:.6}",
+            old.len(),
+            new.len(),
+            new.len() as f64 / old.len() as f64
+        );
+        assert!(new.len() < old.len());
+        assert_eq!(
+            terminal_screen(&frame, &[], &old),
+            terminal_screen(&frame, &[], &new)
+        );
     }
 
     #[test]
