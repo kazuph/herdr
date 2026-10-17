@@ -244,6 +244,16 @@ impl PrefixInputSource for RealPrefixInputSource {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn endpoint_peer_pid(stream: &crate::ipc::LocalStream) -> Option<u32> {
+    use interprocess::local_socket::traits::Stream as _;
+    stream
+        .peer_creds()
+        .ok()?
+        .pid()
+        .and_then(|pid| u32::try_from(pid).ok())
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

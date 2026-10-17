@@ -33,6 +33,7 @@ pub(super) struct EndpointClient {
     /// Surface revision of the last patched frame the viewer has not yet
     /// acknowledged, and when it was sent.
     patch_ack_wait: Option<(u64, std::time::Instant)>,
+    patch_ack_trace: Option<(u64, std::time::Instant)>,
     pixel_mouse: bool,
     mouse_capture: bool,
     outer_focus: Option<bool>,
@@ -293,6 +294,7 @@ impl HeadlessServer {
                             .any(|codec| codec == crate::protocol::endpoint::GRAPHICS_PATCH_CODEC),
                         patch_bases: HashMap::new(),
                         patch_ack_wait: None,
+                        patch_ack_trace: None,
                         graphics_delivery: Default::default(),
                         pixel_mouse: hello.pixel_mouse,
                         mouse_capture: hello.mouse_capture,
@@ -521,15 +523,9 @@ impl HeadlessServer {
                 .get_mut(&client_id)
                 .expect("live client");
             if client.waiting_for_patch_ack() {
-                if crate::logging::latency_trace_enabled() {
-                    tracing::info!(target: "herdr_latency", event = "surface.ack_wait",
-                        time_us = crate::logging::latency_trace_time_us(),
-                        boot_id = %self.endpoint_boot_id, client_id = ?client_id,
-                        surface_revision = client.surface_revision, bytes = 0,
-                        with_images = true, "surface withheld pending graphics acknowledgement");
-                }
                 continue;
             }
+            client.finish_patch_ack_trace(client_id, "timeout");
             let mut snapshot = crate::server::endpoint_snapshot::snapshot(
                 &self.app,
                 &self.endpoint_boot_id,
@@ -759,17 +755,16 @@ impl HeadlessServer {
                     0
                 };
                 if client.writer.render.send_ordered(batch).is_ok() {
-                    if crate::logging::latency_trace_enabled() {
-                        tracing::info!(target: "herdr_latency", event = "surface.queued",
-                            time_us = crate::logging::latency_trace_time_us(),
-                            boot_id = %surface.boot_id, client_id = ?client_id,
-                            surface_revision = surface.surface_revision, bytes = trace_bytes,
-                            with_images = !surface.graphics.assets.is_empty() || !patches.messages.is_empty(),
-                            "surface registered in ordered send queue");
-                    }
+                    let trace_time = crate::logging::latency_trace_enabled()
+                        .then(crate::logging::latency_trace_time_us);
+                    let trace_with_images = crate::logging::latency_trace_enabled()
+                        && (!surface.graphics.assets.is_empty() || !patches.messages.is_empty());
                     if !patches.messages.is_empty() {
                         client.patch_ack_wait =
                             Some((surface.surface_revision, std::time::Instant::now()));
+                        if crate::logging::latency_trace_enabled() {
+                            client.patch_ack_trace = client.patch_ack_wait;
+                        }
                     }
                     // The images these patches carry are the next patches' bases.
                     for (key, data) in patches.bases {
@@ -810,6 +805,19 @@ impl HeadlessServer {
                     client.popup_read_facts = popup_before;
                     client.published_projection_revision = Some(snapshot.revision);
                     client.write_pending = false;
+                    if let Some(time_us) = trace_time {
+                        tracing::info!(target: "herdr_latency", event = "surface.queued",
+                            time_us, pid = std::process::id(),
+                            boot_id = %self.endpoint_boot_id, client_id = ?client_id,
+                            surface_revision = client.surface_revision, bytes = trace_bytes,
+                            with_images = trace_with_images,
+                            "surface registered in ordered send queue");
+                    }
+                    if let Some((surface_revision, _)) = client.patch_ack_trace {
+                        tracing::info!(target: "herdr_latency", event = "surface.ack_started",
+                            time_us = trace_time, pid = std::process::id(), client_id,
+                            surface_revision, "graphics acknowledgement wait started");
+                    }
                 } else {
                     client.write_pending = true;
                 }

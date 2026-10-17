@@ -1216,6 +1216,24 @@ pub fn process_exists(pid: u32) -> bool {
     }
 }
 
+pub(crate) fn endpoint_peer_pid(stream: &crate::ipc::LocalStream) -> Option<u32> {
+    use std::os::fd::{AsFd as _, AsRawFd as _};
+    let crate::ipc::LocalStream::UdSocket(stream) = stream;
+    let mut pid: libc::pid_t = 0;
+    let mut len = std::mem::size_of_val(&pid) as libc::socklen_t;
+    // SAFETY: pid and len are valid output buffers of the size LOCAL_PEERPID expects.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_fd().as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&mut pid as *mut libc::pid_t).cast(),
+            &mut len,
+        )
+    };
+    (result == 0).then(|| u32::try_from(pid).ok()).flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

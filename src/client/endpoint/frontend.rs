@@ -81,6 +81,7 @@ pub(crate) struct ClientFrontend {
     pace: crate::client::terminal_pace::TerminalPace,
     /// When the unanswered pace probe was written.
     pace_since: Option<Instant>,
+    draw_seq: u64,
     /// A repaint was requested while drawing was held.
     draw_deferred: bool,
     /// Typed input waiting for a pane switch to settle.
@@ -202,6 +203,7 @@ impl ClientFrontend {
             force_redraw: true,
             pace: crate::client::terminal_pace::TerminalPace::default(),
             pace_since: None,
+            draw_seq: 0,
             draw_deferred: false,
             held_input: input::HeldInput::default(),
             clicked_pane: None,
@@ -503,28 +505,45 @@ impl ClientFrontend {
             &encoded.bytes,
             &graphics_bytes,
         )?;
+        let draw_seq = if crate::logging::latency_trace_enabled() {
+            self.draw_seq += 1;
+            self.draw_seq
+        } else {
+            0
+        };
+        #[cfg(unix)]
+        let mut probe_trace = None;
         #[cfg(unix)]
         if !graphics_bytes.is_empty() {
             stdout.write_all(crate::client::terminal_pace::PROBE)?;
-            self.pace.sent();
+            probe_trace = self.pace.sent(draw_seq);
             self.pace_since.get_or_insert_with(Instant::now);
         }
         stdout.flush()?;
+        self.graphics = next_graphics;
+        let trace_bytes = if crate::logging::latency_trace_enabled() {
+            encoded.bytes.len() + graphics_bytes.len()
+        } else {
+            0
+        };
+        self.blit.commit(frame, encoded);
+        mobile::commit_presentation(self, mobile_presentation);
+        navigator::commit(self, navigator_presentation);
+        self.force_redraw = false;
         if crate::logging::latency_trace_enabled() {
             if let Some(surface) = &self.runtime.shell.pane_surface {
                 tracing::info!(target: "herdr_latency", event = "surface.terminal_written",
                     time_us = crate::logging::latency_trace_time_us(),
                     boot_id = %surface.boot_id, surface_revision = surface.surface_revision,
-                    bytes = encoded.bytes.len() + graphics_bytes.len(),
+                    bytes = trace_bytes,
+                    pid = std::process::id(), draw_seq, endpoint = ?self.runtime.shell.active_endpoint_id,
+                    generation = self.runtime.shell.endpoint(&self.runtime.shell.active_endpoint_id).and_then(|c| c.generation),
                     with_images = !graphics_bytes.is_empty(),
                     "surface flushed to host terminal");
             }
         }
-        self.graphics = next_graphics;
-        self.blit.commit(frame, encoded);
-        mobile::commit_presentation(self, mobile_presentation);
-        navigator::commit(self, navigator_presentation);
-        self.force_redraw = false;
+        #[cfg(unix)]
+        self.pace.record_sent(probe_trace);
         Ok(())
     }
 
@@ -558,8 +577,9 @@ impl ClientFrontend {
             .is_some_and(|since| now.duration_since(since) >= PACE_TIMEOUT)
         {
             tracing::debug!("host terminal did not answer the pace probe; drawing anyway");
-            self.pace.give_up();
+            let abandoned = self.pace.give_up();
             self.pace_since = None;
+            self.pace.record_give_up(abandoned, "timeout");
             return false;
         }
         true

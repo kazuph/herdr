@@ -63,6 +63,13 @@ fn read_loop(
 ) {
     let result = (|| {
         crate::ipc::set_local_stream_polling(&mut stream, true)?;
+        if crate::logging::latency_trace_enabled() {
+            tracing::info!(target: "herdr_latency", event = "endpoint.connected",
+                time_us = crate::logging::latency_trace_time_us(), pid = std::process::id(),
+                endpoint = ?endpoint_id, generation, peer_pid = crate::platform::endpoint_peer_pid(&stream),
+                "endpoint reader connection established");
+        }
+
         let mut reader = EndpointReader {
             stream: &mut stream,
             stopped: &stopped,

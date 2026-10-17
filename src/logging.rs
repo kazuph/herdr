@@ -619,15 +619,29 @@ mod tests {
             super::init_file_logging("herdr-client.log");
             super::startup("latency-test");
             let pace = crate::client::terminal_pace::TerminalPace::default();
-            pace.sent();
+            let probe = pace.sent(7);
+            pace.record_sent(probe);
             assert_eq!(pace.strip_replies(b"\x1b[0n"), Some(Vec::new()));
             assert!(!pace.waiting());
+            let second = pace.sent(8);
+            pace.record_sent(second);
+            let abandoned = pace.give_up();
+            pace.record_give_up(abandoned, "timeout");
+            let third = pace.sent(9);
+            pace.record_sent(third);
+            assert_eq!(pace.strip_replies(b"\x1b[0n"), Some(Vec::new()));
             let log = std::fs::read_to_string(crate::session::data_dir().join("herdr-client.log"))
                 .unwrap();
             let enabled = super::latency_trace_enabled();
             assert_eq!(log.contains("terminal.probe_sent"), enabled);
             assert_eq!(log.contains("terminal.probe_reply"), enabled);
             assert_eq!(log.contains("time_us="), enabled);
+            if enabled {
+                assert!(log.contains("draw_seq=7"));
+                assert!(log.contains("terminal.probe_give_up"));
+                assert!(log.contains("reason=\"timeout\""));
+                assert!(log.contains("matched=false"));
+            }
             return;
         }
         let root = std::env::temp_dir().join(format!(
