@@ -1071,3 +1071,132 @@ test("multi_select thread reply '1,3' submits option_ids", async () => {
     await fake.stop();
   }
 });
+
+for (const status of ["answered", "cancelled"]) {
+  test(`resolution during post reconciles late ${status} post`, async () => {
+    const fake = await new FakeSlack().start();
+    const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
+    const daemon = makeDaemon({ slack, config: { recreatePostReuseMs: 40 } });
+    const post = slack.postMessage.bind(slack);
+    let release;
+    const blocked = new Promise((resolve) => { release = resolve; });
+    let started;
+    const posting = new Promise((resolve) => { started = resolve; });
+    slack.postMessage = async (payload) => {
+      started();
+      await blocked;
+      return post(payload);
+    };
+    const decision = sampleDecision();
+    try {
+      const created = daemon.onCreated("local", LOCAL, decision);
+      await posting;
+      await daemon.onResolved("local", { ...decision, status });
+      release();
+      await created;
+      if (status === "answered") {
+        assert.equal(fake.posts.length, 0);
+        assert.equal(daemon.posts.size, 0);
+      } else {
+        assert.equal(daemon.reusablePosts.size, 1);
+        assert.match(JSON.stringify(fake.posts[0].blocks), /取り消し/);
+        await waitUntil(() => fake.posts.length === 0);
+      }
+    } finally {
+      release();
+      await daemon.stop();
+      await fake.stop();
+    }
+  });
+}
+
+test("communication failures retry and exhausted deletes survive restart cleanup", async () => {
+  const fake = await new FakeSlack().start();
+  const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
+  const postsFilePath = path.join(tmpdir("retry-posts"), "posts.json");
+  const config = { postMutationRetryMs: 2, postMutationAttempts: 3 };
+  const daemon = makeDaemon({ slack, config, postsFilePath });
+  const decision = sampleDecision();
+  let attempts = 0;
+  const remove = slack.deleteMessage.bind(slack);
+  try {
+    await daemon.onCreated("local", LOCAL, decision);
+    slack.deleteMessage = async () => { attempts += 1; throw new TypeError("fetch failed"); };
+    await daemon.onResolved("local", { ...decision, status: "answered" });
+    assert.equal(attempts, 3);
+    assert.equal(fake.posts.length, 1);
+    assert.equal(daemon.posts.size, 1);
+    assert.equal(Object.keys(JSON.parse(fs.readFileSync(postsFilePath))).length, 1);
+    slack.deleteMessage = remove;
+    const restarted = makeDaemon({ slack, config, postsFilePath,
+      getDecision: async () => ({ ...decision, status: "answered" }) });
+    restarted.loadPostsFile();
+    await restarted.reconcileMachine("local");
+    assert.equal(fake.posts.length, 0);
+    assert.equal(restarted.posts.size, 0);
+    await restarted.stop();
+  } finally {
+    await daemon.stop();
+    await fake.stop();
+  }
+});
+
+test("cancelled update and deletion recover after transient communication errors", async () => {
+  const fake = await new FakeSlack().start();
+  const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
+  const daemon = makeDaemon({ slack, config: {
+    recreatePostReuseMs: 40, postMutationRetryMs: 2, postMutationAttempts: 3,
+  } });
+  const update = slack.updateMessage.bind(slack);
+  const remove = slack.deleteMessage.bind(slack);
+  let updates = 0;
+  let deletes = 0;
+  slack.updateMessage = async (...args) => {
+    if (++updates < 3) throw new TypeError("fetch failed");
+    return update(...args);
+  };
+  slack.deleteMessage = async (...args) => {
+    if (++deletes < 3) throw new TypeError("fetch failed");
+    return remove(...args);
+  };
+  try {
+    const decision = sampleDecision();
+    await daemon.onCreated("local", LOCAL, decision);
+    await daemon.onResolved("local", { ...decision, status: "cancelled" });
+    assert.equal(updates, 3);
+    await waitUntil(() => fake.posts.length === 0);
+    assert.equal(deletes, 3);
+    assert.equal(daemon.posts.size, 0);
+  } finally {
+    await daemon.stop();
+    await fake.stop();
+  }
+});
+
+test("exhausted cancelled cleanup keeps posts for the next decision reconciliation", async () => {
+  const fake = await new FakeSlack().start();
+  const slack = new SlackClient({ token: "t", channel: "C1", apiBase: fake.base });
+  const postsFilePath = path.join(tmpdir("cancel-retry"), "posts.json");
+  const daemon = makeDaemon({ slack, postsFilePath, config: {
+    recreatePostReuseMs: 25, postMutationRetryMs: 2, postMutationAttempts: 3,
+  } });
+  const remove = slack.deleteMessage.bind(slack);
+  let attempts = 0;
+  slack.deleteMessage = async () => { ++attempts; throw new TypeError("fetch failed"); };
+  try {
+    const decision = sampleDecision();
+    await daemon.onCreated("local", LOCAL, decision);
+    await daemon.onResolved("local", { ...decision, status: "cancelled" });
+    await waitUntil(() => attempts === 3);
+    assert.equal(daemon.posts.size, 1);
+    assert.equal(fake.posts.length, 1);
+    assert.equal(Object.keys(JSON.parse(fs.readFileSync(postsFilePath))).length, 1);
+    slack.deleteMessage = remove;
+    await daemon.onResolved("local", { ...decision, status: "answered" });
+    assert.equal(daemon.posts.size, 0);
+    assert.equal(fake.posts.length, 0);
+  } finally {
+    await daemon.stop();
+    await fake.stop();
+  }
+});

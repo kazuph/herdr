@@ -132,6 +132,8 @@ pub(crate) struct ScreenPromptWatch {
     /// Option number of the free-text slot when the prompt offered one; kept
     /// so a text answer still finds the slot when the live read is torn.
     pub free_text_slot: Option<u32>,
+    /// Normalized Codex notice last published without changing identity.
+    pub notice: Option<String>,
     /// The decision was resolved (answered, cancelled, expired); the watch
     /// stays only to observe the prompt leaving the screen so the same prompt
     /// is not re-offered.
@@ -808,6 +810,16 @@ impl App {
         if let Some(watch) = self.screen_prompt_watches.get_mut(&pane_id) {
             if current_sig.as_deref() == Some(watch.signature.as_str()) {
                 watch.mismatches = 0;
+                if let Some(prompt) = prompt.as_ref().filter(|prompt| {
+                    prompt.is_codex_question() && prompt.notice != watch.notice && !watch.resolved
+                }) {
+                    return self.refresh_watched_decision(
+                        ws_idx,
+                        pane_id,
+                        prompt,
+                        current_sig.as_deref().unwrap_or_default(),
+                    );
+                }
                 return false;
             }
             watch.mismatches += 1;
@@ -1094,6 +1106,7 @@ impl App {
                     watch.mismatches = 0;
                     watch.resolved = false;
                     watch.free_text_slot = prompt.free_text;
+                    watch.notice = prompt.notice.clone();
                 }
                 true
             }
@@ -1203,6 +1216,7 @@ impl App {
                                 signature: sig,
                                 decision_id: existing.decision_id.clone(),
                                 free_text_slot: prompt.free_text,
+                                notice: prompt.notice.clone(),
                                 resolved: false,
                                 mismatches: 0,
                             },
@@ -1267,6 +1281,7 @@ impl App {
                 signature: sig,
                 decision_id: decision.decision_id,
                 free_text_slot: prompt.free_text,
+                notice: prompt.notice.clone(),
                 resolved: false,
                 mismatches: 0,
             },
@@ -1773,9 +1788,32 @@ impl App {
         });
         match slot {
             Some(number) => {
-                if let Err(err) =
-                    runtime.try_send_bytes(Bytes::copy_from_slice(number.to_string().as_bytes()))
-                {
+                let selection = if let Some(live) = prompt.filter(|p| p.is_codex_question()) {
+                    // Codex digits submit immediately. Move to Other, then Tab
+                    // opens its notes editor; only Enter submits the typed note.
+                    let Some(Focused::Option(current)) = live.focused else {
+                        warn!(pane_id = ?pane_id, "Codex note needs a live option cursor");
+                        return;
+                    };
+                    let key = if current < number {
+                        crossterm::event::KeyCode::Down
+                    } else {
+                        crossterm::event::KeyCode::Up
+                    };
+                    let arrow = runtime.encode_terminal_key(crate::input::TerminalKey::new(
+                        key,
+                        crossterm::event::KeyModifiers::NONE,
+                    ));
+                    let mut bytes = arrow.repeat(current.abs_diff(number) as usize);
+                    bytes.extend(runtime.encode_terminal_key(crate::input::TerminalKey::new(
+                        crossterm::event::KeyCode::Tab,
+                        crossterm::event::KeyModifiers::NONE,
+                    )));
+                    Bytes::from(bytes)
+                } else {
+                    Bytes::copy_from_slice(number.to_string().as_bytes())
+                };
+                if let Err(err) = runtime.try_send_bytes(selection) {
                     warn!(
                         pane_id = ?pane_id,
                         error = %err,
@@ -3098,6 +3136,63 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         let decision_id = pending_decisions()[0].decision_id.clone();
         answer(&mut app, &decision_id, Some("2"), None);
         assert_eq!(rx.try_recv().expect("bytes").as_ref(), &[0x1b]);
+    }
+
+    #[tokio::test]
+    async fn codex_question_countdown_keeps_one_agent_prompt_and_delivers_notes() {
+        let _guard = crate::config::lock_test_config_env();
+        let screen = include_str!("../../tests/fixtures/screen_prompt/codex-question.txt");
+        let timed = |time: &str| {
+            screen.replace(
+                "Question 1/1 (1 unanswered)",
+                &format!("Question 1/1 (1 unanswered) · auto-resolves in {time}"),
+            )
+        };
+        let (mut app, pane_id, _rx) = test_app("codex-question", screen, true);
+        app.scan_screen_prompts(Instant::now());
+        let original = pending_decisions();
+        assert_eq!(original.len(), 1);
+        assert_eq!(original[0].kind, DecisionKind::AgentPrompt);
+        assert_eq!(original[0].title, "検証用コーヒーはどちらにしますか？");
+        assert_eq!(
+            original[0].question_label.as_deref(),
+            Some("Question 1/1 (1 unanswered)")
+        );
+        assert!(original[0].allow_text);
+        assert!(!original[0]
+            .body
+            .as_deref()
+            .unwrap_or_default()
+            .contains("auto-resolves in"));
+        for time in ["1m 0s", "59s", "58s", "1s"] {
+            let _rx = replace_screen(&mut app, pane_id, &timed(time));
+            app.scan_screen_prompts(Instant::now());
+            let pending = pending_decisions();
+            assert_eq!(pending[0].decision_id, original[0].decision_id);
+            assert!(pending[0]
+                .body
+                .as_deref()
+                .expect("notice")
+                .contains("auto-resolves in …"));
+            assert_eq!(all_decisions().len(), 1);
+        }
+        let mut rx = replace_screen(&mut app, pane_id, screen);
+        answer(
+            &mut app,
+            &original[0].decision_id,
+            None,
+            Some("codexq-note-verified"),
+        );
+        assert_eq!(
+            rx.try_recv().expect("arrows and Tab").as_ref(),
+            b"\x1b[B\x1b[B\t"
+        );
+        app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
+        assert_eq!(
+            rx.try_recv().expect("note").as_ref(),
+            b"codexq-note-verified"
+        );
+        assert_eq!(rx.try_recv().expect("Enter").as_ref(), b"\r");
     }
 
     #[tokio::test]

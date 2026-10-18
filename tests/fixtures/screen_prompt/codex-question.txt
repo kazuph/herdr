@@ -1,0 +1,21 @@
+› これは質問画面の検証専用です。ファイル編集・コマン
+  ド実行・Web検索をしないでください。今すぐ
+  request_user_input ツールで質問を1つ出してくださ
+  い。質問文は「検証用コーヒーはどちらにします
+  か？」、選択肢は「ホット」と「アイス」、各説明は
+  「温かいコーヒー」「冷たいコーヒー」。返答を受けた
+  ら受け取った文をそのまま短く返して終了してくださ
+  い。
+
+
+
+  Question 1/1 (1 unanswered)
+  検証用コーヒーはどちらにしますか？
+
+  › 1. ホット             温かいコーヒー
+    2. アイス             冷たいコーヒー
+    3. None of the above  Optionally, add details in
+                          notes (tab)
+
+  tab to add notes | enter to submit answer
+  esc to interrupt

@@ -1,0 +1,21 @@
+› 今度は request_user_input を通常の定義どおり呼び出…
+  Worked for 34s • 12:25 • WebSocket: 2 events send
+  (0ms) • 96 events received (4.5s)
+
+
+› 実画面採取のため、通常の request_user_input で同じ
+  コーヒーの2択質問を1回出してください。コマンドや編
+  集は行わないでください。
+
+
+
+  Question 1/1 (1 unanswered) · auto-resolves in 59s
+  検証用コーヒーはどちらにしますか？
+
+  › 1. ホット             温かいコーヒー
+    2. アイス             冷たいコーヒー
+    3. None of the above  Optionally, add details in
+                          notes (tab)
+
+  tab to add notes | enter to submit answer
+  esc to interrupt
