@@ -14965,8 +14965,9 @@
         "rust_test_target:ctrl_v_pastes_into_the_navigator_search",
         "rust_test_target:ctrl_v_and_bracketed_paste_reach_the_copy_search_prompt",
         "rust_test_target:paste_shortcut_outside_a_text_field_is_left_for_the_pane",
-        "rust_test_target:server_ctrl_v_pastes_the_clipboard_into_rename_navigator_and_copy_search",
+        "rust_test_target:server_ctrl_v_pastes_the_clipboard_into_rename_and_navigator",
         "rust_test_target:no_session_ctrl_v_pastes_the_clipboard_into_text_fields",
+        "rust_test_target:ctrl_v_pastes_the_clipboard_into_the_copy_search_prompt",
         "drift_source_anchor:src/client/endpoint/frontend/input.rs",
         "drift_source_anchor:src/app/input/mod.rs",
         "platform_live_acceptance:unverified"

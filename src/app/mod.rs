@@ -5791,7 +5791,7 @@ last_pane = "prefix+tab"
     }
 
     #[test]
-    fn server_ctrl_v_pastes_the_clipboard_into_rename_navigator_and_copy_search() {
+    fn server_ctrl_v_pastes_the_clipboard_into_rename_and_navigator() {
         input::set_test_clipboard(Some("clip-text"));
 
         let mut app = test_app();
