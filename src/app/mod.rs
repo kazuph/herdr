@@ -19,9 +19,10 @@ pub(crate) use actions::{launch_label, state_label_text};
 pub(crate) use input::{
     context_menu_item_at_from, context_menu_rect_from, copy_mode_survives_prefix_action,
     custom_command_for_bindings, global_menu_action_label, global_menu_actions_for,
-    global_menu_rect_from, navigation_action_for_bindings, navigator_key_action,
-    popup_child_claims_escape, workspace_section_for_menu_item, BindingDispatch, ContextMenuInput,
-    GlobalMenuAction, NavigateAction, NavigatorKeyAction, SettingsAction, SettingsInput,
+    global_menu_rect_from, is_modal_paste_shortcut, navigation_action_for_bindings,
+    navigator_key_action, popup_child_claims_escape, workspace_section_for_menu_item,
+    BindingDispatch, ContextMenuInput, GlobalMenuAction, NavigateAction, NavigatorKeyAction,
+    SettingsAction, SettingsInput,
 };
 mod msg;
 pub(crate) mod pane_graphics;
@@ -1926,7 +1927,7 @@ impl App {
         if input::modal_paste_target_active(&self.state)
             && input::is_modal_paste_shortcut(&key_event)
         {
-            if let Some(text) = crate::platform::read_clipboard_text() {
+            if let Some(text) = input::modal_paste_clipboard_text() {
                 self.paste_into_active_text_input(&text);
             }
             return;
@@ -5787,6 +5788,26 @@ last_pane = "prefix+tab"
         assert!(app.event_hub.events_after(0).iter().any(|(_, event)| {
             matches!(event.event, crate::api::schema::EventKind::WorkspaceClosed)
         }));
+    }
+
+    #[test]
+    fn server_ctrl_v_pastes_the_clipboard_into_rename_navigator_and_copy_search() {
+        input::set_test_clipboard(Some("clip-text"));
+
+        let mut app = test_app();
+        app.state.mode = Mode::RenameTab;
+        app.state.name_input = "old".into();
+        app.state.name_input_replace_on_type = true;
+        app.route_client_input(vec![0x16]);
+        assert_eq!(app.state.name_input, "clip-text");
+
+        let mut app = test_app();
+        app.state.mode = Mode::Navigator;
+        app.state.navigator.search_focused = true;
+        app.route_client_input(vec![0x16]);
+        assert_eq!(app.state.navigator.query, "clip-text");
+
+        input::set_test_clipboard(None);
     }
 
     #[test]

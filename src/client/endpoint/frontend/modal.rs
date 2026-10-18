@@ -402,6 +402,11 @@ pub(super) fn completed(
     }
 }
 
+/// The rename box is open and takes typed and pasted text.
+pub(super) fn rename_open(frontend: &ClientFrontend) -> bool {
+    matches!(frontend.modal, Some(Modal::Rename(_)))
+}
+
 pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io::Result<bool> {
     if matches!(
         event,
@@ -688,5 +693,101 @@ mod tests {
         assert!(frontend.modal.as_ref().unwrap().hides_terminal_cursor());
         assert!(!input(&mut frontend, &RawInputEvent::OuterFocusGained).unwrap());
         assert!(matches!(frontend.modal, Some(Modal::Rename(_))));
+    }
+
+    fn renaming() -> ClientFrontend {
+        let (mut frontend, target) = query();
+        completed(&mut frontend, &response(&target));
+        assert!(rename_open(&frontend));
+        frontend
+    }
+
+    fn rename_text(frontend: &ClientFrontend) -> &str {
+        let Some(Modal::Rename(rename)) = &frontend.modal else {
+            panic!("rename box open");
+        };
+        &rename.input
+    }
+
+    fn type_bytes(frontend: &mut ClientFrontend, bytes: &[u8]) {
+        for event in crate::raw_input::parse_raw_input_bytes_sync(bytes) {
+            frontend.dispatch_input(event).unwrap();
+        }
+    }
+
+    #[test]
+    fn ctrl_v_pastes_the_clipboard_into_the_rename_box() {
+        let mut frontend = renaming();
+        super::super::input::set_test_clipboard(Some("pasted-name"));
+        type_bytes(&mut frontend, b"\x16");
+        assert_eq!(rename_text(&frontend), "pasted-name");
+        // A bracketed paste from the terminal keeps working.
+        type_bytes(&mut frontend, b"\x1b[200~-more\x1b[201~");
+        assert_eq!(rename_text(&frontend), "pasted-name-more");
+        super::super::input::set_test_clipboard(None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cmd_v_reported_as_a_key_pastes_into_the_rename_box() {
+        let mut frontend = renaming();
+        super::super::input::set_test_clipboard(Some("cmd-name"));
+        // Kitty keyboard report of Cmd+V press, then its release.
+        type_bytes(&mut frontend, b"\x1b[118;9u\x1b[118;9:3u");
+        assert_eq!(rename_text(&frontend), "cmd-name");
+        super::super::input::set_test_clipboard(None);
+    }
+
+    #[test]
+    fn paste_shortcut_with_an_empty_clipboard_leaves_the_rename_box_alone() {
+        let mut frontend = renaming();
+        super::super::input::set_test_clipboard(None);
+        type_bytes(&mut frontend, b"\x16");
+        assert_eq!(rename_text(&frontend), "42");
+        assert!(rename_open(&frontend));
+    }
+
+    #[test]
+    fn ctrl_v_pastes_into_the_navigator_search() {
+        let (mut frontend, _) = query();
+        frontend.modal = None;
+        super::super::navigator::open(&mut frontend);
+        type_bytes(&mut frontend, b"/");
+        assert!(super::super::navigator::search_focused(&frontend));
+        super::super::input::set_test_clipboard(Some("needle"));
+        type_bytes(&mut frontend, b"\x16");
+        assert_eq!(super::super::navigator::test_query(&frontend), "needle");
+        super::super::input::set_test_clipboard(None);
+    }
+
+    #[test]
+    fn ctrl_v_and_bracketed_paste_reach_the_copy_search_prompt() {
+        let (mut frontend, _) = query();
+        frontend.modal = None;
+        super::super::copy::open_search_for_test(&mut frontend);
+        super::super::input::set_test_clipboard(Some("find\tme"));
+        type_bytes(&mut frontend, b"\x16");
+        assert_eq!(
+            super::super::copy::search_query_for_test(&frontend),
+            Some("findme")
+        );
+        type_bytes(&mut frontend, b"\x1b[200~ again\x1b[201~");
+        assert_eq!(
+            super::super::copy::search_query_for_test(&frontend),
+            Some("findme again")
+        );
+        super::super::input::set_test_clipboard(None);
+    }
+
+    #[test]
+    fn paste_shortcut_outside_a_text_field_is_left_for_the_pane() {
+        let (mut frontend, _) = query();
+        frontend.modal = None;
+        let key = crate::input::TerminalKey::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
+        let event =
+            super::super::input::text_input_paste(&frontend, RawInputEvent::Key(key), || {
+                panic!("the clipboard is not read outside a text field")
+            });
+        assert!(matches!(event, Some(RawInputEvent::Key(_))));
     }
 }

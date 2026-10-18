@@ -643,6 +643,14 @@ pub(super) fn input(frontend: &mut ClientFrontend, event: &RawInputEvent) -> io:
     Ok(true)
 }
 
+/// The navigator's search field has the keyboard.
+pub(super) fn search_focused(frontend: &ClientFrontend) -> bool {
+    frontend
+        .navigator
+        .as_ref()
+        .is_some_and(|nav| nav.state.search_focused)
+}
+
 #[cfg(test)]
 pub(super) fn test_rows(frontend: &ClientFrontend) -> (usize, usize) {
     let rows = rows(frontend);

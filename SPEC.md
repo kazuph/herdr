@@ -2417,6 +2417,7 @@
   - 一度画面を受け取ったviewerからの入力は、描き直し中でもserverが受け付ける（他viewerのfocus・寸法・snapshot変化で表示が捨てられた間も入力を落とさない）。
   - paneのprogramがOSC 52でclipboardへ書くと、serverはそれを、表示中で最後に使われたendpoint viewerへ送り、viewerは自分の機械のclipboardに書く（旧来のclientの方が最近使われていればそちら）。保存machineで動くCodex・Claude Codeは、SSHで起動されたserverから`SSH_CONNECTION`を受け継ぐためOSC 52でcopyし、その内容が手元の機械に届く。
   - 保存machineのpaneを表示している時の⌘V（Ghosttyはkitty keyboardの全キー報告が有効な間、⌘Vを貼り付けではなくキーとして送る）は、手元の機械のclipboardを読んで貼り付ける。画像なら画像の橋渡し、文字ならbracketed pasteで送り、⌘Vのキー自体（離した時を含む）はpaneへ送らない。
+  - endpoint client自身が描く文字欄——名前の変更、navigatorの検索欄、copy modeの検索入力——が入力を受けている間、⌘V（macOS）とCtrl+Vは手元の機械のclipboardの文字をその欄へ貼る。端末がキーとして送ってきた場合も、bracketed pasteとして届いた場合も同じで、copy modeの検索入力では制御文字を除いて足す。clipboardに文字が無い時は何も入れず、キー（離した時を含む）は欄の外へ送らない。文字欄が入力を受けていない時のCtrl+V・⌘Vは従来どおりpane（保存machineのpaneなら手元のclipboardの貼り付け）へ渡す。旧来のclientと`--no-session`でも同じ3つの欄へ貼られる。
 - **受け入れ条件**:
   - endpoint client上でtitle click zoom、sidebar drag（保存込み）、pane action barが動く。
   - endpoint client上で、sidebarの最終列とpane枠の列のどちらを掴んでもsidebar幅をdragで変えられる。
@@ -2428,6 +2429,7 @@
   - 2つの画面が同じremote tabを見ていても入力が欠けずに届く。
   - window focusが戻った直後の入力が欠けない。
   - 保存machineのpaneのOSC 52 copyが手元のclipboardに届き、保存machineのpaneで⌘Vを押すと手元のclipboardの文字が貼られる。
+  - endpoint client・旧来のclient・`--no-session`のいずれでも、名前の変更・navigatorの検索欄・copy modeの検索入力でCtrl+V（macOSでは⌘Vも）を押すと、手元のclipboardの文字がその欄に入る。clipboardが空なら欄は変わらない。
   - 表示中viewerのfocus tabだけが既読になり、他tabは未読のまま残る。
   - viewerへ戻るとPTY寸法がそのviewerの寸法に戻る。
 - **デグレ判定**: 「done, unseen」が消えない、focus復帰直後や複数画面で入力が欠ける、またはfork独自操作がendpoint clientで使えない。
