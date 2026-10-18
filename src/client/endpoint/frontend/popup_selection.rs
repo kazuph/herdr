@@ -257,6 +257,7 @@ pub(super) fn completed(
             });
             if current && !text.is_empty() {
                 crate::selection::write_osc52_bytes(text.as_bytes());
+                super::copy_feedback::show(frontend, &text, Instant::now());
             }
             clear(frontend);
         }

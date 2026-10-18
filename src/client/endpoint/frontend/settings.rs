@@ -11,6 +11,7 @@ pub(super) struct HostSettings {
     pub sound: bool,
     pub sound_config: crate::config::SoundConfig,
     pub toast: crate::config::ToastDelivery,
+    pub clipboard: crate::config::ClipboardToastConfig,
     pub labels: bool,
     pub prefix_ascii: bool,
     pub right_click_passthrough: Option<crossterm::event::KeyModifiers>,
@@ -26,6 +27,7 @@ impl HostSettings {
             sound: config.ui.sound.enabled,
             sound_config: config.ui.sound.clone(),
             toast: config.ui.toast.delivery,
+            clipboard: config.ui.toast.clipboard,
             labels: config.ui.show_agent_labels_on_pane_borders,
             prefix_ascii: config.experimental.switch_ascii_input_source_in_prefix,
             right_click_passthrough: config.ui.right_click_passthrough_modifiers(),
@@ -329,6 +331,7 @@ fn reload_host(frontend: &mut ClientFrontend) -> crate::config::ConfigReloadRepo
                 frontend.host_settings.sound = loaded.config.ui.sound.enabled;
                 frontend.host_settings.sound_config = loaded.config.ui.sound.clone();
                 frontend.host_settings.toast = loaded.config.ui.toast.delivery;
+                frontend.host_settings.clipboard = loaded.config.ui.toast.clipboard;
                 frontend.host_settings.labels = loaded.config.ui.show_agent_labels_on_pane_borders;
                 frontend.host_settings.right_click_passthrough =
                     loaded.config.ui.right_click_passthrough_modifiers();
