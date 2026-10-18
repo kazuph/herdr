@@ -1589,6 +1589,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ctrl_v_pastes_the_clipboard_into_the_copy_search_prompt() {
+        fn search_query(app: &App) -> Option<&str> {
+            app.state
+                .copy_mode
+                .as_ref()
+                .and_then(|copy_mode| copy_mode.search.prompt.as_ref())
+                .map(|prompt| prompt.query.as_str())
+        }
+        crate::app::input::set_test_clipboard(Some("needle"));
+
+        // Server: Ctrl+V arrives as the raw byte 0x16.
+        let (mut app, _) = app_with_copy_screen(b"alpha needle\r\n");
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+        app.handle_copy_mode_key(TerminalKey::new(KeyCode::Char('/'), KeyModifiers::empty()));
+        app.route_client_input(vec![0x16]);
+        assert_eq!(search_query(&app), Some("needle"));
+        assert_eq!(app.state.mode, Mode::Copy);
+
+        // --no-session: the key goes through App::handle_key.
+        let (mut app, _) = app_with_copy_screen(b"alpha needle\r\n");
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+        app.handle_copy_mode_key(TerminalKey::new(KeyCode::Char('/'), KeyModifiers::empty()));
+        app.handle_key(TerminalKey::new(KeyCode::Char('v'), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(search_query(&app), Some("needle"));
+        assert_eq!(app.state.mode, Mode::Copy);
+
+        crate::app::input::set_test_clipboard(None);
+    }
+
+    #[tokio::test]
     async fn copy_mode_word_motions_cross_rows_and_respect_separators() {
         let (mut app, pane_id) = app_with_copy_screen(b"foo.bar_baz\r\nqux\r\n");
         app.state.enter_copy_mode(&app.terminal_runtimes);

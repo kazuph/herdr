@@ -87,6 +87,9 @@ fn dispatch_inner(
     event: RawInputEvent,
     pixels: Option<crate::input::mouse::HostPixels>,
 ) -> io::Result<()> {
+    let Some(event) = text_input_paste(frontend, event, clipboard_text) else {
+        return Ok(());
+    };
     if machines::input(frontend, &event)?
         || context::input(frontend, &event)?
         || menu::input(frontend, &event)?
@@ -190,6 +193,9 @@ fn dispatch_inner(
         }
         RawInputEvent::Paste(text) => {
             selection::clear(frontend);
+            if copy::paste_into_search(frontend, &text) {
+                return Ok(());
+            }
             if !copy::active(frontend)
                 && frontend
                     .held_input
@@ -1277,4 +1283,60 @@ pub(super) fn run_navigation_action(
         return Ok(true);
     }
     Ok(prefixed)
+}
+
+/// The screen's own text fields (rename box, navigator search, copy-mode
+/// search) take Cmd+V / Ctrl+V as a paste of this machine's clipboard. A
+/// terminal that reports every key sends those as keys instead of a
+/// bracketed paste, and Ctrl+V always arrives as a key, so the key becomes a
+/// paste of the clipboard text. The key, including its release, is consumed
+/// even when the clipboard holds no text. Returns the event to dispatch, or
+/// `None` when it was consumed.
+pub(super) fn text_input_paste(
+    frontend: &ClientFrontend,
+    event: RawInputEvent,
+    read_clipboard: impl FnOnce() -> Option<String>,
+) -> Option<RawInputEvent> {
+    let RawInputEvent::Key(key) = &event else {
+        return Some(event);
+    };
+    if !text_input_active(frontend) || !crate::app::is_modal_paste_shortcut(&key.as_key_event()) {
+        return Some(event);
+    }
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
+    read_clipboard()
+        .filter(|text| !text.is_empty())
+        .map(RawInputEvent::Paste)
+}
+
+/// A text field drawn by this screen has the keyboard.
+fn text_input_active(frontend: &ClientFrontend) -> bool {
+    modal::rename_open(frontend)
+        || navigator::search_focused(frontend)
+        || copy::search_active(frontend)
+}
+
+#[cfg(not(test))]
+fn clipboard_text() -> Option<String> {
+    crate::platform::read_clipboard_text()
+}
+
+// Tests never read the machine's clipboard: they set the text the paste
+// shortcut sees.
+#[cfg(test)]
+thread_local! {
+    static TEST_CLIPBOARD: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn clipboard_text() -> Option<String> {
+    TEST_CLIPBOARD.with(|clipboard| clipboard.borrow().clone())
+}
+
+#[cfg(test)]
+pub(super) fn set_test_clipboard(text: Option<&str>) {
+    TEST_CLIPBOARD.with(|clipboard| *clipboard.borrow_mut() = text.map(str::to_owned));
 }

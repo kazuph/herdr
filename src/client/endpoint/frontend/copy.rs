@@ -702,6 +702,20 @@ pub(super) fn observe(frontend: &mut ClientFrontend) -> io::Result<()> {
     Ok(())
 }
 
+/// A paste while the copy-mode search prompt is open goes into the query,
+/// without control characters (the same rule as the server's copy search).
+pub(super) fn paste_into_search(frontend: &mut ClientFrontend, text: &str) -> bool {
+    let Some((_, query)) = frontend
+        .copy_mode
+        .as_mut()
+        .and_then(|mode| mode.prompt.as_mut())
+    else {
+        return false;
+    };
+    query.extend(text.chars().filter(|ch| !ch.is_control()));
+    true
+}
+
 pub(super) fn search_active(frontend: &ClientFrontend) -> bool {
     frontend
         .copy_mode
@@ -714,6 +728,43 @@ pub(super) fn active(frontend: &ClientFrontend) -> bool {
         .copy_mode
         .as_ref()
         .is_some_and(|mode| mode.owner.pane(frontend).is_some())
+}
+
+#[cfg(test)]
+pub(super) fn open_search_for_test(frontend: &mut ClientFrontend) {
+    frontend.copy_mode = Some(CopyMode {
+        owner: Owner {
+            endpoint: ClientEndpointId::Local,
+            generation: 0,
+            boot: String::new(),
+            pane: String::new(),
+        },
+        cursor: api::PaneTextPoint { row: 0, col: 0 },
+        anchor: None,
+        entry_offset: 0,
+        revision: 0,
+        geometry: (0, 0),
+        prompt: Some((api::PaneCopySearchDirection::Forward, String::new())),
+        query: String::new(),
+        direction: None,
+        matches: Vec::new(),
+        current: None,
+        current_global: None,
+        total: 0,
+        pending: None,
+        waiting_scroll: None,
+        keys: VecDeque::new(),
+        exit_requested: false,
+    });
+}
+
+#[cfg(test)]
+pub(super) fn search_query_for_test(frontend: &ClientFrontend) -> Option<&str> {
+    frontend
+        .copy_mode
+        .as_ref()
+        .and_then(|mode| mode.prompt.as_ref())
+        .map(|(_, query)| query.as_str())
 }
 
 #[cfg(test)]

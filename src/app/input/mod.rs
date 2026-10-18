@@ -88,7 +88,7 @@ impl App {
         }
         let key_event = key.as_key_event();
         if modal_paste_target_active(&self.state) && is_modal_paste_shortcut(&key_event) {
-            if let Some(text) = crate::platform::read_clipboard_text() {
+            if let Some(text) = modal_paste_clipboard_text() {
                 self.paste_into_active_text_input(&text);
             }
             return;
@@ -679,6 +679,29 @@ pub(crate) fn is_modal_paste_shortcut(key: &KeyEvent) -> bool {
     }
 }
 
+/// Clipboard text for Cmd+V / Ctrl+V in a text field. Tests set the text
+/// instead of reading the machine's clipboard.
+#[cfg(not(test))]
+pub(crate) fn modal_paste_clipboard_text() -> Option<String> {
+    crate::platform::read_clipboard_text()
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_CLIPBOARD: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn modal_paste_clipboard_text() -> Option<String> {
+    TEST_CLIPBOARD.with(|clipboard| clipboard.borrow().clone())
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_clipboard(text: Option<&str>) {
+    TEST_CLIPBOARD.with(|clipboard| *clipboard.borrow_mut() = text.map(str::to_owned));
+}
+
 pub(crate) fn modal_paste_target_active(state: &AppState) -> bool {
     match state.mode {
         Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::NewLinkedWorktree => {
@@ -873,6 +896,39 @@ mod tests {
             tokio::sync::mpsc::unbounded_channel().1,
             crate::api::EventHub::default(),
         )
+    }
+
+    #[tokio::test]
+    async fn no_session_ctrl_v_pastes_the_clipboard_into_text_fields() {
+        set_test_clipboard(Some("clip-text"));
+        let ctrl_v = TerminalKey::new(KeyCode::Char('v'), KeyModifiers::CONTROL);
+
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.mode = Mode::RenameTab;
+        app.state.name_input = "2".into();
+        app.state.name_input_replace_on_type = true;
+        app.handle_key(ctrl_v).await;
+        assert_eq!(app.state.name_input, "clip-text");
+
+        let mut app = test_app();
+        app.state.mode = Mode::Navigator;
+        app.state.navigator.search_focused = true;
+        app.handle_key(ctrl_v).await;
+        assert_eq!(app.state.navigator.query, "clip-text");
+
+        #[cfg(target_os = "macos")]
+        {
+            let cmd_v = TerminalKey::new(KeyCode::Char('v'), KeyModifiers::SUPER);
+            let mut app = test_app();
+            app.state.mode = Mode::Navigator;
+            app.state.navigator.search_focused = true;
+            app.handle_key(cmd_v).await;
+            assert_eq!(app.state.navigator.query, "clip-text");
+        }
+
+        set_test_clipboard(None);
     }
 
     #[tokio::test]
