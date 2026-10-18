@@ -331,7 +331,7 @@ fn reload_host(frontend: &mut ClientFrontend) -> crate::config::ConfigReloadRepo
                 frontend.host_settings.sound = loaded.config.ui.sound.enabled;
                 frontend.host_settings.sound_config = loaded.config.ui.sound.clone();
                 frontend.host_settings.toast = loaded.config.ui.toast.delivery;
-                frontend.host_settings.clipboard = loaded.config.ui.toast.clipboard;
+                super::copy_feedback::set_config(frontend, loaded.config.ui.toast.clipboard);
                 frontend.host_settings.labels = loaded.config.ui.show_agent_labels_on_pane_borders;
                 frontend.host_settings.right_click_passthrough =
                     loaded.config.ui.right_click_passthrough_modifiers();

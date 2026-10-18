@@ -332,14 +332,18 @@ fn should_prefer_osc52() -> bool {
 ///
 /// Some terminals still only honor BEL-terminated OSC 52 writes, so herdr
 /// emits BEL here even though ST works in newer emulators.
-pub fn write_osc52_bytes(bytes: &[u8]) {
+///
+/// Returns false when neither the native write nor the OSC 52 write went out.
+/// An OSC 52 write that went out is reported as written; the terminal may still
+/// ignore it.
+pub fn write_osc52_bytes(bytes: &[u8]) -> bool {
     if !should_prefer_osc52() && crate::platform::write_clipboard(bytes) {
-        return;
+        return true;
     }
 
     let sequence = osc52_sequence(bytes);
-    let _ = std::io::stdout().write_all(sequence.as_bytes());
-    let _ = std::io::stdout().flush();
+    let mut stdout = std::io::stdout();
+    stdout.write_all(sequence.as_bytes()).is_ok() && stdout.flush().is_ok()
 }
 
 #[cfg(test)]

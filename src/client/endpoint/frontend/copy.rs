@@ -616,8 +616,7 @@ pub(super) fn completed(
             if pane_id == mode.owner.pane =>
         {
             let offset = mode.entry_offset;
-            if !text.is_empty() {
-                crate::selection::write_osc52_bytes(text.as_bytes());
+            if !text.is_empty() && crate::selection::write_osc52_bytes(text.as_bytes()) {
                 super::copy_feedback::show(frontend, &text, Instant::now());
             }
             scroll(frontend, offset, true)?;

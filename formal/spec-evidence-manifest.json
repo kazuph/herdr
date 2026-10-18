@@ -15000,6 +15000,8 @@
         "rust_test_target:copy_feedback_counts_lines_and_expires",
         "rust_test_target:copy_feedback_says_line_for_a_single_line",
         "rust_test_target:copy_feedback_stays_hidden_when_clipboard_toasts_are_off",
+        "rust_test_target:copy_feedback_ends_in_an_ellipsis_when_the_sidebar_is_narrow",
+        "rust_test_target:turning_clipboard_toasts_off_hides_a_message_already_shown",
         "drift_source_anchor:src/client/endpoint/frontend/copy_feedback.rs",
         "platform_live_acceptance:unverified"
       ],
@@ -15014,7 +15016,7 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "The copy-mode, mouse and popup copy call sites are checked on a live screen, not by a unit test"
+        "The copy-mode and mouse copy call sites are checked on a live screen; the popup copy call site and a failed clipboard write are not exercised by a test or a live screen"
       ]
     }
   ]

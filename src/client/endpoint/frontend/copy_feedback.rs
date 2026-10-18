@@ -25,6 +25,18 @@ pub(super) fn show(frontend: &mut ClientFrontend, text: &str, now: Instant) {
     });
 }
 
+/// Takes a reloaded `[ui.toast.clipboard]`; turning it off hides a message
+/// already on screen.
+pub(super) fn set_config(
+    frontend: &mut ClientFrontend,
+    config: crate::config::ClipboardToastConfig,
+) {
+    frontend.host_settings.clipboard = config;
+    if !config.enabled {
+        frontend.copy_feedback = None;
+    }
+}
+
 /// Clears the message once its time is up. Returns true when it was cleared.
 pub(super) fn tick(frontend: &mut ClientFrontend, now: Instant) -> bool {
     if frontend
@@ -53,7 +65,7 @@ pub(super) fn render(
         return;
     }
     let palette = &frontend.chrome.settings.palette;
-    let label: String = shown.message.chars().take(usize::from(width)).collect();
+    let label = fit(&shown.message, width);
     frame.render_widget(
         Paragraph::new(Span::styled(
             label,
@@ -64,6 +76,17 @@ pub(super) fn render(
         )),
         Rect::new(sidebar.x, sidebar.bottom() - 1, width, 1),
     );
+}
+
+/// The message cut to `width` columns, ending in "…" when it does not fit.
+fn fit(message: &str, width: u16) -> String {
+    let width = usize::from(width);
+    if message.chars().count() <= width {
+        return message.to_owned();
+    }
+    let mut label: String = message.chars().take(width.saturating_sub(1)).collect();
+    label.push('…');
+    label
 }
 
 #[cfg(test)]
@@ -144,10 +167,9 @@ mod tests {
             Some("Copied 3 lines")
         );
         assert!(!tick(&mut frontend, now));
-        assert!(tick(
-            &mut frontend,
-            now + crate::app::COPY_FEEDBACK_DURATION
-        ));
+        assert!(!tick(&mut frontend, now + Duration::from_millis(1999)));
+        assert!(frontend.copy_feedback.is_some());
+        assert!(tick(&mut frontend, now + Duration::from_secs(2)));
         assert!(frontend.copy_feedback.is_none());
     }
 
@@ -162,6 +184,27 @@ mod tests {
                 .map(|shown| shown.message.as_str()),
             Some("Copied 1 line")
         );
+    }
+
+    #[test]
+    fn copy_feedback_ends_in_an_ellipsis_when_the_sidebar_is_narrow() {
+        assert_eq!(fit("Copied 3 lines", 20), "Copied 3 lines");
+        assert_eq!(fit("Copied 3 lines", 11), "Copied 3 l…");
+        assert_eq!(fit("Copied 3 lines", 1), "…");
+    }
+
+    #[test]
+    fn turning_clipboard_toasts_off_hides_a_message_already_shown() {
+        let mut frontend = frontend();
+        let now = Instant::now();
+        show(&mut frontend, "alpha\n", now);
+        let mut config = frontend.host_settings.clipboard;
+        config.enabled = false;
+        set_config(&mut frontend, config);
+        assert!(frontend.copy_feedback.is_none());
+        config.enabled = true;
+        set_config(&mut frontend, config);
+        assert!(frontend.copy_feedback.is_none());
     }
 
     #[test]

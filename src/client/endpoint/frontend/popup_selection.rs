@@ -255,8 +255,7 @@ pub(super) fn completed(
                         facts.surface == surface.surface_revision && facts.revision == revision
                     })
             });
-            if current && !text.is_empty() {
-                crate::selection::write_osc52_bytes(text.as_bytes());
+            if current && !text.is_empty() && crate::selection::write_osc52_bytes(text.as_bytes()) {
                 super::copy_feedback::show(frontend, &text, Instant::now());
             }
             clear(frontend);
