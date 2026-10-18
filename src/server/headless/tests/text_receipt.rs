@@ -482,7 +482,8 @@ async fn receipt_popup_text_at_same_position_is_sent_but_scrolling_waits() {
             if server.endpoint_clients[&id].surface.is_some() {
                 break;
             }
-            notified.await;
+            // A deferred popup read can become consistent without another render notification.
+            let _ = tokio::time::timeout(Duration::from_millis(10), notified).await;
         }
     })
     .await

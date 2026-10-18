@@ -1444,7 +1444,8 @@ pub(in crate::server::headless) async fn wait_output(
             {
                 return;
             }
-            notified.await;
+            // The PTY read may settle after its last notification; always recheck the marker.
+            let _ = tokio::time::timeout(Duration::from_millis(10), notified).await;
         }
     })
     .await
