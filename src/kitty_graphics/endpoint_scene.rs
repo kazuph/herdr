@@ -16,7 +16,7 @@ const MAX_OFFSCREEN_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 /// the server's image files, so a remote viewer gets a fraction of the bytes.
 const COMPRESS_MIN_BYTES: u64 = 512 * 1024;
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DeliveryCache {
     assets: HashSet<SurfaceGraphicsAssetKey>,
     offscreen: Vec<SurfaceGraphicsAssetKey>,

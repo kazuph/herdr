@@ -11,6 +11,10 @@ mod lifecycle;
 #[cfg(unix)]
 pub(super) mod native_graphics;
 mod pane_graphics;
+mod text_receipt;
+#[cfg(all(test, unix))]
+#[path = "tests/text_receipt.rs"]
+mod text_receipt_tests;
 
 pub(super) struct EndpointClient {
     writer: ClientWriter,
@@ -523,6 +527,7 @@ impl HeadlessServer {
                 .get_mut(&client_id)
                 .expect("live client");
             if client.waiting_for_patch_ack() {
+                self.stream_endpoint_text_during_receipt(client_id, resources);
                 continue;
             }
             client.finish_patch_ack_trace(client_id, "timeout");
@@ -691,36 +696,7 @@ impl HeadlessServer {
                     continue;
                 }
                 surface.surface_revision = surface.surface_revision.saturating_add(1);
-                let mut message = wire::ServerMessage::PaneSurface(surface.clone());
-                let delta = client
-                    .surface_delta
-                    .then_some(client.surface.as_ref())
-                    .flatten()
-                    .and_then(|last| {
-                        crate::protocol::surface_delta::message(last, &mut message)
-                            .map_err(|error| warn!(%error, "failed to encode surface delta"))
-                            .ok()
-                            .flatten()
-                    });
-                let reused = if let wire::ServerMessage::PaneSurface(next) = &mut message {
-                    (delta.is_none() && client.surface_reuse)
-                        .then_some(client.surface.as_ref())
-                        .flatten()
-                        .filter(|last| {
-                            last.boot_id == next.boot_id
-                                && last.frame == next.frame
-                                && next.popup.is_none()
-                                && next.graphics.assets.is_empty()
-                        })
-                        .and_then(|last| {
-                            crate::protocol::surface_reuse::message(last.surface_revision, next)
-                                .map_err(|error| warn!(%error, "failed to encode surface reuse"))
-                                .ok()
-                                .flatten()
-                        })
-                } else {
-                    None
-                };
+                let message = client.encode_surface(&surface);
                 // Patches precede the frame that places their images.
                 for patch in &patches.messages {
                     let Ok(data) = framed(patch) else {
@@ -728,7 +704,7 @@ impl HeadlessServer {
                     };
                     batch.extend(data);
                 }
-                let Ok(data) = framed(&delta.or(reused).unwrap_or(message)) else {
+                let Ok(data) = framed(&message) else {
                     continue;
                 };
                 batch.extend(data);
@@ -810,7 +786,7 @@ impl HeadlessServer {
                             time_us, pid = std::process::id(),
                             boot_id = %self.endpoint_boot_id, client_id = ?client_id,
                             surface_revision = client.surface_revision, bytes = trace_bytes,
-                            with_images = trace_with_images,
+                            with_images = trace_with_images, text_only = false,
                             "surface registered in ordered send queue");
                     }
                     if let Some((surface_revision, _)) = client.patch_ack_trace {
