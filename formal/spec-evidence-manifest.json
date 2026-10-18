@@ -14735,19 +14735,22 @@
       ]
     },
     {
-      "contract_id": "G9-55fd0f8e57",
+      "contract_id": "G9-066e6098ca",
       "dimensions": [
         "Codex question identity and notes delivery"
       ],
       "verification_methods": [
         "rust_test_target:codex_question_countdown_keeps_one_agent_prompt_and_delivers_notes",
         "drift_source_anchor:src/screen_prompt.rs",
-        "drift_source_anchor:src/app/screen_prompts.rs"
+        "drift_source_anchor:src/app/screen_prompts.rs",
+        "rust_test_target:codex_open_notes_answer_does_not_toggle_tab_and_checks_submit",
+        "rust_test_target:codex_torn_answer_read_waits_for_same_question_and_open_notes"
       ],
       "source_anchors": [
         "SPEC.md:2048",
-        "src/screen_prompt.rs:57",
-        "src/app/screen_prompts.rs:1776"
+        "src/screen_prompt.rs:934",
+        "src/app/screen_prompts.rs:1644",
+        "src/app/screen_prompts.rs:1806"
       ],
       "test_status": [
         "unverified"

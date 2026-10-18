@@ -169,6 +169,8 @@ pub(crate) struct ScreenPrompt {
     /// travels with that option. Excluded from the signature — the footer
     /// drops the hint while a note is being typed.
     pub amend: bool,
+    /// Codex's visible notes-editor footer, independent of option focus.
+    pub codex_notes_open: bool,
 }
 
 impl ScreenPrompt {
@@ -929,6 +931,12 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         advance_after,
         focused: extras.focused,
         amend: end.is_some_and(|end| footer_offers_amend(&lines[end..])),
+        codex_notes_open: codex_header.is_some()
+            && end.is_some_and(|end| {
+                lines[end]
+                    .to_lowercase()
+                    .contains("tab or esc to clear notes")
+            }),
     };
     if let Some(mq) = mq {
         // Progress + tab name become the header so the review tab (no
@@ -1254,6 +1262,8 @@ Ready to submit your answers?
         .expect("live notes");
         assert!(first.is_question());
         assert!(first.is_codex_question());
+        assert!(!first.codex_notes_open);
+        assert!(notes.codex_notes_open);
         assert_eq!(first.title(), "検証用コーヒーはどちらにしますか？");
         assert_eq!(
             first.progress().as_deref(),

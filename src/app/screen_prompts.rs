@@ -132,6 +132,7 @@ pub(crate) struct ScreenPromptWatch {
     /// Option number of the free-text slot when the prompt offered one; kept
     /// so a text answer still finds the slot when the live read is torn.
     pub free_text_slot: Option<u32>,
+    pub codex_question: bool,
     /// Normalized Codex notice last published without changing identity.
     pub notice: Option<String>,
     /// The decision was resolved (answered, cancelled, expired); the watch
@@ -249,6 +250,7 @@ pub(crate) enum DeferredPaneWrite {
         note: String,
         phase: AmendPhase,
         attempts_left: u8,
+        codex: bool,
     },
 }
 
@@ -661,6 +663,7 @@ impl App {
                     note,
                     phase,
                     attempts_left,
+                    codex,
                     ..
                 } => {
                     if self.pane_user_input_recent(ws_idx, pane_id) {
@@ -678,6 +681,7 @@ impl App {
                         note,
                         phase,
                         attempts_left,
+                        codex,
                     );
                 }
             }
@@ -1106,6 +1110,7 @@ impl App {
                     watch.mismatches = 0;
                     watch.resolved = false;
                     watch.free_text_slot = prompt.free_text;
+                    watch.codex_question = prompt.is_codex_question();
                     watch.notice = prompt.notice.clone();
                 }
                 true
@@ -1216,6 +1221,7 @@ impl App {
                                 signature: sig,
                                 decision_id: existing.decision_id.clone(),
                                 free_text_slot: prompt.free_text,
+                                codex_question: prompt.is_codex_question(),
                                 notice: prompt.notice.clone(),
                                 resolved: false,
                                 mismatches: 0,
@@ -1281,6 +1287,7 @@ impl App {
                 signature: sig,
                 decision_id: decision.decision_id,
                 free_text_slot: prompt.free_text,
+                codex_question: prompt.is_codex_question(),
                 notice: prompt.notice.clone(),
                 resolved: false,
                 mismatches: 0,
@@ -1626,6 +1633,7 @@ impl App {
             note,
             AmendPhase::Aim,
             AMEND_ATTEMPTS,
+            false,
         );
     }
 
@@ -1642,6 +1650,7 @@ impl App {
         note: String,
         phase: AmendPhase,
         attempts_left: u8,
+        codex: bool,
     ) {
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
             warn!(pane_id = ?pane_id, "permission note answer dropped: pane gone");
@@ -1649,9 +1658,13 @@ impl App {
         };
         let screen = runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS);
         let prompt = parse_screen_prompt(&screen);
-        let same_prompt = prompt
-            .as_ref()
-            .is_some_and(|prompt| normalize_volatile(&prompt.question) == question);
+        let same_prompt = prompt.as_ref().is_some_and(|prompt| {
+            if codex {
+                prompt.is_codex_question() && prompt.signature() == question
+            } else {
+                normalize_volatile(&prompt.question) == question
+            }
+        });
         let focused = prompt.as_ref().and_then(|prompt| prompt.focused);
         let key = |code| {
             Bytes::from(runtime.encode_terminal_key(crate::input::TerminalKey::new(
@@ -1662,8 +1675,34 @@ impl App {
         // The footer shows `Tab to amend` only while the cursor sits on an
         // option that takes a note ("Yes, and always allow …" does not), and
         // drops it once the note is open.
-        let note_open = prompt.as_ref().is_some_and(|prompt| !prompt.amend);
+        let note_open = prompt.as_ref().is_some_and(|prompt| {
+            if codex {
+                prompt.codex_notes_open
+            } else {
+                !prompt.amend
+            }
+        });
         let (send, next) = match phase {
+            AmendPhase::Aim if same_prompt && codex => match focused {
+                Some(Focused::Option(at)) if at == number && note_open => (
+                    Some(Bytes::copy_from_slice(note.as_bytes())),
+                    Some((AmendPhase::Submit, FREE_TEXT_ENTER_DELAY)),
+                ),
+                Some(Focused::Option(at)) if !note_open => {
+                    let arrow = key(if at < number {
+                        crossterm::event::KeyCode::Down
+                    } else {
+                        crossterm::event::KeyCode::Up
+                    });
+                    let mut bytes = arrow.repeat(at.abs_diff(number) as usize);
+                    bytes.extend_from_slice(&key(crossterm::event::KeyCode::Tab));
+                    (
+                        Some(Bytes::from(bytes)),
+                        Some((AmendPhase::Type, FREE_TEXT_OPTION_DELAY)),
+                    )
+                }
+                _ => (None, None),
+            },
             AmendPhase::Aim if same_prompt => match focused {
                 // On the option but no hint (yet): the redraw may lag, so the
                 // step retries; an option that never offers a note stops.
@@ -1732,6 +1771,7 @@ impl App {
                         note,
                         phase: next_phase,
                         attempts_left,
+                        codex,
                     });
             }
             return;
@@ -1749,6 +1789,7 @@ impl App {
                     note,
                     phase,
                     attempts_left: attempts_left - 1,
+                    codex,
                 });
             return;
         }
@@ -1770,6 +1811,33 @@ impl App {
         prompt: Option<&ScreenPrompt>,
         text: &str,
     ) {
+        let watch = self
+            .screen_prompt_watches
+            .get(&pane_id)
+            .filter(|watch| watch.decision_id == decision.decision_id);
+        let codex = prompt.is_some_and(ScreenPrompt::is_codex_question)
+            || watch.is_some_and(|watch| watch.codex_question);
+        if codex {
+            let signature = watch
+                .map(|watch| watch.signature.clone())
+                .or_else(|| prompt.map(ScreenPrompt::signature));
+            let slot = prompt
+                .and_then(|prompt| prompt.free_text)
+                .or_else(|| watch.and_then(|watch| watch.free_text_slot));
+            if let (Some(signature), Some(number)) = (signature, slot) {
+                self.amend_step(
+                    ws_idx,
+                    pane_id,
+                    signature,
+                    number,
+                    text.to_string(),
+                    AmendPhase::Aim,
+                    AMEND_ATTEMPTS,
+                    true,
+                );
+            }
+            return;
+        }
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
             return;
         };
@@ -1788,31 +1856,7 @@ impl App {
         });
         match slot {
             Some(number) => {
-                let selection = if let Some(live) = prompt.filter(|p| p.is_codex_question()) {
-                    // Codex digits submit immediately. Move to Other, then Tab
-                    // opens its notes editor; only Enter submits the typed note.
-                    let Some(Focused::Option(current)) = live.focused else {
-                        warn!(pane_id = ?pane_id, "Codex note needs a live option cursor");
-                        return;
-                    };
-                    let key = if current < number {
-                        crossterm::event::KeyCode::Down
-                    } else {
-                        crossterm::event::KeyCode::Up
-                    };
-                    let arrow = runtime.encode_terminal_key(crate::input::TerminalKey::new(
-                        key,
-                        crossterm::event::KeyModifiers::NONE,
-                    ));
-                    let mut bytes = arrow.repeat(current.abs_diff(number) as usize);
-                    bytes.extend(runtime.encode_terminal_key(crate::input::TerminalKey::new(
-                        crossterm::event::KeyCode::Tab,
-                        crossterm::event::KeyModifiers::NONE,
-                    )));
-                    Bytes::from(bytes)
-                } else {
-                    Bytes::copy_from_slice(number.to_string().as_bytes())
-                };
+                let selection = Bytes::copy_from_slice(number.to_string().as_bytes());
                 if let Err(err) = runtime.try_send_bytes(selection) {
                     warn!(
                         pane_id = ?pane_id,
@@ -3187,11 +3231,70 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
             rx.try_recv().expect("arrows and Tab").as_ref(),
             b"\x1b[B\x1b[B\t"
         );
+        rx = replace_screen(
+            &mut app,
+            pane_id,
+            include_str!("../../tests/fixtures/screen_prompt/codex-notes.txt"),
+        );
         app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
         assert_eq!(
             rx.try_recv().expect("note").as_ref(),
             b"codexq-note-verified"
         );
+        app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
+        assert_eq!(rx.try_recv().expect("Enter").as_ref(), b"\r");
+    }
+
+    #[tokio::test]
+    async fn codex_open_notes_answer_does_not_toggle_tab_and_checks_submit() {
+        let _guard = crate::config::lock_test_config_env();
+        let notes = include_str!("../../tests/fixtures/screen_prompt/codex-notes.txt");
+        let (mut app, pane_id, mut rx) = test_app("codex-open-notes", notes, true);
+        app.scan_screen_prompts(Instant::now());
+        let id = pending_decisions()[0].decision_id.clone();
+        answer(&mut app, &id, None, Some("open-note"));
+        assert_eq!(
+            rx.try_recv().expect("text without Tab").as_ref(),
+            b"open-note"
+        );
+        assert!(rx.try_recv().is_err());
+        let mut idle = replace_screen(&mut app, pane_id, IDLE_SCREEN);
+        app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
+        assert!(
+            idle.try_recv().is_err(),
+            "Enter must not leak after the question disappears"
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_torn_answer_read_waits_for_same_question_and_open_notes() {
+        let _guard = crate::config::lock_test_config_env();
+        let screen = include_str!("../../tests/fixtures/screen_prompt/codex-question.txt");
+        let notes = include_str!("../../tests/fixtures/screen_prompt/codex-notes.txt");
+        let (mut app, pane_id, _rx) = test_app("codex-torn-note", screen, true);
+        app.scan_screen_prompts(Instant::now());
+        let id = pending_decisions()[0].decision_id.clone();
+        let mut torn = replace_screen(&mut app, pane_id, "");
+        answer(&mut app, &id, None, Some("recovered-note"));
+        assert!(
+            torn.try_recv().is_err(),
+            "no numeric fallback on a torn read"
+        );
+        let mut rx = replace_screen(&mut app, pane_id, screen);
+        app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
+        assert_eq!(
+            rx.try_recv().expect("open editor").as_ref(),
+            b"\x1b[B\x1b[B\t"
+        );
+        app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
+        assert!(
+            rx.try_recv().is_err(),
+            "do not type until notes editor is confirmed open"
+        );
+        rx = replace_screen(&mut app, pane_id, notes);
+        app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
+        assert_eq!(rx.try_recv().expect("text").as_ref(), b"recovered-note");
+        app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
         assert_eq!(rx.try_recv().expect("Enter").as_ref(), b"\r");
     }
 
