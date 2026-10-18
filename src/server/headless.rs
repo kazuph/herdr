@@ -4755,13 +4755,13 @@ mod tests {
 
     #[cfg(unix)]
     #[path = "endpoints.rs"]
-    mod endpoint_tests;
+    pub(super) mod endpoint_tests;
     #[path = "pane_graphics.rs"]
     mod pane_graphics_tests;
 
     static TEST_SOCKET_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-    fn test_headless_server() -> HeadlessServer {
+    pub(super) fn test_headless_server() -> HeadlessServer {
         test_headless_server_with_event_hub(api::EventHub::default())
     }
 
@@ -4847,7 +4847,7 @@ mod tests {
         }
     }
 
-    fn shutdown_test_runtimes(server: &mut HeadlessServer) {
+    pub(super) fn shutdown_test_runtimes(server: &mut HeadlessServer) {
         for (_, runtime) in server.app.terminal_runtimes.drain() {
             runtime.shutdown();
         }
