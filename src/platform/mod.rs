@@ -244,6 +244,13 @@ impl PrefixInputSource for RealPrefixInputSource {
     }
 }
 
+/// Peer process ids are only read where the OS exposes them (macOS, Linux);
+/// latency traces record no peer pid elsewhere.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub(crate) fn endpoint_peer_pid(_stream: &crate::ipc::LocalStream) -> Option<u32> {
+    None
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

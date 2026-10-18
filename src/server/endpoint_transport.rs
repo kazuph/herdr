@@ -88,6 +88,13 @@ pub(crate) fn handle_endpoint_handshake(
         return Ok(());
     }
     set_client_recv_timeout(&stream, None, "endpoint handshake completed", client_id)?;
+    if crate::logging::latency_trace_enabled() {
+        tracing::info!(target: "herdr_latency", event = "endpoint.accepted",
+            time_us = crate::logging::latency_trace_time_us(), pid = std::process::id(), client_id,
+            peer_pid = crate::platform::endpoint_peer_pid(&stream),
+            "endpoint client transport accepted");
+    }
+
     let writer_events = event_tx.clone();
     let writer = ClientWriter::spawn(stream.try_clone()?, move |signal| {
         let event = match signal {

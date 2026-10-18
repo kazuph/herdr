@@ -244,3 +244,16 @@ mod patch_rebuild {
         assert_eq!(image_of(&out, &key(2)), None);
     }
 }
+
+#[test]
+fn endpoint_connection_peer_pid_matches_actual_socket_process() {
+    let (client, peer, _socket) = pair();
+    assert_eq!(
+        crate::platform::endpoint_peer_pid(&client),
+        Some(std::process::id())
+    );
+    assert_eq!(
+        crate::platform::endpoint_peer_pid(&peer),
+        Some(std::process::id())
+    );
+}

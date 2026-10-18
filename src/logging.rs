@@ -22,12 +22,41 @@ pub(crate) fn init_file_logging(file_name: &str) {
     let filter =
         EnvFilter::try_from_env("HERDR_LOG").unwrap_or_else(|_| EnvFilter::new("herdr=info"));
 
+    let filter = if latency_trace_enabled() {
+        filter.add_directive(
+            "herdr_latency=info"
+                .parse()
+                .expect("static latency directive"),
+        )
+    } else {
+        filter
+    };
+
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(make_writer)
         .with_ansi(false)
         .with_target(true)
         .try_init();
+}
+
+/// Opt-in hot-path tracing. The environment is read once per process; disabled
+/// callers do not read a clock, format fields, or allocate trace payloads.
+pub(crate) fn latency_trace_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED
+        .get_or_init(|| latency_trace_requested(std::env::var_os("HERDR_LATENCY_TRACE").as_deref()))
+}
+
+fn latency_trace_requested(value: Option<&std::ffi::OsStr>) -> bool {
+    value == Some(std::ffi::OsStr::new("1"))
+}
+
+pub(crate) fn latency_trace_time_us() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros()
 }
 
 pub(crate) fn help_log_paths_summary() -> String {
@@ -583,6 +612,73 @@ fn rotated_log_path(path: &Path, index: usize) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn latency_trace_file_output_is_opt_in() {
+        const CHILD: &str = "HERDR_LATENCY_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            super::init_file_logging("herdr-client.log");
+            super::startup("latency-test");
+            let pace = crate::client::terminal_pace::TerminalPace::default();
+            let probe = pace.sent(7);
+            pace.record_sent(probe);
+            assert_eq!(pace.strip_replies(b"\x1b[0n"), Some(Vec::new()));
+            assert!(!pace.waiting());
+            let second = pace.sent(8);
+            pace.record_sent(second);
+            let abandoned = pace.give_up();
+            pace.record_give_up(abandoned, "timeout");
+            let third = pace.sent(9);
+            pace.record_sent(third);
+            assert_eq!(pace.strip_replies(b"\x1b[0n"), Some(Vec::new()));
+            let log = std::fs::read_to_string(crate::session::data_dir().join("herdr-client.log"))
+                .unwrap();
+            let enabled = super::latency_trace_enabled();
+            assert_eq!(log.contains("terminal.probe_sent"), enabled);
+            assert_eq!(log.contains("terminal.probe_reply"), enabled);
+            assert_eq!(log.contains("time_us="), enabled);
+            if enabled {
+                assert!(log.contains("draw_seq=7"));
+                assert!(log.contains("terminal.probe_give_up"));
+                assert!(log.contains("reason=\"timeout\""));
+                assert!(log.contains("matched=false"));
+            }
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "herdr-latency-test-{}-{}",
+            std::process::id(),
+            super::latency_trace_time_us()
+        ));
+        for value in ["0", "1"] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "logging::tests::latency_trace_file_output_is_opt_in",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("XDG_CONFIG_HOME", root.join(value))
+                .env("HERDR_LATENCY_TRACE", value)
+                .env("HERDR_LOG", "herdr=info")
+                .status()
+                .unwrap();
+            assert!(status.success(), "trace mode {value}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn latency_trace_requires_exact_opt_in() {
+        for value in [None, Some(""), Some("0"), Some("true"), Some("01")] {
+            assert!(!super::latency_trace_requested(
+                value.map(std::ffi::OsStr::new)
+            ));
+        }
+        assert!(super::latency_trace_requested(Some(std::ffi::OsStr::new(
+            "1"
+        ))));
+    }
+
     use super::*;
 
     fn temp_log_path(name: &str) -> PathBuf {

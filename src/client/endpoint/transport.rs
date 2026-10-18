@@ -63,9 +63,17 @@ fn read_loop(
 ) {
     let result = (|| {
         crate::ipc::set_local_stream_polling(&mut stream, true)?;
+        if crate::logging::latency_trace_enabled() {
+            tracing::info!(target: "herdr_latency", event = "endpoint.connected",
+                time_us = crate::logging::latency_trace_time_us(), pid = std::process::id(),
+                endpoint = ?endpoint_id, generation, peer_pid = crate::platform::endpoint_peer_pid(&stream),
+                "endpoint reader connection established");
+        }
+
         let mut reader = EndpointReader {
             stream: &mut stream,
             stopped: &stopped,
+            trace_bytes: crate::logging::latency_trace_enabled().then_some(0),
         };
         let mut patches = PatchRebuild::default();
         while !stopped.load(Ordering::Acquire) {
@@ -78,6 +86,9 @@ fn read_loop(
                 crate::protocol::FramingError::UnexpectedEof => io::ErrorKind::UnexpectedEof.into(),
                 error => io::Error::new(io::ErrorKind::InvalidData, error),
             })?;
+            let received_time_us = reader
+                .trace_bytes
+                .map(|_| crate::logging::latency_trace_time_us());
             let message = if let Some(decoder) = &mut decoder {
                 decoder
                     .decode(message)
@@ -85,6 +96,27 @@ fn read_loop(
             } else {
                 message
             };
+            if let (Some(bytes), Some(time_us)) = (reader.trace_bytes.take(), received_time_us) {
+                let identity = match &message {
+                    ServerMessage::PaneSurface(surface) => Some((
+                        &surface.boot_id,
+                        surface.surface_revision,
+                        !surface.graphics.assets.is_empty(),
+                    )),
+                    ServerMessage::PaneSurfacePatch(patch) => {
+                        Some((&patch.boot_id, patch.surface_revision, false))
+                    }
+                    _ => None,
+                };
+                if let Some((boot_id, surface_revision, with_images)) = identity {
+                    tracing::info!(target: "herdr_latency", event = "surface.received",
+                        time_us, endpoint = ?endpoint_id,
+                        generation, boot_id = %boot_id,
+                        surface_revision, bytes, with_images,
+                        "surface read and decoded before graphics reconstruction");
+                }
+                reader.trace_bytes = Some(0);
+            }
             for message in patches.receive(message) {
                 if events
                     .blocking_send(EndpointReaderEvent::Message {
@@ -116,6 +148,7 @@ fn read_loop(
 struct EndpointReader<'a> {
     stream: &'a mut LocalStream,
     stopped: &'a AtomicBool,
+    trace_bytes: Option<usize>,
 }
 
 impl io::Read for EndpointReader<'_> {
@@ -125,7 +158,12 @@ impl io::Read for EndpointReader<'_> {
                 return Ok(0);
             }
             match crate::ipc::poll_local_stream_read_count(self.stream, buffer) {
-                Ok(crate::ipc::LocalStreamReadCount::Data(count)) => return Ok(count),
+                Ok(crate::ipc::LocalStreamReadCount::Data(count)) => {
+                    if let Some(bytes) = &mut self.trace_bytes {
+                        *bytes += count;
+                    }
+                    return Ok(count);
+                }
                 Ok(crate::ipc::LocalStreamReadCount::Closed) => return Ok(0),
                 Ok(crate::ipc::LocalStreamReadCount::Pending) => {
                     crate::platform::wait_client_stream_readable(self.stream)?;
