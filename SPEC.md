@@ -2368,7 +2368,7 @@
 - **分類**: CORE-UI
 - **status: fork独自・保持 (C)** — 保存マシンの画像受領を待つ間も、同じ配置の画面では文字を先に更新する。
 - **挙動**:
-  - 最後に正常送信した画面があり、起動ID・画面寸法・focusedタブ・ペインとsplitの配置・スクロール位置・ポップアップの有無と寸法が同じで、最新画像のsource・画素寸法・format・配置ID・位置・大きさ・crop・offset・z・scrollbackが一致する時だけ、文字だけの画面を送る。画像の世代（data_fingerprintとdata_len）だけの違いは許容する。条件を満たさなければ従来どおり待つ。
+  - 最後に正常送信した画面があり、起動ID・画面寸法・focusedタブ・ペインとsplitの配置・スクロール位置・ポップアップの有無と寸法が同じで、ポップアップも前回送信時と端末ID・offset_from_bottom・viewport_rowsが一致し、最新画像のsource・画素寸法・format・配置ID・位置・大きさ・crop・offset・z・scrollbackが一致する時だけ、文字だけの画面を送る。画像の世代（data_fingerprintとdata_len）だけの違いは許容する。条件を満たさなければ従来どおり待つ。
   - 文字だけの画面は前回送信したplacementsとretained_assetsをそのまま使い、assetsは空にする。未送信世代のasset keyは使わない。patch生成・pane画像準備・native prepare/hold/commitは呼ばず、graphics_delivery・patch_bases・nativeの記録・受領待ちのrevisionと開始時刻を進めない。送信成功時だけsurface_revisionと文字差分の基底を更新し、送信失敗では確定しない。
   - 元の画像revisionへの受領返事、500msの時間切れ、組み立て失敗の後は、従来の経路で最新画像を送る。古い受領返事は新しい画像の待ちを解除しない。direct_graphicsのファイル経由転送、端末の処理待ち、PNG・patch生成とワイヤー形式は変えない。
   - 任意の遅延記録のsurface.queuedにtext_onlyを付け、受領待ち中の文字送信はtrue、通常送信はfalseとする。記録は送信成功と状態確定の後だけ行う。
@@ -2377,6 +2377,8 @@
   - source・画素寸法・format・配置・crop・offset・z・scrollbackの変更、タブ・ペイン・split・ポップアップ・サイズの変更では文字画面を送らず、画素世代だけの変更では送る。
   - 文字送信後も元の画像への受領を受け付け、受領・500ms時間切れ・組み立て失敗の後には最新の画像を送り、遅れて届いた古い受領で新しい待ちを解除しない。
   - 通常画面・surface_delta・surface_reuseの受信とキャッシュは前回の画像を保ったまま文字とrevisionを更新し、余分な受領返事・再送要求・同じ画素の端末への再転送・画像消去を発生させない。
+  - ポップアップの端末ID・offset_from_bottom・viewport_rowsは前回送信時と比較し、不一致なら受領を待つ。同じ位置の文字更新はcontent_revisionが変わっても送る。実ソケットと履歴のあるポップアップで文字更新とスクロールの両方を検証する。
+  - 表示配置とは別にretained_assetsだけが参照する画面外画像を、通常・差分・使い回しの文字画面の後もキャッシュとpatch組み立て器に保持し、次の差分の基底に使える。文字送信で余分なACK・MISS・画素再転送を出さず、サーバーの空でない保持一覧と配信記録も変えない。
 - **デグレ判定**: 受領待ち中に画像キーを未送信世代へ進める、切替先へ古い画像を持ち込む、受領後の最新画像が欠ける、または文字更新で画像を消す。
 
 ### machine管理メニュー（P5）
