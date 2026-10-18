@@ -52,6 +52,12 @@ const SPINNER_CHARS: &[char] = &[
     '✳', '✽', '✢', '✣', '✤', '✥', '◐', '◑', '◒', '◓', '⠋', '⠙', '⠚', '⠞', '⠖', '⠦', '⠴', '⠲', '⠳',
     '⠓', '⠏', '⠹', '⠸', '⠼',
 ];
+// Codex's question overlay starts here, independently of the transcript
+// above it. The optional countdown is presentation, never prompt identity.
+static CODEX_QUESTION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*(Question \d+/\d+ \(\d+ unanswered\))(?:\s*·\s*auto-resolves in (?:\d+[hms]\s*)+)?\s*$")
+        .expect("valid Codex question header regex")
+});
 static MQ_TAB_ROW_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*←\s+(.*?)\s*→\s*$").unwrap());
 static MQ_TAB_ITEM_RE: LazyLock<Regex> =
@@ -163,11 +169,16 @@ pub(crate) struct ScreenPrompt {
     /// travels with that option. Excluded from the signature — the footer
     /// drops the hint while a note is being typed.
     pub amend: bool,
+    /// Codex's visible notes-editor footer, independent of option focus.
+    pub codex_notes_open: bool,
 }
 
 impl ScreenPrompt {
-    /// saberante's `is_question`: checkbox header or a free-text slot marks a
-    /// question worth a decision; bare numbered menus are confirmations.
+    pub fn is_codex_question(&self) -> bool {
+        CODEX_QUESTION_RE.is_match(&self.header)
+    }
+
+    /// A question header or free-text slot distinguishes questions from permissions.
     pub fn is_question(&self) -> bool {
         !self.header.is_empty() || self.free_text.is_some()
     }
@@ -217,6 +228,9 @@ impl ScreenPrompt {
 
     /// Multi-question progress label for the decision body.
     pub fn progress(&self) -> Option<String> {
+        if self.is_codex_question() {
+            return Some(self.header.clone());
+        }
         self.mq.as_ref().map(|mq| {
             if mq.at_submit {
                 "最終確認".to_string()
@@ -659,6 +673,25 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         mq = parse_mq_tabs(&lines, lines.len());
     }
 
+    let codex_header = end
+        .filter(|end| {
+            lines[*end]
+                .to_lowercase()
+                .contains("enter to submit answer")
+        })
+        .and(first)
+        .and_then(|first| {
+            lines[..first]
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(row, line)| {
+                    CODEX_QUESTION_RE
+                        .captures(line)
+                        .map(|caps| (row, caps[1].to_string(), line.contains("auto-resolves in")))
+                })
+        });
+
     // Free-text slots by label first, then by position. Claude Code draws
     // "Type something." as the last option above a divider with "Chat about
     // this" alone below it; once text is typed the placeholder labels are
@@ -695,7 +728,13 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
                 _ => None,
             }
         });
-    let free = label_free.or_else(|| {
+    let codex_free = codex_header.as_ref().and_then(|_| {
+        options
+            .iter()
+            .find(|(_, label)| label.starts_with("None of the above"))
+            .map(|(number, _)| *number)
+    });
+    let free = codex_free.or(label_free).or_else(|| {
         // The option directly above — or glued onto — the divider that
         // closes the option block above the chat slot.
         let chat_row = option_rows.get(&chat_slot?).copied()?;
@@ -734,25 +773,37 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     let first = first?;
 
     // Prompt header: nearest `☐`/`☒` checkbox row above the options.
-    let header = lines[..first]
-        .iter()
-        .rev()
-        .map(|line| line.trim())
-        .find(|line| line.starts_with(['☐', '☒']))
-        .unwrap_or("")
-        .to_string();
+    let header = codex_header
+        .as_ref()
+        .map(|(_, label, _)| label.clone())
+        .unwrap_or_else(|| {
+            lines[..first]
+                .iter()
+                .rev()
+                .map(|line| line.trim())
+                .find(|line| line.starts_with(['☐', '☒']))
+                .unwrap_or("")
+                .to_string()
+        });
 
     // Question text: everything between the checkbox/tab rows and the options,
     // top-down, stopping at agent-message (`⏺`) or rule lines. Dashed
     // permission-box borders are skipped without stopping; the AFK countdown
     // is lifted into `notice` so its ticking digits cannot churn identity.
     let mut question_lines: Vec<&str> = Vec::new();
-    let mut notice_lines: Vec<String> = Vec::new();
+    let mut notice_lines: Vec<String> = codex_header
+        .as_ref()
+        .filter(|(_, _, timed)| *timed)
+        .map(|_| vec!["auto-resolves in …".to_string()])
+        .unwrap_or_default();
     let mut in_afk = false;
     let mut j = first;
     let mut stop_at = 0usize;
     while j > 0 && question_lines.len() < MAX_QUESTION_LINES {
         j -= 1;
+        if codex_header.as_ref().is_some_and(|(row, _, _)| j <= *row) {
+            break;
+        }
         if let Some(mq) = &mq {
             if j <= mq.row {
                 break;
@@ -880,6 +931,12 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         advance_after,
         focused: extras.focused,
         amend: end.is_some_and(|end| footer_offers_amend(&lines[end..])),
+        codex_notes_open: codex_header.is_some()
+            && end.is_some_and(|end| {
+                lines[end]
+                    .to_lowercase()
+                    .contains("tab or esc to clear notes")
+            }),
     };
     if let Some(mq) = mq {
         // Progress + tab name become the header so the review tab (no
@@ -1187,6 +1244,55 @@ Ready to submit your answers?
   2. Cancel
 "
         )
+    }
+
+    #[test]
+    fn codex_question_overlay_has_stable_identity_and_free_text() {
+        let first = parse_screen_prompt(include_str!(
+            "../tests/fixtures/screen_prompt/codex-question.txt"
+        ))
+        .expect("live Codex question");
+        let cursor = parse_screen_prompt(include_str!(
+            "../tests/fixtures/screen_prompt/codex-cursor.txt"
+        ))
+        .expect("live cursor");
+        let notes = parse_screen_prompt(include_str!(
+            "../tests/fixtures/screen_prompt/codex-notes.txt"
+        ))
+        .expect("live notes");
+        assert!(first.is_question());
+        assert!(first.is_codex_question());
+        assert!(!first.codex_notes_open);
+        assert!(notes.codex_notes_open);
+        assert_eq!(first.title(), "検証用コーヒーはどちらにしますか？");
+        assert_eq!(
+            first.progress().as_deref(),
+            Some("Question 1/1 (1 unanswered)")
+        );
+        assert_eq!(first.free_text, Some(3));
+        assert_eq!(first.choices.len(), 2);
+        assert_eq!(first.signature(), cursor.signature());
+        assert_eq!(first.signature(), notes.signature());
+        for screen in [
+            include_str!("../tests/fixtures/screen_prompt/codex-countdown-1.txt"),
+            include_str!("../tests/fixtures/screen_prompt/codex-countdown-2.txt"),
+            include_str!("../tests/fixtures/screen_prompt/codex-countdown-cursor.txt"),
+        ] {
+            let live = parse_screen_prompt(screen).expect("live countdown");
+            assert_eq!(first.signature(), live.signature());
+            assert_eq!(first.title(), live.title());
+        }
+        for timer in ["1m 0s", "59s", "1s"] {
+            let screen = include_str!("../tests/fixtures/screen_prompt/codex-question.txt")
+                .replace(
+                    "Question 1/1 (1 unanswered)",
+                    &format!("Question 1/1 (1 unanswered) · auto-resolves in {timer}"),
+                );
+            let timed = parse_screen_prompt(&screen).expect("timed Codex question");
+            assert_eq!(first.signature(), timed.signature());
+            assert_eq!(timed.title(), first.title());
+            assert_eq!(timed.notice(), Some("auto-resolves in …"));
+        }
     }
 
     // Codex approval overlay (codex-rs TUI snapshot shape): `›` cursor,
