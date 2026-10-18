@@ -405,8 +405,8 @@ pub(super) fn completed(
         (Operation::Copy { revision }, api::ResponseResult::PaneSelection { pane_id, text })
             if pane_id == pane.pane_id && pane.content_revision == revision =>
         {
-            if !text.is_empty() {
-                crate::selection::write_osc52_bytes(text.as_bytes());
+            if !text.is_empty() && crate::selection::write_osc52_bytes(text.as_bytes()) {
+                super::copy_feedback::show(frontend, &text, Instant::now());
             }
             clear(frontend);
         }

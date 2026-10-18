@@ -67,7 +67,7 @@ const PENDING_AGENT_RESUME_THEME_WAIT: Duration = Duration::from_millis(750);
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
 const SIDEBAR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
 const PANE_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(500);
-const COPY_FEEDBACK_DURATION: Duration = Duration::from_secs(2);
+pub(crate) const COPY_FEEDBACK_DURATION: Duration = Duration::from_secs(2);
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},

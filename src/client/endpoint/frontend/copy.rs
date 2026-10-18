@@ -615,10 +615,10 @@ pub(super) fn completed(
         (Operation::Copy, api::ResponseResult::PaneSelection { pane_id, text })
             if pane_id == mode.owner.pane =>
         {
-            if !text.is_empty() {
-                crate::selection::write_osc52_bytes(text.as_bytes());
-            }
             let offset = mode.entry_offset;
+            if !text.is_empty() && crate::selection::write_osc52_bytes(text.as_bytes()) {
+                super::copy_feedback::show(frontend, &text, Instant::now());
+            }
             scroll(frontend, offset, true)?;
         }
         (Operation::Scroll { offset, exit }, api::ResponseResult::PaneInfo { pane })

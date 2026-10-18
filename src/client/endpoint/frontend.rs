@@ -26,6 +26,7 @@ mod ascii;
 mod clipboard_images;
 mod context;
 mod copy;
+mod copy_feedback;
 mod custom;
 #[cfg(unix)]
 mod direct;
@@ -114,6 +115,8 @@ pub(crate) struct ClientFrontend {
     focus_history: history::FocusHistory,
     copy_mode: Option<copy::CopyMode>,
     copy_action: Option<copy::DeferredAction>,
+    /// "Copied N lines" after a copy, until its time is up.
+    copy_feedback: Option<copy_feedback::CopyFeedback>,
     resize_mode: Option<copy::Owner>,
     split_drag: Option<resize::SplitDrag>,
     sidebar_drag: bool,
@@ -241,6 +244,7 @@ impl ClientFrontend {
             focus_history: history::FocusHistory::default(),
             copy_mode: None,
             copy_action: None,
+            copy_feedback: None,
             resize_mode: None,
             split_drag: None,
             sidebar_drag: false,
@@ -470,6 +474,7 @@ impl ClientFrontend {
                     );
                 }
                 notice::render(self, frame, &view);
+                copy_feedback::render(self, frame, &view);
             }),
             (self.runtime.input_lease_current() || self.runtime.awaiting_surface_pair())
                 && self.mobile.is_none()
@@ -678,7 +683,9 @@ impl ClientFrontend {
                 _ = maintenance.tick() => {
                     let now = Instant::now();
                     let update = self.runtime.tick(now);
-                    let repaint = self.update(update)? | notice::tick(self, now);
+                    let repaint = self.update(update)?
+                        | notice::tick(self, now)
+                        | copy_feedback::tick(self, now);
                     let indicator_pending = self.job_indicator_expiry_pending();
                     let indicator_just_expired =
                         std::mem::replace(&mut self.job_indicator_pending, indicator_pending)
