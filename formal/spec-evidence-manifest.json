@@ -14760,7 +14760,7 @@
       ]
     },
     {
-      "contract_id": "G9-d08cbb5511",
+      "contract_id": "G9-97299647e8",
       "dimensions": [
         "Slack in-flight resolution and durable cleanup"
       ],
@@ -14780,7 +14780,7 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "Real Slack sends are prohibited; local fake Slack verifies lifecycle and retry behavior.",
+        "Real Slack sends are prohibited; local fake Slack verifies in-flight reuse ownership, retry ownership and per-disconnect attempt limits.",
         "Production 60-second delay is shortened in tests."
       ]
     }

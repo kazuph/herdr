@@ -1187,7 +1187,7 @@ export class SlackDecisionsDaemon {
         return;
       }
       const emojis = NUMBER_EMOJIS.slice(0, (decision.options || []).length);
-      if (emojis.length > 0) {
+      if (emojis.length > 0 && this.ownsPost(entry.key, entry.post)) {
         await this.slack.addReactions(reuse.ts, emojis);
       }
       this.log(`Slack 投稿を使い回し: ${decision.decision_id} (${reuse.ts})`);
@@ -1240,7 +1240,7 @@ export class SlackDecisionsDaemon {
     const post = entry.post;
     try {
       await this.retryPostMutation(() => {
-        if (entry.resolved || entry.post !== post) return;
+        if (entry.resolved || !this.ownsPost(entry.key, post)) return;
         return this.slack.updateMessage(post.ts, {
           text: fallbackText(entry),
           blocks: buildDecisionBlocks({
@@ -1250,16 +1250,17 @@ export class SlackDecisionsDaemon {
             mention: this.slack.mention || "",
           }),
         });
-      });
+      }, () => !entry.resolved && this.ownsPost(entry.key, post));
     } catch (error) {
       this.log(`投稿の再表示に失敗 (${entry.decision.decision_id}): ${error.message}`);
     }
   }
 
   async updatePostStatus(entry, status, decision) {
-    if (!entry.post) return;
+    const post = entry.post;
+    if (!this.ownsPost(entry.key, post)) return;
     try {
-      await this.retryPostMutation(() => this.slack.updateMessage(entry.post.ts, {
+      await this.retryPostMutation(() => this.slack.updateMessage(post.ts, {
         text: `${(STATUS_TEXT[status] || status).replace(/:[a-z_0-9]+:/g, "").trim()}: ${decision.title || decision.decision_id}`,
         blocks: buildDecisionBlocks({
           decision,
@@ -1267,7 +1268,7 @@ export class SlackDecisionsDaemon {
           status,
           mention: this.slack.mention || "",
         }),
-      }));
+      }), () => this.ownsPost(entry.key, post));
     } catch (error) {
       this.log(`投稿の更新に失敗 (${decision.decision_id}): ${error.message}`);
     }
@@ -1294,22 +1295,35 @@ export class SlackDecisionsDaemon {
     this.log(`決定済み: ${decision.decision_id} (${decision.status})`);
   }
 
-  async finishResolvedPost(entry) {
-    if (!entry.post) return;
-    const decision = entry.decision;
-    const status = decision.status || "answered";
-    if (status === "cancelled") {
-      await this.updatePostStatus(entry, status, decision);
-      this.rememberReusablePost(entry.machineId, decision, entry.post, entry.key);
-    } else {
-      await this.deletePost(entry);
-    }
+  ownsPost(key, post) {
+    const owner = this.posts.get(key);
+    return !!post && owner?.ts === post.ts && owner.channel === post.channel;
   }
 
-  async retryPostMutation(operation) {
+  finishResolvedPost(entry) {
+    if (!this.ownsPost(entry.key, entry.post)) return;
+    if (entry.resolutionWork) return entry.resolutionWork;
+    entry.resolutionWork = (async () => {
+      const decision = entry.decision;
+      const post = entry.post;
+      const status = decision.status || "answered";
+      if (status === "cancelled") {
+        await this.updatePostStatus(entry, status, decision);
+        if (this.ownsPost(entry.key, post)) {
+          this.rememberReusablePost(entry.machineId, decision, post, entry.key);
+        }
+      } else {
+        await this.deletePost(entry);
+      }
+    })();
+    return entry.resolutionWork;
+  }
+
+  async retryPostMutation(operation, stillOwned = () => true) {
     const attempts = this.config.postMutationAttempts ?? POST_MUTATION_ATTEMPTS;
     for (let attempt = 1; ; attempt += 1) {
       try {
+        if (!stillOwned()) return;
         return await operation();
       } catch (error) {
         const communicationFailure = error instanceof TypeError ||
@@ -1326,15 +1340,17 @@ export class SlackDecisionsDaemon {
   // together with the parent post.
   async deletePost(entry) {
     const post = entry.post;
-    if (!post) return;
-    if (await this.deletePostByTs(post)) {
+    const stillOwned = () => this.ownsPost(entry.key, post);
+    if (!stillOwned()) return;
+    if (await this.deletePostByTs(post, stillOwned) && stillOwned()) {
       entry.post = null;
       this.posts.delete(entry.key);
       this.savePostsFile();
     }
   }
 
-  async deletePostByTs(post) {
+  async deletePostByTs(post, stillOwned) {
+    if (!stillOwned()) return false;
     let replies = [];
     try {
       replies = await this.slack.replies(post.ts);
@@ -1345,13 +1361,14 @@ export class SlackDecisionsDaemon {
       if (reply.ts === post.ts) continue;
       if (!reply.bot_id && reply.user !== this.botUserId) continue;
       try {
-        await this.retryPostMutation(() => this.slack.deleteMessage(reply.ts));
+        await this.retryPostMutation(() => this.slack.deleteMessage(reply.ts), stillOwned);
       } catch (error) {
         this.log(`スレッド返信の削除に失敗 (${reply.ts}): ${error.message}`);
       }
     }
     try {
-      await this.retryPostMutation(() => this.slack.deleteMessage(post.ts));
+      await this.retryPostMutation(() => this.slack.deleteMessage(post.ts), stillOwned);
+      if (!stillOwned()) return false;
       this.log(`Slack 投稿を削除: ${post.ts}`);
       return true;
     } catch (error) {
@@ -1363,6 +1380,7 @@ export class SlackDecisionsDaemon {
   }
 
   rememberReusablePost(machineId, decision, post, mapKey) {
+    if (!this.ownsPost(mapKey, post)) return;
     const now = Date.now();
     for (const [key, record] of this.reusablePosts) {
       if (now - record.at > this.recreateReuseMs) {
@@ -1374,8 +1392,10 @@ export class SlackDecisionsDaemon {
     if (previous?.timer) clearTimeout(previous.timer);
     const record = { channel: post.channel, ts: post.ts, at: now, mapKey };
     record.timer = setTimeout(async () => {
+      if (this.reusablePosts.get(qkey) !== record) return;
       this.reusablePosts.delete(qkey);
-      if (await this.deletePostByTs(record)) {
+      const stillOwned = () => this.ownsPost(mapKey, record);
+      if (await this.deletePostByTs(record, stillOwned) && stillOwned()) {
         this.posts.delete(mapKey);
         this.savePostsFile();
       }
@@ -1390,12 +1410,14 @@ export class SlackDecisionsDaemon {
     if (!record) return null;
     this.reusablePosts.delete(qkey);
     if (record.timer) clearTimeout(record.timer);
-    if (Date.now() - record.at > this.recreateReuseMs) return null;
+    if (Date.now() - record.at > this.recreateReuseMs ||
+        !this.ownsPost(record.mapKey, record)) return null;
     return record;
   }
 
   async onMachineDown(mid, reason) {
     this.machinesDown.add(mid);
+    const handled = new Set();
     for (const entry of [...this.entries.values()]) {
       if (entry.machineId !== mid) continue;
       if (!entry.post) {
@@ -1404,6 +1426,7 @@ export class SlackDecisionsDaemon {
         continue; // unposted items of a down machine are never posted
       }
       entry.machineDown = true;
+      handled.add(entry.key);
       // Deleted, not marked: a down machine's question cannot be answered.
       // A still-pending decision is re-posted on machine_up.
       await this.deletePost(entry);
@@ -1413,8 +1436,9 @@ export class SlackDecisionsDaemon {
     // down, and a pending one is re-posted on machine_up.
     let removedOrphans = false;
     for (const [key, post] of [...this.posts]) {
-      if (post.machineId !== mid) continue;
-      if (await this.deletePostByTs(post)) {
+      if (post.machineId !== mid || handled.has(key)) continue;
+      const stillOwned = () => this.ownsPost(key, post);
+      if (await this.deletePostByTs(post, stillOwned) && stillOwned()) {
         this.posts.delete(key);
         removedOrphans = true;
       }
