@@ -740,6 +740,31 @@ fn process_session_id(pid: u32) -> Option<i32> {
     fields.get(3)?.parse().ok()
 }
 
+/// Process id of the other end of a local endpoint socket (`SO_PEERCRED`).
+pub(crate) fn endpoint_peer_pid(stream: &crate::ipc::LocalStream) -> Option<u32> {
+    use std::os::fd::{AsFd as _, AsRawFd as _};
+    let crate::ipc::LocalStream::UdSocket(stream) = stream;
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut len = std::mem::size_of_val(&cred) as libc::socklen_t;
+    // SAFETY: cred and len are valid output buffers of the size SO_PEERCRED expects.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_fd().as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast(),
+            &mut len,
+        )
+    };
+    (result == 0)
+        .then(|| u32::try_from(cred.pid).ok())
+        .flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
