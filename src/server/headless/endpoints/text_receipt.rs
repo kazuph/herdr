@@ -98,6 +98,14 @@ fn compatible(previous: &wire::PaneSurfaceFrame, next: &wire::PaneSurfaceFrame) 
             .all(|(a, b)| same_placement_geometry(a, b))
 }
 
+fn popup_position(facts: &PopupReadFacts) -> (&str, u64, u64) {
+    (
+        &facts.terminal_id,
+        facts.scroll.offset_from_bottom,
+        facts.scroll.viewport_rows,
+    )
+}
+
 impl HeadlessServer {
     pub(super) fn stream_endpoint_text_during_receipt(
         &mut self,
@@ -150,6 +158,12 @@ impl HeadlessServer {
         jobs.revision = projection_revision;
         let target = self.endpoint_target(client_id);
         let popup_before = self.popup_read_facts(client_id);
+        if (previous.popup.is_some() && client.popup_read_facts.is_none())
+            || client.popup_read_facts.as_ref().map(popup_position)
+                != popup_before.as_ref().map(popup_position)
+        {
+            return;
+        }
         // Do not resize shared PTYs while the previous scene is still in flight.
         let Ok(rendered) = crate::server::endpoint_surface::render_text_surface(
             &self.app,

@@ -255,12 +255,27 @@ mod patch_rebuild {
                 &ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 80, 24)),
                 None,
             );
-            first.graphics.retained_assets = vec![key(1)];
+            let mut retained_key = key(11);
+            if let SurfaceGraphicsSource::Terminal { image_id, .. } = &mut retained_key.source {
+                *image_id = 8;
+            }
+            first.graphics.retained_assets = vec![retained_key.clone()];
+            assert!(first
+                .graphics
+                .placements
+                .iter()
+                .all(|p| p.asset != retained_key));
+            let retained_data = vec![61; (W * H * 4) as usize];
             let mut decoder = crate::protocol::surface_reuse::Decoder::new(true, false);
             let mut rebuild = PatchRebuild::default();
             let data = vec![200; (W * H * 4) as usize];
             assert!(rebuild
                 .receive(message(&GraphicsPatch::whole(&key(1), &data).unwrap()))
+                .is_empty());
+            assert!(rebuild
+                .receive(message(
+                    &GraphicsPatch::whole(&retained_key, &retained_data).unwrap()
+                ))
                 .is_empty());
             let decoded = decoder
                 .decode(ServerMessage::PaneSurface(first.clone()))
@@ -349,7 +364,31 @@ mod patch_rebuild {
                     .unwrap();
                 assert_eq!(held.frame.cells[0].symbol, "T");
                 assert_eq!(held.surface_revision, text.surface_revision + step as u64);
-                assert_eq!(held.graphics.assets[0].data, data);
+                assert_eq!(
+                    held.graphics
+                        .assets
+                        .iter()
+                        .find(|a| a.key == key(1))
+                        .unwrap()
+                        .data,
+                    data
+                );
+                assert_eq!(
+                    held.graphics
+                        .assets
+                        .iter()
+                        .find(|a| a.key == retained_key)
+                        .unwrap()
+                        .data,
+                    retained_data
+                );
+                assert_eq!(rebuild.images.get(&retained_key), Some(&retained_data));
+                assert_eq!(held.graphics.retained_assets, vec![retained_key.clone()]);
+                assert!(held
+                    .graphics
+                    .placements
+                    .iter()
+                    .all(|p| p.asset != retained_key));
                 assert!(runtime
                     .shell
                     .endpoint_mut(&local)
@@ -398,6 +437,63 @@ mod patch_rebuild {
                         .unwrap();
                 assert_eq!(outgoing, marker);
             }
+            let mut changed_key = retained_key.clone();
+            changed_key.data_fingerprint += 1;
+            let mut changed_data = retained_data.clone();
+            changed_data[..4 * 64].fill(7);
+            let patch =
+                patch::diff(&retained_key, &retained_data, &changed_key, &changed_data).unwrap();
+            assert!(!patch.is_whole());
+            assert!(rebuild.receive(message(&patch)).is_empty());
+            let mut next = text.clone();
+            next.surface_revision += 2;
+            next.graphics.retained_assets = vec![changed_key.clone()];
+            let decoded = decoder
+                .decode(ServerMessage::PaneSurface(next.clone()))
+                .unwrap();
+            let rebuilt = rebuild.receive(decoded);
+            assert_eq!(rebuilt.len(), 1, "no orphan patch or MISS");
+            assert_eq!(image_of(&rebuilt, &changed_key), Some(changed_data.clone()));
+            assert_eq!(rebuild.images.get(&changed_key), Some(&changed_data));
+            for message in rebuilt {
+                feed(&mut runtime, message);
+            }
+            let held = runtime
+                .shell
+                .endpoint(&local)
+                .unwrap()
+                .cache
+                .received_surface(1)
+                .unwrap();
+            assert_eq!(
+                held.graphics
+                    .assets
+                    .iter()
+                    .find(|a| a.key == changed_key)
+                    .unwrap()
+                    .data,
+                changed_data
+            );
+            assert_eq!(held.graphics.retained_assets, vec![changed_key]);
+            assert_eq!(held.graphics.placements, first.graphics.placements);
+            let ack: crate::protocol::endpoint_wire::ClientMessage =
+                crate::protocol::read_message(&mut peer, crate::protocol::MAX_FRAME_SIZE).unwrap();
+            assert!(
+                matches!(ack,crate::protocol::endpoint_wire::ClientMessage::EndpointControl {kind,data} if kind==crate::protocol::endpoint::GRAPHICS_PATCH_ACK_KIND && data==next.surface_revision.to_string())
+            );
+            host.set_scene(held.graphics.clone());
+            let graphics = host.encode(Visibility::Main, (0, 0), None, cell, &Occlusion::default());
+            let ansi = String::from_utf8_lossy(&graphics);
+            assert!(!ansi.contains("a=t,") && !ansi.contains("a=T,") && !ansi.contains("a=d,"));
+            let marker =
+                crate::protocol::endpoint_wire::ClientMessage::ClientShellFocus { focused: false };
+            assert_eq!(
+                runtime.endpoints.send_to(&local, &marker),
+                crate::client::endpoint::EndpointSendOutcome::Sent
+            );
+            let outgoing: crate::protocol::endpoint_wire::ClientMessage =
+                crate::protocol::read_message(&mut peer, crate::protocol::MAX_FRAME_SIZE).unwrap();
+            assert_eq!(outgoing, marker);
         }
     }
 

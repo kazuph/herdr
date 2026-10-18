@@ -453,3 +453,148 @@ async fn receipt_placement_comparison_ignores_only_pixel_generation() {
     }
     shutdown_test_runtimes(&mut server);
 }
+
+#[tokio::test]
+async fn receipt_popup_text_at_same_position_is_sent_but_scrolling_waits() {
+    let mut server = test_headless_server();
+    owned_activation_pty(&mut server, "POPUP-RECEIPT").await;
+    server.app.state.kitty_graphics_enabled = true;
+    set_image(&mut server, 1);
+    server.app.spawn_popup_argv_command(&["/usr/bin/python3".into(), "-u".into(), "-c".into(),
+        "import sys\nfor i in range(150): print('history',i)\nprint('POPUP-READY',flush=True)\nfor line in sys.stdin: print('ACK:'+line.strip(),flush=True)".into()],
+        Some(std::env::current_dir().unwrap()), Vec::new(), Default::default()).unwrap();
+    let popup = server
+        .app
+        .state
+        .active_popup_pane()
+        .unwrap()
+        .terminal_id
+        .clone();
+    wait_output(&server, &popup, "POPUP-READY").await;
+    let (id, mut stream, _) = connect_with_graphics_receipt(&mut server, true, false, true).await;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let notify = server.app.render_notify.clone();
+            let notified = notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            server.stream_endpoint_views();
+            if server.endpoint_clients[&id].surface.is_some() {
+                break;
+            }
+            notified.await;
+        }
+    })
+    .await
+    .unwrap();
+    let first = surface(&drain(&server, id, &mut stream));
+    assert!(first.popup.is_some());
+    let previous = server.endpoint_clients[&id]
+        .popup_read_facts
+        .clone()
+        .unwrap();
+    type_text(&mut server, &popup, "same-position-text").await;
+    server.endpoint_clients.get_mut(&id).unwrap().patch_ack_wait =
+        Some((first.surface_revision, Instant::now()));
+    let current = server.popup_read_facts(id).unwrap();
+    assert_ne!(previous.content_revision, current.content_revision);
+    assert_eq!(
+        previous.scroll.offset_from_bottom,
+        current.scroll.offset_from_bottom
+    );
+    assert_eq!(previous.scroll.viewport_rows, current.scroll.viewport_rows);
+    server.stream_endpoint_views();
+    let messages = drain(&server, id, &mut stream);
+    let text = surface(&messages);
+    assert!(text.graphics.assets.is_empty());
+    assert_eq!(patch_count(&messages), 0);
+    assert_ne!(
+        text.popup.as_ref().unwrap().frame,
+        first.popup.as_ref().unwrap().frame
+    );
+    let waiting = server.endpoint_clients[&id].patch_ack_wait;
+    server
+        .app
+        .terminal_runtimes
+        .get(&popup)
+        .unwrap()
+        .scroll_up(1);
+    assert!(
+        server
+            .popup_read_facts(id)
+            .unwrap()
+            .scroll
+            .offset_from_bottom
+            > current.scroll.offset_from_bottom
+    );
+    server.stream_endpoint_views();
+    assert!(!drain(&server, id, &mut stream)
+        .iter()
+        .any(|m| matches!(m, ServerMessage::PaneSurface(_))));
+    assert_eq!(server.endpoint_clients[&id].surface, Some(text));
+    assert_eq!(server.endpoint_clients[&id].patch_ack_wait, waiting);
+    shutdown_test_runtimes(&mut server);
+}
+
+#[tokio::test]
+async fn receipt_server_preserves_retained_only_image_and_delivery_record() {
+    let mut server = test_headless_server();
+    let terminal = owned_activation_pty(&mut server, "RETAINED-RECEIPT").await;
+    server.app.state.kitty_graphics_enabled = true;
+    server
+        .app
+        .terminal_runtimes
+        .get(&terminal)
+        .unwrap()
+        .send_paste("\x1b_Ga=T,f=32,s=1,v=1,i=41,c=1,r=1,q=2;AQIDBA==\x1b\\\n".into())
+        .await
+        .unwrap();
+    type_text(&mut server, &terminal, "image-uploaded").await;
+    let (id, mut stream, _) = connect_with_graphics_receipt(&mut server, true, false, true).await;
+    server.stream_endpoint_views();
+    let visible = surface(&drain(&server, id, &mut stream));
+    assert_eq!(visible.graphics.placements.len(), 1);
+    let retained_key = visible.graphics.placements[0].asset.clone();
+    server
+        .app
+        .terminal_runtimes
+        .get(&terminal)
+        .unwrap()
+        .send_paste("\x1b_Ga=d,d=i,i=41,q=2;\x1b\\\n".into())
+        .await
+        .unwrap();
+    type_text(&mut server, &terminal, "image-hidden").await;
+    set_image(&mut server, 1);
+    server.stream_endpoint_views();
+    let messages = drain(&server, id, &mut stream);
+    assert_eq!(patch_count(&messages), 1);
+    let first = surface(&messages);
+    assert_eq!(first.graphics.retained_assets, vec![retained_key.clone()]);
+    assert!(first
+        .graphics
+        .placements
+        .iter()
+        .all(|p| p.asset != retained_key));
+    assert!(server.endpoint_clients[&id]
+        .graphics_delivery
+        .contains(&retained_key));
+    type_text(&mut server, &terminal, "retained-text").await;
+    set_image(&mut server, 2);
+    server.endpoint_clients.get_mut(&id).unwrap().patch_ack_wait =
+        Some((first.surface_revision, Instant::now()));
+    let delivery = server.endpoint_clients[&id].graphics_delivery.clone();
+    let bases = server.endpoint_clients[&id].patch_bases.clone();
+    let waiting = server.endpoint_clients[&id].patch_ack_wait;
+    server.stream_endpoint_views();
+    let messages = drain(&server, id, &mut stream);
+    let text = surface(&messages);
+    assert_eq!(patch_count(&messages), 0);
+    assert!(text.graphics.assets.is_empty());
+    assert_ne!(text.frame, first.frame);
+    assert_eq!(text.graphics.retained_assets, vec![retained_key]);
+    assert_eq!(text.graphics.placements, first.graphics.placements);
+    assert_eq!(server.endpoint_clients[&id].graphics_delivery, delivery);
+    assert_eq!(server.endpoint_clients[&id].patch_bases, bases);
+    assert_eq!(server.endpoint_clients[&id].patch_ack_wait, waiting);
+    shutdown_test_runtimes(&mut server);
+}
