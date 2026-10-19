@@ -4353,6 +4353,36 @@ with open(sys.argv[1],'wb',buffering=0) as output:
 
 #[tokio::test]
 async fn endpoint_real_pty_incremental_and_inactive_surface_bytes() {
+    async fn wait_complete_line(
+        server: &HeadlessServer,
+        terminal: &crate::terminal::TerminalId,
+        marker: &str,
+    ) {
+        tokio::time::timeout(PTY_OUTPUT_TIMEOUT, async {
+            loop {
+                let notified = server.app.render_notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                let runtime = server.app.terminal_runtimes.get(terminal).unwrap();
+                let text = runtime.visible_text();
+                let (cols, rows) = runtime.terminal_dimensions().unwrap();
+                let cursor =
+                    runtime.cursor_state(ratatui::layout::Rect::new(0, 0, cols, rows), true);
+                // The fixture prints CR/LF after the marker. Its text can be
+                // visible before that final cursor move reaches the parser.
+                let marker_row = text.lines().position(|line| line == marker);
+                if marker_row.is_some_and(|row| {
+                    cursor.is_some_and(|cursor| cursor.x == 0 && usize::from(cursor.y) == row + 1)
+                }) {
+                    break;
+                }
+                let _ = tokio::time::timeout(Duration::from_millis(10), notified).await;
+            }
+        })
+        .await
+        .expect("PTY marker and following line-start cursor did not complete");
+    }
+
     let mut server = test_headless_server();
     let terminal = owned_activation_pty(&mut server, "INCREMENTAL-READY").await;
     let child = server
@@ -4432,6 +4462,12 @@ async fn endpoint_real_pty_incremental_and_inactive_surface_bytes() {
                 .unwrap();
             wait_output(&server, &terminal, &format!("ACK:{phase}")).await;
         }
+        let marker = match phase {
+            "initial" => "INCREMENTAL-READY".to_owned(),
+            "unchanged" => "ACK:pty-output".to_owned(),
+            _ => format!("ACK:{phase}"),
+        };
+        wait_complete_line(&server, &terminal, &marker).await;
         let started = Instant::now();
         server.stream_endpoint_views();
         let render_elapsed_ns = started.elapsed().as_nanos();
