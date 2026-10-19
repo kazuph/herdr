@@ -1,0 +1,13 @@
+id = "zenbu-labs.terminal-browser"
+name = "Terminal Browser"
+version = "0.7.1"
+min_herdr_version = "0.2.0"
+description = "Open the Herdr bundled terminal browser"
+platforms = ["macos"]
+
+[[actions]]
+id = "open-split"
+title = "Open terminal-browser (right split)"
+description = "Split the focused pane and open this installed terminal-browser version"
+contexts = ["global"]
+command = ["bash", "open-split.sh"]
