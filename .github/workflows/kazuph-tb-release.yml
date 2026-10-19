@@ -20,10 +20,10 @@ jobs:
         run: |
           [[ "$GITHUB_REF_NAME" =~ ^kazuph-tb-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$(uname -sm)" = 'Darwin arm64'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '22'
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
         with:
           package_json_file: apps/terminal-browser/package.json
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
@@ -38,7 +38,7 @@ jobs:
           MACOS_DEVELOPER_ID_P12: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
           MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
         run: bash apps/terminal-browser/scripts/herdr-sign-release.sh "${GITHUB_REF_NAME#kazuph-tb-v}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: signed-tb
           if-no-files-found: error
@@ -51,7 +51,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: signed-tb
           path: artifacts
