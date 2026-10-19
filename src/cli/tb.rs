@@ -322,6 +322,7 @@ where
         "#!/bin/sh\nexec {} \"$@\"\n",
         shell_quote(&destination.join("bin/terminal-browser"))?
     );
+    let _interrupts = crate::platform::defer_tb_activation_interrupts()?;
     let mut current_replaced = false;
     let mut launcher_replaced = false;
     let result = (|| {

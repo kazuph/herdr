@@ -86,6 +86,31 @@ pub fn update<T>(
     })
 }
 
+/// Compare and replace one entry under the same lock as every plugin writer.
+/// An already-restored value is a no-op, never a rewrite of someone else's data.
+pub(crate) fn compare_and_replace(
+    plugin_id: &str,
+    expected: Option<&InstalledPluginInfo>,
+    replacement: Option<&InstalledPluginInfo>,
+) -> std::io::Result<()> {
+    with_registry_lock(|| {
+        let mut entries = load_from_path_strict(&registry_path())?;
+        let current = entries.iter().find(|p| p.plugin_id == plugin_id);
+        if current == replacement {
+            return Ok(());
+        }
+        if current != expected {
+            return Err(std::io::Error::other("tb plugin registration conflict: another plugin operation changed the registration; its value was preserved"));
+        }
+        entries.retain(|p| p.plugin_id != plugin_id);
+        if let Some(replacement) = replacement {
+            entries.push(replacement.clone());
+        }
+        entries.sort_by(|a, b| a.plugin_id.cmp(&b.plugin_id));
+        save_to_path(&registry_path(), &entries)
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn take_update_path_used_for_test() -> bool {
     UPDATE_PATH_USED.with(|flag| flag.replace(false))

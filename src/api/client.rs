@@ -54,9 +54,17 @@ impl ApiClient {
     }
 
     pub fn request_value(&self, request: &Request) -> Result<serde_json::Value, ApiClientError> {
+        self.request_value_after_send(request, || {})
+    }
+
+    pub(crate) fn request_value_after_send(
+        &self,
+        request: &Request,
+        sent: impl FnOnce(),
+    ) -> Result<serde_json::Value, ApiClientError> {
         let mut stream = self.connect()?;
         write_request(&mut stream, request)?;
-
+        sent();
         let mut reader = BufReader::new(stream);
         read_json_line(&mut reader)
     }

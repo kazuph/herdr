@@ -413,3 +413,12 @@ pub(crate) fn tb_file_symlink(
         Err(std::io::Error::other("tb requires macOS Apple silicon"))
     }
 }
+
+#[cfg(unix)]
+mod tb_activation;
+#[cfg(unix)]
+pub(crate) use tb_activation::defer_tb_activation_interrupts;
+#[cfg(not(unix))]
+pub(crate) fn defer_tb_activation_interrupts() -> std::io::Result<()> {
+    Err(std::io::Error::other("tb requires macOS Apple silicon"))
+}

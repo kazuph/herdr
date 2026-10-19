@@ -642,7 +642,12 @@ fn tb_registration_restore_preserves_exact_entry_and_other_plugins() {
     let second = s.0.join("two.tgz");
     fixture(&second, "0.7.2");
     local_install(&s, &second, "0.7.2", register_offline).unwrap();
-    super::super::plugin::restore_tb_registration(previous.clone()).unwrap();
+    let written = crate::persist::plugin_registry::try_load()
+        .unwrap()
+        .into_iter()
+        .find(|p| p.plugin_id == PLUGIN)
+        .unwrap();
+    super::super::plugin::restore_tb_registration(previous.as_ref(), &written).unwrap();
     let entries = crate::persist::plugin_registry::try_load().unwrap();
     assert_eq!(
         entries.iter().find(|p| p.plugin_id == PLUGIN),
@@ -652,7 +657,7 @@ fn tb_registration_restore_preserves_exact_entry_and_other_plugins() {
         entries.iter().find(|p| p.plugin_id == "test.unrelated"),
         Some(&unrelated)
     );
-    super::super::plugin::restore_tb_registration(None).unwrap();
+    super::super::plugin::restore_tb_registration(None, previous.as_ref().unwrap()).unwrap();
     assert_eq!(
         crate::persist::plugin_registry::try_load().unwrap(),
         vec![unrelated]
@@ -835,3 +840,6 @@ fn tb_running_old_version_survives_upgrade() {
     assert_eq!(launch(&s), "0.7.2\n--version\n");
     assert!(s.root().join("0.7.1/bin/terminal-browser").exists());
 }
+
+#[cfg(unix)]
+mod recovery;
