@@ -944,6 +944,7 @@ pub struct WorktreesConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
+    pub window_title: WindowTitleMode,
     pub sidebar_width: u16,
     /// Minimum sidebar width (columns) when expanded. Default: 18.
     pub sidebar_min_width: u16,
@@ -1167,9 +1168,19 @@ impl Default for WorktreesConfig {
     }
 }
 
+/// Automatic host terminal title presentation (client-local only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowTitleMode {
+    #[default]
+    Summary,
+    Plain,
+}
+
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
+            window_title: WindowTitleMode::default(),
             sidebar_width: 26,
             sidebar_min_width: 18,
             sidebar_max_width: 72,

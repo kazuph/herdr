@@ -198,6 +198,7 @@ pub(crate) fn run() -> io::Result<()> {
         frontend.event_loop(rx, quit.clone()).await
     });
     quit.store(true, Ordering::Release);
+    client::write_window_title(None);
     drop(terminal_guard);
     rt.shutdown_timeout(Duration::from_millis(100));
     crate::logging::shutdown("client");

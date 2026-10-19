@@ -132,6 +132,7 @@ pub struct App {
     pub(crate) event_hub: crate::api::EventHub,
     pub(crate) last_focus: Option<(usize, crate::layout::PaneId)>,
     pub(crate) no_session: bool,
+    window_title: crate::window_title::WindowTitle,
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
     pub(crate) last_terminal_size: Option<(u16, u16)>,
     pub(crate) config_diagnostic_deadline: Option<Instant>,
@@ -922,6 +923,7 @@ impl App {
             event_hub,
             last_focus,
             no_session,
+            window_title: crate::window_title::WindowTitle::new(config.ui.window_title),
             input_rx: None,
             last_terminal_size: terminal::size().ok(),
             render_notify,
@@ -1072,11 +1074,24 @@ impl App {
         self.prefix_input_source = source;
     }
 
+    fn window_title_statuses(&self) -> impl Iterator<Item = crate::api::schema::AgentStatus> + '_ {
+        self.state.workspaces.iter().map(|workspace| {
+            let (state, seen) = workspace.aggregate_state(&self.state.terminals);
+            api_helpers::pane_agent_status(state, seen)
+        })
+    }
+
+    fn sync_window_title(&mut self) -> io::Result<()> {
+        let title = self.window_title.format(self.window_title_statuses());
+        self.window_title.write(&mut io::stdout(), &title)
+    }
+
     pub async fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         if self.input_rx.is_none() {
             self.input_rx = Some(crate::raw_input::spawn_input_reader());
         }
         self.query_host_terminal_theme();
+        self.sync_window_title()?;
 
         let mut needs_render = true;
         let mut host_mouse_capture_active = self.state.mouse_capture;
@@ -1231,6 +1246,7 @@ impl App {
                 needs_render = true;
             }
 
+            self.sync_window_title()?;
             let now = Instant::now();
             self.sync_animation_timer(now);
             self.sync_host_mouse_capture(&mut host_mouse_capture_active)?;
@@ -1560,6 +1576,7 @@ impl App {
             } else {
                 diagnostics.extend(config.ui.sound.diagnostics());
 
+                self.window_title.mode = config.ui.window_title;
                 self.state.default_sidebar_width = config.ui.sidebar_width;
                 if self.state.sidebar_width_source == state::SidebarWidthSource::ConfigDefault {
                     self.state.sidebar_width = config.ui.sidebar_width;
@@ -3283,6 +3300,100 @@ mod tests {
             at: at + Duration::from_millis(100),
             ..first
         }));
+    }
+
+    fn window_title_app_with_mixed_space() -> App {
+        let mut app = test_app();
+        let mut workspace = crate::workspace::Workspace::test_new("space");
+        let working_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        let working_terminal = workspace.terminal_id(working_pane).unwrap().clone();
+        app.state.terminals.clear();
+        for pane in workspace.tabs[0].panes.values() {
+            let mut terminal = crate::terminal::TerminalState::new(
+                pane.attached_terminal_id.clone(),
+                "/tmp".into(),
+            );
+            let state = if terminal.id == working_terminal {
+                crate::detect::AgentState::Working
+            } else {
+                crate::detect::AgentState::Blocked
+            };
+            terminal.set_detected_state(Some(crate::detect::Agent::Codex), state);
+            app.state.terminals.insert(terminal.id.clone(), terminal);
+        }
+        app.state.workspaces = vec![workspace];
+        app
+    }
+
+    #[test]
+    fn window_title_same_space_uses_representative_not_pane_set() {
+        let app = window_title_app_with_mixed_space();
+        assert_eq!(
+            app.window_title_statuses().collect::<Vec<_>>(),
+            vec![crate::api::schema::AgentStatus::Blocked],
+        );
+        assert_eq!(
+            crate::window_title::summary_title(app.window_title_statuses(), "herdr"),
+            "🔴 herdr",
+        );
+    }
+
+    #[test]
+    fn window_title_endpoint_uses_snapshot_workspace_representative() {
+        use crate::api::schema::AgentStatus;
+        use crate::client::endpoint::{shell::ClientShellState, ClientEndpointId};
+        let app = window_title_app_with_mixed_space();
+        let snapshot = crate::server::endpoint_snapshot::snapshot(
+            &app,
+            "title-test",
+            1,
+            None,
+            &crate::server::client_view::ClientShellLocation::default(),
+            Vec::new(),
+            app.session_snapshot(),
+        );
+        assert_eq!(snapshot.workspaces.len(), 1);
+        assert_eq!(snapshot.workspaces[0].agent_status, AgentStatus::Blocked);
+        assert_eq!(snapshot.agents.len(), 2);
+        assert!(snapshot
+            .agents
+            .iter()
+            .any(|agent| agent.agent_status == AgentStatus::Blocked));
+        assert!(snapshot
+            .agents
+            .iter()
+            .any(|agent| agent.agent_status == AgentStatus::Working));
+        let mut shell = ClientShellState::new();
+        assert!(shell.begin_connection(&ClientEndpointId::Local, 1));
+        assert!(shell.receive_snapshot(&ClientEndpointId::Local, 1, snapshot));
+        assert_eq!(
+            crate::window_title::summary_title(shell.window_title_statuses(), "herdr"),
+            "🔴 herdr",
+        );
+    }
+
+    #[test]
+    fn window_title_app_reload_applies_plain_and_summary() {
+        let _guard = crate::config::lock_test_config_env();
+        let path = temp_config_path("window-title-reload");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+        let mut app = test_app();
+        for mode in ["plain", "summary"] {
+            std::fs::write(&path, format!("[ui]\nwindow_title = '{mode}'\n")).unwrap();
+            assert_eq!(
+                app.reload_config().status,
+                crate::config::ConfigReloadStatus::Applied
+            );
+            let expected = if mode == "plain" {
+                crate::config::WindowTitleMode::Plain
+            } else {
+                crate::config::WindowTitleMode::Summary
+            };
+            assert_eq!(app.window_title.mode, expected);
+        }
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

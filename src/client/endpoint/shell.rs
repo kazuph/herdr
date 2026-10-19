@@ -44,6 +44,21 @@ pub(crate) struct ClientShellState {
 }
 
 impl ClientShellState {
+    pub(crate) fn window_title_statuses(
+        &self,
+    ) -> impl Iterator<Item = crate::api::schema::AgentStatus> + '_ {
+        self.endpoints
+            .iter()
+            .filter(|endpoint| endpoint.status != ClientEndpointStatus::Disabled)
+            .filter_map(|endpoint| endpoint.cache.live_snapshot(endpoint.generation?))
+            .flat_map(|snapshot| {
+                snapshot
+                    .workspaces
+                    .iter()
+                    .map(|workspace| workspace.agent_status)
+            })
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             endpoints: vec![ClientShellEndpoint::new(
@@ -350,6 +365,42 @@ mod tests {
             session: "original-session".into(),
             enabled,
         }
+    }
+
+    #[test]
+    fn window_title_excludes_disconnected_stale_and_disabled_endpoints() {
+        use crate::api::schema::AgentStatus;
+        let mut shell = ClientShellState::new();
+        let remote = ClientEndpointId::Ssh("remote".into());
+        shell.set_endpoint_catalog(&[profile("remote", true)]);
+        let mut local_snapshot = snapshot();
+        for workspace in &mut local_snapshot.workspaces {
+            workspace.agent_status = AgentStatus::Working;
+        }
+        let mut remote_snapshot = snapshot();
+        for workspace in &mut remote_snapshot.workspaces {
+            workspace.agent_status = AgentStatus::Blocked;
+        }
+        shell.begin_connection(&ClientEndpointId::Local, 1);
+        shell.receive_snapshot(&ClientEndpointId::Local, 1, local_snapshot);
+        shell.begin_connection(&remote, 1);
+        shell.receive_snapshot(&remote, 1, remote_snapshot.clone());
+        let title = |shell: &ClientShellState| {
+            crate::window_title::summary_title(shell.window_title_statuses(), "herdr")
+        };
+        assert_eq!(title(&shell), "🔴🟡 herdr");
+        shell.active_endpoint_id = remote.clone();
+        assert_eq!(title(&shell), "🔴🟡 herdr");
+        shell.disconnect(&remote, 1);
+        assert_eq!(title(&shell), "🟡 herdr");
+        shell.begin_connection(&remote, 2);
+        assert_eq!(title(&shell), "🟡 herdr");
+        assert!(!shell.receive_snapshot(&remote, 1, remote_snapshot.clone()));
+        assert_eq!(title(&shell), "🟡 herdr");
+        shell.receive_snapshot(&remote, 2, remote_snapshot);
+        assert_eq!(title(&shell), "🔴🟡 herdr");
+        shell.set_endpoint_catalog(&[profile("remote", false)]);
+        assert_eq!(title(&shell), "🟡 herdr");
     }
 
     #[test]

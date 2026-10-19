@@ -482,3 +482,13 @@ Common log files:
 ```
 
 Logs rotate automatically. Include the current log and rotated siblings when reporting issues.
+
+### Terminal tab title
+
+`[ui] window_title = "summary"` (default) prefixes the local session name with
+`🔴` for ASK, `🟡` for working, and `🔵` for finished but unseen spaces, in that
+order. Each space contributes its sidebar representative state. All live machines
+are included, even when collapsed; disconnected or disabled machines are excluded.
+The name is `herdr` for the default session or `herdr:<session>` for a named session.
+Set `window_title = "plain"` to show only that name. Reload configuration to apply
+changes. Detaching or exiting resets the title to `herdr`.
