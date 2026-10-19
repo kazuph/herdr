@@ -71,6 +71,7 @@ pub(crate) struct ClientFrontend {
     navigator: Option<navigator::Navigator>,
     options: EndpointConnectOptions,
     host: host::HostPresentation,
+    window_title: crate::window_title::WindowTitle,
     pub(crate) notice: Option<String>,
     notice_clock: notice::NoticeClock,
     blit: crate::protocol::render_ansi::BlitEncoder,
@@ -197,6 +198,7 @@ impl ClientFrontend {
             navigator: None,
             options,
             host: host::HostPresentation::new(config.ui.mouse_capture),
+            window_title: crate::window_title::WindowTitle::new(config.ui.window_title),
             notice: None,
             notice_clock: notice::NoticeClock::default(),
             blit: crate::protocol::render_ansi::BlitEncoder::new(),
@@ -263,6 +265,13 @@ impl ClientFrontend {
             chrome_preferences: preferences::ClientChromePreferences::default(),
             chrome_preferences_path: None,
         }
+    }
+
+    fn sync_window_title(&mut self) -> io::Result<()> {
+        let title = self
+            .window_title
+            .format(self.runtime.shell.window_title_statuses());
+        self.window_title.write(&mut io::stdout(), &title)
     }
 
     fn persist_chrome_preferences(&mut self) {
@@ -358,6 +367,13 @@ impl ClientFrontend {
             }
             #[cfg(unix)]
             if direct::effect(self, &effect)? {
+                continue;
+            }
+            // Presentation resets must restore the client-owned summary, not a fixed title.
+            if matches!(
+                effect.message,
+                wire::ServerMessage::WindowTitle { title: None }
+            ) {
                 continue;
             }
             self.host.apply(&self.runtime, effect)?;
@@ -606,6 +622,7 @@ impl ClientFrontend {
         maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut animation = tokio::time::interval(crate::app::HEADLESS_ANIMATION_INTERVAL);
         animation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        self.sync_window_title()?;
         self.draw()?;
         // Probe replies wake the loop through this shared handle, which does not
         // borrow the frontend while the select arms use it.
@@ -697,6 +714,7 @@ impl ClientFrontend {
                     repaint || jobs_due || indicator_just_expired
                 }
             };
+            self.sync_window_title()?;
             input::flush_held(self, Instant::now())?;
             if repaint {
                 self.draw_deferred = true;

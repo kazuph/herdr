@@ -132,6 +132,7 @@ pub struct App {
     pub(crate) event_hub: crate::api::EventHub,
     pub(crate) last_focus: Option<(usize, crate::layout::PaneId)>,
     pub(crate) no_session: bool,
+    window_title: crate::window_title::WindowTitle,
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
     pub(crate) last_terminal_size: Option<(u16, u16)>,
     pub(crate) config_diagnostic_deadline: Option<Instant>,
@@ -922,6 +923,7 @@ impl App {
             event_hub,
             last_focus,
             no_session,
+            window_title: crate::window_title::WindowTitle::new(config.ui.window_title),
             input_rx: None,
             last_terminal_size: terminal::size().ok(),
             render_notify,
@@ -1072,11 +1074,22 @@ impl App {
         self.prefix_input_source = source;
     }
 
+    fn sync_window_title(&mut self) -> io::Result<()> {
+        let title = self
+            .window_title
+            .format(self.state.workspaces.iter().map(|workspace| {
+                let (state, seen) = workspace.aggregate_state(&self.state.terminals);
+                api_helpers::pane_agent_status(state, seen)
+            }));
+        self.window_title.write(&mut io::stdout(), &title)
+    }
+
     pub async fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         if self.input_rx.is_none() {
             self.input_rx = Some(crate::raw_input::spawn_input_reader());
         }
         self.query_host_terminal_theme();
+        self.sync_window_title()?;
 
         let mut needs_render = true;
         let mut host_mouse_capture_active = self.state.mouse_capture;
@@ -1231,6 +1244,7 @@ impl App {
                 needs_render = true;
             }
 
+            self.sync_window_title()?;
             let now = Instant::now();
             self.sync_animation_timer(now);
             self.sync_host_mouse_capture(&mut host_mouse_capture_active)?;
@@ -1560,6 +1574,7 @@ impl App {
             } else {
                 diagnostics.extend(config.ui.sound.diagnostics());
 
+                self.window_title.mode = config.ui.window_title;
                 self.state.default_sidebar_width = config.ui.sidebar_width;
                 if self.state.sidebar_width_source == state::SidebarWidthSource::ConfigDefault {
                     self.state.sidebar_width = config.ui.sidebar_width;
@@ -3283,6 +3298,30 @@ mod tests {
             at: at + Duration::from_millis(100),
             ..first
         }));
+    }
+
+    #[test]
+    fn window_title_app_reload_applies_plain_and_summary() {
+        let _guard = crate::config::lock_test_config_env();
+        let path = temp_config_path("window-title-reload");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+        let mut app = test_app();
+        for mode in ["plain", "summary"] {
+            std::fs::write(&path, format!("[ui]\nwindow_title = '{mode}'\n")).unwrap();
+            assert_eq!(
+                app.reload_config().status,
+                crate::config::ConfigReloadStatus::Applied
+            );
+            let expected = if mode == "plain" {
+                crate::config::WindowTitleMode::Plain
+            } else {
+                crate::config::WindowTitleMode::Summary
+            };
+            assert_eq!(app.window_title.mode, expected);
+        }
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

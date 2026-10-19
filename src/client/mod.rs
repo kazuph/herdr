@@ -2210,7 +2210,7 @@ fn forward_clipboard(data: &str) {
     crate::selection::write_osc52_bytes(&bytes);
 }
 
-fn window_title_osc(title: Option<&str>) -> Vec<u8> {
+pub(crate) fn window_title_osc(title: Option<&str>) -> Vec<u8> {
     let title = title.unwrap_or("herdr");
     let safe_title = title
         .chars()
@@ -2219,7 +2219,7 @@ fn window_title_osc(title: Option<&str>) -> Vec<u8> {
     format!("\x1b]0;{safe_title}\x07").into_bytes()
 }
 
-fn write_window_title(title: Option<&str>) {
+pub(crate) fn write_window_title(title: Option<&str>) {
     let _ = io::stdout().write_all(&window_title_osc(title));
 }
 

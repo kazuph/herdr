@@ -110,6 +110,7 @@ mod terminal_notify;
 mod terminal_theme;
 mod ui;
 mod update;
+mod window_title;
 mod workspace;
 mod worktree;
 
@@ -900,6 +901,7 @@ fn main() -> io::Result<()> {
             event_hub,
         );
         let result = app.run(&mut terminal).await;
+        client::write_window_title(None);
 
         // Reset modifyOtherKeys if we enabled it.
         if modify_other_keys_mode.is_some() {

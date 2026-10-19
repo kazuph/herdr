@@ -560,6 +560,16 @@
       "title": "UI and sidebar",
       "keys": [
         {
+          "key": "ui.window_title",
+          "type": "string",
+          "default": "\"summary\"",
+          "values": [
+            "summary",
+            "plain"
+          ],
+          "description": "Terminal title: summary prefixes the local session name with ASK, working and unseen-done space marks across all live machines; plain shows only the session name. Reloadable."
+        },
+        {
           "key": "ui.sidebar_width",
           "type": "integer",
           "default": "26",

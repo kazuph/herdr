@@ -271,6 +271,7 @@ fn reload_host(frontend: &mut ClientFrontend) -> crate::config::ConfigReloadRepo
             }
             if valid_ui {
                 let config = &loaded.config;
+                frontend.window_title.mode = config.ui.window_title;
                 let settings = &mut frontend.chrome.settings;
                 if settings.sidebar_width_source
                     == crate::app::state::SidebarWidthSource::ConfigDefault

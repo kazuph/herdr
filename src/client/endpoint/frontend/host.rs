@@ -23,7 +23,6 @@ impl HostPresentation {
         self.endpoint_mouse_capture = false;
         self.mouse(self.preference, false)?;
         self.keyboard(false)?;
-        super::super::super::write_window_title(None);
         Ok(())
     }
 

@@ -23,7 +23,7 @@ pub use self::{
         ClipboardToastConfig, Config, ConfigReloadReport, ConfigReloadStatus, GuardConfig,
         GuardModeConfig, HostCursorModeConfig, NewTerminalCwdConfig, ShellModeConfig,
         SidebarCollapsedModeConfig, ToastClipboardPosition, ToastConfig, ToastDelivery,
-        ToastHerdrPosition, UpdateChannelConfig, WorkspacePanelDensityConfig,
+        ToastHerdrPosition, UpdateChannelConfig, WindowTitleMode, WorkspacePanelDensityConfig,
         MAX_TOAST_DELAY_SECONDS,
     },
     sidebar::{

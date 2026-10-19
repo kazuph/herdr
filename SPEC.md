@@ -2440,6 +2440,14 @@
 - ID名前空間（複合ID vs machine修飾子）は未決定。P1/P2はlabel-or-id完全一致＋曖昧拒否で進め、pane解決・mailbox・`herdr run`への波及はP3着手時に親が決定する。
 - 単発`--remote`と保存machineの責務分界は現状維持（畳み込みなし）。machine側からのattach再利用は将来packetで検討する。
 
+### 端末タイトルに全接続spaceの代表状態を集約する
+- **目的**: Ghosttyなどの端末タブから、ASK・実行中・未確認完了が存在するherdrを区別できるようにする。
+- **受け入れ条件**:
+  - 通常のendpoint frontendと`--no-session`は共通の純粋関数で各spaceの代表状態を集約し、Blocked・Working・Doneの存在を数なしの`🔴🟡🔵`の順で基底名の前に表示する。同じspace内のASKと実行中はBlockedだけとし、Idle（確認済み）とUnknownは表示せず、印がなければ基底名だけを表示する。
+  - 通常画面は現在の接続世代で有効なsnapshotを持つ全endpointの全spaceを含み、折りたたみ・非表示・選択マシンに依存せず、切断済み・古いsnapshot・無効なendpointを除く。`--no-session`はAppStateの各workspaceの既存代表状態を使う。
+  - 基底名は起動したローカルセッションが既定なら`herdr`、名前付きなら`herdr:<名前>`とし、リモートへの切替で変えない。`[ui] window_title = "summary"`を既定とし、`"plain"`では基底名のみ表示し、設定再読込で反映する。
+  - 起動時にタイトルを1回書き、その後は既存OSC終端文字除去を適用した最終文字列が変わる時だけOSC 0を書き、同じ状態の描画・スピナー・presentation resetで再送しない。detach・終了では`herdr`へ戻す。既存のAPIタイトル指定の配送・旧サーバー描画client・`--no-session`のNoForegroundClient契約を変えず、新しいサーバー通信を追加しない。
+
 ## G12. 危険コマンドの見張り（command guard、既定 enforce）
 
 ### 判定部品（src/guard）
