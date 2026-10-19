@@ -1578,6 +1578,19 @@
   - `docs`・`test`・`release`・`fix(nix)`のcommitと、runtime codeを変えない`feat`/`fix`は検査対象にならない。
 - **デグレ判定**: SPEC未記載のまま機能や修正がmainへ入る、またはCIからこの検査が外れる。
 
+### 同梱 terminal-browser の独立配布と安全な導入
+- **分類**: CORE-CLI
+- **status: fork独自・保持 (C)** — tb の明示導入だけを許可し、Herdr 本体の self-update 禁止を維持する。
+- **目的**: 保存マシンでビルドせず、Herdr 連携済み tb を安全に入れて更新する。
+- **受け入れ条件**:
+  - `herdr tb install [--version MAJOR.MINOR.PATCH]` と `herdr tb status` は macOS Apple silicon のみを対象とし、Linux・Intel Mac を明示拒否する。kazuph/herdr の kazuph-tb-v タグだけをページ送りして選び、下書き・プレリリース・配布物欠けを除外する。status は通信失敗でも導入済み状態を表示する。
+  - curl は HTTPS の取得先とリダイレクトだけを許可し、HTTP エラー・途中切断を失敗とし、大きな圧縮ファイルをファイルへ直接保存する。SHA256SUMS の欠け・重複・不正を拒否し、src/checksum.rs の SHA-256 照合を必須とする。
+  - 全 archive 項目を展開前に検査し、絶対パス・親参照・外向きリンク・デバイスを拒否し、Electron の内部リンクを保持する。同一 filesystem の staging から版別フォルダを確定し、同版の異なる内容の上書き・同時導入を拒否する。旧版と動作中 tb は消去・停止しない。
+  - wrapper は導入版の本体を呼び、ビルド不要 plugin の右分割操作も同じ版を使う。切替後に plugin link と同じ経路で再登録し、展開・切替・登録の失敗で旧 wrapper・導入版・登録を保持する。開発用 just terminal-browser-install を保持し、tb upgrade は本家ではなく herdr tb install のみを呼び、エディタ・AI 設定を変更しない。
+  - root の tb 専用 workflow は kazuph-tb-v タグだけを GitHub-hosted Apple silicon Mac でビルドし、67M8FDFZ28 の Developer ID Application 署名を必須とする。2つの証明書 secrets は必要 step だけへ渡し、ランダムパスワードの一時 keychain と p12 を成否にかかわらず削除して検索リストを復元する。公証・Linux・Intel ビルドは行わず、圧縮ファイルと SHA256SUMS が揃ってから latest を奪わず公開し、既存タグを差し替えない。
+  - 切替後の登録待ちに SIGINT/SIGTERM を受けても、切替または巻き戻しが完了した安全な境界まで中断を遅らせ、wrapper・current-version・plugin 登録を同じ版にそろえる。送信前の登録失敗は復元を書き込まず、送信後の復元はレジストリ更新ロック内でこの導入の値と一致する時だけ行う。別操作の link/disable/unlink の値は保持して競合をエラーにし、保存後の応答喪失を実サーバーで再現したテストと復元呼出し削除の変異検査で保護する。SIGKILL・電源断はこの保証の対象外。
+- **検証**: Rust の release 選択・checksum・archive 検査・導入トランザクションの実ファイルテスト、Mac mini の隔離導入、workflow lint と秘密なしの fail-closed、upgrade の実 subprocess 経路。署名済み実配布の公開・仕事 Mac の受入れは親の後工程とする。
+
 ## G9. Agent間通信・長時間job・runtime信頼性
 
 ### herdr msg durable mailbox

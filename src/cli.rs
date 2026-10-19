@@ -28,6 +28,7 @@ mod server_not_running;
 mod spec;
 mod status;
 mod tab;
+mod tb;
 mod workspace;
 mod worktree;
 
@@ -89,6 +90,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "terminal" => run_terminal_command(&args[2..])?,
         "pane" => pane::run_pane_command(&args[2..])?,
         "plugin" => plugin::run_plugin_command(&args[2..])?,
+        "tb" => tb::run_tb_command(&args[2..])?,
         "guard" => guard::run_guard_command(&args[2..])?,
         "send" => comms::msg_send(&args[2..])?,
         "run" => comms::herdr_run(&args[2..])?,

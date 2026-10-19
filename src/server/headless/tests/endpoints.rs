@@ -2402,10 +2402,6 @@ async fn endpoint_split_actual_socket_creates_owned_pty_without_stealing_other_v
         .find(|runtime| runtime.child_pid().is_some())
         .unwrap();
     assert_ne!(runtime.child_pid().unwrap(), std::process::id());
-    runtime
-        .send_paste("printf 'SPLIT-OWNED-PTY\\n'\n".into())
-        .await
-        .unwrap();
     let terminal = server
         .app
         .terminal_runtimes
@@ -2414,6 +2410,17 @@ async fn endpoint_split_actual_socket_creates_owned_pty_without_stealing_other_v
         .unwrap()
         .0
         .clone();
+    // /bin/sh must finish printing its initial prompt before accepting input;
+    // visible_text trims the prompt's trailing space.
+    wait_output(&server, &terminal, "$").await;
+    server
+        .app
+        .terminal_runtimes
+        .get(&terminal)
+        .unwrap()
+        .send_paste("printf 'SPLIT-OWNED-PTY\\n'\n".into())
+        .await
+        .unwrap();
     wait_output(&server, &terminal, "\nSPLIT-OWNED-PTY\n").await;
     server.stream_endpoint_views();
     let (snapshot, before_swap_surface) = receive_view(&mut first);
@@ -3879,6 +3886,24 @@ async fn endpoint_worktree_actual_git_deferred_create_open_dirty_remove_keep_vie
 
 #[tokio::test]
 async fn endpoint_popup_actual_socket_owns_input_focus_and_releases_original_terminal() {
+    async fn receive_popup_view(
+        stream: &crate::ipc::LocalStream,
+    ) -> (wire::ClientShellSnapshot, wire::PaneSurfaceFrame) {
+        use interprocess::TryClone as _;
+        let mut reader = stream.try_clone().unwrap();
+        reader.set_recv_timeout(Some(TIMEOUT)).unwrap();
+        // Keep the current-thread runtime free to flush the queued surface.
+        // Read each frame once, retaining partial bytes rather than restarting
+        // framing after WouldBlock; a real deadline still fails this test.
+        tokio::time::timeout(
+            TIMEOUT,
+            tokio::task::spawn_blocking(move || receive_view(&mut reader)),
+        )
+        .await
+        .expect("popup view was not received before the deadline")
+        .expect("popup view reader failed")
+    }
+
     let mut server = test_headless_server();
     let background = owned_activation_pty(&mut server, "POPUP-BACKGROUND").await;
     let public_focus = server.app.state.workspaces[0].focused_pane_id();
@@ -3970,7 +3995,7 @@ while True:
     })
     .await
     .unwrap();
-    let (snapshot, surface) = receive_view(&mut stream);
+    let (snapshot, surface) = receive_popup_view(&stream).await;
     assert_eq!(
         surface.popup.as_ref().unwrap().terminal_id,
         popup.terminal_id.to_string()
@@ -4084,7 +4109,7 @@ while True:
     );
     set_surface(&mut server, &mut stream, true).await;
     server.stream_endpoint_views();
-    receive_view(&mut stream);
+    receive_popup_view(&stream).await;
     let closed = endpoint_crud_request(
         &mut server,
         &mut stream,
@@ -4328,6 +4353,36 @@ with open(sys.argv[1],'wb',buffering=0) as output:
 
 #[tokio::test]
 async fn endpoint_real_pty_incremental_and_inactive_surface_bytes() {
+    async fn wait_complete_line(
+        server: &HeadlessServer,
+        terminal: &crate::terminal::TerminalId,
+        marker: &str,
+    ) {
+        tokio::time::timeout(PTY_OUTPUT_TIMEOUT, async {
+            loop {
+                let notified = server.app.render_notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                let runtime = server.app.terminal_runtimes.get(terminal).unwrap();
+                let text = runtime.visible_text();
+                let (cols, rows) = runtime.terminal_dimensions().unwrap();
+                let cursor =
+                    runtime.cursor_state(ratatui::layout::Rect::new(0, 0, cols, rows), true);
+                // The fixture prints CR/LF after the marker. Its text can be
+                // visible before that final cursor move reaches the parser.
+                let marker_row = text.lines().position(|line| line == marker);
+                if marker_row.is_some_and(|row| {
+                    cursor.is_some_and(|cursor| cursor.x == 0 && usize::from(cursor.y) == row + 1)
+                }) {
+                    break;
+                }
+                let _ = tokio::time::timeout(Duration::from_millis(10), notified).await;
+            }
+        })
+        .await
+        .expect("PTY marker and following line-start cursor did not complete");
+    }
+
     let mut server = test_headless_server();
     let terminal = owned_activation_pty(&mut server, "INCREMENTAL-READY").await;
     let child = server
@@ -4407,6 +4462,12 @@ async fn endpoint_real_pty_incremental_and_inactive_surface_bytes() {
                 .unwrap();
             wait_output(&server, &terminal, &format!("ACK:{phase}")).await;
         }
+        let marker = match phase {
+            "initial" => "INCREMENTAL-READY".to_owned(),
+            "unchanged" => "ACK:pty-output".to_owned(),
+            _ => format!("ACK:{phase}"),
+        };
+        wait_complete_line(&server, &terminal, &marker).await;
         let started = Instant::now();
         server.stream_endpoint_views();
         let render_elapsed_ns = started.elapsed().as_nanos();

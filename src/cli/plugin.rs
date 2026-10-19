@@ -85,6 +85,93 @@ fn plugin_link(args: &[String]) -> std::io::Result<i32> {
     super::print_response(&response)
 }
 
+// Use the same live/offline plugin-link operation without printing after the
+// registry commit: a broken stdout must not turn a committed link into failure.
+pub(super) fn link_for_tb(path: &Path) -> io::Result<()> {
+    const ID: &str = "zenbu-labs.terminal-browser";
+    let previous = crate::persist::plugin_registry::try_load()?
+        .into_iter()
+        .find(|p| p.plugin_id == ID);
+    let mut written = load_cli_plugin_manifest(path, true)?;
+    // Local plugin.link clears source metadata; disable/unlink retain or remove
+    // this entry. The existing installation timestamp distinguishes this write
+    // even from another link of the very same manifest, without a wire change.
+    let after_previous = previous
+        .as_ref()
+        .and_then(|p| p.source.installed_unix_ms)
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| io::Error::other("tb installation timestamp overflow"))?;
+    written.source.installed_unix_ms = Some(current_unix_ms().max(after_previous));
+    let client = crate::api::client::ApiClient::local();
+    if let Err(error) = super::ensure_server_protocol_compatible(&client, "cli:tb:link") {
+        if is_connection_error(&error) {
+            crate::plugin_paths::ensure_plugin_user_dirs(ID)?;
+            return crate::persist::plugin_registry::compare_and_replace(
+                ID,
+                previous.as_ref(),
+                Some(&written),
+            );
+        }
+        // No plugin.link request was sent. A concurrent writer must be left
+        // untouched, including when preflight itself failed.
+        let current = crate::persist::plugin_registry::try_load()?
+            .into_iter()
+            .find(|p| p.plugin_id == ID);
+        if current != previous {
+            return Err(io::Error::other(format!(
+                "{error}; tb plugin registration conflict before send; concurrent value preserved"
+            )));
+        }
+        return Err(error);
+    }
+    let request = Request {
+        id: "cli:tb:link".into(),
+        method: Method::PluginLink(PluginLinkParams {
+            path: path.to_string_lossy().into_owned(),
+            enabled: true,
+            source: Some(written.source.clone()),
+        }),
+    };
+    let mut sent = false;
+    let result = (|| {
+        let response = client
+            .request_value_after_send(&request, || sent = true)
+            .map_err(io::Error::other)?;
+        let parsed: SuccessResponse = serde_json::from_value(response).map_err(io::Error::other)?;
+        if !matches!(parsed.result, ResponseResult::PluginLinked { .. }) {
+            return Err(io::Error::other("expected plugin_linked response"));
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        if sent {
+            restore_tb_registration(previous.as_ref(), &written)
+                .map_err(|rollback| io::Error::other(format!("{error}; {rollback}")))?;
+        } else {
+            let current = crate::persist::plugin_registry::try_load()?
+                .into_iter()
+                .find(|p| p.plugin_id == ID);
+            if current != previous {
+                return Err(io::Error::other(format!("{error}; tb plugin registration conflict before send; concurrent value preserved")));
+            }
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+pub(super) fn restore_tb_registration(
+    previous: Option<&InstalledPluginInfo>,
+    written: &InstalledPluginInfo,
+) -> io::Result<()> {
+    crate::persist::plugin_registry::compare_and_replace(
+        "zenbu-labs.terminal-browser",
+        Some(written),
+        previous,
+    )
+}
+
 fn plugin_config_dir_command(args: &[String]) -> std::io::Result<i32> {
     let Some(plugin_id) = args.first() else {
         eprintln!("usage: herdr plugin config-dir <plugin_id>");
@@ -1100,7 +1187,9 @@ fn persist_plugin_offline(plugin: &InstalledPluginInfo) -> std::io::Result<()> {
     .map(|_| ())
 }
 
-fn offline_plugin_link_response(params: &PluginLinkParams) -> std::io::Result<serde_json::Value> {
+pub(super) fn offline_plugin_link_response(
+    params: &PluginLinkParams,
+) -> std::io::Result<serde_json::Value> {
     let plugin = load_cli_plugin_manifest(Path::new(&params.path), params.enabled)?;
     persist_plugin_offline(&plugin)?;
     serde_json::to_value(SuccessResponse {

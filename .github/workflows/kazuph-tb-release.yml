@@ -1,0 +1,79 @@
+name: kazuph terminal-browser release
+on:
+  push:
+    tags: ['kazuph-tb-v*']
+permissions:
+  contents: read
+concurrency:
+  group: kazuph-tb-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'kazuph/herdr'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Validate trusted tag and architecture
+        shell: bash
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^kazuph-tb-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$(uname -sm)" = 'Darwin arm64'
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@9fd676a19091d4595eefd76e4bd31c97133911f1 # v4.2.0
+        with:
+          package_json_file: apps/terminal-browser/package.json
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: '1.96.1'
+      - name: Install pinned dependencies
+        working-directory: apps/terminal-browser
+        run: pnpm install --frozen-lockfile
+      - name: Build and verify Developer ID signatures
+        shell: bash
+        env:
+          MACOS_DEVELOPER_ID_P12: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+        run: bash apps/terminal-browser/scripts/herdr-sign-release.sh "${GITHUB_REF_NAME#kazuph-tb-v}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signed-tb
+          if-no-files-found: error
+          path: |
+            apps/terminal-browser/dist-release/terminal-browser-darwin-arm64.tar.gz
+            apps/terminal-browser/dist-release/SHA256SUMS
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: signed-tb
+          path: artifacts
+      - name: Publish complete release without replacing an existing tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: kazuph/herdr
+        run: |
+          set -euo pipefail
+          cd artifacts
+          test -s terminal-browser-darwin-arm64.tar.gz
+          test -s SHA256SUMS
+          sha256sum -c SHA256SUMS
+          # Any API failure other than a confirmed 404 is fatal. Never update
+          # assets of an existing draft or published release on a rerun.
+          response="$(mktemp)"
+          status="$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME")"
+          test "$status" = 404 || { echo 'release already exists or cannot be checked; refusing replacement' >&2; exit 1; }
+          gh release create "$GITHUB_REF_NAME" --repo "$GH_REPO" --verify-tag --draft \
+            --title "$GITHUB_REF_NAME" --notes 'Herdr bundled terminal-browser for macOS Apple silicon. Developer ID signed; not notarized.' --latest=false \
+            terminal-browser-darwin-arm64.tar.gz SHA256SUMS
+          gh release edit "$GITHUB_REF_NAME" --repo "$GH_REPO" --draft=false --latest=false

@@ -407,3 +407,25 @@ herdr plugin pane close <pane_id>
 | `HERDR_WORKSPACE_ID` | 运行中窗格进程的公开工作区 id。 |
 | `HERDR_LOG` | 设置日志过滤,例如 `HERDR_LOG=herdr=debug`。 |
 | `HERDR_DISABLE_SOUND` | 即使启用了声音通知也禁用声音播放。 |
+
+## 内置 terminal-browser（fork）
+
+在 macOS Apple silicon 上，使用 `herdr tb install [--version MAJOR.MINOR.PATCH]`
+安装或更新 Herdr 内置的 tb。只选择 `kazuph/herdr` 中完整的稳定版
+`kazuph-tb-v*`，排除草稿、预发布版和缺少文件的版本。`herdr tb status` 显示
+已安装版本、路径和最新的适用版本。网络失败时仍显示本地状态，并以错误退出码
+报告最新版本查询失败。
+
+将 `~/.local/bin` 加入 PATH。版本保存在
+`~/.local/share/herdr/terminal-browser/<版本>`。安装会校验 SHA256SUMS、检查所有
+归档路径及链接、保留旧版本和正在运行的浏览器，并重新注册无需构建的右侧分屏
+插件。不会修改编辑器或 AI 配置。SHA-256 只能检测损坏，不能独立证明发布者身份。
+
+`tb upgrade` 调用 `herdr tb install`。不支持 Linux 或 Intel Mac。发布包使用
+KAZUHIRO HOMMA (67M8FDFZ28) 的 Developer ID 签名，不进行 Apple 公证。
+开发时继续使用 `just terminal-browser-install`。标签和两个签名 secrets 的发布
+说明见仓库 README 的 optional terminal browser 部分。
+
+切换期间的 SIGINT/SIGTERM 会延迟到注册或回滚完成后再生效。注册失败并回滚时，
+期间手动执行的 plugin link/disable/unlink 更改会保留，并报告冲突错误。此保证不包含 SIGKILL
+或断电后的恢复。
