@@ -135,6 +135,8 @@ exec "\$ROOT/$ELECTRON_EXE" "\$ROOT/cli/dist/main.js" "\$@"
 EOF
 chmod +x "$STAGE/bin/terminal-browser"
 cp -R "$ROOT/herdr-plugin-release" "$STAGE/herdr-plugin"
+sed "s/^version = .*/version = \"$VERSION\"/" \
+  "$ROOT/herdr-plugin-release/herdr-plugin.toml" > "$STAGE/herdr-plugin/herdr-plugin.toml"
 echo "$TARGET" > "$STAGE/PLATFORM"
 echo "$VERSION" > "$STAGE/VERSION"
 echo "$CHANNEL" > "$STAGE/CHANNEL"

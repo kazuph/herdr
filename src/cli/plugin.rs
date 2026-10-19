@@ -85,6 +85,56 @@ fn plugin_link(args: &[String]) -> std::io::Result<i32> {
     super::print_response(&response)
 }
 
+// Use the same live/offline plugin-link operation without printing after the
+// registry commit: a broken stdout must not turn a committed link into failure.
+pub(super) fn link_for_tb(path: &Path) -> io::Result<()> {
+    let previous = crate::persist::plugin_registry::try_load()?
+        .into_iter()
+        .find(|p| p.plugin_id == "zenbu-labs.terminal-browser");
+    let result = (|| {
+        let params = PluginLinkParams {
+            path: path.to_string_lossy().into_owned(),
+            enabled: true,
+            source: None,
+        };
+        let response = match super::send_request(&Request {
+            id: "cli:tb:link".into(),
+            method: Method::PluginLink(params.clone()),
+        }) {
+            Ok(response) => response,
+            Err(err) if is_connection_error(&err) => offline_plugin_link_response(&params)?,
+            Err(err) => return Err(err),
+        };
+        let parsed: SuccessResponse = serde_json::from_value(response).map_err(io::Error::other)?;
+        if !matches!(parsed.result, ResponseResult::PluginLinked { .. }) {
+            return Err(io::Error::other("expected plugin_linked response"));
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        // A server can persist the link and disconnect before delivering its
+        // response. Restore the exact old entry, including disabled/source
+        // metadata. Live list/action handlers reload this persisted registry.
+        restore_tb_registration(previous)?;
+    }
+    result
+}
+
+pub(super) fn restore_tb_registration(previous: Option<InstalledPluginInfo>) -> io::Result<()> {
+    let current = crate::persist::plugin_registry::try_load()?
+        .into_iter()
+        .find(|p| p.plugin_id == "zenbu-labs.terminal-browser");
+    if current != previous {
+        crate::persist::plugin_registry::update(|entries| {
+            entries.retain(|p| p.plugin_id != "zenbu-labs.terminal-browser");
+            if let Some(previous) = previous {
+                entries.push(previous);
+            }
+        })?;
+    }
+    Ok(())
+}
+
 fn plugin_config_dir_command(args: &[String]) -> std::io::Result<i32> {
     let Some(plugin_id) = args.first() else {
         eprintln!("usage: herdr plugin config-dir <plugin_id>");
@@ -1100,7 +1150,9 @@ fn persist_plugin_offline(plugin: &InstalledPluginInfo) -> std::io::Result<()> {
     .map(|_| ())
 }
 
-fn offline_plugin_link_response(params: &PluginLinkParams) -> std::io::Result<serde_json::Value> {
+pub(super) fn offline_plugin_link_response(
+    params: &PluginLinkParams,
+) -> std::io::Result<serde_json::Value> {
     let plugin = load_cli_plugin_manifest(Path::new(&params.path), params.enabled)?;
     persist_plugin_offline(&plugin)?;
     serde_json::to_value(SuccessResponse {

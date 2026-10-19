@@ -42,7 +42,17 @@ pub(super) fn command() -> Command {
         .subcommand(terminal_command())
         .subcommand(session_command())
         .subcommand(machine_command())
-        .subcommand(plugin_command());
+        .subcommand(plugin_command())
+        .subcommand(
+            Command::new("tb")
+                .about("Install the bundled terminal browser (macOS Apple silicon)")
+                .subcommand(
+                    Command::new("install")
+                        .about("Install or update bundled tb")
+                        .arg(option("version", "MAJOR.MINOR.PATCH")),
+                )
+                .subcommand(Command::new("status").about("Show installed and latest tb versions")),
+        );
     disable_auto_help(command)
 }
 

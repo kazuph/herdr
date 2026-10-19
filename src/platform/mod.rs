@@ -370,3 +370,46 @@ mod tests {
         );
     }
 }
+
+/// File permissions used by validated tb archives; unsupported targets fail
+/// explicitly rather than silently installing a non-executable payload.
+pub(crate) fn tb_archive_permissions(mode: u32) -> std::io::Result<std::fs::Permissions> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        Ok(std::fs::Permissions::from_mode(mode))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = mode;
+        Err(std::io::Error::other("tb requires macOS Apple silicon"))
+    }
+}
+
+pub(crate) fn tb_file_executable(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        false
+    }
+}
+
+pub(crate) fn tb_file_symlink(
+    target: &std::path::Path,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, path)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (target, path);
+        Err(std::io::Error::other("tb requires macOS Apple silicon"))
+    }
+}
