@@ -489,3 +489,8 @@ The macOS release is Developer ID signed by KAZUHIRO HOMMA (67M8FDFZ28) and is
 not notarized. Source development continues to use `just terminal-browser-install`.
 See the repository README's optional terminal browser section for tag-based
 publication and the two signing secrets.
+
+During activation, SIGINT/SIGTERM are deferred until registration or rollback
+finishes, then replayed. Concurrent manual plugin link/disable/unlink changes
+are preserved and reported as conflicts. This does not guarantee recovery
+from SIGKILL or power loss.

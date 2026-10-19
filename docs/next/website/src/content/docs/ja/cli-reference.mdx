@@ -427,3 +427,7 @@ Herdr 同梱版 tb を導入・更新する。`kazuph/herdr` の安定版 `kazup
 Developer ID は KAZUHIRO HOMMA (67M8FDFZ28)、Apple の公証は行わない。
 開発用のビルドは `just terminal-browser-install` を使う。タグと署名 secrets
 による配布手順はリポジトリ README の optional terminal browser 節を参照。
+
+切替中の SIGINT/SIGTERM は登録または巻き戻しが完了するまで遅延し、その後で
+反映する。並行した手動の plugin link/disable/unlink の値は上書きせず、競合を
+エラーで知らせる。SIGKILL・電源断からの回復はこの保証に含まない。

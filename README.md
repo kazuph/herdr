@@ -118,6 +118,9 @@ on PATH. No Rust, Node, or local tb build is needed. Installs live in
 for that version. The bundled plugin provides “Open terminal-browser (right
 split)”. Updating re-registers that plugin, preserves old versions and running
 browsers, and leaves the previous launcher/registration in place on failure.
+During activation, SIGINT/SIGTERM take effect after registration or rollback
+finishes. A concurrent manual plugin link/disable/unlink is preserved and
+reported as a conflict; rollback never overwrites its value.
 `tb upgrade` runs `herdr tb install`; it never invokes the upstream installer
 or changes editor/AI agent configuration. `status` prints the installed version
 and location even when its latest-release lookup fails (exit status 1).

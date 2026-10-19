@@ -425,3 +425,7 @@ herdr plugin pane close <pane_id>
 KAZUHIRO HOMMA (67M8FDFZ28) 的 Developer ID 签名，不进行 Apple 公证。
 开发时继续使用 `just terminal-browser-install`。标签和两个签名 secrets 的发布
 说明见仓库 README 的 optional terminal browser 部分。
+
+切换期间的 SIGINT/SIGTERM 会延迟到注册或回滚完成后再生效。并发执行的手动
+plugin link/disable/unlink 更改会保留，并报告冲突错误。此保证不包含 SIGKILL
+或断电后的恢复。
