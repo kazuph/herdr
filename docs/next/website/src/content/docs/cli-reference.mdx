@@ -491,6 +491,7 @@ See the repository README's optional terminal browser section for tag-based
 publication and the two signing secrets.
 
 During activation, SIGINT/SIGTERM are deferred until registration or rollback
-finishes, then replayed. Concurrent manual plugin link/disable/unlink changes
-are preserved and reported as conflicts. This does not guarantee recovery
+finishes, then replayed. When registration fails and the install rolls back, a
+manual plugin link/disable/unlink made in the meantime is kept and reported as
+a conflict. This does not guarantee recovery
 from SIGKILL or power loss.

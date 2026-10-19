@@ -429,5 +429,5 @@ Developer ID は KAZUHIRO HOMMA (67M8FDFZ28)、Apple の公証は行わない。
 による配布手順はリポジトリ README の optional terminal browser 節を参照。
 
 切替中の SIGINT/SIGTERM は登録または巻き戻しが完了するまで遅延し、その後で
-反映する。並行した手動の plugin link/disable/unlink の値は上書きせず、競合を
-エラーで知らせる。SIGKILL・電源断からの回復はこの保証に含まない。
+反映する。登録に失敗して巻き戻す時は、その間に手動で行った plugin
+link/disable/unlink の値を上書きせず、競合をエラーで知らせる。SIGKILL・電源断からの回復はこの保証に含まない。
