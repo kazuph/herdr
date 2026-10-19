@@ -1074,13 +1074,15 @@ impl App {
         self.prefix_input_source = source;
     }
 
+    fn window_title_statuses(&self) -> impl Iterator<Item = crate::api::schema::AgentStatus> + '_ {
+        self.state.workspaces.iter().map(|workspace| {
+            let (state, seen) = workspace.aggregate_state(&self.state.terminals);
+            api_helpers::pane_agent_status(state, seen)
+        })
+    }
+
     fn sync_window_title(&mut self) -> io::Result<()> {
-        let title = self
-            .window_title
-            .format(self.state.workspaces.iter().map(|workspace| {
-                let (state, seen) = workspace.aggregate_state(&self.state.terminals);
-                api_helpers::pane_agent_status(state, seen)
-            }));
+        let title = self.window_title.format(self.window_title_statuses());
         self.window_title.write(&mut io::stdout(), &title)
     }
 
@@ -3298,6 +3300,76 @@ mod tests {
             at: at + Duration::from_millis(100),
             ..first
         }));
+    }
+
+    fn window_title_app_with_mixed_space() -> App {
+        let mut app = test_app();
+        let mut workspace = crate::workspace::Workspace::test_new("space");
+        let working_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        let working_terminal = workspace.terminal_id(working_pane).unwrap().clone();
+        app.state.terminals.clear();
+        for pane in workspace.tabs[0].panes.values() {
+            let mut terminal = crate::terminal::TerminalState::new(
+                pane.attached_terminal_id.clone(),
+                "/tmp".into(),
+            );
+            let state = if terminal.id == working_terminal {
+                crate::detect::AgentState::Working
+            } else {
+                crate::detect::AgentState::Blocked
+            };
+            terminal.set_detected_state(Some(crate::detect::Agent::Codex), state);
+            app.state.terminals.insert(terminal.id.clone(), terminal);
+        }
+        app.state.workspaces = vec![workspace];
+        app
+    }
+
+    #[test]
+    fn window_title_same_space_uses_representative_not_pane_set() {
+        let app = window_title_app_with_mixed_space();
+        assert_eq!(
+            app.window_title_statuses().collect::<Vec<_>>(),
+            vec![crate::api::schema::AgentStatus::Blocked],
+        );
+        assert_eq!(
+            crate::window_title::summary_title(app.window_title_statuses(), "herdr"),
+            "🔴 herdr",
+        );
+    }
+
+    #[test]
+    fn window_title_endpoint_uses_snapshot_workspace_representative() {
+        use crate::api::schema::AgentStatus;
+        use crate::client::endpoint::{shell::ClientShellState, ClientEndpointId};
+        let app = window_title_app_with_mixed_space();
+        let snapshot = crate::server::endpoint_snapshot::snapshot(
+            &app,
+            "title-test",
+            1,
+            None,
+            &crate::server::client_view::ClientShellLocation::default(),
+            Vec::new(),
+            app.session_snapshot(),
+        );
+        assert_eq!(snapshot.workspaces.len(), 1);
+        assert_eq!(snapshot.workspaces[0].agent_status, AgentStatus::Blocked);
+        assert_eq!(snapshot.agents.len(), 2);
+        assert!(snapshot
+            .agents
+            .iter()
+            .any(|agent| agent.agent_status == AgentStatus::Blocked));
+        assert!(snapshot
+            .agents
+            .iter()
+            .any(|agent| agent.agent_status == AgentStatus::Working));
+        let mut shell = ClientShellState::new();
+        assert!(shell.begin_connection(&ClientEndpointId::Local, 1));
+        assert!(shell.receive_snapshot(&ClientEndpointId::Local, 1, snapshot));
+        assert_eq!(
+            crate::window_title::summary_title(shell.window_title_statuses(), "herdr"),
+            "🔴 herdr",
+        );
     }
 
     #[test]

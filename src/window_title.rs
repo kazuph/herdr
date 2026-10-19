@@ -113,28 +113,6 @@ mod tests {
     }
 
     #[test]
-    fn window_title_same_space_uses_representative_not_pane_set() {
-        use crate::{detect::AgentState, terminal::TerminalState, workspace::Workspace};
-        let mut workspace = Workspace::test_new("space");
-        let second = workspace.test_split(ratatui::layout::Direction::Horizontal);
-        let mut terminals = std::collections::HashMap::new();
-        for pane in workspace.tabs[0].panes.values() {
-            let mut terminal = TerminalState::new(pane.attached_terminal_id.clone(), "/tmp".into());
-            terminal.state = if pane.attached_terminal_id == *workspace.terminal_id(second).unwrap()
-            {
-                AgentState::Working
-            } else {
-                AgentState::Blocked
-            };
-            terminals.insert(terminal.id.clone(), terminal);
-        }
-        let (state, seen) = workspace.aggregate_state(&terminals);
-        assert_eq!(state, AgentState::Blocked);
-        assert!(seen);
-        assert_eq!(summary_title([AgentStatus::Blocked], "herdr"), "🔴 herdr");
-    }
-
-    #[test]
     fn window_title_config_defaults_and_rejects_unknown_modes() {
         let default: crate::config::Config = toml::from_str("").unwrap();
         assert_eq!(default.ui.window_title, WindowTitleMode::Summary);
