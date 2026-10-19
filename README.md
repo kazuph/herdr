@@ -99,16 +99,59 @@ just check       # formatting, tests, and maintenance checks
 
 ### optional terminal browser
 
-This fork vendors the audited `terminal-browser` source under
-`apps/terminal-browser`. Build, verify, and link its local Herdr plugin with:
+`tb` is a real browser displayed inside a Herdr terminal pane. The bundled
+`apps/terminal-browser` starts from zenbu-labs/terminal-browser 0.7.1 and adds
+Herdr mouse fixes, zoom controls, and gtx support. Use this bundled version;
+the upstream tb lacks these Herdr integration changes.
+
+On macOS Apple silicon, install or update a prebuilt, Developer ID signed copy:
+
+```bash
+herdr tb install
+herdr tb install --version 0.7.1 # select an exact published version
+herdr tb status
+```
+
+The corresponding Herdr version must already be installed, with `~/.local/bin`
+on PATH. No Rust, Node, or local tb build is needed. Installs live in
+`~/.local/share/herdr/terminal-browser/<version>`; `~/.local/bin/tb` is a wrapper
+for that version. The bundled plugin provides “Open terminal-browser (right
+split)”. Updating re-registers that plugin, preserves old versions and running
+browsers, and leaves the previous launcher/registration in place on failure.
+`tb upgrade` runs `herdr tb install`; it never invokes the upstream installer
+or changes editor/AI agent configuration. `status` prints the installed version
+and location even when its latest-release lookup fails (exit status 1).
+
+Only stable, complete `kazuph-tb-vMAJOR.MINOR.PATCH` releases in `kazuph/herdr`
+are selected. SHA256SUMS detects download corruption; it is not independent
+proof of the author, since the archive and sums come from the same release.
+The macOS app is signed by Developer ID Application: KAZUHIRO HOMMA
+(67M8FDFZ28), without Apple notarization. Managed Macs may require additional
+organizational approval. Linux and Intel Macs return an explicit unsupported
+error. On saved machines such as the Mac mini or work Mac, use
+`herdr tb install` rather than copying local build output.
+
+For source development, retain the build, checks and local plugin link:
 
 ```bash
 just terminal-browser-install
 ```
 
-The macOS build requires a Developer ID Application identity. The build pins
-downloaded source and binary checksums and does not download an executable when
-the plugin is linked or opened.
+That build requires a Developer ID Application identity and verifies pinned
+download checksums. The development plugin still uses the repository build.
+
+To publish a new bundled tb version, configure repository secrets
+`MACOS_DEVELOPER_ID_P12` (base64 of the Developer ID certificate **with its
+private key**) and `MACOS_DEVELOPER_ID_P12_PASSWORD`, then push a unique tag
+`kazuph-tb-vMAJOR.MINOR.PATCH` on the approved source commit. The root workflow
+`.github/workflows/kazuph-tb-release.yml` builds on a GitHub-hosted Apple silicon
+Mac, checks the certificate Team ID, signs through the existing release script,
+and removes its temporary keychain while restoring the previous search list.
+Missing signing credentials fail closed. It publishes only the archive and
+SHA256SUMS, as a complete release without taking Herdr's “latest” marker.
+Existing release tags (including drafts left by failed publication) are refused;
+review a failed draft explicitly rather than silently replacing its contents.
+The nested upstream R2/worker release workflow is not used.
 
 ## license
 

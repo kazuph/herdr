@@ -468,3 +468,24 @@ in pane or agent APIs. Native non-terminal plugin panes are a later surface.
 | `HERDR_WORKSPACE_ID` | Public workspace id for the running pane process. |
 | `HERDR_LOG` | Set log filter, for example `HERDR_LOG=herdr=debug`. |
 | `HERDR_DISABLE_SOUND` | Disable sound playback even when sound notifications are enabled. |
+
+## Bundled terminal browser (fork)
+
+On macOS Apple silicon, `herdr tb install [--version MAJOR.MINOR.PATCH]` downloads
+and installs the Herdr bundled tb from a complete stable `kazuph-tb-v*` release
+in `kazuph/herdr`. `herdr tb status` prints the installed version, installation
+root and latest eligible version. If the network is unavailable, local status
+is still printed and the command exits with an error for the latest lookup.
+
+Add `~/.local/bin` to PATH. Versions live in
+`~/.local/share/herdr/terminal-browser/<version>`. Installation verifies
+SHA256SUMS, validates every archive destination and link, preserves old versions
+and running browsers, and re-registers the bundled right-split plugin without
+building it. SHA-256 detects corruption and does not independently authenticate
+the publisher. No editor or AI agent configuration is modified.
+
+`tb upgrade` invokes `herdr tb install`. Linux and Intel Macs are unsupported.
+The macOS release is Developer ID signed by KAZUHIRO HOMMA (67M8FDFZ28) and is
+not notarized. Source development continues to use `just terminal-browser-install`.
+See the repository README's optional terminal browser section for tag-based
+publication and the two signing secrets.

@@ -408,3 +408,22 @@ herdr plugin pane close <pane_id>
 | `HERDR_WORKSPACE_ID` | 実行中ペインプロセスの公開ワークスペース id。 |
 | `HERDR_LOG` | ログフィルターを設定する。例: `HERDR_LOG=herdr=debug`。 |
 | `HERDR_DISABLE_SOUND` | サウンド通知が有効でも音の再生を無効にする。 |
+
+## 同梱 terminal-browser（fork）
+
+macOS Apple silicon では `herdr tb install [--version MAJOR.MINOR.PATCH]` で
+Herdr 同梱版 tb を導入・更新する。`kazuph/herdr` の安定版 `kazuph-tb-v*` から、
+下書き・プレリリース・配布物欠けを除いて選ぶ。`herdr tb status` は導入済み版・
+保存先・最新の対象版を表示する。通信失敗でも導入済み情報を表示し、最新確認は
+失敗として終了コードを返す。
+
+`~/.local/bin` を PATH に追加する。保存先は
+`~/.local/share/herdr/terminal-browser/<版>`。SHA256SUMS と全 archive 項目・
+リンクを検査し、旧版と動作中のブラウザを保持する。ビルド不要の右分割 plugin
+も再登録し、エディタ・AI 設定は書き換えない。SHA-256 は破損確認であり、
+作者を独立に証明するものではない。
+
+`tb upgrade` は `herdr tb install` を呼ぶ。Linux と Intel Mac は非対応。
+Developer ID は KAZUHIRO HOMMA (67M8FDFZ28)、Apple の公証は行わない。
+開発用のビルドは `just terminal-browser-install` を使う。タグと署名 secrets
+による配布手順はリポジトリ README の optional terminal browser 節を参照。
