@@ -6,6 +6,7 @@ Herdr の判断待ち（`herdr decision ask`、guard の `ask`、画面プロン
 
 - 常駐デーモンが `herdr decision watch --all-machines` を購読します。
 - `created` イベントで、ネイティブの AppKit パネル（`dialog.swift`）を今いるデスクトップの最前面に1回だけ出します。**作業中のアプリからキーボードを奪いません**（アクティブにしない・何度も前に出し直さない）。パネルを自分でクリックしたときだけ入力先になります（日本語入力もそこから使えます）。
+- すべての判断待ちを1アプリの複数窓として少しずつずらして開きます。通常の層なので他アプリの後ろへ下がり、全デスクトップには追従しません。Dock は1アイコンで、開いている窓の数だけをバッジに表示します（あとで中・回答再送中を除く）。0枚で Dock から消えます。⌘Tab・Dock クリックで戻せ、Dock 右クリックの出どころと質問の一覧から個別に選べます。別窓が開閉しても書きかけは保持します。
 - パネルの中身（上から）:
   - 出どころ: 🤖 エージェント（保存マシンならマシン名）、**プロジェクト（スペース） › タブ › ペイン**。ウィンドウのタイトルにもプロジェクト名が出ます。
   - 質問の見出し（「質問 1/3」など）と題名を大きく、本文（前提）を全文。
@@ -15,7 +16,7 @@ Herdr の判断待ち（`herdr decision ask`、guard の `ask`、画面プロン
   - 自由入力欄では ⌘V（貼り付け）・⌘C・⌘X・⌘A・⌘Z / ⇧⌘Z が使えます（パネルにメニューバーが無いので、キーを文字欄へ直接渡しています）。
 - 回答は `herdr decision answer <id> <option_id>... --machine <machine.id> --responder mac-dialog [--text ...]` を実行します。
 - 他所で回答・取消・期限切れになった判断待ち（`resolved`）や、マシン切断（`machine_down`）では、開いているパネルを即座に閉じます。デーモンが止まった・パネル用ファイルが消えたときもパネルは自分で閉じるので、答えた後に窓が残りません。
-- 判断待ちが複数あるときは1枚だけ出し、残りは順番に出します（「ほかに N 件待っています」）。
+- 回答・あとで・他所で解決・取り消しはその1枚だけ、マシン切断はそのマシンの窓だけを閉じます。常駐役が止まると全窓を閉じます。
 
 ## 答え方
 
@@ -44,9 +45,9 @@ herdr plugin link <repo>/apps/mac-dialog-decisions
 | --- | --- | --- |
 | `enabled` | `true` | `false` でプラグイン無効（デーモンを起動しません） |
 | `herdr_bin` | `herdr` / `HERDR_BIN_PATH` | herdr 実行ファイルのパス |
-| `helper_command` | なし | パネル表示プロセスの差し替え（テスト用。argv の配列。引数に spec JSON のパスが渡り、結果を stdout に JSON 行で返します） |
+| `helper_command` | なし | パネル表示プロセスの差し替え（テスト用。argv の配列。`--stream` で1プロセスを起動し、stdin の JSON 行 `{command:"open", key, spec_path}` / `{command:"close", key}` で窓を管理。stdout の結果にも同じ `key` を返します） |
 | `later_minutes` | `10` | 「あとで」で閉じた判断待ちをもう一度出すまでの分数 |
-| `present_delay_ms` | `250` | キューの先頭を画面に出すまでの待ち。同時に届いた複数の判断待ちを束ねて、最初のダイアログの「ほかN件」を正確にします |
+| `present_delay_ms` | `250` | 同時に届いた複数の判断待ちを束ねて全窓を出すまでの待ち |
 
 環境変数でも上書きできます: `MAC_DIALOG_ENABLED`（`0`/`false` で無効）、`MAC_DIALOG_PRESENT_DELAY_MS`、`MAC_DIALOG_LATER_MS`、`MAC_DIALOG_HELPER_CMD`（JSON の argv）、`MAC_DIALOG_STATE_DIR`、`MAC_DIALOG_CONFIG`（設定ファイルのパス）。
 

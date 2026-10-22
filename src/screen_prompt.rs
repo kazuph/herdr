@@ -967,6 +967,22 @@ fn parse_prompt_lines(raw_lines: &[&str], preview: Option<PreviewBox>) -> Option
                 .unwrap_or(0)
         })
     });
+    let preview_none = preview
+        .as_ref()
+        .filter(|(_, _, _, inner)| {
+            inner
+                .iter()
+                .map(|line| line.trim())
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>()
+                == ["No preview available"]
+        })
+        .and_then(|_| match extras.focused {
+            Some(Focused::Option(number)) if choices.contains_key(&number) => Some(number),
+            _ => None,
+        })
+        .into_iter()
+        .collect();
     let mut prompt = ScreenPrompt {
         header,
         question,
@@ -980,7 +996,7 @@ fn parse_prompt_lines(raw_lines: &[&str], preview: Option<PreviewBox>) -> Option
         checked: extras.checked,
         previews,
         preview_box: preview.is_some(),
-        preview_none: Default::default(),
+        preview_none,
         advance: extras.advance,
         advance_after,
         focused: extras.focused,
@@ -1403,6 +1419,39 @@ with untrusted content.
 ";
 
     #[test]
+    fn swift_preview_scalar_widths_match_reader_for_every_unicode_scalar() {
+        let source = include_str!("../apps/mac-dialog-decisions/dialog.swift");
+        let regex = regex::Regex::new(r"\(0x([0-9A-F]+), 0x([0-9A-F]+), ([0-9]+)\)")
+            .expect("width table regex");
+        let ranges: Vec<(u32, u32, usize)> = regex
+            .captures_iter(source)
+            .map(|caps| {
+                (
+                    u32::from_str_radix(&caps[1], 16).expect("start"),
+                    u32::from_str_radix(&caps[2], 16).expect("end"),
+                    caps[3].parse().expect("width"),
+                )
+            })
+            .collect();
+        assert!(!ranges.is_empty());
+        for value in 0..=0x10ffff {
+            if let Some(ch) = char::from_u32(value) {
+                let at = ranges.partition_point(|(_, end, _)| *end < value);
+                let swift = ranges
+                    .get(at)
+                    .filter(|(start, _, _)| value >= *start)
+                    .map(|(_, _, width)| *width)
+                    .unwrap_or(1);
+                assert_eq!(
+                    swift,
+                    unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0),
+                    "U+{value:04X}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn real_preview_frames_ignore_transcript_tables_and_keep_wrapped_labels() {
         let table = parse_screen_prompt(include_str!(
             "../tests/fixtures/screen_prompts/claude_preview_table.txt"
@@ -1475,6 +1524,7 @@ with untrusted content.
         let prompt = parse_screen_prompt(absent).expect("absent preview");
         assert!(prompt.preview_box);
         assert!(prompt.previews.is_empty());
+        assert!(prompt.preview_none.contains(&1));
     }
 
     // Verbatim preview frame: Claude Code draws the focused option's

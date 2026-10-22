@@ -14319,7 +14319,10 @@
         "drift_source_anchor:apps/mac-dialog-decisions/mac-dialog-decisions.mjs",
         "platform_live_acceptance:unverified",
         "node_test:apps/mac-dialog-decisions/test/daemon.test.mjs",
-        "node_test:apps/mac-dialog-decisions/test/render.test.mjs"
+        "node_test:apps/mac-dialog-decisions/test/render.test.mjs",
+        "rust_test_target:swift_preview_scalar_widths_match_reader_for_every_unicode_scalar",
+        "platform_live_acceptance:.artifacts/mac-dialog-background-preview/native-window-contract.json",
+        "platform_live_acceptance:.artifacts/mac-dialog-background-preview/preview-layout.json"
       ],
       "source_anchors": [
         "SPEC.md:2104",

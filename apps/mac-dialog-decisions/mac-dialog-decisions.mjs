@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// herdr plugin daemon: show pending decisions as a floating macOS panel.
+// herdr plugin daemon: show pending decisions as normal macOS windows.
 //
 // A `herdr decision watch --all-machines` subscription feeds `created` /
 // `resolved` / `machine_up` / `machine_down` lines. Each pending decision is
-// presented one at a time in a native AppKit panel (dialog.swift) that shows
+// presented together in one native AppKit app (dialog.swift) that shows
 // where it comes from, the question, every option with its description and
 // preview, and a free-text field, and returns the picked option(s) and/or
 // free text as a JSON line on stdout. The daemon turns
 // that into `herdr decision answer ... --responder mac-dialog`. When the
-// decision resolves anywhere else, the open dialog is killed so a stale answer
+// decision resolves anywhere else, only its keyed window closes so a stale answer
 // is never sent.
 
 import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
@@ -231,7 +231,15 @@ function buildDialogSpec(decision, machine, queueRemaining = 0, options = {}) {
     machine: remote ? String(machine?.label || machineId) : "",
     question_label: decision.question_label || "",
     title: String(decision.title || decision.decision_id || ""),
-    body: decision.body ? String(decision.body) : "",
+    body: (() => {
+      const body = String(decision.body || "");
+      const progress = String(decision.question_label || "");
+      if (!/^質問 \d+\/\d+(?: |$)/u.test(progress)) return body;
+      const at = body.indexOf(progress);
+      if (at < 0 || (at > 0 && !/\s/u.test(body[at - 1])) ||
+          (at + progress.length < body.length && !/\s/u.test(body[at + progress.length]))) return body;
+      return (body.slice(0, at) + body.slice(at + progress.length)).trim();
+    })(),
     details,
     options: (Array.isArray(decision.options) ? decision.options : []).map(
       (option) => ({
@@ -279,7 +287,7 @@ export class MacDialogDecisionsDaemon {
     this.log = logFn;
     this.entries = new Map(); // key -> entry
     this.queue = []; // keys waiting for the dialog
-    this.showing = null; // key currently on screen
+    this.showing = new Map(); // machine + decision -> open window
     this.child = null; // dialog child handle while showing
     this.machinesDown = new Set();
     this.stopped = false;
@@ -296,7 +304,12 @@ export class MacDialogDecisionsDaemon {
     this.stopped = true;
     if (this._pumpTimer) clearTimeout(this._pumpTimer);
     this._watchHandle?.close?.();
-    this._closeDialog();
+    for (const entry of this.entries.values()) {
+      clearTimeout(entry.snoozeTimer);
+      clearTimeout(entry.answerRetryTimer);
+      this._closeDialog(entry);
+    }
+    this.child?.kill();
     await Promise.allSettled([this._watchDone]);
   }
 
@@ -372,6 +385,8 @@ export class MacDialogDecisionsDaemon {
         !existing.showing &&
         !existing.queued &&
         !existing.dismissed &&
+        !existing.answerPending &&
+        !existing.answerRetryTimer &&
         !existing.resolved
       ) {
         existing.queued = true;
@@ -415,7 +430,7 @@ export class MacDialogDecisionsDaemon {
       clearTimeout(entry.snoozeTimer);
       clearTimeout(entry.answerRetryTimer);
       this.queue = this.queue.filter((k) => k !== key);
-      if (entry.showing) this._closeDialog();
+      if (entry.showing) this._closeDialog(entry);
       this.entries.delete(key);
     }
     this.log(`決定済み: ${decision.decision_id} (${decision.status})`);
@@ -428,8 +443,9 @@ export class MacDialogDecisionsDaemon {
       entry.machineDown = true;
       entry.queued = false;
       clearTimeout(entry.snoozeTimer);
+      clearTimeout(entry.answerRetryTimer);
       this.queue = this.queue.filter((k) => k !== entry.key);
-      if (entry.showing) this._closeDialog();
+      if (entry.showing) this._closeDialog(entry);
       this.entries.delete(entry.key);
     }
     this.log(`マシン切断: ${mid} (${reason})`);
@@ -438,7 +454,7 @@ export class MacDialogDecisionsDaemon {
   // ---- dialog presentation ----------------------------------------------------
 
   pump() {
-    if (this.showing || this.stopped) return;
+    if (this.stopped) return;
     while (this.queue.length > 0) {
       const key = this.queue.shift();
       const entry = this.entries.get(key);
@@ -447,7 +463,6 @@ export class MacDialogDecisionsDaemon {
       }
       entry.queued = false;
       this._present(entry);
-      return;
     }
   }
 
@@ -465,21 +480,22 @@ export class MacDialogDecisionsDaemon {
       this.log(`spec ファイルの書き込みに失敗 (${entry.decision.decision_id}): ${error.message}`);
       return;
     }
+    if (!this.child) {
+      const child = this.spawnDialog();
+      this.child = child;
+      this._consumeChild(child);
+    }
+    entry.specPath = specPath;
     entry.showing = true;
-    this.showing = entry.key;
+    this.showing.set(entry.key, entry);
+    this.child.send({ command: "open", key: entry.key, spec_path: specPath });
     this.log(`ダイアログを表示: ${entry.decision.decision_id}`);
-    const child = this.spawnDialog(specPath, spec);
-    child.entry = entry;
-    child.specPath = specPath;
-    child.handled = false;
-    this.child = child;
-    this._consumeChild(child);
   }
 
   async _consumeChild(child) {
     try {
       for await (const line of child.lines) {
-        if (child.handled || this.stopped) continue;
+        if (this.stopped || this.child !== child) continue;
         let message;
         try {
           message = JSON.parse(line);
@@ -487,41 +503,34 @@ export class MacDialogDecisionsDaemon {
           this.log(`ダイアログの JSON でない行を捨てました: ${String(line).slice(0, 120)}`);
           continue;
         }
-        if (message?.event === "shown") continue;
-        if (typeof message?.result !== "string") continue;
-        child.handled = true;
-        await this._handleResult(child, message);
+        const entry = this.showing.get(message.key);
+        if (!entry || typeof message.result !== "string") continue;
+        this._closeDialog(entry);
+        if (message.result === "answer") {
+          const ids = Array.isArray(message.option_ids)
+            ? message.option_ids.filter((id) => typeof id === "string" && id) : [];
+          const text = typeof message.text === "string" ? message.text.trim() : "";
+          if (!entry.resolved && (ids.length > 0 || text)) {
+            // Do not block other windows on a saved machine's SSH timeout.
+            void this.submitAnswer(entry, { optionIds: ids, text });
+          }
+        } else if (["later", "dismiss", "closed"].includes(message.result)) {
+          this.snooze(entry);
+        }
       }
     } catch (error) {
       this.log(`ダイアログプロセスの読み取りに失敗: ${error.message}`);
     }
-    // exited
-    const entry = child.entry;
-    try {
-      fs.unlinkSync(child.specPath);
-      fs.unlinkSync(`${child.specPath}.result.jsonl`);
-    } catch {}
-    entry.showing = false;
-    if (this.showing === entry.key) this.showing = null;
+    if (this.child !== child) return;
     this.child = null;
-    this.schedulePump();
-  }
-
-  async _handleResult(child, message) {
-    const entry = child.entry;
-    if (message.result === "answer") {
-      const ids = Array.isArray(message.option_ids)
-        ? message.option_ids.filter((id) => typeof id === "string" && id)
-        : [];
-      const text = typeof message.text === "string" ? message.text.trim() : "";
-      if (!entry.resolved && (ids.length > 0 || text)) {
-        await this.submitAnswer(entry, { optionIds: ids, text });
+    for (const entry of [...this.showing.values()]) {
+      this._closeDialog(entry);
+      if (!this.stopped && !entry.resolved && !entry.dismissed && !entry.answerPending) {
+        entry.queued = true;
+        this.queue.push(entry.key);
       }
-      return;
     }
-    if (["later", "dismiss", "closed"].includes(message.result)) {
-      this.snooze(entry);
-    }
+    this.schedulePump();
   }
 
   // あとで: hide now, show again after laterMs if nobody has answered by then.
@@ -546,23 +555,20 @@ export class MacDialogDecisionsDaemon {
     entry.snoozeTimer.unref?.();
   }
 
-  _closeDialog() {
-    if (!this.child) return;
-    this.log(`ダイアログを閉じます: ${this.child.entry.decision.decision_id}`);
-    // The panel watches its spec file and exits as soon as it disappears;
-    // the signal is the fast path.
-    try {
-      fs.unlinkSync(this.child.specPath);
-    } catch {}
-    try {
-      this.child.kill();
-    } catch {}
+  _closeDialog(entry) {
+    if (!entry.showing) return;
+    this.showing.delete(entry.key);
+    entry.showing = false;
+    this.child?.send({ command: "close", key: entry.key });
+    for (const file of [entry.specPath, `${entry.specPath}.result.jsonl`]) {
+      try { fs.unlinkSync(file); } catch {}
+    }
   }
 
   // ---- answering ---------------------------------------------------------------
 
   async submitAnswer(entry, { optionIds = [], text = "" }) {
-    if (entry.resolved || entry.answerPending) return;
+    if (this.stopped || entry.machineDown || entry.resolved || entry.answerPending) return;
     entry.answerPending = true;
     const did = entry.decision.decision_id;
     const args = [
@@ -580,6 +586,7 @@ export class MacDialogDecisionsDaemon {
       `回答を送信: ${did} option=${optionIds.join(",") || "-"}${text ? " +text" : ""}`,
     );
     const result = await this.runAnswer(args);
+    if (this.stopped || entry.machineDown || entry.resolved) return;
     if (result.code === 0) return; // the resolved event closes/removes the entry
     entry.answerPending = false;
     const combined = `${result.stdout}\n${result.stderr}`;
@@ -676,11 +683,12 @@ function spawnDecisionWatch(config, logFn) {
 // MAC_DIALOG_HELPER_CMD stand-in in tests. It prints JSON lines on stdout; the
 // first {"result": ...} line is the user's answer and {"event":"shown"} marks
 // that the window is on screen.
-function spawnHelperDialog(config, specPath, logFn = () => {}) {
+function spawnHelperDialog(config, logFn = () => {}) {
   const argv = config.helperCmd;
-  const child = spawn(argv[0], [...argv.slice(1), specPath], {
-    stdio: ["ignore", "pipe", "pipe"],
+  const child = spawn(argv[0], [...argv.slice(1), "--stream"], {
+    stdio: ["pipe", "pipe", "pipe"],
   });
+  child.stdin.on("error", (error) => logFn(`dialog stdin: ${error.message}`));
   child.on("error", (error) =>
     logFn(`dialog spawn に失敗: ${error.message} (argv=${argv.join(" ")})`),
   );
@@ -710,6 +718,9 @@ function spawnHelperDialog(config, specPath, logFn = () => {}) {
       }
     })(),
     exited,
+    send(message) {
+      if (!child.stdin.destroyed) child.stdin.write(`${JSON.stringify(message)}\n`);
+    },
     kill() {
       try {
         child.kill("SIGTERM");
@@ -730,7 +741,7 @@ function nativeDialogPath(config) {
     .update(fs.readFileSync(source))
     .digest("hex")
     .slice(0, 12);
-  return path.join(config.stateDir, "bin", `herdr-decision-dialog-${hash}`);
+  return path.join(config.stateDir, "bin", `herdr-decision-dialog-${hash}.app`, "Contents", "MacOS", "herdr-decision-dialog");
 }
 
 function ensureNativeDialog(config, logFn = () => {}) {
@@ -757,12 +768,22 @@ function ensureNativeDialog(config, logFn = () => {}) {
     return null;
   }
   fs.renameSync(tmp, binary);
+  fs.writeFileSync(path.join(path.dirname(path.dirname(binary)), "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>herdr-decision-dialog</string>
+<key>CFBundleIdentifier</key><string>dev.herdr.mac-dialog-decisions</string>
+<key>CFBundleName</key><string>herdr 判断待ち</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>NSHighResolutionCapable</key><true/>
+</dict></plist>`);
   // older builds of the panel are no longer needed
-  for (const name of fs.readdirSync(path.dirname(binary))) {
-    const full = path.join(path.dirname(binary), name);
-    if (full !== binary && name.startsWith("herdr-decision-dialog-")) {
+  const bundle = path.dirname(path.dirname(path.dirname(binary)));
+  for (const name of fs.readdirSync(path.dirname(bundle))) {
+    const full = path.join(path.dirname(bundle), name);
+    if (full !== bundle && name.startsWith("herdr-decision-dialog-")) {
       try {
-        fs.rmSync(full, { force: true });
+        fs.rmSync(full, { recursive: true, force: true });
       } catch {}
     }
   }
@@ -1003,10 +1024,9 @@ async function main() {
     config,
     spawnWatch: () => Promise.resolve(spawnDecisionWatch(config, log)),
     runAnswer: createRunAnswer(config, log),
-    spawnDialog: (specPath) =>
+    spawnDialog: () =>
       spawnHelperDialog(
         { ...config, helperCmd: config.helperCmd || [nativeDialog] },
-        specPath,
         log,
       ),
     specFilePath: (key) =>

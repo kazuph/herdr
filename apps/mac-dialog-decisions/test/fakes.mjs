@@ -1,3 +1,4 @@
+import fs from "node:fs";
 // Shared fakes for mac-dialog-decisions tests. No real dialogs are opened.
 
 import { EventEmitter } from "node:events";
@@ -135,4 +136,30 @@ export async function waitUntil(fn, { timeout = 5_000, interval = 20 } = {}) {
     }
     await new Promise((resolve) => setTimeout(resolve, interval));
   }
+}
+
+// The existing daemon component harness now speaks the keyed app transport.
+export function dialogSession(dialogs) {
+  const session = new FakeDialog();
+  session.windows = new Map();
+  session.send = (message) => {
+    if (message.command === "close") {
+      session.windows.get(message.key)?.kill();
+      session.windows.delete(message.key);
+      return;
+    }
+    if (message.command !== "open" || session.windows.has(message.key)) return;
+    const window = new FakeDialog();
+    window.specPath = message.spec_path;
+    window.spec = JSON.parse(fs.readFileSync(message.spec_path, "utf8"));
+    window.emit = (result) => session.emit({ ...result, key: message.key });
+    session.windows.set(message.key, window);
+    dialogs.push(window);
+  };
+  const kill = session.kill.bind(session);
+  session.kill = () => {
+    for (const window of session.windows.values()) window.kill();
+    kill();
+  };
+  return session;
 }
