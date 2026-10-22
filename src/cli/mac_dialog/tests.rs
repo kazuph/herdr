@@ -106,6 +106,7 @@ fn mac_dialog_install_lock_excludes_concurrent_installs() {
     drop(first);
     assert!(lock(&s.versions()).is_ok());
 }
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn pack(source: &Path, target: &Path) {
     let encoder = GzEncoder::new(File::create(target).unwrap(), Compression::fast());
     let mut archive = Builder::new(encoder);
@@ -115,6 +116,7 @@ fn pack(source: &Path, target: &Path) {
         .unwrap();
     archive.into_inner().unwrap().finish().unwrap();
 }
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn sums(archive: &Path) -> String {
     format!("{}  {ARCHIVE}\n", {
         use sha2::{Digest, Sha256};
