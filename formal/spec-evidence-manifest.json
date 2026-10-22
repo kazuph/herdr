@@ -15301,7 +15301,9 @@
       "verification_methods": [
         "rust_test_target:confirmation_force_requires_prior_unforced_rejection_for_same_question",
         "rust_test_target:direct_api_input_routes_reject_before_writing_confirmation",
-        "platform_live_acceptance:unverified"
+        "platform_live_acceptance:unverified",
+        "rust_test_target:managed_launch_confirmation_is_guarded_before_agent_detection",
+        "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices"
       ],
       "source_anchors": [
         "SPEC.md:1885",
@@ -15326,7 +15328,9 @@
       "verification_methods": [
         "rust_test_target:confirmation_force_requires_prior_unforced_rejection_for_same_question",
         "rust_test_target:direct_api_input_routes_reject_before_writing_confirmation",
-        "platform_live_acceptance:unverified"
+        "platform_live_acceptance:unverified",
+        "rust_test_target:managed_launch_confirmation_is_guarded_before_agent_detection",
+        "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices"
       ],
       "source_anchors": [
         "SPEC.md:1886",

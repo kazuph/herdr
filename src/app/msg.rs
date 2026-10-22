@@ -851,6 +851,39 @@ mod tests {
     }
 
     #[test]
+    fn managed_launch_confirmation_is_guarded_before_agent_detection() {
+        with_msg_api_harness(&["claude"], |harness| {
+            let pane_id = harness.agents["claude"].pane_id;
+            let id = harness.app.state.workspaces[0]
+                .terminal_id(pane_id)
+                .unwrap()
+                .clone();
+            let terminal = harness.app.state.terminals.get_mut(&id).unwrap();
+            terminal.hook_authority = None;
+            terminal.detected_agent = None;
+            terminal.begin_managed_agent(
+                "claude".into(),
+                crate::detect::Agent::Claude,
+                std::time::Instant::now(),
+                super::super::agents::AGENT_START_SETTLE_DELAY,
+                super::super::agents::AGENT_START_SETTLE_DELAY,
+            );
+            assert!(terminal.effective_known_agent().is_none());
+            draw_question(
+                harness,
+                include_str!("../detect/fixtures/claude-workspace-trust-live.txt"),
+            );
+            let error = harness
+                .app
+                .guard_external_input(0, pane_id, false)
+                .unwrap_err();
+            assert_eq!(error.code, "pane_confirmation_pending");
+            assert!(error.message.contains("Yes, I trust this folder"));
+            assert!(harness.received_texts("claude").is_empty());
+        });
+    }
+
+    #[test]
     fn visible_confirmation_holds_mail_and_jobs_even_while_working_and_decisions_disabled() {
         with_msg_api_harness(&["claude"], |harness| {
             harness.app.state.decisions_screen_prompts = false;

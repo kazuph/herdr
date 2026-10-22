@@ -1878,7 +1878,7 @@
 - **status: fork独自・保持 (C)** — 外部入力の誤回答を防ぐserver側の契約。
 - **目的**: 他paneから届く文字やEnterが、人に表示された質問・許可確認を勝手に回答しないようにする。
 - **挙動**:
-  - pane run・send-text・send-keys・agent send・agent promptと対応JSON APIは、入力前にmanifestのvisible_blocker規則を照合する。最終状態の優先順位、binary wire protocol、decision API・回答形式は変えない。
+  - pane run・send-text・send-keys・agent send・agent promptと対応JSON APIは、入力前にmanifestのvisible_blocker規則を照合する。検出結果の記録前でも、serverが起動命令に記録したmanaged agent種別があれば同じ照合を行う。最終状態の優先順位、binary wire protocol、decision API・回答形式は変えない。
   - 確認表示中は題名と選択肢を含む待機中errorを返し、byteを書かず非ゼロ終了する。CLIは対象より前の-f/--force、JSON APIはforce=trueで明示入力する。forceなしの拒否応答が作られた後、同一pane・同一質問だけ許可する。先行force・質問変更後のforceを拒否し、その拒否で許可を作らない。
   - 人の直接キー入力とdecision answerは従来どおり。題名・選択肢を抽出できない確認画面はunsupported errorを返し、似た質問への置換や常時forceをしない。
 - **受け入れ条件**:

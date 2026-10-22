@@ -15,7 +15,11 @@ impl App {
         else {
             return false;
         };
-        let Some(agent) = terminal.effective_known_agent().or(terminal.detected_agent) else {
+        let Some(agent) = terminal
+            .effective_known_agent()
+            .or(terminal.detected_agent)
+            .or_else(|| terminal.managed_agent_kind())
+        else {
             return false;
         };
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
@@ -126,6 +130,25 @@ fn blocker_description(screen: &str) -> Option<(String, String)> {
         );
         return Some((prompt.signature(), description));
     }
+    // Captured with `herdr agent read --source detection` on 2026-10-22.
+    // Workspace trust is a bare selection form, not a numbered decision form.
+    if screen.contains("Accessing workspace:") {
+        let lines = screen.lines().collect::<Vec<_>>();
+        let controls = lines
+            .iter()
+            .position(|line| line.trim().trim_start_matches('❯').trim() == "No, exit")?;
+        if !lines[controls..]
+            .iter()
+            .any(|line| line.trim().trim_start_matches('❯').trim() == "Yes, I trust this folder")
+        {
+            return None;
+        }
+        let title = lines[..controls].join("\n").trim().to_string();
+        return Some((
+            format!("workspace-trust:{title}"),
+            format!("{title}\nNo, exit / Yes, I trust this folder"),
+        ));
+    }
     // MCP elicitation has unnumbered controls and is not a decision-answer form.
     let lines = screen.lines().collect::<Vec<_>>();
     let start = lines.iter().rposition(|line| {
@@ -138,4 +161,26 @@ fn blocker_description(screen: &str) -> Option<(String, String)> {
     let title = lines[start..controls].join("\n").trim().to_string();
     let signature = format!("mcp:{title}:Accept:Decline");
     Some((signature, format!("{title}\nAccept / Decline")))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn captured_workspace_trust_preserves_title_and_bare_choices() {
+        let screen = include_str!("../detect/fixtures/claude-workspace-trust-live.txt");
+        let (signature, description) =
+            super::blocker_description(screen).expect("captured trust prompt");
+        assert!(description.contains("fix/hold-mail-while-asking"));
+        assert!(description.contains("No, exit / Yes, I trust this folder"));
+        assert_eq!(
+            super::blocker_description(
+                &screen
+                    .replace("❯ No, exit", "  No, exit")
+                    .replace("  Yes, I trust this folder", "❯ Yes, I trust this folder")
+            )
+            .unwrap()
+            .0,
+            signature
+        );
+    }
 }
