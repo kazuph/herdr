@@ -1242,6 +1242,14 @@ final class DialogApplication: NSObject, NSApplicationDelegate {
     windows[key]?.panel.makeKeyAndOrderFront(nil)
   }
 
+  func applicationDidBecomeActive(_ notification: Notification) {
+    // An explicit application switch (⌘Tab) must reveal ordinary panels,
+    // while preserving the clicked window's editor and first responder.
+    let key = NSApp.keyWindow
+    for id in order { windows[id]?.panel.orderFront(nil) }
+    key?.makeKeyAndOrderFront(nil)
+  }
+
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
     for key in order { windows[key]?.panel.orderFront(nil) }
     order.last.flatMap { windows[$0] }?.panel.makeKey()

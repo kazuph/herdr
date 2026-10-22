@@ -25,6 +25,8 @@ owner.open(key: "mini new", path: "\(directory)/native/3.json")
 precondition(owner.windows.count == 3)
 precondition(draft.currentText() == "書きかけの日本語")
 precondition(draft.checkedIds() == ["a"])
+owner.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+precondition(draft.currentText() == "書きかけの日本語")
 var evidence: [String: Any] = ["windows": owner.windows.count, "window_level": draft.panel.level.rawValue, "dock_badge": NSApp.dockTile.badgeLabel ?? "", "menu": menu.items.map { $0.title }, "draft": draft.currentText(), "selected": draft.checkedIds()]
 for appearance in [NSAppearance.Name.aqua, .darkAqua] {
   testApp.appearance = NSAppearance(named: appearance)
