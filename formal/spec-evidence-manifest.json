@@ -15300,7 +15300,7 @@
       ]
     },
     {
-      "contract_id": "G8-f8d8101165",
+      "contract_id": "G8-4664927481",
       "dimensions": [
         "server-owned configuration identity",
         "atomic update and conditional rollback",
@@ -15308,13 +15308,15 @@
       ],
       "verification_methods": [
         "node_test_target:apps/terminal-browser/terminals/test/ikesu.integration.cjs",
+        "node_test_target:apps/terminal-browser/terminals/test/config-transaction.integration.cjs",
         "node_test_target:apps/terminal-browser/terminals/test/kitty-config.test.js",
         "drift_source_anchor:apps/terminal-browser/terminals/src/terminals/ikesu.ts",
         "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
         "SPEC.md:1591",
-        "apps/terminal-browser/terminals/src/terminals/ikesu.ts:8"
+        "apps/terminal-browser/terminals/src/terminals/ikesu.ts:52",
+        "apps/terminal-browser/terminals/src/terminals/herdr.ts:20"
       ],
       "test_status": [
         "unverified"
@@ -15323,7 +15325,7 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "Signed release publication and parent acceptance remain outside this implementation task"
+        "Native ikesu 0.4.1 config_path emission is not yet available; compatibility response tested with real ikesu 0.4.0 forwarding; publication and parent review remain outside implementation acceptance"
       ]
     },
     {
