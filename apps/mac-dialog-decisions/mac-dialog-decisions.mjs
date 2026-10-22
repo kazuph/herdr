@@ -434,12 +434,15 @@ export class MacDialogDecisionsDaemon {
     const entry = this.entries.get(key);
     if (entry) {
       entry.resolved = true;
+      entry.answerPending = false;
       entry.queued = false;
       clearTimeout(entry.snoozeTimer);
       clearTimeout(entry.answerRetryTimer);
+      entry.answerRetryTimer = null;
       this.queue = this.queue.filter((k) => k !== key);
       if (entry.showing) this._closeDialog(entry);
       this.entries.delete(key);
+      this.onStateChange();
     }
     this.log(`決定済み: ${decision.decision_id} (${decision.status})`);
   }
@@ -597,11 +600,15 @@ export class MacDialogDecisionsDaemon {
     );
     const result = await this.runAnswer(args);
     if (this.stopped || entry.resolved) return;
-    if (result.code === 0) return; // the resolved event closes/removes the entry
+    if (result.code === 0) {
+      this.onResolved(entry.machineId, entry.decision);
+      return;
+    }
     entry.answerPending = false;
     const combined = `${result.stdout}\n${result.stderr}`;
     if (combined.includes("decision_already_resolved")) {
       this.log(`ほかの窓口で決定済みでした: ${did}`);
+      this.onResolved(entry.machineId, entry.decision);
       return;
     }
     const approvalUrl = combined.match(/https:\/\/login\.tailscale\.com\/\S+/)?.[0];
@@ -615,6 +622,7 @@ export class MacDialogDecisionsDaemon {
       if (entry.answerRetries < ANSWER_RETRY_LIMIT) {
         clearTimeout(entry.answerRetryTimer);
         entry.answerRetryTimer = setTimeout(() => {
+          entry.answerRetryTimer = null;
           if (!entry.resolved) void this.submitAnswer(entry, { optionIds, text });
         }, this.config.answerRetryMs ?? ANSWER_RETRY_MS);
         entry.answerRetryTimer.unref?.();
@@ -1029,7 +1037,7 @@ async function gateCheck(config) {
   return true;
 }
 
-async function main() {
+async function main({ createDaemon = (options) => new MacDialogDecisionsDaemon(options) } = {}) {
   const mode = process.argv[2] || "run";
   const config = loadConfig(process.env);
 
@@ -1070,7 +1078,7 @@ async function main() {
     log("ダイアログを作れないため終了します（上のビルドエラーを確認してください）");
     process.exit(1);
   }
-  const daemon = new MacDialogDecisionsDaemon({
+  const daemon = createDaemon({
     config,
     spawnWatch: () => Promise.resolve(spawnDecisionWatch(config, log)),
     runAnswer: createRunAnswer(config, log),
@@ -1166,6 +1174,7 @@ if (invokedAsScript) {
 }
 
 export {
+  main,
   buildDialogSpec,
   createRunAnswer,
   decisionKey,

@@ -13976,7 +13976,8 @@
         "rust_test_target:silent_run_starts_from_a_plain_shell_pane",
         "drift_source_anchor:src/app/api/jobs.rs",
         "rust_test_target:silent_background_run_starts_without_any_caller_and_has_no_recipient",
-        "rust_test_target:notifying_or_pane_runs_still_fail_without_a_caller"
+        "rust_test_target:notifying_or_pane_runs_still_fail_without_a_caller",
+        "rust_test_target:explicit_missing_caller_never_creates_a_silent_job"
       ],
       "source_anchors": [
         "SPEC.md:1833",
@@ -13995,7 +13996,7 @@
       ]
     },
     {
-      "contract_id": "G9-628d4d4757",
+      "contract_id": "G9-7aa484a679",
       "dimensions": [
         "silent run caller",
         "headless silent background job has no caller or completion recipient"
@@ -14004,7 +14005,8 @@
         "rust_test_target:silent_run_starts_from_a_plain_shell_pane",
         "drift_source_anchor:src/app/api/jobs.rs",
         "rust_test_target:silent_background_run_starts_without_any_caller_and_has_no_recipient",
-        "rust_test_target:notifying_or_pane_runs_still_fail_without_a_caller"
+        "rust_test_target:notifying_or_pane_runs_still_fail_without_a_caller",
+        "rust_test_target:explicit_missing_caller_never_creates_a_silent_job"
       ],
       "source_anchors": [
         "SPEC.md:1834",
@@ -14032,7 +14034,8 @@
         "rust_test_target:silent_run_starts_from_a_plain_shell_pane",
         "drift_source_anchor:src/app/api/jobs.rs",
         "rust_test_target:silent_background_run_starts_without_any_caller_and_has_no_recipient",
-        "rust_test_target:notifying_or_pane_runs_still_fail_without_a_caller"
+        "rust_test_target:notifying_or_pane_runs_still_fail_without_a_caller",
+        "rust_test_target:explicit_missing_caller_never_creates_a_silent_job"
       ],
       "source_anchors": [
         "SPEC.md:1835",
@@ -14336,7 +14339,8 @@
         "pending remote answers survive disconnect and replay without duplication",
         "reverting registration clears stale handoff and handoff rechecks registration",
         "footerless numbered prompts remain readable after historical MCP confirmations",
-        "normal nonactivating panels without utilityWindow"
+        "normal nonactivating panels without utilityWindow",
+        "confirmed offline answer is retired idempotently and unblocks reserved version handoff"
       ],
       "verification_methods": [
         "drift_source_anchor:apps/mac-dialog-decisions/dialog.swift",
@@ -14354,7 +14358,8 @@
         "rust_test_target:mcp_server_change_cancels_old_approval_before_accepting_answers",
         "rust_test_target:historical_mcp_keeps_footerless_numbered_questions_readable",
         "platform_live_acceptance:.artifacts/mac-dialog-background-preview/review-window-style/window-count.json",
-        "platform_live_acceptance:.artifacts/mac-dialog-background-preview/review-lifecycle/summary.json"
+        "platform_live_acceptance:.artifacts/mac-dialog-background-preview/review-lifecycle/summary.json",
+        "command:node apps/mac-dialog-decisions/test/offline-answer-handoff.mjs RELEASES HERDR OUT"
       ],
       "source_anchors": [
         "SPEC.md:2108",

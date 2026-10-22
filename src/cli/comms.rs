@@ -408,7 +408,7 @@ pub(super) fn herdr_run(args: &[String]) -> std::io::Result<i32> {
     };
     let caller = match resolve_run_caller(caller.as_deref()) {
         Ok(caller) => caller,
-        Err(_) if !pane_mode && completion == "none" => String::new(),
+        Err(_) if caller.is_none() && !pane_mode && completion == "none" => String::new(),
         Err(err) => {
             eprintln!("unable to resolve caller pane: {err}");
             eprintln!("pass --caller <pane> explicitly; do not infer from focused pane");

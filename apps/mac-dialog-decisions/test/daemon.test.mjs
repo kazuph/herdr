@@ -343,3 +343,25 @@ test("remote resolution stops retry even while the machine is disconnected", asy
     assert.equal(answers.length,before);
   } finally {await daemon.stop();}
 });
+
+for (const result of [{code:0,stdout:'{}',stderr:''},{code:1,stdout:'',stderr:'decision_already_resolved'}]) {
+  test(`confirmed answer clears state once without a resolved event (${result.code})`, async () => {
+    let finish;
+    const {daemon,watch,dialogs}=makeDaemon({runAnswer:()=>new Promise(resolve=>{finish=resolve;})});
+    try {
+      await daemon.start();watch.push({event:'created',machine:MACHINE,decision:decision('confirmed')});
+      await waitUntil(()=>dialogs.length===1);dialogs[0].answer(['a']);
+      await waitUntil(()=>finish);
+      const entry=daemon.entries.get('local confirmed');
+      watch.push({event:'machine_down',machine:MACHINE});
+      await waitUntil(()=>daemon.machinesDown.has('local'));
+      assert.equal(daemon.entries.size,1,'unconfirmed answer is retained');
+      let changes=0;daemon.onStateChange=()=>changes++;
+      finish(result);await waitUntil(()=>daemon.entries.size===0);
+      assert.equal(entry.answerPending,false);assert.equal(entry.answerRetryTimer,null);
+      const settled=changes;
+      daemon.onResolved('local',decision('confirmed',{status:'answered'}));
+      assert.equal(changes,settled,'late resolution performs no second cleanup');
+    } finally {await daemon.stop();}
+  });
+}

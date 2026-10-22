@@ -117,3 +117,22 @@ fn notifying_or_pane_runs_still_fail_without_a_caller() {
     let jobs: serde_json::Value = serde_json::from_slice(&h.run(&["run", "list"]).stdout).unwrap();
     assert_eq!(jobs["jobs"].as_array().unwrap().len(), 0);
 }
+
+#[test]
+fn explicit_missing_caller_never_creates_a_silent_job() {
+    let h = Headless::new();
+    let output = h.run(&[
+        "run",
+        "--caller",
+        "missing-pane",
+        "--completion",
+        "none",
+        "--",
+        "echo",
+        "must-not-run",
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unable to resolve caller pane"));
+    let jobs: serde_json::Value = serde_json::from_slice(&h.run(&["run", "list"]).stdout).unwrap();
+    assert_eq!(jobs["jobs"].as_array().unwrap().len(), 0);
+}
