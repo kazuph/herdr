@@ -15293,21 +15293,33 @@
       ]
     },
     {
-      "contract_id": "G9-3ef4e804b5",
+      "contract_id": "G9-6913055f8a",
       "dimensions": [
         "visible confirmation input protection",
-        "same question force observation"
+        "same question force observation",
+        "current input boundary",
+        "instruction-only terminal tail",
+        "quoted and historical controls exclusion"
       ],
       "verification_methods": [
         "rust_test_target:confirmation_force_requires_prior_unforced_rejection_for_same_question",
         "rust_test_target:direct_api_input_routes_reject_before_writing_confirmation",
         "platform_live_acceptance:unverified",
         "rust_test_target:managed_launch_confirmation_is_guarded_before_agent_detection",
-        "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices"
+        "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices",
+        "rust_test_target:input_blocker_does_not_block_code_explaining_confirmation_controls",
+        "rust_test_target:input_blocker_ignores_old_question_above_current_input",
+        "rust_test_target:input_blocker_requires_instruction_only_tail_after_current_controls",
+        "rust_test_target:input_blocker_ignores_quoted_controls_inside_fenced_code_with_border",
+        "rust_test_target:input_blocker_preserves_captured_trust_and_wrapped_question_controls",
+        "rust_test_target:quoted_controls_and_old_questions_do_not_hold_mail_or_immediate_input",
+        "rust_test_target:mcp_confirmation_keeps_regular_and_job_messages_queued",
+        "rust_test_target:input_blocker_preserves_existing_permission_control_forms"
       ],
       "source_anchors": [
         "SPEC.md:1885",
-        "src/app/input_guard.rs:8"
+        "src/app/input_guard.rs:8",
+        "src/detect/manifest.rs:407"
       ],
       "test_status": [
         "unverified"

@@ -867,6 +867,9 @@ fn claude_mcp_elicitation_is_blocked() {
         });
         assert_eq!(result.state, AgentState::Blocked, "{result:#?}");
         assert!(result.visible_blocker, "{result:#?}");
+        assert!(visible_blocker_with_input(Agent::Claude, DetectionInput {
+            screen, osc_title: "⠂ project", osc_progress: "",
+        }), "captured MCP controls must remain guarded");
         assert_eq!(
             result.matched_rule.as_ref().map(|r| r.id.as_str()),
             Some("mcp_elicitation_prompt"),
@@ -1212,6 +1215,17 @@ fn claude_narrow_question_footer_wraps_are_blocked() {
             let result = explain(Agent::Claude, &screen);
             assert_eq!(result.state, AgentState::Blocked, "{screen}");
             assert!(result.visible_blocker);
+            assert!(
+                visible_blocker_with_input(
+                    Agent::Claude,
+                    DetectionInput {
+                        screen: &screen,
+                        osc_title: "⠂ project",
+                        osc_progress: "",
+                    }
+                ),
+                "wrapped current control guide must remain guarded"
+            );
             assert_eq!(result.matched_rule.unwrap().id, "live_blocked_form");
         }
     });
@@ -1277,5 +1291,111 @@ fn input_blocker_does_not_block_code_explaining_confirmation_controls() {
             !visible_blocker_with_input(Agent::Claude, input),
             "quoted code contains no active confirmation controls and must not hold input"
         );
+    });
+}
+
+#[test]
+fn input_blocker_ignores_old_question_above_current_input() {
+    with_manifest_dirs("input-blocker-old-question", || {
+        for old_question in [
+            include_str!("../fixtures/claude-narrow-multi-question.txt"),
+            include_str!("../fixtures/claude-workspace-trust-live.txt"),
+        ] {
+            for current in [
+                "\n────────────────────────\n❯ Ordinary input\n────────────────────────\n? for shortcuts\n",
+                "\n────────────────────────\n1. first item\n2. second item\n❯ Ordinary input\n",
+            ] {
+                let screen = format!("{old_question}{current}");
+                assert!(!visible_blocker_with_input(Agent::Claude, DetectionInput {
+                    screen: &screen, osc_title: "⠂ project", osc_progress: "",
+                }), "old question must not guard current input: {screen}");
+            }
+        }
+    });
+}
+
+#[test]
+fn input_blocker_requires_instruction_only_tail_after_current_controls() {
+    with_manifest_dirs("input-blocker-control-tail", || {
+        let captured = include_str!("../fixtures/claude-narrow-multi-question.txt");
+        for suffix in [
+            "\nThis is ordinary prose after the quoted controls.\n",
+            "\n❯ Current editable input\n",
+            "\n```\n",
+        ] {
+            let screen = format!("{captured}{suffix}");
+            assert!(
+                !visible_blocker_with_input(
+                    Agent::Claude,
+                    DetectionInput {
+                        screen: &screen,
+                        osc_title: "⠂ project",
+                        osc_progress: "",
+                    }
+                ),
+                "controls followed by ordinary content must not guard: {screen}"
+            );
+        }
+    });
+}
+
+#[test]
+fn input_blocker_ignores_quoted_controls_inside_fenced_code_with_border() {
+    with_manifest_dirs("input-blocker-fenced-controls", || {
+        for fence in ["```text", "~~~text"] {
+            let screen = format!("A quoted example:\n{fence}\n────────────────────────\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel\n");
+            assert!(
+                !visible_blocker_with_input(
+                    Agent::Claude,
+                    DetectionInput {
+                        screen: &screen,
+                        osc_title: "⠂ project",
+                        osc_progress: "",
+                    }
+                ),
+                "a border inside a code fence is not a current input field"
+            );
+        }
+    });
+}
+
+#[test]
+fn input_blocker_preserves_captured_trust_and_wrapped_question_controls() {
+    with_manifest_dirs("input-blocker-captured-controls", || {
+        for screen in [
+            include_str!("../fixtures/claude-narrow-multi-question.txt"),
+            include_str!("../fixtures/claude-workspace-trust-live.txt"),
+        ] {
+            let before = osc_explain(Agent::Claude, screen, "⠂ project", "");
+            assert!(
+                visible_blocker_with_input(
+                    Agent::Claude,
+                    DetectionInput {
+                        screen,
+                        osc_title: "⠂ project",
+                        osc_progress: "",
+                    }
+                ),
+                "captured confirmation must remain guarded: {screen}"
+            );
+            assert_eq!(osc_explain(Agent::Claude, screen, "⠂ project", ""), before);
+        }
+    });
+}
+
+#[test]
+fn input_blocker_preserves_existing_permission_control_forms() {
+    with_manifest_dirs("input-blocker-existing-permissions", || {
+        // Existing captured prompt examples from the manifest/screen-prompt tests.
+        for (agent, screen) in [
+            (Agent::Claude, "────────────────────────\nBash command\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel · Tab to amend · ctrl+e to explain\n"),
+            (Agent::Codex, "Would you like to run the following command?\n› 1. Yes, proceed (y)\n  2. No (esc)\nPress enter to confirm or esc to cancel\n"),
+            (Agent::Devin, "Do you trust the authors of this directory?\nFor security, devin should not be run in directories\nwith untrusted content.\n❭ 1 Yes, trust /private/tmp/devin-hook-probe\n· 2 No, exit\n"),
+            (Agent::Devin, "⏺ Running command\n  └ $ sleep 30\n❭ 1 Yes  (Approve once)\n· 2 No\n↑↓ select · ↵ confirm · esc cancel\n"),
+        ] {
+            assert!(visible_blocker_with_input(agent, DetectionInput { screen, osc_title: "", osc_progress: "" }), "existing permission must remain guarded: {screen}");
+            let historical = format!("{screen}\n────────────────────────\n❯ Ordinary input\n────────────────────────\n? for shortcuts\n");
+            assert!(!visible_blocker_with_input(agent, DetectionInput { screen: &historical, osc_title: "", osc_progress: "" }), "historical permission must not guard a new input field");
+        }
     });
 }

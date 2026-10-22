@@ -1,6 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock, RwLock},
+    sync::{LazyLock, Mutex, OnceLock, RwLock},
 };
 
 use regex::Regex;
@@ -405,10 +405,17 @@ pub fn explain_with_input(agent: Agent, input: DetectionInput<'_>) -> DetectionE
     evaluate_loaded_manifest(agent, input, loaded, true)
 }
 
-/// Independently checks blocker rules without changing the winning state rule.
+/// Independently checks current input controls without changing state arbitration.
 pub fn visible_blocker_with_input(agent: Agent, input: DetectionInput<'_>) -> bool {
+    let Some(current_input) = current_confirmation_input(input.screen) else {
+        return false;
+    };
     let Some(loaded) = load_manifest(agent) else {
         return false;
+    };
+    let current = DetectionInput {
+        screen: current_input,
+        ..input
     };
     loaded
         .manifest
@@ -418,8 +425,89 @@ pub fn visible_blocker_with_input(agent: Agent, input: DetectionInput<'_>) -> bo
         .any(|(rule, compiled)| {
             rule.visible_blocker
                 && rule.state.map(AgentState::from) == Some(AgentState::Blocked)
-                && compiled_rule_matches(compiled, region(input, &rule.region))
+                && compiled_rule_matches(compiled, region(current, &rule.region))
         })
+}
+
+// A complete control-guide suffix, including physical line wraps, is evidence
+// of a current input field. Prose after it invalidates that evidence.
+static CONFIRMATION_GUIDE: LazyLock<Regex> = LazyLock::new(|| {
+    let action = concat!(
+        r"(?:(?:press\s+)?(?:enter|return|↵)\s+(?:to\s+)?(?:select|confirm|accept|submit(?:\s+(?:answer|all))?)",
+        r"|esc(?:ape)?\s+(?:to\s+)?(?:cancel|exit|dismiss)",
+        r"|(?:(?:tab/arrow|arrow)\s+keys|arrows|↑/↓|↑↓)\s+(?:to\s+)?(?:navigate|select)",
+        r"|tab\s+(?:to\s+)?(?:amend|add\s+(?:context|notes))|ctrl\+e\s+to\s+explain)",
+    );
+    Regex::new(&format!(
+        r"(?i)^{action}(?:(?:\s*[·•|,]\s*|\s+(?:or|and)\s+){action})*\s*$"
+    ))
+    .expect("confirmation control-guide regex")
+});
+
+static CONFIRMATION_CHOICE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*([❯›❭·])?\s*\d+[.)]?\s+\S.*$").expect("confirmation selection-row regex")
+});
+
+fn current_confirmation_input(screen: &str) -> Option<&str> {
+    let current = after_last_horizontal_rule(screen);
+    let start = screen.len() - current.len();
+    // Existing region semantics use the whole screen for a cropped capture
+    // without a border. Such a capture still needs a visible selection cursor.
+    if start == 0
+        && !current
+            .lines()
+            .any(|line| line.trim_start().starts_with(['❯', '›', '❭']))
+    {
+        return None;
+    }
+    let mut offset = 0;
+    let mut fence: Option<(char, usize)> = None;
+    for line in screen.lines() {
+        let trimmed = line.trim_start();
+        let marker = if trimmed.starts_with("```") {
+            Some('`')
+        } else if trimmed.starts_with("~~~") {
+            Some('~')
+        } else {
+            None
+        };
+        if let Some(marker) = marker {
+            let width = trimmed.chars().take_while(|ch| *ch == marker).count();
+            match fence {
+                None => fence = Some((marker, width)),
+                Some((open, length))
+                    if open == marker
+                        && width >= length
+                        && trimmed.trim_matches(marker).trim().is_empty() =>
+                {
+                    fence = None
+                }
+                _ => {}
+            }
+        }
+        if offset >= start && fence.is_none() {
+            let tail = &screen[offset..];
+            if CONFIRMATION_GUIDE.is_match(tail.trim()) {
+                return Some(current);
+            }
+            // Some selection forms (Devin trust) end at the last option,
+            // without a separate guide. Require the live cursor and a tail
+            // consisting entirely of option rows, not surrounding prose.
+            let selected = CONFIRMATION_CHOICE.captures(line).is_some_and(|row| {
+                row.get(1)
+                    .is_some_and(|marker| matches!(marker.as_str(), "❯" | "›" | "❭"))
+            });
+            if selected
+                && tail
+                    .lines()
+                    .all(|row| row.trim().is_empty() || CONFIRMATION_CHOICE.is_match(row))
+            {
+                return Some(current);
+            }
+        }
+        offset += line.len() + 1;
+    }
+    None
 }
 
 pub fn explain_for_label(agent_label: &str, screen_content: &str) -> DetectionExplain {

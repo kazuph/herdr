@@ -884,6 +884,69 @@ mod tests {
     }
 
     #[test]
+    fn quoted_controls_and_old_questions_do_not_hold_mail_or_immediate_input() {
+        with_msg_api_harness(&["claude"], |harness| {
+            let pane = harness.global_pane_id("claude");
+            let old = include_str!("../detect/fixtures/claude-workspace-trust-live.txt");
+            let screens = [
+                "Here is code:\r\n```rust\r\nprintln!(\"Enter to select · Tab/Arrow keys to navigate · Esc to cancel\");\r\n```\r\n".to_string(),
+                format!("{old}\n────────────────────────\n❯ Ordinary input\n────────────────────────\n? for shortcuts\n"),
+            ];
+            for screen in screens {
+                draw_question(harness, &screen);
+                assert_eq!(
+                    harness.send("sender", &pane, "ordinary-input", "regular"),
+                    vec![pane.clone()]
+                );
+                assert_eq!(harness.received_texts("claude"), vec!["regular\r"]);
+                let response = harness.app.handle_api_request(Request {
+                    id: "ordinary-input".into(),
+                    method: Method::PaneSendText(crate::api::schema::PaneSendTextParams {
+                        force: false,
+                        pane_id: pane.clone(),
+                        text: "literal text".into(),
+                    }),
+                });
+                success_result(&response);
+                assert_eq!(harness.received_texts("claude"), vec!["literal text"]);
+            }
+        });
+    }
+
+    #[test]
+    fn mcp_confirmation_keeps_regular_and_job_messages_queued() {
+        // The same pre-existing live-capture fragment as the manifest MCP test.
+        let screen = "MCP server \u{201c}my-server\u{201d} requests your input\n\nGrant temporary access to the demo gateway for 15 minutes?\n\n\u{276f} Accept    Decline\n\nEsc to cancel \u{b7} \u{2191}/\u{2193} to navigate\n";
+        with_msg_api_harness(&["claude"], |harness| {
+            let pane = harness.global_pane_id("claude");
+            draw_question(harness, screen);
+            assert!(harness
+                .send("sender", &pane, "mcp-protection", "regular")
+                .is_empty());
+            assert!(harness
+                .send("herdr-run", &pane, crate::msg::JOBS_ROOM, "completion")
+                .is_empty());
+            assert!(harness.received_texts("claude").is_empty());
+            let pane_id = harness.agents["claude"].pane_id;
+            assert!(harness.app.guard_external_input(0, pane_id, true).is_err());
+            let error = harness
+                .app
+                .guard_external_input(0, pane_id, false)
+                .unwrap_err();
+            assert_eq!(error.code, "pane_confirmation_pending");
+            assert!(error.message.contains("Accept / Decline"));
+            assert!(harness.app.guard_external_input(0, pane_id, true).is_ok());
+            draw_question(harness, "────────────────────────\n❯ Ordinary input\n────────────────────────\n? for shortcuts\n");
+            harness.app.input_guard_tasks(std::time::Instant::now());
+            harness.drain_events();
+            assert_eq!(
+                harness.received_texts("claude"),
+                vec!["regular\r", "completion", "\r"]
+            );
+        });
+    }
+
+    #[test]
     fn visible_confirmation_holds_mail_and_jobs_even_while_working_and_decisions_disabled() {
         with_msg_api_harness(&["claude"], |harness| {
             harness.app.state.decisions_screen_prompts = false;
