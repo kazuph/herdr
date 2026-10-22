@@ -119,3 +119,10 @@ test("fmtDeadline shows absolute time and remaining; no deadline when absent", (
   assert.match(fmtDeadline(d, now), /^\d{2}:\d{2}（残り約5分）$/);
   assert.equal(fmtDeadline(decision({ expires_unix_ms: null }), now), "期限なし");
 });
+
+test("only the exact question progress repeated by the heading is hidden", () => {
+  const d = decision({ question_label: "質問 1/2 戻し方", body: "質問 1/2 戻し方" });
+  assert.equal(buildDialogSpec(d, machine).body, "");
+  assert.equal(buildDialogSpec({ ...d, body: "期限のお知らせ 質問 1/2 戻し方" }, machine).body, "期限のお知らせ");
+  assert.equal(buildDialogSpec({ ...d, body: "質問 1/2 別の本文" }, machine).body, "質問 1/2 別の本文");
+});

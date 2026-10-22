@@ -1,4 +1,4 @@
-// Daemon tests: watch-line handling, the one-at-a-time dialog queue, answer
+// Daemon tests: watch-line handling, the keyed multi-window app transport, answer
 // command shape, closing on external resolution — all against fakes.
 
 import fs from "node:fs";
@@ -7,7 +7,7 @@ import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MacDialogDecisionsDaemon } from "../mac-dialog-decisions.mjs";
-import { FakeDialog, FakeWatch, waitUntil } from "./fakes.mjs";
+import { dialogSession, FakeWatch, waitUntil } from "./fakes.mjs";
 
 const MACHINE = { id: "local", label: "Local" };
 
@@ -38,13 +38,7 @@ function makeDaemon({ stateDir, laterMs, answerRetryMs, runAnswer } = {}) {
       answers.push(argv);
       return runAnswer ? runAnswer(argv) : Promise.resolve({ code: 0, stdout: "{}", stderr: "" });
     },
-    spawnDialog: (specPath, spec) => {
-      const d = new FakeDialog();
-      d.specPath = specPath;
-      d.spec = spec;
-      dialogs.push(d);
-      return d;
-    },
+    spawnDialog: () => dialogSession(dialogs),
     specFilePath: (key) =>
       path.join(dir, "dialogs", `${key.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`),
     log: (...a) => logs.push(a.join(" ")),
@@ -123,17 +117,19 @@ test("resolving elsewhere closes the open dialog and never sends its answer", as
   await daemon.stop();
 });
 
-test("two decisions are presented one at a time, in order", async () => {
+test("two decisions open together in one process and answering either preserves the other", async () => {
   const { daemon, watch, dialogs } = makeDaemon();
   await daemon.start();
   watch.push({ event: "created", machine: MACHINE, decision: decision("dec-1") });
   watch.push({ event: "created", machine: MACHINE, decision: decision("dec-2") });
-  await waitUntil(() => dialogs.length === 1);
-  assert.match(dialogs[0].spec.title, /dec-1 の題名/);
-  assert.equal(dialogs[0].spec.queue_remaining, 1);
-  dialogs[0].answer(["a"]);
   await waitUntil(() => dialogs.length === 2);
-  assert.match(dialogs[1].spec.title, /dec-2 の題名/);
+  const process = daemon.child;
+  assert.equal(daemon.showing.size, 2);
+  dialogs[1].answer(["a"]);
+  await waitUntil(() => daemon.showing.size === 1);
+  assert.equal(daemon.child, process);
+  assert.equal(dialogs[0].killed, false);
+  assert.match(dialogs[0].spec.title, /dec-1 の題名/);
   await daemon.stop();
 });
 
@@ -206,13 +202,7 @@ test("already_resolved answer failure is logged, not retried or fatal", async ()
         stdout: "",
         stderr: "error: decision_already_resolved",
       }),
-    spawnDialog: (specPath, spec) => {
-      const d = new FakeDialog();
-      d.specPath = specPath;
-      d.spec = spec;
-      dialogs.push(d);
-      return d;
-    },
+    spawnDialog: () => dialogSession(dialogs),
     specFilePath: (key) => path.join(dir, `${key}.json`),
     log: (...a) => logs.push(a.join(" ")),
   });
@@ -256,3 +246,122 @@ test("answer blocked by Tailscale re-approval is resent until it lands", async (
   assert.ok(answers.every((argv) => argv.includes("m0e51")));
   await daemon.stop();
 });
+
+test("machine and decision keys isolate close, replay and disconnect", async () => {
+  const { daemon, watch, dialogs, answers } = makeDaemon();
+  await daemon.start();
+  const remote = { id: "mini", label: "mini" };
+  for (const [machine, id] of [[MACHINE, "same"], [remote, "same"], [remote, "other"]]) {
+    watch.push({event: "created", machine, decision: decision(id)});
+  }
+  await waitUntil(() => dialogs.length === 3);
+  const child = daemon.child;
+  watch.push({event:"created", machine:MACHINE, decision:decision("same")});
+  watch.push({event:"machine_down", machine:remote});
+  await waitUntil(() => daemon.showing.size === 1);
+  assert.equal(daemon.child, child);
+  assert.equal(dialogs[0].killed, false);
+  assert.equal(dialogs[1].killed, true);
+  assert.equal(dialogs[2].killed, true);
+  assert.equal(dialogs.length, 3);
+  assert.equal(answers.length, 0);
+  await daemon.stop();
+  assert.equal(dialogs[0].killed, true);
+  assert.equal(daemon.showing.size, 0);
+});
+
+test("replay while an answer waits for SSH does not reopen its window", async () => {
+  const {daemon, watch, dialogs} = makeDaemon({answerRetryMs: 1000, runAnswer: async () => ({code:255, stdout:"", stderr:"https://login.tailscale.com/a/test"})});
+  await daemon.start();
+  watch.push({event:"created", machine:MACHINE, decision:decision("retry")});
+  await waitUntil(() => dialogs.length === 1);
+  dialogs[0].answer(["a"]);
+  await waitUntil(() => daemon.entries.get("local retry")?.answerRetryTimer);
+  watch.push({event:"created", machine:MACHINE, decision:decision("retry")});
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(dialogs.length, 1);
+  assert.equal(daemon.showing.size, 0);
+  await daemon.stop();
+});
+
+test("answer retry survives down up replay with the original options and note", async () => {
+  let calls = 0;
+  const ctx = makeDaemon({answerRetryMs: 40, runAnswer: async () => ++calls === 1
+    ? {code:255, stdout:"", stderr:"https://login.tailscale.com/a/retry"}
+    : {code:0, stdout:"{}", stderr:""}});
+  const {daemon, watch, dialogs, answers} = ctx;
+  try {
+    await daemon.start();
+    const machine = {id:"mini", label:"mini"};
+    watch.push({event:"created", machine, decision:decision("retry-down", {allow_text:true})});
+    await waitUntil(()=>dialogs.length===1);
+    dialogs[0].answer(["b"], "元の補足");
+    await waitUntil(()=>daemon.entries.get("mini retry-down")?.answerRetryTimer);
+    watch.push({event:"machine_down", machine});
+    await waitUntil(()=>daemon.machinesDown.has("mini"));
+    watch.push({event:"machine_up", machine});
+    watch.push({event:"created", machine, decision:decision("retry-down", {allow_text:true})});
+    await waitUntil(()=>calls===2);
+    assert.deepEqual(answers[1], answers[0]);
+    assert.ok(answers[1].includes("元の補足"));
+    assert.equal(dialogs.length,1);
+  } finally { await daemon.stop(); }
+});
+
+test("disconnect while the first answer is in flight still schedules its retry", async () => {
+  let finish;
+  let calls=0;
+  const {daemon,watch,dialogs,answers}=makeDaemon({answerRetryMs:40,runAnswer:()=>{
+    calls++; return calls===1 ? new Promise(resolve=>{finish=resolve;}) : Promise.resolve({code:0,stdout:"{}",stderr:""});
+  }});
+  try {
+    await daemon.start();const machine={id:"mini",label:"mini"};
+    watch.push({event:"created",machine,decision:decision("inflight",{allow_text:true})});
+    await waitUntil(()=>dialogs.length===1);dialogs[0].answer(["a"],"保持する文");
+    await waitUntil(()=>calls===1);watch.push({event:"machine_down",machine});
+    await waitUntil(()=>daemon.machinesDown.has("mini"));
+    finish({code:255,stdout:"",stderr:"https://login.tailscale.com/a/retry"});
+    await waitUntil(()=>calls===2);
+    assert.deepEqual(answers[1],answers[0]);
+    watch.push({event:"resolved",machine,decision:{...decision("inflight"),status:"answered"}});
+    await waitUntil(()=>daemon.entries.size===0);
+  } finally { await daemon.stop(); }
+});
+
+test("remote resolution stops retry even while the machine is disconnected", async () => {
+  const {daemon,watch,dialogs,answers}=makeDaemon({answerRetryMs:40,runAnswer:async()=>({code:255,stdout:"",stderr:"https://login.tailscale.com/a/retry"})});
+  try {
+    await daemon.start();const machine={id:"mini",label:"mini"};
+    watch.push({event:"created",machine,decision:decision("resolved-down")});
+    await waitUntil(()=>dialogs.length===1);dialogs[0].answer(["a"]);
+    await waitUntil(()=>daemon.entries.get("mini resolved-down")?.answerRetryTimer);
+    watch.push({event:"machine_down",machine});
+    watch.push({event:"resolved",machine,decision:{...decision("resolved-down"),status:"answered"}});
+    await waitUntil(()=>daemon.entries.size===0);
+    const before=answers.length;
+    await new Promise(resolve=>setTimeout(resolve,80));
+    assert.equal(answers.length,before);
+  } finally {await daemon.stop();}
+});
+
+for (const result of [{code:0,stdout:'{}',stderr:''},{code:1,stdout:'',stderr:'decision_already_resolved'}]) {
+  test(`confirmed answer clears state once without a resolved event (${result.code})`, async () => {
+    let finish;
+    const {daemon,watch,dialogs}=makeDaemon({runAnswer:()=>new Promise(resolve=>{finish=resolve;})});
+    try {
+      await daemon.start();watch.push({event:'created',machine:MACHINE,decision:decision('confirmed')});
+      await waitUntil(()=>dialogs.length===1);dialogs[0].answer(['a']);
+      await waitUntil(()=>finish);
+      const entry=daemon.entries.get('local confirmed');
+      watch.push({event:'machine_down',machine:MACHINE});
+      await waitUntil(()=>daemon.machinesDown.has('local'));
+      assert.equal(daemon.entries.size,1,'unconfirmed answer is retained');
+      let changes=0;daemon.onStateChange=()=>changes++;
+      finish(result);await waitUntil(()=>daemon.entries.size===0);
+      assert.equal(entry.answerPending,false);assert.equal(entry.answerRetryTimer,null);
+      const settled=changes;
+      daemon.onResolved('local',decision('confirmed',{status:'answered'}));
+      assert.equal(changes,settled,'late resolution performs no second cleanup');
+    } finally {await daemon.stop();}
+  });
+}

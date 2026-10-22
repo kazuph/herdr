@@ -1,0 +1,67 @@
+name: kazuph mac-dialog release
+on:
+  push:
+    tags: ['kazuph-mac-dialog-v*']
+permissions:
+  contents: read
+concurrency:
+  group: kazuph-mac-dialog-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'kazuph/herdr'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Validate trusted tag and architecture
+        shell: bash
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^kazuph-mac-dialog-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$(uname -sm)" = 'Darwin arm64'
+      - name: Build and verify Developer ID signatures
+        shell: bash
+        env:
+          MACOS_DEVELOPER_ID_P12: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+        run: bash apps/mac-dialog-decisions/scripts/herdr-sign-release.sh "${GITHUB_REF_NAME#kazuph-mac-dialog-v}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signed-mac-dialog
+          if-no-files-found: error
+          path: |
+            apps/mac-dialog-decisions/dist-release/mac-dialog-decisions-darwin-arm64.tar.gz
+            apps/mac-dialog-decisions/dist-release/SHA256SUMS
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: signed-mac-dialog
+          path: artifacts
+      - name: Publish complete release without replacing an existing tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: kazuph/herdr
+        run: |
+          set -euo pipefail
+          cd artifacts
+          test -s mac-dialog-decisions-darwin-arm64.tar.gz
+          test -s SHA256SUMS
+          sha256sum -c SHA256SUMS
+          # Any API failure other than a confirmed 404 is fatal. Never update
+          # assets of an existing draft or published release on a rerun.
+          response="$(mktemp)"
+          status="$(curl --silent --show-error --output "$response" --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GH_REPO/releases/tags/$GITHUB_REF_NAME")"
+          test "$status" = 404 || { echo 'release already exists or cannot be checked; refusing replacement' >&2; exit 1; }
+          gh release create "$GITHUB_REF_NAME" --repo "$GH_REPO" --verify-tag --draft \
+            --title "$GITHUB_REF_NAME" --notes 'Herdr decision dialogs for macOS Apple silicon. Developer ID signed; not notarized.' --latest=false \
+            mac-dialog-decisions-darwin-arm64.tar.gz SHA256SUMS
+          gh release edit "$GITHUB_REF_NAME" --repo "$GH_REPO" --draft=false --latest=false

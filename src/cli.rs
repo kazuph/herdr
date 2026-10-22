@@ -17,6 +17,7 @@ mod completion;
 mod decision;
 mod guard;
 mod integration;
+mod mac_dialog;
 mod machine;
 mod notification;
 mod pane;
@@ -91,6 +92,7 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "pane" => pane::run_pane_command(&args[2..])?,
         "plugin" => plugin::run_plugin_command(&args[2..])?,
         "tb" => tb::run_tb_command(&args[2..])?,
+        "mac-dialog" => mac_dialog::run_mac_dialog_command(&args[2..])?,
         "guard" => guard::run_guard_command(&args[2..])?,
         "send" => comms::msg_send(&args[2..])?,
         "run" => comms::herdr_run(&args[2..])?,
