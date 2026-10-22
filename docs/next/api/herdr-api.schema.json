@@ -1492,6 +1492,9 @@
       "$defs": {
         "AgentPromptParams": {
           "properties": {
+            "force": {
+              "type": "boolean"
+            },
             "target": {
               "type": "string"
             },
@@ -1593,6 +1596,9 @@
         },
         "AgentSendParams": {
           "properties": {
+            "force": {
+              "type": "boolean"
+            },
             "target": {
               "type": "string"
             },
@@ -3875,6 +3881,9 @@
         },
         "PaneSendInputParams": {
           "properties": {
+            "force": {
+              "type": "boolean"
+            },
             "keys": {
               "items": {
                 "type": "string"
@@ -3895,6 +3904,9 @@
         },
         "PaneSendKeysParams": {
           "properties": {
+            "force": {
+              "type": "boolean"
+            },
             "keys": {
               "items": {
                 "type": "string"
@@ -3913,6 +3925,9 @@
         },
         "PaneSendTextParams": {
           "properties": {
+            "force": {
+              "type": "boolean"
+            },
             "pane_id": {
               "type": "string"
             },

@@ -952,6 +952,7 @@ fn pane_close(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn pane_send_text(args: &[String]) -> std::io::Result<i32> {
+    let (force, args) = super::external_input_force(args);
     if args.len() < 2 {
         eprintln!("usage: herdr pane send-text <pane_id> <text>");
         return Ok(2);
@@ -959,10 +960,15 @@ fn pane_send_text(args: &[String]) -> std::io::Result<i32> {
 
     let pane_id = super::normalize_pane_id(&args[0]);
     let text = args[1..].join(" ");
-    super::send_ok_request(Method::PaneSendText(PaneSendTextParams { pane_id, text }))
+    super::send_ok_request(Method::PaneSendText(PaneSendTextParams {
+        force,
+        pane_id,
+        text,
+    }))
 }
 
 fn pane_send_keys(args: &[String]) -> std::io::Result<i32> {
+    let (force, args) = super::external_input_force(args);
     if args.len() < 2 {
         eprintln!("usage: herdr pane send-keys <pane_id> <key> [key ...]");
         return Ok(2);
@@ -970,10 +976,15 @@ fn pane_send_keys(args: &[String]) -> std::io::Result<i32> {
 
     let pane_id = super::normalize_pane_id(&args[0]);
     let keys = args[1..].to_vec();
-    super::send_ok_request(Method::PaneSendKeys(PaneSendKeysParams { pane_id, keys }))
+    super::send_ok_request(Method::PaneSendKeys(PaneSendKeysParams {
+        force,
+        pane_id,
+        keys,
+    }))
 }
 
 fn pane_run(args: &[String]) -> std::io::Result<i32> {
+    let (force, args) = super::external_input_force(args);
     if args.len() < 2 {
         eprintln!("usage: herdr pane run <pane_id> <command>");
         return Ok(2);
@@ -982,6 +993,7 @@ fn pane_run(args: &[String]) -> std::io::Result<i32> {
     let pane_id = super::normalize_pane_id(&args[0]);
     let text = args[1..].join(" ");
     super::send_ok_request(Method::PaneSendInput(PaneSendInputParams {
+        force,
         pane_id,
         text,
         keys: vec!["Enter".into()],

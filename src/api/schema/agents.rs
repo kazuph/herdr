@@ -18,6 +18,8 @@ pub struct AgentReadParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentSendParams {
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub force: bool,
     pub target: String,
     pub text: String,
 }
@@ -244,6 +246,8 @@ pub struct AgentSessionInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentPromptParams {
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub force: bool,
     pub target: String,
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

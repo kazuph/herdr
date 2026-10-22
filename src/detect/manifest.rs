@@ -405,6 +405,23 @@ pub fn explain_with_input(agent: Agent, input: DetectionInput<'_>) -> DetectionE
     evaluate_loaded_manifest(agent, input, loaded, true)
 }
 
+/// Independently checks blocker rules without changing the winning state rule.
+pub fn visible_blocker_with_input(agent: Agent, input: DetectionInput<'_>) -> bool {
+    let Some(loaded) = load_manifest(agent) else {
+        return false;
+    };
+    loaded
+        .manifest
+        .rules
+        .iter()
+        .zip(&loaded.compiled_rules)
+        .any(|(rule, compiled)| {
+            rule.visible_blocker
+                && rule.state.map(AgentState::from) == Some(AgentState::Blocked)
+                && compiled_rule_matches(compiled, region(input, &rule.region))
+        })
+}
+
 pub fn explain_for_label(agent_label: &str, screen_content: &str) -> DetectionExplain {
     let Some(agent) = parse_agent_label(agent_label) else {
         return DetectionExplain {

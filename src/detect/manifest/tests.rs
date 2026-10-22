@@ -1231,3 +1231,26 @@ fn claude_separate_cancel_prose_does_not_match_wrapped_footer() {
         }
     });
 }
+
+#[test]
+fn input_blocker_is_independent_of_winning_working_rule() {
+    with_manifest_dirs("input-blocker-working", || {
+        let screen = include_str!("../fixtures/claude-narrow-multi-question.txt");
+        let input = DetectionInput {
+            screen,
+            osc_title: "⠂ project",
+            osc_progress: "",
+        };
+        let before = explain_with_input(Agent::Claude, input);
+        assert_eq!(before.state, AgentState::Working);
+        assert!(visible_blocker_with_input(Agent::Claude, input));
+        assert_eq!(explain_with_input(Agent::Claude, input), before);
+        assert!(!visible_blocker_with_input(
+            Agent::Claude,
+            DetectionInput {
+                screen: "普通の回答\n1. first\n2. second\n❯",
+                ..input
+            }
+        ));
+    });
+}

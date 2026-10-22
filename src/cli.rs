@@ -37,6 +37,17 @@ const TERMINAL_SESSION_OBSERVE_USAGE: &str =
 const TERMINAL_SESSION_CONTROL_USAGE: &str =
     "usage: herdr terminal session control <target> [--takeover] [--cols N] [--rows N]";
 
+fn external_input_force(args: &[String]) -> (bool, &[String]) {
+    if args
+        .first()
+        .is_some_and(|arg| matches!(arg.as_str(), "-f" | "--force"))
+    {
+        (true, &args[1..])
+    } else {
+        (false, args)
+    }
+}
+
 pub(crate) fn parse_token_assignment(raw: &str) -> Result<(String, Option<String>), String> {
     let Some((key, value)) = raw.split_once('=') else {
         return Err("token must use NAME=VALUE".into());

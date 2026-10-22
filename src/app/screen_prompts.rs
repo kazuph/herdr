@@ -29,14 +29,14 @@ use crate::screen_prompt::{
 /// Decision origin reason marking decisions created from pane screens.
 pub(crate) const SCREEN_PROMPT_REASON: &str = "screen_prompt";
 /// How often blocked panes are re-scanned while the feature is active.
-const SCREEN_PROMPT_SCAN_INTERVAL: Duration = Duration::from_millis(400);
+pub(super) const SCREEN_PROMPT_SCAN_INTERVAL: Duration = Duration::from_millis(400);
 /// Consecutive reads that no longer show the watched prompt before the watch
 /// is released and the pending decision cancelled.
 const SCREEN_PROMPT_MISMATCH_LIMIT: u8 = 2;
 /// Extra scrollback rows above the viewport included in every screen-prompt
 /// read — a permission dialog taller than the pane keeps its header, the
 /// full command box and the `⏺` call line reachable for the title.
-const SCREEN_PROMPT_EXTRA_ROWS: usize = 24;
+pub(super) const SCREEN_PROMPT_EXTRA_ROWS: usize = 24;
 /// Cancel+recreate rebuilds inside this window mark a pane as churning.
 const SCREEN_PROMPT_FLOOD_WINDOW: Duration = Duration::from_secs(30);
 /// Rebuild count inside the window that triggers the flood brake — beyond
@@ -301,6 +301,7 @@ impl App {
         });
         [
             scan_deadline,
+            self.input_guard_scan_at,
             self.deferred_pane_writes
                 .iter()
                 .map(DeferredPaneWrite::at)
@@ -314,6 +315,7 @@ impl App {
     /// Deadline-driven work for the TUI and headless loops: flush due writes
     /// and run a scan when its scheduled instant passed.
     pub(crate) fn screen_prompt_tasks(&mut self, now: Instant) -> bool {
+        self.input_guard_tasks(now);
         let mut changed = self.flush_deferred_pane_writes(now);
         if self
             .screen_prompt_scan_at
