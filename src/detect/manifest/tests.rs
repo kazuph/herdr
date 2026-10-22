@@ -1254,3 +1254,28 @@ fn input_blocker_is_independent_of_winning_working_rule() {
         ));
     });
 }
+
+#[test]
+fn input_blocker_does_not_block_code_explaining_confirmation_controls() {
+    with_manifest_dirs("input-blocker-quoted-controls", || {
+        // This is a constructed contract counterexample, not a captured UI fixture.
+        let screen = concat!(
+            "Here is code that explains a confirmation footer:\n```rust\n",
+            "println!(\"Enter to select · Tab/Arrow keys to navigate · Esc to cancel\");\n",
+            "```\n",
+        );
+        let input = DetectionInput {
+            screen,
+            osc_title: "⠂ project",
+            osc_progress: "",
+        };
+        assert_eq!(
+            explain_with_input(Agent::Claude, input).state,
+            AgentState::Working
+        );
+        assert!(
+            !visible_blocker_with_input(Agent::Claude, input),
+            "quoted code contains no active confirmation controls and must not hold input"
+        );
+    });
+}
