@@ -934,7 +934,8 @@ mod tests {
                 .guard_external_input(0, pane_id, false)
                 .unwrap_err();
             assert_eq!(error.code, "pane_confirmation_pending");
-            assert!(error.message.contains("Accept / Decline"));
+            assert!(error.message.contains("1. Accept"));
+            assert!(error.message.contains("2. Decline"));
             assert!(harness.app.guard_external_input(0, pane_id, true).is_ok());
             draw_question(harness, "────────────────────────\n❯ Ordinary input\n────────────────────────\n? for shortcuts\n");
             harness.app.input_guard_tasks(std::time::Instant::now());
@@ -943,6 +944,85 @@ mod tests {
                 harness.received_texts("claude"),
                 vec!["regular\r", "completion", "\r"]
             );
+        });
+    }
+
+    #[test]
+    fn mcp_decision_answer_passes_guard_while_mail_waits_for_screen_disappearance() {
+        with_msg_api_harness(&["claude"], |harness| {
+            let previous_db = std::env::var_os(crate::dispatch::HERDR_DB_PATH_ENV_VAR);
+            std::env::set_var(crate::dispatch::HERDR_DB_PATH_ENV_VAR, &harness.db_path);
+            harness.app.state.decisions_screen_prompts = true;
+            let pane = harness.global_pane_id("claude");
+            let pane_id = harness.agents["claude"].pane_id;
+            draw_question(
+                harness,
+                include_str!("../../tests/fixtures/screen_prompts/claude_mcp_accept.txt"),
+            );
+            harness.report_state("claude", PaneAgentState::Blocked);
+            harness.app.screen_prompt_scan_at = Some(std::time::Instant::now());
+            harness.app.screen_prompt_tasks(std::time::Instant::now());
+            let store = crate::decision::DecisionStore::open_active().unwrap();
+            let pending = store
+                .list(Some(crate::api::schema::DecisionStatus::Pending))
+                .unwrap();
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].options[0].label, "Accept");
+            assert_eq!(pending[0].options[1].label, "Decline");
+            // The hook may report Working while the MCP decision remains visible.
+            harness.report_state("claude", PaneAgentState::Working);
+            assert!(harness.app.pane_has_visible_blocker(0, pane_id));
+            assert!(harness
+                .send("sender", &pane, "mcp-decision", "regular")
+                .is_empty());
+            assert!(harness
+                .send("herdr-run", &pane, crate::msg::JOBS_ROOM, "completion")
+                .is_empty());
+            assert!(harness.received_texts("claude").is_empty());
+            assert!(harness.app.guard_external_input(0, pane_id, true).is_err());
+            assert!(harness.app.guard_external_input(0, pane_id, false).is_err());
+            let response = harness.app.handle_api_request(Request {
+                id: "dialog-answer".into(),
+                method: Method::DecisionAnswer(crate::api::schema::DecisionAnswerParams {
+                    decision_id: pending[0].decision_id.clone(),
+                    option_id: Some("1".into()),
+                    option_ids: None,
+                    text: None,
+                    responder: Some("mac-dialog".into()),
+                }),
+            });
+            success_result(&response);
+            harness
+                .app
+                .screen_prompt_tasks(std::time::Instant::now() + std::time::Duration::from_secs(5));
+            assert_eq!(harness.received_texts("claude"), vec!["\r"]);
+            assert!(store
+                .list(Some(crate::api::schema::DecisionStatus::Pending))
+                .unwrap()
+                .is_empty());
+            harness
+                .app
+                .input_guard_tasks(std::time::Instant::now() + std::time::Duration::from_secs(5));
+            harness.drain_events();
+            assert!(
+                harness.received_texts("claude").is_empty(),
+                "answer resolution alone must not release mail"
+            );
+            assert!(harness.history("mcp-decision")[0].delivered_at.is_none());
+            draw_question(harness, "────────────────────────\n❯ Ordinary input\n────────────────────────\n? for shortcuts\n");
+            harness
+                .app
+                .input_guard_tasks(std::time::Instant::now() + std::time::Duration::from_secs(10));
+            harness.drain_events();
+            assert_eq!(
+                harness.received_texts("claude"),
+                vec!["regular\r", "completion", "\r"]
+            );
+            if let Some(previous) = previous_db {
+                std::env::set_var(crate::dispatch::HERDR_DB_PATH_ENV_VAR, previous);
+            } else {
+                std::env::remove_var(crate::dispatch::HERDR_DB_PATH_ENV_VAR);
+            }
         });
     }
 

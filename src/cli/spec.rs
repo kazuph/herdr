@@ -44,6 +44,19 @@ pub(super) fn command() -> Command {
         .subcommand(machine_command())
         .subcommand(plugin_command())
         .subcommand(
+            Command::new("mac-dialog")
+                .about("Install signed decision dialogs (macOS Apple silicon)")
+                .subcommand(
+                    Command::new("install")
+                        .about("Install or update decision dialogs")
+                        .arg(option("version", "MAJOR.MINOR.PATCH")),
+                )
+                .subcommand(
+                    Command::new("status")
+                        .about("Show registered, running and latest dialog versions"),
+                ),
+        )
+        .subcommand(
             Command::new("tb")
                 .about("Install the bundled terminal browser (macOS Apple silicon)")
                 .subcommand(

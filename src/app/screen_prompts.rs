@@ -223,6 +223,13 @@ pub(crate) enum DeferredPaneWrite {
     /// Confirm a single-select answer on a question that draws option
     /// previews: the digit moved the cursor, Enter selects it once the
     /// cursor sits on the answered option of the same prompt.
+    McpConfirm {
+        at: Instant,
+        ws_idx: usize,
+        pane_id: PaneId,
+        signature: String,
+        number: u32,
+    },
     PreviewConfirm {
         at: Instant,
         ws_idx: usize,
@@ -269,6 +276,7 @@ impl DeferredPaneWrite {
         match self {
             Self::Bytes { at, .. }
             | Self::MultiSelectSubmit { at, .. }
+            | Self::McpConfirm { at, .. }
             | Self::PreviewConfirm { at, .. }
             | Self::PreviewScanStep { at, .. }
             | Self::AmendStep { at, .. } => *at,
@@ -635,6 +643,17 @@ impl App {
                         attempts_left,
                     );
                 }
+                DeferredPaneWrite::McpConfirm {
+                    ws_idx,
+                    pane_id,
+                    signature,
+                    number,
+                    ..
+                } => {
+                    if !self.pane_user_input_recent(ws_idx, pane_id) {
+                        self.finish_mcp_confirm(ws_idx, pane_id, &signature, number);
+                    }
+                }
                 DeferredPaneWrite::PreviewConfirm {
                     ws_idx,
                     pane_id,
@@ -974,6 +993,12 @@ impl App {
                 machine: Some("local".to_string()),
                 ..DecisionOrigin::default()
             };
+            if let Some(server) = &prompt.mcp_server {
+                origin.agent = Some(format!(
+                    "{} / MCP server “{server}”",
+                    origin.agent.as_deref().unwrap_or("Claude Code")
+                ));
+            }
             self.enrich_decision_origin(&mut origin);
             origin
         };
@@ -989,9 +1014,19 @@ impl App {
         })
     }
 
-    /// Identical option ids+labels after volatile-display normalisation —
-    /// the answer surface is the same prompt's.
+    /// Identical MCP source and option ids+labels after volatile-display
+    /// normalisation, including the flood-brake and startup adoption paths.
     fn same_prompt_options(existing: &Decision, parts: &PromptDecisionParts) -> bool {
+        let server = |origin: Option<&DecisionOrigin>| {
+            origin
+                .and_then(|origin| origin.agent.as_deref())
+                .and_then(|agent| agent.split_once(" / MCP server “"))
+                .and_then(|(_, server)| server.strip_suffix('”'))
+                .map(str::to_string)
+        };
+        if server(existing.origin.as_ref()) != server(Some(&parts.origin)) {
+            return false;
+        }
         existing
             .options
             .iter()
@@ -1363,6 +1398,26 @@ impl App {
             }
         }
 
+        // An unreadable MCP screen must never fall through to numeric delivery.
+        if prompt.as_ref().is_some_and(|p| p.mcp_server.is_some())
+            || decision
+                .origin
+                .as_ref()
+                .and_then(|o| o.agent.as_deref())
+                .is_some_and(|a| a.contains("/ MCP server “"))
+        {
+            if let (Some(live), Some(number)) = (
+                prompt.as_ref().filter(|p| p.mcp_server.is_some()),
+                answer
+                    .and_then(|a| a.option_id.as_deref())
+                    .and_then(|id| id.parse::<u32>().ok())
+                    .filter(|n| matches!(n, 1 | 2)),
+            ) {
+                self.start_mcp_answer(ws_idx, pane_id, live, number);
+            }
+            return;
+        }
+
         if decision.multi_select {
             self.deliver_multi_select(ws_idx, pane_id, decision, prompt.as_ref(), answer);
             return;
@@ -1551,6 +1606,66 @@ impl App {
                     number,
                     attempts_left: PREVIEW_CONFIRM_RETRIES,
                 });
+        }
+    }
+
+    fn start_mcp_answer(
+        &mut self,
+        ws_idx: usize,
+        pane_id: PaneId,
+        prompt: &ScreenPrompt,
+        number: u32,
+    ) {
+        let Some(Focused::Option(current @ (1 | 2))) = prompt.focused else {
+            return;
+        };
+        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+            return;
+        };
+        if current != number {
+            let code = if number == 1 {
+                crossterm::event::KeyCode::Up
+            } else {
+                crossterm::event::KeyCode::Down
+            };
+            let bytes = runtime.encode_terminal_key(crate::input::TerminalKey::new(
+                code,
+                crossterm::event::KeyModifiers::NONE,
+            ));
+            if runtime.try_send_bytes(Bytes::from(bytes)).is_err() {
+                return;
+            }
+        }
+        self.deferred_pane_writes
+            .push(DeferredPaneWrite::McpConfirm {
+                at: Instant::now() + FREE_TEXT_ENTER_DELAY,
+                ws_idx,
+                pane_id,
+                signature: prompt.signature(),
+                number,
+            });
+    }
+
+    fn finish_mcp_confirm(&mut self, ws_idx: usize, pane_id: PaneId, signature: &str, number: u32) {
+        let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
+            return;
+        };
+        let screen = runtime.detection_text_unwrapped_extra(SCREEN_PROMPT_EXTRA_ROWS);
+        let Some(prompt) = parse_screen_prompt(&screen) else {
+            return;
+        };
+        if prompt.mcp_server.is_none()
+            || prompt.signature() != signature
+            || prompt.focused != Some(Focused::Option(number))
+        {
+            return;
+        }
+        let bytes = runtime.encode_terminal_key(crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        if let Err(error) = runtime.try_send_bytes(Bytes::from(bytes)) {
+            warn!(%error, "MCP answer confirmation failed");
         }
     }
 
@@ -2444,6 +2559,7 @@ fn is_submit_confirmation(prompt: &ScreenPrompt) -> bool {
 fn option_role(label: &str) -> DecisionOptionRole {
     let lower = label.trim_start().to_lowercase();
     if lower.starts_with("yes")
+        || lower == "accept"
         || lower.starts_with("approve")
         || lower.starts_with("allow")
         || lower.starts_with("proceed")
@@ -2451,6 +2567,7 @@ fn option_role(label: &str) -> DecisionOptionRole {
     {
         DecisionOptionRole::Approve
     } else if lower.starts_with("no")
+        || lower == "decline"
         || lower.starts_with("deny")
         || lower.starts_with("reject")
         || lower.starts_with("cancel")
@@ -2465,6 +2582,161 @@ fn option_role(label: &str) -> DecisionOptionRole {
 
 #[cfg(test)]
 mod tests {
+
+    const MCP_ACCEPT: &str =
+        include_str!("../../tests/fixtures/screen_prompts/claude_mcp_accept.txt");
+    const MCP_DECLINE: &str =
+        include_str!("../../tests/fixtures/screen_prompts/claude_mcp_decline.txt");
+
+    #[tokio::test]
+    async fn mcp_server_change_cancels_old_approval_before_accepting_answers() {
+        let _guard = crate::config::lock_test_config_env();
+        for restart in [false, true] {
+            for flood in [false, true] {
+                for cut_title in [false, true] {
+                    let (mut app, pane, _) = test_app("mcp-source", &crlf(MCP_ACCEPT), true);
+                    app.scan_screen_prompts(Instant::now());
+                    let old = pending_decisions().pop().unwrap();
+                    if restart {
+                        app.screen_prompt_watches.remove(&pane);
+                    }
+                    if flood {
+                        for _ in 0..SCREEN_PROMPT_FLOOD_LIMIT {
+                            app.record_pane_rebuild(pane);
+                        }
+                    }
+                    let mut next = MCP_ACCEPT.replace("codex-cu", "different-server");
+                    if cut_title {
+                        next = next.replace("Allow Computer Use to use", "use");
+                    }
+                    let mut rx = replace_screen(&mut app, pane, &crlf(&next));
+                    rescan_until_adopted(&mut app);
+                    let current = pending_decisions().pop().unwrap();
+                    assert_ne!(
+                        old.decision_id, current.decision_id,
+                        "restart={restart} flood={flood} cut={cut_title}"
+                    );
+                    assert!(all_decisions()
+                        .iter()
+                        .any(|d| d.decision_id == old.decision_id
+                            && d.status == DecisionStatus::Cancelled));
+                    let response = answer_response(&mut app, &old.decision_id, Some("1"), None);
+                    assert!(response.contains("\"error\""));
+                    app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(5));
+                    assert!(rx.try_recv().is_err(), "no keys into the other MCP server");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_answers_use_arrows_confirm_focus_then_enter_in_both_directions() {
+        let _guard = crate::config::lock_test_config_env();
+        for (screen, target, next, arrow) in [
+            (MCP_ACCEPT, "2", MCP_DECLINE, b'B'),
+            (MCP_DECLINE, "1", MCP_ACCEPT, b'A'),
+        ] {
+            let (mut app, pane, mut rx) = test_app("mcp-arrows", &crlf(screen), true);
+            app.scan_screen_prompts(Instant::now());
+            let decision = pending_decisions().pop().expect("MCP decision");
+            assert_eq!(decision.kind, DecisionKind::ToolPermission);
+            assert!(decision
+                .origin
+                .as_ref()
+                .unwrap()
+                .agent
+                .as_deref()
+                .unwrap()
+                .contains("codex-cu"));
+            assert_eq!(decision.options[0].role, DecisionOptionRole::Approve);
+            assert_eq!(decision.options[1].role, DecisionOptionRole::Reject);
+            assert!(!decision.allow_text);
+            assert!(app.pane_has_visible_blocker(0, pane));
+            assert!(app.guard_external_input(0, pane, true).is_err());
+            let refused = app.guard_external_input(0, pane, false).unwrap_err();
+            assert_eq!(refused.code, "pane_confirmation_pending");
+            assert!(rx.try_recv().is_err(), "external refusal sends no keys");
+            answer(&mut app, &decision.decision_id, Some(target), None);
+            assert_eq!(drain_arrow(&mut rx), arrow);
+            rx = replace_screen(&mut app, pane, &crlf(next));
+            app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(5));
+            assert_eq!(
+                rx.try_recv().expect("Enter after focus check").as_ref(),
+                b"\r"
+            );
+            assert!(rx.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_confirmation_sends_nothing_on_change_disappearance_wrong_focus_or_human_input() {
+        let _guard = crate::config::lock_test_config_env();
+        for (next, human) in [
+            (MCP_ACCEPT.to_string(), false),
+            (MCP_DECLINE.replace("TextEdit", "Other"), false),
+            (MCP_DECLINE.replace("codex-cu", "other-server"), false),
+            (IDLE_SCREEN.to_string(), false),
+            (MCP_DECLINE.to_string(), true),
+        ] {
+            let (mut app, pane, mut rx) = test_app("mcp-abort", &crlf(MCP_ACCEPT), true);
+            app.scan_screen_prompts(Instant::now());
+            let decision = pending_decisions().pop().unwrap();
+            answer(&mut app, &decision.decision_id, Some("2"), None);
+            assert_eq!(drain_arrow(&mut rx), b'B');
+            rx = replace_screen(&mut app, pane, &crlf(&next));
+            if human {
+                app.lookup_runtime_sender(0, pane)
+                    .unwrap()
+                    .note_user_input();
+            }
+            app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(5));
+            assert!(rx.try_recv().is_err());
+            assert!(app.deferred_pane_writes.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_answer_sends_no_initial_keys_after_input_or_unreadable_or_changed_screen() {
+        let _guard = crate::config::lock_test_config_env();
+        for (screen, human) in [
+            (MCP_ACCEPT.to_string(), true),
+            (IDLE_SCREEN.to_string(), false),
+            (MCP_ACCEPT.replace("TextEdit", "Other"), false),
+        ] {
+            let (mut app, pane, _) = test_app("mcp-initial-abort", &crlf(MCP_ACCEPT), true);
+            app.scan_screen_prompts(Instant::now());
+            let decision = pending_decisions().pop().unwrap();
+            let mut rx = replace_screen(&mut app, pane, &crlf(&screen));
+            if human {
+                app.lookup_runtime_sender(0, pane)
+                    .unwrap()
+                    .note_user_input();
+            }
+            let answer = crate::api::schema::DecisionAnswer {
+                option_id: Some("2".into()),
+                option_ids: None,
+                text: None,
+                responder: None,
+                answered_unix_ms: 0,
+            };
+            app.deliver_screen_prompt_answer(0, pane, &decision, Some(&answer));
+            app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(5));
+            assert!(rx.try_recv().is_err());
+            assert!(app.deferred_pane_writes.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_already_focused_answer_is_rechecked_before_enter() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, _, mut rx) = test_app("mcp-same", &crlf(MCP_ACCEPT), true);
+        app.scan_screen_prompts(Instant::now());
+        let id = pending_decisions().pop().unwrap().decision_id;
+        answer(&mut app, &id, Some("1"), None);
+        assert!(rx.try_recv().is_err());
+        app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(5));
+        assert_eq!(rx.try_recv().unwrap().as_ref(), b"\r");
+    }
     use super::*;
     use crate::api::schema::DecisionAnswerParams;
     use crate::workspace::Workspace;
@@ -3519,6 +3791,69 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         assert!(options[2].preview.is_none());
         assert!(!options[2].preview_unavailable);
         assert!(options.iter().all(|o| !o.preview_unavailable));
+    }
+
+    #[tokio::test]
+    async fn real_table_preview_scan_restores_nonfirst_cursor_without_recreating_decision() {
+        let _guard = crate::config::lock_test_config_env();
+        let original = include_str!("../../tests/fixtures/screen_prompts/claude_preview_table.txt");
+        let frame = |number: u32| {
+            original
+                .replace("❯ 2. 案B", "  2. 案B")
+                .replace(&format!("  {number}. 案"), &format!("❯ {number}. 案"))
+                .replace("[店長] --依頼-->", &format!("[選択{number}] --依頼-->"))
+        };
+        let (mut app, pane_id, _) = test_app("real-table-preview", IDLE_SCREEN, true);
+        let install = |app: &mut App, text: &str| {
+            let (runtime, rx) =
+                crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                    240,
+                    100,
+                    0,
+                    crlf(text).as_bytes(),
+                    16,
+                );
+            app.state.workspaces[0].tabs[0]
+                .runtimes
+                .insert(pane_id, runtime);
+            rx
+        };
+        let mut rx = install(&mut app, &frame(2));
+        let mut now = Instant::now();
+        app.scan_screen_prompts(now);
+        assert!(pending_decisions().is_empty());
+        for (number, key) in [(1, b'A'), (2, b'B'), (3, b'B'), (2, b'A')] {
+            now += Duration::from_secs(1);
+            app.flush_deferred_pane_writes(now);
+            assert_eq!(drain_arrow(&mut rx), key);
+            assert!(rx.try_recv().is_err());
+            rx = install(&mut app, &frame(number));
+        }
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert!(
+            rx.try_recv().is_err(),
+            "no keys after original cursor restored"
+        );
+        assert!(app.preview_scans.is_empty());
+        let pending = pending_decisions();
+        assert_eq!(pending.len(), 1);
+        let id = pending[0].decision_id.clone();
+        for (index, option) in pending[0].options.iter().enumerate() {
+            assert!(option
+                .preview
+                .as_deref()
+                .expect("visited preview")
+                .contains(&format!("選択{}", index + 1)));
+            assert!(!option.preview_unavailable);
+        }
+        for _ in 0..3 {
+            now += Duration::from_secs(1);
+            app.scan_screen_prompts(now);
+        }
+        assert_eq!(all_decisions().len(), 1, "one creation and no cancellation");
+        assert_eq!(pending_decisions()[0].decision_id, id);
+        assert!(rx.try_recv().is_err());
     }
 
     /// Walk a preview scan over the three-option fixture so the decision
