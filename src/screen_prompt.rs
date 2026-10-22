@@ -120,6 +120,7 @@ pub(crate) struct ScreenPrompt {
     /// Prompt header: the `☐`/`☒` checkbox line above the options, or the
     /// multi-question progress label ("質問 n/N <tab>", "最終確認").
     pub header: String,
+    pub mcp_server: Option<String>,
     /// Question/prompt text collected above the options.
     pub question: String,
     /// Volatile notice lifted out of the question — Claude Code's AFK
@@ -180,7 +181,7 @@ impl ScreenPrompt {
 
     /// A question header or free-text slot distinguishes questions from permissions.
     pub fn is_question(&self) -> bool {
-        !self.header.is_empty() || self.free_text.is_some()
+        self.mcp_server.is_none() && (!self.header.is_empty() || self.free_text.is_some())
     }
 
     /// saberante's `prompt_key`: identity of the visible prompt so the same
@@ -210,6 +211,7 @@ impl ScreenPrompt {
                 .collect::<BTreeMap<u32, String>>(),
             self.free_text,
             self.multi_select,
+            &self.mcp_server,
         ))
         .unwrap_or_default()
     }
@@ -531,12 +533,83 @@ fn footer_offers_amend(footer: &[&str]) -> bool {
 /// numbered option block anchored by a prompt footer or by the screen bottom.
 pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     let raw_lines: Vec<&str> = screen.lines().collect();
+    if let Some(header) = raw_lines
+        .iter()
+        .rposition(|line| line.trim_start().starts_with("MCP server "))
+    {
+        let mcp_end = raw_lines
+            .iter()
+            .enumerate()
+            .skip(header)
+            .find(|(_, line)| PROMPT_END_RE.is_match(line))
+            .map(|(row, _)| row);
+        let last_end = raw_lines
+            .iter()
+            .rposition(|line| PROMPT_END_RE.is_match(line));
+        // A historical MCP confirmation must not hide a later numbered question.
+        if mcp_end.is_none() || mcp_end == last_end {
+            return parse_mcp_confirmation(screen);
+        }
+    }
     for preview in extract_preview_boxes(&raw_lines) {
         if let Some(prompt) = parse_prompt_lines(&raw_lines, Some(preview)) {
             return Some(prompt);
         }
     }
     parse_prompt_lines(&raw_lines, None)
+}
+
+fn parse_mcp_confirmation(screen: &str) -> Option<ScreenPrompt> {
+    let lines: Vec<_> = screen
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let footer = lines.len().checked_sub(1)?;
+    if lines[footer] != "Esc to cancel · ↑/↓ to navigate" {
+        return None;
+    }
+    let options = footer.checked_sub(1)?;
+    let focused = match lines[options]
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["❯", "Accept", "Decline"] => 1,
+        ["Accept", "❯", "Decline"] => 2,
+        _ => return None,
+    };
+    let header = lines[..options]
+        .iter()
+        .rposition(|line| line.starts_with("MCP server “"))?;
+    let server = lines[header]
+        .strip_prefix("MCP server “")?
+        .strip_suffix("” requests your input")?;
+    // Only the captured confirmation form has a single question and no fields.
+    if server.is_empty() || options != header + 2 {
+        return None;
+    }
+    Some(ScreenPrompt {
+        header: String::new(),
+        mcp_server: Some(server.to_string()),
+        question: lines[header + 1].to_string(),
+        notice: None,
+        choices: [(1, "Accept".to_string()), (2, "Decline".to_string())].into(),
+        descriptions: BTreeMap::new(),
+        free_text: None,
+        shortcuts: BTreeMap::new(),
+        mq: None,
+        multi_select: false,
+        checked: Default::default(),
+        previews: BTreeMap::new(),
+        preview_box: false,
+        preview_none: Default::default(),
+        advance: false,
+        advance_after: None,
+        focused: Some(Focused::Option(focused)),
+        amend: false,
+        codex_notes_open: false,
+    })
 }
 
 type PreviewBox = (usize, usize, usize, Vec<String>);
@@ -985,6 +1058,7 @@ fn parse_prompt_lines(raw_lines: &[&str], preview: Option<PreviewBox>) -> Option
         .collect();
     let mut prompt = ScreenPrompt {
         header,
+        mcp_server: None,
         question,
         notice,
         choices,
@@ -1184,6 +1258,47 @@ fn parse_mq_tabs(lines: &[&str], before: usize) -> Option<MqInfo> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn historical_mcp_does_not_hide_the_new_numbered_question() {
+        let history = include_str!("../tests/fixtures/screen_prompts/claude_mcp_accept.txt");
+        let current = "次の質問です\n\n❯ 1. Yes\n  2. No\n\nEnter to select · Esc to cancel";
+        let prompt = super::parse_screen_prompt(&format!("{history}\n{current}")).unwrap();
+        assert!(prompt.mcp_server.is_none());
+        assert_eq!(prompt.title(), "次の質問です");
+        assert!(super::parse_screen_prompt(&format!("{current}\n{history}"))
+            .unwrap()
+            .mcp_server
+            .is_some());
+    }
+
+    #[test]
+    fn mcp_real_accept_decline_screens_and_identity() {
+        let accept = include_str!("../tests/fixtures/screen_prompts/claude_mcp_accept.txt");
+        let decline = include_str!("../tests/fixtures/screen_prompts/claude_mcp_decline.txt");
+        let a = super::parse_screen_prompt(accept).expect("actual MCP confirmation");
+        let d = super::parse_screen_prompt(decline).expect("actual Decline focus");
+        assert_eq!(a.title(), "Allow Computer Use to use \"TextEdit\"?");
+        assert_eq!(a.mcp_server.as_deref(), Some("codex-cu"));
+        assert!(!a.is_question());
+        assert_eq!(a.focused, Some(super::Focused::Option(1)));
+        assert_eq!(d.focused, Some(super::Focused::Option(2)));
+        assert_eq!(a.signature(), d.signature());
+        assert_ne!(
+            a.signature(),
+            super::parse_screen_prompt(&accept.replace("codex-cu", "another-server"))
+                .unwrap()
+                .signature()
+        );
+        for screen in [
+            accept.replace("❯ Accept    Decline", "Name: [         ]"),
+            accept.replace("❯ Accept    Decline", "❯ Accept    Decline    Other"),
+            accept.replace("Allow Computer", "Field: [ ]\n  Allow Computer"),
+            accept.replace("Esc to cancel · ↑/↓ to navigate", ""),
+        ] {
+            assert!(super::parse_screen_prompt(&screen).is_none());
+        }
+    }
     use super::*;
 
     const DIVIDER: &str = "────────────────────────────────────────────────────────────";

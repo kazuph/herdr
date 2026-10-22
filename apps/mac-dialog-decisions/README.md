@@ -70,3 +70,25 @@ node test/e2e.mjs                                      # e2e（隔離 herdr サ�
 - `daemon.test.mjs`: JSON 行の処理、キュー、resolved/machine_down で閉じる、回答コマンドの形（`--machine`・`--responder mac-dialog`）など。
 - `render.test.mjs`: パネルに渡す内容の組み立て（出どころ・全選択肢の説明とプレビューが欠けないこと、長文が切り捨てられないこと）。
 - `e2e.mjs`: 捨て用の XDG/ソケットで本物の `herdr server` を起こし、本物のデーモンにフェイクのダイアログコマンドを差し込んで、回答・キューイング・他所回答によるクローズを確かめます。証拠は `.artifacts/feat-mac-dialog-decisions/e2e/` に出ます。
+
+## 保存マシンへの導入（macOS Apple silicon）
+
+対応する herdr と Node.js を PATH に用意し、親・子それぞれの利用者で実行します。
+
+```sh
+herdr mac-dialog install
+herdr mac-dialog install --version 0.1.0
+herdr mac-dialog status
+```
+
+専用の `kazuph-mac-dialog-vMAJOR.MINOR.PATCH` リリースから最新版（または指定版）を選び、SHA-256、アーカイブの安全性、Developer ID の署名を確認してから `~/.local/share/herdr/mac-dialog-decisions/<版>` へ展開します。旧版を残し、利用者のプラグイン登録を切り替えて常駐を開始します。導入中のロックや失敗時の登録復元があり、同じ版の異なる内容は上書きしません。Linux・Intel Mac は非対応です。自動更新はありません。
+
+親も子も従来どおり `decision watch --all-machines` を購読します。同じ判断待ちにどちらから答えても保存マシンの最初の回答だけが確定し、ほかの表示も閉じます。片方の切断でほかのマシンの窓は閉じません。
+
+`status` は登録版・稼働版・切替待ちと最新版を表示します。新しい常駐役同士では、開いている窓・あとで中・回答再送中の判断待ちがすべて無くなってから新版へ起動し直します。古い常駐役は稼働版不明・切替待ちと表示し、強制停止しません。旧版の起動し直しは、判断待ちが無い時に管理者が行います。
+
+配布版は同梱の署名済み `.app` をそのまま使い、起動時にも署名を確認します。欠落・改変・異なる署名では失敗し、開発ビルドへ戻りません。リポジトリを直接 `herdr plugin link` する開発用では従来どおり `swiftc` でビルドします。ログに使用した方式を表示します。
+
+情シス向け：**KAZUHIRO HOMMA の開発者 ID で署名した、herdr の判断待ちを表示するアプリ。ホーム以下に置き /Applications には入れない。** Team ID は `67M8FDFZ28`、署名名は `Developer ID Application: KAZUHIRO HOMMA (67M8FDFZ28)` です。公証はしません。Apple の署名検証と開発者 ID の一致は `.app` を検証します。同梱 JavaScript・設定ファイルはリリースの HTTPS と SHA-256 で破損を確認し、同じリリースの SHA は作者を独立に証明しません。
+
+配布は root の `.github/workflows/kazuph-mac-dialog-release.yml` だけで行います。署名秘密が無ければ公開せず失敗し、既存リリースを差し替えず、herdr 本体の latest や tb の配布を変更しません。

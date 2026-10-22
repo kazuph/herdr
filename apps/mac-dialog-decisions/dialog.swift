@@ -1094,7 +1094,7 @@ final class DialogController: NSObject, NSWindowDelegate {
 
     var info: [String] = []
     if let d = spec.deadline, !d.isEmpty { info.append(d) }
-    if let q = spec.queue_remaining, q > 0 { info.append("ほかに \(q) 件待っています") }
+    if let q = spec.queue_remaining, q > 0 { info.append("ほかに \(q) 件開いています") }
     let infoLabel = label(info.joined(separator: "  ·  "), size: Look.small, color: .secondaryLabelColor, selectable: false)
     pendingLabel = infoLabel
 
@@ -1218,7 +1218,7 @@ final class DialogApplication: NSObject, NSApplicationDelegate {
     if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     for controller in windows.values {
       var info = [controller.spec.deadline ?? ""].filter { !$0.isEmpty }
-      if windows.count > 1 { info.append("ほかに \(windows.count - 1) 件待っています") }
+      if windows.count > 1 { info.append("ほかに \(windows.count - 1) 件開いています") }
       controller.pendingLabel.stringValue = info.joined(separator: "  ·  ")
     }
   }

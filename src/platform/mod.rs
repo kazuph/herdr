@@ -422,3 +422,31 @@ pub(crate) use tb_activation::defer_tb_activation_interrupts;
 pub(crate) fn defer_tb_activation_interrupts() -> std::io::Result<()> {
     Err(std::io::Error::other("tb requires macOS Apple silicon"))
 }
+
+/// Validate the distributed decision app before registering or running it.
+pub(crate) fn verify_mac_dialog_signature(app: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::verify_mac_dialog_signature(app)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "Mac decision dialogs require macOS Apple silicon",
+        ))
+    }
+}
+
+pub(crate) fn mac_dialog_daemon_running(pid: u32) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::mac_dialog_daemon_running(pid)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = pid;
+        false
+    }
+}

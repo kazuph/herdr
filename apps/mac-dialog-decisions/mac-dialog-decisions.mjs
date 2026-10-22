@@ -20,6 +20,7 @@ import process from "node:process";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
+const MAC_DIALOG_SIGNATURE_REQUIREMENT = '=anchor apple generic and identifier "dev.herdr.mac-dialog-decisions" and certificate leaf[subject.OU] = "67M8FDFZ28" and certificate leaf[subject.CN] = "Developer ID Application: KAZUHIRO HOMMA (67M8FDFZ28)"';
 const PLUGIN_ID = "kazuph.mac-dialog-decisions";
 const RUN_LABEL = "mac-dialog-decisions";
 const WATCH_RETRY_MS = 2_000;
@@ -278,6 +279,7 @@ export class MacDialogDecisionsDaemon {
     spawnDialog, // (specPath, spec) => {lines: AsyncIterable<string>, kill()}
     specFilePath, // (key) => path to write the spec JSON
     log: logFn = log,
+    onStateChange = () => {},
   }) {
     this.config = config;
     this.spawnWatch = spawnWatch;
@@ -285,6 +287,7 @@ export class MacDialogDecisionsDaemon {
     this.spawnDialog = spawnDialog;
     this.specFilePath = specFilePath;
     this.log = logFn;
+    this.onStateChange = onStateChange;
     this.entries = new Map(); // key -> entry
     this.queue = []; // keys waiting for the dialog
     this.showing = new Map(); // machine + decision -> open window
@@ -350,6 +353,11 @@ export class MacDialogDecisionsDaemon {
   }
 
   onWatchLine(line) {
+    this._onWatchLine(line);
+    this.onStateChange();
+  }
+
+  _onWatchLine(line) {
     const event = line?.event;
     const machine = line?.machine || {};
     const mid = String(machine.id || "local");
@@ -489,6 +497,7 @@ export class MacDialogDecisionsDaemon {
     entry.showing = true;
     this.showing.set(entry.key, entry);
     this.child.send({ command: "open", key: entry.key, spec_path: specPath });
+    this.onStateChange();
     this.log(`ダイアログを表示: ${entry.decision.decision_id}`);
   }
 
@@ -559,6 +568,7 @@ export class MacDialogDecisionsDaemon {
     if (!entry.showing) return;
     this.showing.delete(entry.key);
     entry.showing = false;
+    this.onStateChange();
     this.child?.send({ command: "close", key: entry.key });
     for (const file of [entry.specPath, `${entry.specPath}.result.jsonl`]) {
       try { fs.unlinkSync(file); } catch {}
@@ -744,8 +754,23 @@ function nativeDialogPath(config) {
   return path.join(config.stateDir, "bin", `herdr-decision-dialog-${hash}.app`, "Contents", "MacOS", "herdr-decision-dialog");
 }
 
-function ensureNativeDialog(config, logFn = () => {}) {
-  const source = path.join(pluginRootDir(), "dialog.swift");
+function ensureNativeDialog(config, logFn = () => {}, root = pluginRootDir()) {
+  if (fs.existsSync(path.join(root, "VERSION"))) {
+    const binary = path.join(root, "herdr-decision-dialog.app", "Contents", "MacOS", "herdr-decision-dialog");
+    if ((!fs.existsSync(path.join(root, "PLATFORM")) || fs.readFileSync(path.join(root, "PLATFORM"), "utf8").trim() !== "darwin-arm64") || !fs.existsSync(binary)) {
+      logFn("配布版の同梱アプリが欠けているか、対応するマシン用ではありません。herdr mac-dialog install で入れ直してください");
+      return null;
+    }
+    const verified = spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--test-requirement", MAC_DIALOG_SIGNATURE_REQUIREMENT, path.join(root, "herdr-decision-dialog.app")], { encoding: "utf8" });
+    if (verified.error || verified.status !== 0) {
+      logFn(`同梱アプリの署名が無効、改変済み、または開発者 ID が一致しません: ${verified.stderr || verified.error?.message || verified.status}`);
+      return null;
+    }
+    logFn(`署名済み配布版の同梱アプリを使用: ${binary}`);
+    return binary;
+  }
+  logFn("開発版: リポジトリの dialog.swift を使用します");
+  const source = path.join(root, "dialog.swift");
   const binary = nativeDialogPath(config);
   if (fs.existsSync(binary)) return binary;
   fs.mkdirSync(path.dirname(binary), { recursive: true });
@@ -868,13 +893,26 @@ function daemonRunning(stateDir) {
   return pid > 0 && pidAlive(pid) && pidLooksOurs(pid);
 }
 
-function writeDaemonPid(stateDir) {
+function pluginVersion(root = pluginRootDir()) {
+  try { return fs.readFileSync(path.join(root, "VERSION"), "utf8").trim(); }
+  catch { return "development"; }
+}
+function writeDaemonPid(stateDir, fields = {}) {
   fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(
-    daemonPidPath(stateDir),
-    JSON.stringify({ pid: process.pid, started: Date.now() }),
-    { mode: 0o600 },
-  );
+  const temporary = `${daemonPidPath(stateDir)}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify({ pid: process.pid, plugin_root: pluginRootDir(), version: pluginVersion(), ...fields }), { mode: 0o600 });
+  fs.renameSync(temporary, daemonPidPath(stateDir));
+}
+function daemonStatus(config) {
+  let state = {};
+  try { state = JSON.parse(fs.readFileSync(daemonPidPath(config.stateDir), "utf8")); } catch {}
+  return { ...state, running: daemonRunning(config.stateDir), restart_requested: fs.existsSync(path.join(config.stateDir, "restart-request.json")) };
+}
+function requestRestart(config) {
+  const file = path.join(config.stateDir, "restart-request.json");
+  const temporary = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify({ plugin_root: pluginRootDir() }), { mode: 0o600 });
+  fs.renameSync(temporary, file);
 }
 
 function shellQuote(value) {
@@ -904,7 +942,13 @@ async function ensureDaemon(config, env) {
   }
   try {
     if (daemonRunning(config.stateDir)) {
-      log(`デーモンは起動済み (pid ${readDaemonPid(config.stateDir)})`);
+      const state = daemonStatus(config);
+      if (state.plugin_root !== pluginRootDir()) {
+        requestRestart(config);
+        log(`登録版 ${pluginVersion()} と稼働版 ${state.version || "不明（旧常駐役）"} が異なります。書きかけ・あとで・回答再送を保ち、安全に切り替えられるまで待ちます`);
+      } else {
+        log(`デーモンは起動済み (pid ${state.pid}, version ${state.version})`);
+      }
       return;
     }
     let startedAt = 0;
@@ -956,8 +1000,7 @@ async function ensureDaemon(config, env) {
       { timeoutMs: 15_000 },
     );
     if (result.code !== 0) {
-      log(`herdr run に失敗: ${(result.stderr || result.stdout).trim()}`);
-      return;
+      throw new Error(`herdr run に失敗: ${(result.stderr || result.stdout).trim()}`);
     }
     fs.writeFileSync(
       path.join(config.stateDir, "starting.json"),
@@ -990,13 +1033,18 @@ async function main() {
 
   if (!(await gateCheck(config))) return;
 
+  if (mode === "status") {
+    process.stdout.write(JSON.stringify(daemonStatus(config)) + "\n");
+    return;
+  }
   if (mode === "ensure") {
+    if (!config.helperCmd && !ensureNativeDialog(config, log)) { process.exitCode = 1; return; }
     await ensureDaemon(config, process.env);
     return;
   }
 
   if (mode !== "run") {
-    process.stderr.write("usage: mac-dialog-decisions.mjs [run|ensure]\n");
+    process.stderr.write("usage: mac-dialog-decisions.mjs [run|ensure|status]\n");
     process.exit(2);
   }
 
@@ -1032,11 +1080,47 @@ async function main() {
     specFilePath: (key) =>
       path.join(specDir, `${key.replace(/[^A-Za-z0-9_.-]/g, "_")}.json`),
     log,
+    onStateChange: () => {
+      writeDaemonPid(config.stateDir, { open_windows: daemon.showing.size, pending_entries: daemon.entries.size });
+      void maybeHandoff();
+    },
+  });
+  let handingOff = false;
+  const restartPath = path.join(config.stateDir, "restart-request.json");
+  async function maybeHandoff() {
+    // A hidden あとで or an in-flight answer still owns state. Keep the
+    // current process until it has nothing to lose, including retry timers.
+    if (handingOff || daemon.stopped || daemon.entries.size !== 0 || daemon.showing.size !== 0) return;
+    let request;
+    try { request = JSON.parse(fs.readFileSync(restartPath, "utf8")); } catch { return; }
+    if (typeof request.plugin_root !== "string" || request.plugin_root === pluginRootDir()) return;
+    const target = path.join(request.plugin_root, "mac-dialog-decisions.mjs");
+    if (!fs.existsSync(target)) { log("新版の常駐役が欠けています。現在の版を保持します"); return; }
+    if (!config.helperCmd && !ensureNativeDialog(config, log, request.plugin_root)) {
+      log("新版のアプリ検証に失敗しました。現在の版を保持します"); return;
+    }
+    handingOff = true;
+    await daemon.stop();
+    restartWatcher.close();
+    if (readDaemonPid(config.stateDir) === process.pid) fs.rmSync(daemonPidPath(config.stateDir), { force: true });
+    fs.rmSync(path.join(config.stateDir, "starting.json"), { force: true });
+    fs.rmSync(restartPath, { force: true });
+    log(`安全な切替: ${pluginRootDir()} → ${request.plugin_root}`);
+    const result = await execFileText(process.execPath, [target, "ensure"], { env: process.env });
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    process.exit(result.code);
+  }
+  const restartWatcher = fs.watch(config.stateDir, (_, filename) => {
+    if (filename === "restart-request.json") void maybeHandoff();
   });
   await daemon.start();
+  writeDaemonPid(config.stateDir, { open_windows: 0, pending_entries: 0 });
+  void maybeHandoff();
   log("watch 開始 (herdr decision watch --all-machines)");
 
   const shutdown = () => {
+    restartWatcher.close();
     void daemon.stop().then(() => process.exit(0));
   };
   process.on("SIGINT", shutdown);

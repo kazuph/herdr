@@ -3,6 +3,8 @@
 ## [0.2.44] - 2026-10-14
 
 ### Fixed
+- Signed macOS arm64 decision dialogs can be installed on storage machines with `herdr mac-dialog install` and inspected with `status`; dedicated releases preserve old versions and verify Developer ID signatures. MCP Accept / Decline confirmations become tool permissions answered with arrows and a verified cursor before Enter. Multiple windows show the count of other open windows.
+
 - Claude Code question panes now remain blocked when narrow terminal widths wrap the Enter, navigation, or Esc-to-cancel footer controls. Multi-tab and multi-select questions therefore create screen-prompt decisions and advance through decision answers; existing wide-pane and idle detection are preserved.
 
 ## [0.2.39] - 2026-10-13
