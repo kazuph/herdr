@@ -13967,17 +13967,22 @@
       ]
     },
     {
-      "contract_id": "G9-4e051a0eeb",
+      "contract_id": "G9-ff8cf2e5cf",
       "dimensions": [
-        "silent run caller"
+        "silent run caller",
+        "headless silent background job has no caller or completion recipient"
       ],
       "verification_methods": [
         "rust_test_target:silent_run_starts_from_a_plain_shell_pane",
-        "drift_source_anchor:src/app/api/jobs.rs"
+        "drift_source_anchor:src/app/api/jobs.rs",
+        "rust_test_target:silent_background_run_starts_without_any_caller_and_has_no_recipient",
+        "rust_test_target:notifying_or_pane_runs_still_fail_without_a_caller"
       ],
       "source_anchors": [
         "SPEC.md:1833",
-        "src/app/api/jobs.rs:24"
+        "src/app/api/jobs.rs:24",
+        "src/cli/comms.rs:409",
+        "src/app/api/jobs.rs:25"
       ],
       "test_status": [
         "unverified"
@@ -13990,17 +13995,22 @@
       ]
     },
     {
-      "contract_id": "G9-bb90c1e3d0",
+      "contract_id": "G9-628d4d4757",
       "dimensions": [
-        "silent run caller"
+        "silent run caller",
+        "headless silent background job has no caller or completion recipient"
       ],
       "verification_methods": [
         "rust_test_target:silent_run_starts_from_a_plain_shell_pane",
-        "drift_source_anchor:src/app/api/jobs.rs"
+        "drift_source_anchor:src/app/api/jobs.rs",
+        "rust_test_target:silent_background_run_starts_without_any_caller_and_has_no_recipient",
+        "rust_test_target:notifying_or_pane_runs_still_fail_without_a_caller"
       ],
       "source_anchors": [
         "SPEC.md:1834",
-        "src/app/api/jobs.rs:24"
+        "src/app/api/jobs.rs:24",
+        "src/cli/comms.rs:409",
+        "src/app/api/jobs.rs:25"
       ],
       "test_status": [
         "unverified"
@@ -14013,17 +14023,22 @@
       ]
     },
     {
-      "contract_id": "G9-3ab9b93806",
+      "contract_id": "G9-d86df6c90e",
       "dimensions": [
-        "silent run caller"
+        "silent run caller",
+        "headless silent background job has no caller or completion recipient"
       ],
       "verification_methods": [
         "rust_test_target:silent_run_starts_from_a_plain_shell_pane",
-        "drift_source_anchor:src/app/api/jobs.rs"
+        "drift_source_anchor:src/app/api/jobs.rs",
+        "rust_test_target:silent_background_run_starts_without_any_caller_and_has_no_recipient",
+        "rust_test_target:notifying_or_pane_runs_still_fail_without_a_caller"
       ],
       "source_anchors": [
         "SPEC.md:1835",
-        "src/app/api/jobs.rs:24"
+        "src/app/api/jobs.rs:24",
+        "src/cli/comms.rs:409",
+        "src/app/api/jobs.rs:25"
       ],
       "test_status": [
         "unverified"

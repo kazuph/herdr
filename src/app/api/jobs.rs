@@ -18,27 +18,31 @@ impl App {
                 "completion must be summary, full, or none",
             );
         }
-        // A job with `--completion none` never notifies anyone, so its caller
-        // only has to be a pane that exists — plugin hooks and actions run
-        // with whatever pane is focused, often a plain shell. Jobs that do
-        // notify still need an agent with a mailbox identity.
+        // Silent background jobs may have no caller at all (headless plugin
+        // hooks). Never resolve an empty caller through the focused pane.
         let silent = params.completion == "none";
-        let (caller_pane, caller_agent) = match self.agent_info_for_target(&params.caller_pane) {
-            Ok(caller) => match crate::app::msg::mailbox_agent_name(&caller) {
-                Some(caller_agent) => (caller.global_pane_id, caller_agent),
-                None if silent => (caller.global_pane_id, String::new()),
-                None => {
-                    return responses::encode_error(
-                        id,
-                        "agent_not_found",
-                        "caller has no mailbox identity",
-                    )
+        let (caller_pane, caller_agent) = if silent && params.caller_pane.is_empty() {
+            (String::new(), String::new())
+        } else {
+            match self.agent_info_for_target(&params.caller_pane) {
+                Ok(caller) => match crate::app::msg::mailbox_agent_name(&caller) {
+                    Some(caller_agent) => (caller.global_pane_id, caller_agent),
+                    None if silent => (caller.global_pane_id, String::new()),
+                    None => {
+                        return responses::encode_error(
+                            id,
+                            "agent_not_found",
+                            "caller has no mailbox identity",
+                        )
+                    }
+                },
+                Err(_) if silent && self.resolve_terminal_target(&params.caller_pane).is_ok() => {
+                    (params.caller_pane.clone(), String::new())
                 }
-            },
-            Err(_) if silent && self.resolve_terminal_target(&params.caller_pane).is_ok() => {
-                (params.caller_pane.clone(), String::new())
+                Err(err) => {
+                    return responses::encode_error_body(id, self.agent_target_error_body(err))
+                }
             }
-            Err(err) => return responses::encode_error_body(id, self.agent_target_error_body(err)),
         };
         let cwd = std::path::PathBuf::from(&params.cwd);
         if !cwd.is_absolute() {
