@@ -1603,7 +1603,9 @@
 - **目的**: room単位のmessageをSQLiteへ永続化し、待機中のagentには新しいturnとして、作業中のagentには現在の作業への追加指示として、送信時点で全文を届ける。
 - **挙動**:
   - `msg.send` / `msg.inbox` / `msg.history` / `msg.rooms` と対応CLIを提供し、messageはroom、project、sender、recipient、本文、created/delivered/read時刻を持つ。
-  - direct sendとroom broadcastを扱い、通常mailはSQLiteへ保存した直後、recipientがIdleまたはDoneなら新しいturn、Workingなら現在の作業へのsteeringとして、全roomのqueued本文をcreated時刻・同時刻ならmessage ID順に、そのまま1本文ずつtext+Enterで直接submitする。Working中のmessageをIdleまで保留せず、処理順や作業変更の判断は全文を受け取ったagentへ委ねる。Blocked、Unknown、runtime不在ではqueueを維持し、次にIdle、Working、Doneのいずれかとして利用可能になった時に同じ順序でsubmitする。通常自動配送で`herdr msg inbox` commandを注入したり、受信側に本文の取得・要約・再解釈を要求したりしない。各本文のsubmit成功後にそのmessage IDだけを`delivered`・`read`へ遷移する。
+  - direct sendとroom broadcastを扱い、通常mailはSQLiteへ保存した直後、recipientがIdleまたはDoneなら新しいturn、Workingなら現在の作業へのsteeringとして、全roomのqueued本文をcreated時刻・同時刻ならmessage ID順に、そのまま1本文ずつtext+Enterで直接submitする。確認画面が見えていなければWorking中のmessageをIdleまで保留せず、処理順や作業変更の判断は全文を受け取ったagentへ委ねる。Blocked、Unknown、runtime不在ではqueueを維持し、次にIdle、Working、Doneのいずれかとして利用可能になった時に同じ順序でsubmitする。通常自動配送で`herdr msg inbox` commandを注入したり、受信側に本文の取得・要約・再解釈を要求したりしない。各本文のsubmit成功後にそのmessage IDだけを`delivered`・`read`へ遷移する。
+  - 確認画面が見えている間は、最終状態がWorkingでも通常mailをqueueへ保持する。検出manifestのvisible_blocker付きBlocked規則を独立に照合し、状態・優先度の選び方は変えない。確認画面が無いことを連続2回の走査で確かめたら状態遷移や新着を待たず再評価し、decisions.screen_prompts無効でも配送を再開する。decision.answerの解決だけでは解除しない。
+  - 各recipientの通常mailはPTY書き込み確認を1件ずつ待ち、次の1件を投入する直前に確認画面を再照合する。投入済み本文は取り消さず、その後の本文から保留する。通常mail内の作成順とjob通知のまとめ配りを保持し、両者を跨ぐ順序は追加しない。
   - 通常mailのsubmit成功は、内部channelへの投入ではなく、本文とEnterの全byteをrecipientのPTY masterへ書き終えた時点とする。PTY完了は共有AppEventの容量を予約せず、mailbox専用eventでApp loopを待機させずに反映し、書き込み中のmessageは重複submitとmanual inbox取得から除外する。内部channelへ投入できてもPTY書き込みが失敗したmessageは`queued`を維持し、後続の利用可能eventで再試行する。
   - recipientは登録agent名でもglobal pane ID `pN`でも同一paneのmailboxを指す。serverはpaneに解決できるrecipientについて同一paneのrecipientエイリアス集合を使い、nudgeとinboxで同じqueued行を扱う。paneに解決できないrecipientは完全一致で扱い、`claude`や`codex`など個別paneを指さないagent種別名をrecipientエイリアス集合へ加えない。
   - 同じagent名が複数paneにある時は名前宛の`herdr send`を拒否し、本文・宛先・理由を`failed`として記録する。解決済みの通知・通常mailのrecipientはglobal pane IDで保存し、actorの後続登録で配送先を変更しない。
@@ -1611,6 +1613,7 @@
   - 通常mailはrecipientのactor IDとstatusのindexを使う1回のqueryで全roomをcreated時刻・message ID順に取得して直接配送する。`herdr-jobs`だけは既存のroom単位group配送を使う。agentごとに全roomを列挙してqueryしない。
 - **受け入れ条件**:
   - server再起動後もqueued messageと履歴が残り、Idle、Working、Doneとして利用可能な正確なrecipientへ本文が直接submitされる。
+  - 確認画面とWorkingが同時に一致しても、通常mailとjob通知は本文もEnterも送らず、確認消失後は設定無効・状態表示不変でも再開する。
   - room名に空白やquoteがあっても、本文は送信時の文字列のまま直接submitされる。
   - Working agentへ送ったmessageはIdle遷移を待たず、送信時点で全文が現在のagent sessionへの追加指示としてsubmitされる。recipient側runtimeが次の安全な処理区切りで取り込み、Herdrは内容の優先度や作業変更を推測しない。
   - `herdr msg send pN ...` で送ったqueued messageは、同じpaneがIdle、Working、Doneなら直ちに直接submitされ、delivery後は既読化される。登録agent名宛てのmessageも同じpaneへ直接配送される。
@@ -1658,7 +1661,7 @@
   - list/status/log/cancelを提供する。cancelはrunner PIDが同じPIDのprocess group leaderであることを確認してからDBの`cancelling`を取得し、process groupへSIGTERMを送る。2秒以内にprocess groupが消滅しなければSIGKILLへ昇格し、消滅を確認した後だけDBを`cancelled`へ遷移する。SIGKILL後も残る時は`cancelling`のままfail closedする。
   - jobのcaller pane/agentは作成時にcommand行へ保存し、actors表の現在paneから再構成しない。cancelと`--pane`を含むcompletionは作成時のglobal caller pane IDだけへ配送し、詳細は`herdr log <job_id>`を指す。
   - `herdr-run`からの名前宛completionは、現在の同名paneが1つだけでも不変callerの証拠にならないため拒否し、failedとして保存する。旧実行中runnerから新serverへの通知にもこの規則を適用する。
-  - server不在時のcompletionは確定済みcaller pane IDへdurable queueする。serverがpane消失・曖昧宛先を確認した時、または旧jobのcallerが不明な時は配送せず、通知本文と理由を`failed`として保存する。Blocked/runtime未準備の既存pane宛はqueueを維持する。
+  - server不在時のcompletionは確定済みcaller pane IDへdurable queueする。serverがpane消失・曖昧宛先を確認した時、または旧jobのcallerが不明な時は配送せず、通知本文と理由を`failed`として保存する。Blocked/runtime未準備・確認画面表示中の既存pane宛はqueueを維持する。確認消失を連続2回の走査で確かめた時は状態表示の変化を待たず再評価し、起動時の再配達も同じ確認を行う。
   - 旧command行には不変callerの証拠がないためcaller paneを空として扱い、actorsの現在paneを転用しない。旧queuedの名前宛`herdr-jobs`通知は本文を保持して`failed`にし、自動再送・既読化しない。既にpane ID宛のqueued通知はその宛先を保持する。
   - `herdr-jobs`のcompletionは直接注入後に既読化し、server起動時にも配送済みentryを未読へ戻さない。
 - **受け入れ条件**:
@@ -1863,7 +1866,7 @@
 - **目的**: agentへ1回分のpromptを確実に送り、必要なら作業開始から完了までを待てるようにする。
 - **挙動**:
   - `herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]`と`agent.prompt` APIを提供する。
-  - 空文字、blocked、unknown、starting、foregroundでないtargetは入力前に拒否する。bracketed pasteで本文と末尾改行を保ち、本文、送信遅延、Enterを書き終えた後だけ成功を返す。
+  - 空文字、blocked、unknown、starting、foregroundでないtargetは入力前に拒否する（現在の確認画面を確認した後のforceだけを下記の外部入力保護契約に従って許可する）。bracketed pasteで本文と末尾改行を保ち、本文、送信遅延、Enterを書き終えた後だけ成功を返す。
   - `--wait`はworking/blockedの観測を必要とし、止まったpromptを報告する。Copilotのfocus処理とterminal closeの失敗は本家に揃える。
   - forkのargvベース`agent start`（shell・環境・言語runtimeのwrapper込み）で起動したagentも本家のpending/blocked/readyの段階（3秒の落ち着き待ち、30秒の起動期限）を追う。
 - **受け入れ条件**:
@@ -1871,6 +1874,19 @@
   - 成功応答はEnterの書き込み後にだけ返る。
   - `agent send`、`send --room`、`p_N`/`pN`/`%N` targetは従来どおり動く。
 - **デグレ判定**: forkの`agent send`やmailbox配送を置き換える、または入力前の拒否を緩める。
+
+
+### 確認画面への外部入力を拒否し、確認後の同じ質問だけ明示入力を許可する
+- **分類**: CORE-UI
+- **status: fork独自・保持 (C)** — 外部入力の誤回答を防ぐserver側の契約。
+- **目的**: 他paneから届く文字やEnterが、人に表示された質問・許可確認を勝手に回答しないようにする。
+- **挙動**:
+  - pane run・send-text・send-keys・agent send・agent promptと対応JSON APIは、入力前にmanifestのvisible_blocker規則を照合する。検出結果の記録前でも、serverが起動命令に記録したmanaged agent種別があれば同じ照合を行う。最終状態の優先順位、binary wire protocol、decision API・回答形式は変えない。
+  - 確認表示中は題名と選択肢を含む待機中errorを返し、byteを書かず非ゼロ終了する。CLIは対象より前の-f/--force、JSON APIはforce=trueで明示入力する。forceなしの拒否応答が作られた後、同一の呼び出し元・対象pane・現在の質問署名だけ許可する。JSON API の caller_pane_id は申告だけでは信用せず、serverがOSから取得した接続元processが申告paneのprocess自身または子孫である時だけ呼び出し元として照合する。別paneやpane外のclientによる実在IDの申告、processを検証できない直接APIのforceは拒否する。CLIは既存のpane currentで呼び出し元を解決し、フォーカス中のpaneを推測しない。pane runは呼び出し元の確認後、本文とEnterを1回のpane.send_inputで送る。呼び出し元を特定できない時も通常入力は同じ1回で送り、確認表示中のforceは拒否する。先行force・質問変更後のforceを拒否し、その拒否で許可を作らない。
+  - 人の直接キー入力とdecision answerは従来どおり。題名・選択肢を抽出できない確認画面はunsupported errorを返し、似た質問への置換や常時forceをしない。
+- **受け入れ条件**:
+  - 即時入力の各APIは確認表示中に本文とEnterを書かず拒否し、未確認forceを繰り返しても通さず、forceなしの拒否を受けた同じ呼び出し元・対象pane・質問だけ許可し、別の呼び出し元や対象paneと呼び出し元不明のAPIには流用しない。別の実clientやpane外のclientが拒否された呼び出し元IDを申告してもbyteを送出せず、serverが接続元processの所属を確認した同一paneのCLI再試行だけを許可する。MCP の判断待ちを作成しても外部入力とメールは保護され、ダイアログからの decision answer は従来の矢印・再読・Enter 経路を通る。回答の解決だけでは保留を解除せず、確認画面が無いことを連続2回の走査で確かめて配送を再開する。通常メール・完了通知の投入前検査と即時入力の拒否を含むどの入口でも質問を再検知したら消失回数を0に戻し、再検知後に改めて連続2回を必要とする。質問が無い間の新着だけでは消失回数を戻さず、配送再開を妨げない。遅延回答の書き込みとpreview走査の途中は解除せず、消去・途中描画・次問の遷移で本文やEnterを挟まない。入力保護は独自の操作語の一覧で既存Blocked規則を狭めず、その規則に一致した現在の確認領域を使う。プレビューの内部区切りは同じ質問に含める。題名・選択肢・署名もその領域から取り、現在の確認を読めない時は履歴で代用せずunsupportedにする。引用コード・過去の質問・操作案内より下に普通の文章がある画面を保留せず、採取した信頼確認・MCP・質問の画面は保護する。
+  - 質問変更または確認画面消失後は既存の確認済み記録を無効にする。通常のシェルと人の直接入力とdecision answerは従来どおり動く。
 
 ### agent検出manifestの共有cache反映とfork所有manifest
 - **該当コミット**: 86df79b1, 6462edd4

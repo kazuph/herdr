@@ -12,7 +12,7 @@
       "alloy": "verified: Alloy 6.2.0 SAT4J; 4 assertions UNSAT and OwnershipWitness SAT; see formal/formal-verification-results.json",
       "quint": "verified: Quint 0.32.0; 6 invariants GREEN at 20000 samples x 25 steps and 2 non-vacuity RED witnesses; see formal/formal-verification-results.json"
     },
-    "active_contract_count": 591
+    "active_contract_count": 594
   },
   "contracts": [
     {
@@ -8012,7 +8012,41 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1613"
+        "SPEC.md:1615"
+      ]
+    },
+    {
+      "contract_id": "G9-7c5f4cd7c6",
+      "unrepresented_dimensions": [
+        "real question permission MCP screens and restart acceptance not yet run"
+      ],
+      "dimensions": [
+        "visible confirmation input protection",
+        "same question force observation"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:visible_confirmation_holds_mail_and_jobs_even_while_working_and_decisions_disabled",
+        "platform_live_acceptance:unverified",
+        "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
+        "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
+        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
+        "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
+        "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
+        "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
+        "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
+        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
+        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
+        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1616",
+        "src/app/input_guard.rs:8"
       ]
     },
     {
@@ -8037,7 +8071,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1614"
+        "SPEC.md:1617"
       ]
     },
     {
@@ -8063,7 +8097,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1615"
+        "SPEC.md:1618"
       ]
     },
     {
@@ -8089,7 +8123,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1616"
+        "SPEC.md:1619"
       ]
     },
     {
@@ -8114,7 +8148,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1617"
+        "SPEC.md:1620"
       ]
     },
     {
@@ -8140,7 +8174,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1618"
+        "SPEC.md:1621"
       ]
     },
     {
@@ -8168,7 +8202,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1619"
+        "SPEC.md:1622"
       ]
     },
     {
@@ -8194,7 +8228,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1636"
+        "SPEC.md:1639"
       ]
     },
     {
@@ -8221,7 +8255,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1637"
+        "SPEC.md:1640"
       ]
     },
     {
@@ -8247,7 +8281,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1638"
+        "SPEC.md:1641"
       ]
     },
     {
@@ -8274,7 +8308,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1639"
+        "SPEC.md:1642"
       ]
     },
     {
@@ -8300,7 +8334,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1640"
+        "SPEC.md:1643"
       ]
     },
     {
@@ -8327,7 +8361,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1641"
+        "SPEC.md:1644"
       ]
     },
     {
@@ -8352,7 +8386,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1642"
+        "SPEC.md:1645"
       ]
     },
     {
@@ -8376,7 +8410,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1665"
+        "SPEC.md:1668"
       ]
     },
     {
@@ -8400,7 +8434,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1666"
+        "SPEC.md:1669"
       ]
     },
     {
@@ -8424,7 +8458,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1667"
+        "SPEC.md:1670"
       ]
     },
     {
@@ -8448,7 +8482,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1668"
+        "SPEC.md:1671"
       ]
     },
     {
@@ -8473,7 +8507,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1669",
+        "SPEC.md:1672",
         "tests/cli_wrapper.rs:3547"
       ]
     },
@@ -8499,7 +8533,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1670"
+        "SPEC.md:1673"
       ]
     },
     {
@@ -8524,7 +8558,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1671"
+        "SPEC.md:1674"
       ]
     },
     {
@@ -8547,7 +8581,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1672",
+        "SPEC.md:1675",
         "src/cli/comms.rs:1640"
       ]
     },
@@ -8572,7 +8606,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1686"
+        "SPEC.md:1689"
       ]
     },
     {
@@ -8596,7 +8630,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1687"
+        "SPEC.md:1690"
       ]
     },
     {
@@ -8620,7 +8654,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1688"
+        "SPEC.md:1691"
       ]
     },
     {
@@ -8644,7 +8678,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1699"
+        "SPEC.md:1702"
       ]
     },
     {
@@ -8668,7 +8702,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1700"
+        "SPEC.md:1703"
       ]
     },
     {
@@ -8692,7 +8726,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1701"
+        "SPEC.md:1704"
       ]
     },
     {
@@ -8716,7 +8750,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1710"
+        "SPEC.md:1713"
       ]
     },
     {
@@ -8740,7 +8774,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1711"
+        "SPEC.md:1714"
       ]
     },
     {
@@ -8764,7 +8798,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1720"
+        "SPEC.md:1723"
       ]
     },
     {
@@ -8788,7 +8822,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1721"
+        "SPEC.md:1724"
       ]
     },
     {
@@ -8812,7 +8846,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1730"
+        "SPEC.md:1733"
       ]
     },
     {
@@ -8836,7 +8870,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1731"
+        "SPEC.md:1734"
       ]
     },
     {
@@ -8860,7 +8894,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1732"
+        "SPEC.md:1735"
       ]
     },
     {
@@ -8884,7 +8918,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1741"
+        "SPEC.md:1744"
       ]
     },
     {
@@ -8908,7 +8942,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1742"
+        "SPEC.md:1745"
       ]
     },
     {
@@ -8932,7 +8966,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1743"
+        "SPEC.md:1746"
       ]
     },
     {
@@ -8956,7 +8990,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1752"
+        "SPEC.md:1755"
       ]
     },
     {
@@ -8980,7 +9014,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1753"
+        "SPEC.md:1756"
       ]
     },
     {
@@ -9004,7 +9038,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1754"
+        "SPEC.md:1757"
       ]
     },
     {
@@ -9028,7 +9062,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1755"
+        "SPEC.md:1758"
       ]
     },
     {
@@ -9052,7 +9086,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1756"
+        "SPEC.md:1759"
       ]
     },
     {
@@ -9076,7 +9110,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1766"
+        "SPEC.md:1769"
       ]
     },
     {
@@ -9100,7 +9134,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1767"
+        "SPEC.md:1770"
       ]
     },
     {
@@ -9124,7 +9158,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1768"
+        "SPEC.md:1771"
       ]
     },
     {
@@ -9148,7 +9182,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1769"
+        "SPEC.md:1772"
       ]
     },
     {
@@ -9172,7 +9206,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1770"
+        "SPEC.md:1773"
       ]
     },
     {
@@ -9196,7 +9230,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1779"
+        "SPEC.md:1782"
       ]
     },
     {
@@ -9220,7 +9254,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1780"
+        "SPEC.md:1783"
       ]
     },
     {
@@ -9244,7 +9278,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1781"
+        "SPEC.md:1784"
       ]
     },
     {
@@ -9268,7 +9302,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1782"
+        "SPEC.md:1785"
       ]
     },
     {
@@ -9292,7 +9326,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1792"
+        "SPEC.md:1795"
       ]
     },
     {
@@ -9316,7 +9350,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1793"
+        "SPEC.md:1796"
       ]
     },
     {
@@ -9340,95 +9374,11 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1794"
+        "SPEC.md:1797"
       ]
     },
     {
       "contract_id": "G9-0c49beb039",
-      "unrepresented_dimensions": [
-        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
-      ],
-      "dimensions": [
-        "spawn next hint",
-        "json key order"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
-        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
-        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
-        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
-        "drift_source_anchor:src/cli/comms.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1805",
-        "src/cli/comms.rs:1230"
-      ]
-    },
-    {
-      "contract_id": "G9-855ff86e4c",
-      "unrepresented_dimensions": [
-        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
-      ],
-      "dimensions": [
-        "spawn next hint",
-        "json key order"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
-        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
-        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
-        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
-        "drift_source_anchor:src/cli/comms.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1806",
-        "src/cli/comms.rs:1230"
-      ]
-    },
-    {
-      "contract_id": "G9-7a150838d4",
-      "unrepresented_dimensions": [
-        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
-      ],
-      "dimensions": [
-        "spawn next hint",
-        "json key order"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
-        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
-        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
-        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
-        "drift_source_anchor:src/cli/comms.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1807",
-        "src/cli/comms.rs:1230"
-      ]
-    },
-    {
-      "contract_id": "G9-30cf6c945d",
       "unrepresented_dimensions": [
         "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
       ],
@@ -9456,6 +9406,90 @@
       ]
     },
     {
+      "contract_id": "G9-855ff86e4c",
+      "unrepresented_dimensions": [
+        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
+      ],
+      "dimensions": [
+        "spawn next hint",
+        "json key order"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
+        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
+        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
+        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
+        "drift_source_anchor:src/cli/comms.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1809",
+        "src/cli/comms.rs:1230"
+      ]
+    },
+    {
+      "contract_id": "G9-7a150838d4",
+      "unrepresented_dimensions": [
+        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
+      ],
+      "dimensions": [
+        "spawn next hint",
+        "json key order"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
+        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
+        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
+        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
+        "drift_source_anchor:src/cli/comms.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1810",
+        "src/cli/comms.rs:1230"
+      ]
+    },
+    {
+      "contract_id": "G9-30cf6c945d",
+      "unrepresented_dimensions": [
+        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
+      ],
+      "dimensions": [
+        "spawn next hint",
+        "json key order"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
+        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
+        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
+        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
+        "drift_source_anchor:src/cli/comms.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1811",
+        "src/cli/comms.rs:1230"
+      ]
+    },
+    {
       "contract_id": "G9-a8db650967",
       "unrepresented_dimensions": [
         "Real mouse drag in a terminal is not automated; the endpoint drag is driven through the frontend input path against a real server socket"
@@ -9476,7 +9510,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1821",
+        "SPEC.md:1824",
         "src/ui/tabs.rs:30",
         "src/client/endpoint/frontend/tab_drag.rs:31"
       ]
@@ -9504,7 +9538,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1822",
+        "SPEC.md:1825",
         "src/workspace/aggregate.rs:106",
         "src/ui/sidebar.rs:535"
       ]
@@ -9530,7 +9564,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1823",
+        "SPEC.md:1826",
         "src/ui/tabs.rs:30",
         "src/client/endpoint/frontend/tab_drag.rs:31"
       ]
@@ -9549,7 +9583,7 @@
         "rust_test_target:explicit_missing_caller_never_creates_a_silent_job"
       ],
       "source_anchors": [
-        "SPEC.md:1836",
+        "SPEC.md:1839",
         "src/app/api/jobs.rs:24",
         "src/cli/comms.rs:409",
         "src/app/api/jobs.rs:25"
@@ -9578,7 +9612,7 @@
         "rust_test_target:explicit_missing_caller_never_creates_a_silent_job"
       ],
       "source_anchors": [
-        "SPEC.md:1837",
+        "SPEC.md:1840",
         "src/app/api/jobs.rs:24",
         "src/cli/comms.rs:409",
         "src/app/api/jobs.rs:25"
@@ -9607,7 +9641,7 @@
         "rust_test_target:explicit_missing_caller_never_creates_a_silent_job"
       ],
       "source_anchors": [
-        "SPEC.md:1838",
+        "SPEC.md:1841",
         "src/app/api/jobs.rs:24",
         "src/cli/comms.rs:409",
         "src/app/api/jobs.rs:25"
@@ -9648,7 +9682,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1853",
+        "SPEC.md:1856",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ]
@@ -9679,7 +9713,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1854",
+        "SPEC.md:1857",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ]
@@ -9710,7 +9744,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1855",
+        "SPEC.md:1858",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ]
@@ -9741,7 +9775,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1856",
+        "SPEC.md:1859",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ]
@@ -9772,7 +9806,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1870",
+        "SPEC.md:1873",
         "src/app/api/agents.rs:957"
       ]
     },
@@ -9802,7 +9836,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1871",
+        "SPEC.md:1874",
         "src/app/api/agents.rs:957"
       ]
     },
@@ -9832,8 +9866,96 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1872",
+        "SPEC.md:1875",
         "src/app/api/agents.rs:957"
+      ]
+    },
+    {
+      "contract_id": "G9-7dd56658e6",
+      "unrepresented_dimensions": [
+        "real question permission MCP screens and restart acceptance not yet run"
+      ],
+      "dimensions": [
+        "visible confirmation input protection",
+        "same question force observation",
+        "current input boundary",
+        "instruction-only terminal tail",
+        "quoted and historical controls exclusion"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:confirmation_force_requires_prior_unforced_rejection_for_same_question",
+        "rust_test_target:direct_api_input_routes_reject_before_writing_confirmation",
+        "platform_live_acceptance:unverified",
+        "rust_test_target:managed_launch_confirmation_is_guarded_before_agent_detection",
+        "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices",
+        "rust_test_target:input_blocker_does_not_block_code_explaining_confirmation_controls",
+        "rust_test_target:input_blocker_ignores_old_question_above_current_input",
+        "rust_test_target:input_blocker_requires_instruction_only_tail_after_current_controls",
+        "rust_test_target:input_blocker_ignores_quoted_controls_inside_fenced_code_with_border",
+        "rust_test_target:input_blocker_preserves_captured_trust_and_wrapped_question_controls",
+        "rust_test_target:quoted_controls_and_old_questions_do_not_hold_mail_or_immediate_input",
+        "rust_test_target:mcp_confirmation_keeps_regular_and_job_messages_queued",
+        "rust_test_target:input_blocker_preserves_existing_permission_control_forms",
+        "rust_test_target:mcp_decision_answer_passes_guard_while_mail_waits_for_screen_disappearance",
+        "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
+        "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
+        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
+        "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
+        "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
+        "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
+        "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
+        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
+        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
+        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry",
+        "rust_test_target:pane_run_sends_one_send_input_request_with_enter_key"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1888",
+        "src/app/input_guard.rs:8",
+        "src/detect/manifest.rs:407"
+      ]
+    },
+    {
+      "contract_id": "G9-732241a923",
+      "unrepresented_dimensions": [
+        "real question permission MCP screens and restart acceptance not yet run"
+      ],
+      "dimensions": [
+        "visible confirmation input protection",
+        "same question force observation"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:confirmation_force_requires_prior_unforced_rejection_for_same_question",
+        "rust_test_target:direct_api_input_routes_reject_before_writing_confirmation",
+        "platform_live_acceptance:unverified",
+        "rust_test_target:managed_launch_confirmation_is_guarded_before_agent_detection",
+        "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices",
+        "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
+        "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
+        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
+        "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
+        "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
+        "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
+        "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
+        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
+        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
+        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1889",
+        "src/app/input_guard.rs:8"
       ]
     },
     {
@@ -9860,7 +9982,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1885",
+        "SPEC.md:1901",
         "src/detect/manifest.rs:147"
       ]
     },
@@ -9888,7 +10010,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1886",
+        "SPEC.md:1902",
         "src/detect/manifest.rs:147"
       ]
     },
@@ -9916,7 +10038,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1887",
+        "SPEC.md:1903",
         "src/detect/manifest.rs:147"
       ]
     },
@@ -9943,7 +10065,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1888",
+        "SPEC.md:1904",
         "src/detect/manifests/claude.toml:80",
         "src/app/screen_prompts.rs:1780"
       ]
@@ -9968,7 +10090,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1898",
+        "SPEC.md:1914",
         "src/pane/terminal.rs:24"
       ]
     },
@@ -9993,7 +10115,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1910",
+        "SPEC.md:1926",
         "src/ghostty/mod.rs:483"
       ]
     },
@@ -10018,7 +10140,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1911",
+        "SPEC.md:1927",
         "src/ghostty/mod.rs:483"
       ]
     },
@@ -10046,7 +10168,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1927",
+        "SPEC.md:1943",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ]
@@ -10075,7 +10197,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1928",
+        "SPEC.md:1944",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ]
@@ -10104,7 +10226,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1929",
+        "SPEC.md:1945",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ]
@@ -10133,7 +10255,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1930",
+        "SPEC.md:1946",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ]
@@ -10162,7 +10284,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1931",
+        "SPEC.md:1947",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ]
@@ -10191,7 +10313,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1932",
+        "SPEC.md:1948",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ]
@@ -10220,7 +10342,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1933",
+        "SPEC.md:1949",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ]
@@ -10249,7 +10371,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1934",
+        "SPEC.md:1950",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ]
@@ -10278,7 +10400,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1935",
+        "SPEC.md:1951",
         "src/pane.rs:308",
         "src/app/runtime.rs:712"
       ]
@@ -10304,7 +10426,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1945"
+        "SPEC.md:1961"
       ]
     },
     {
@@ -10328,7 +10450,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1946"
+        "SPEC.md:1962"
       ]
     },
     {
@@ -10352,7 +10474,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1947"
+        "SPEC.md:1963"
       ]
     },
     {
@@ -10383,7 +10505,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1978",
+        "SPEC.md:1994",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ]
@@ -10416,7 +10538,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1979",
+        "SPEC.md:1995",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ]
@@ -10449,7 +10571,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1980",
+        "SPEC.md:1996",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ]
@@ -10482,7 +10604,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1981",
+        "SPEC.md:1997",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ]
@@ -10515,7 +10637,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1982",
+        "SPEC.md:1998",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ]
@@ -10548,7 +10670,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1983",
+        "SPEC.md:1999",
         "src/decision.rs:134",
         "src/app/api/decisions.rs:195"
       ]
@@ -10578,7 +10700,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1984",
+        "SPEC.md:2000",
         "src/api/schema/decisions.rs:41",
         "src/cli/decision.rs:114"
       ]
@@ -10608,7 +10730,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1985",
+        "SPEC.md:2001",
         "src/app/api/decisions.rs:21"
       ]
     },
@@ -10635,7 +10757,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1986",
+        "SPEC.md:2002",
         "apps/slack-decisions/slack-decisions.mjs:1097"
       ]
     },
@@ -10664,7 +10786,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1987",
+        "SPEC.md:2003",
         "src/api/mod.rs:102",
         "apps/slack-decisions/slack-decisions.mjs:204"
       ]
@@ -10692,7 +10814,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2028",
+        "SPEC.md:2044",
         "src/cli/decision/watch.rs:356"
       ]
     },
@@ -10718,7 +10840,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2029",
+        "SPEC.md:2045",
         "src/cli/decision/watch.rs:348"
       ]
     },
@@ -10744,7 +10866,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2030",
+        "SPEC.md:2046",
         "src/cli/decision/watch.rs:109"
       ]
     },
@@ -10771,7 +10893,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2031",
+        "SPEC.md:2047",
         "src/cli/decision/watch.rs:356"
       ]
     },
@@ -10799,7 +10921,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2032",
+        "SPEC.md:2048",
         "src/cli/decision/watch.rs:701"
       ]
     },
@@ -10829,7 +10951,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2033",
+        "SPEC.md:2049",
         "src/cli/decision/watch.rs:259",
         "src/cli/decision/watch.rs:701"
       ]
@@ -10857,7 +10979,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2034",
+        "SPEC.md:2050",
         "src/machine.rs:301",
         "src/machine.rs:311"
       ]
@@ -10886,7 +11008,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2035",
+        "SPEC.md:2051",
         "src/cli/decision/watch.rs:1110",
         "src/api/subscriptions.rs:738"
       ]
@@ -10915,7 +11037,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2036",
+        "SPEC.md:2052",
         "src/cli/decision/watch.rs:271",
         "src/cli/decision/watch.rs:1509"
       ]
@@ -10941,7 +11063,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2037",
+        "SPEC.md:2053",
         "src/cli/decision/watch.rs:31"
       ]
     },
@@ -10974,7 +11096,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2059",
+        "SPEC.md:2075",
         "src/screen_prompt.rs:145",
         "src/app/screen_prompts.rs:378"
       ]
@@ -11004,7 +11126,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2060",
+        "SPEC.md:2076",
         "src/app/screen_prompts.rs:533"
       ]
     },
@@ -11035,7 +11157,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2061",
+        "SPEC.md:2077",
         "src/app/screen_prompts.rs:1620",
         "src/screen_prompt.rs:504"
       ]
@@ -11063,7 +11185,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2062",
+        "SPEC.md:2078",
         "src/app/screen_prompts.rs:299"
       ]
     },
@@ -11092,7 +11214,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2063",
+        "SPEC.md:2079",
         "src/app/screen_prompts.rs:378"
       ]
     },
@@ -11118,7 +11240,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2064",
+        "SPEC.md:2080",
         "src/screen_prompt.rs:934",
         "src/app/screen_prompts.rs:1644",
         "src/app/screen_prompts.rs:1806"
@@ -11150,7 +11272,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2065",
+        "SPEC.md:2081",
         "src/screen_prompt.rs:232",
         "src/screen_prompt.rs:175",
         "src/app/screen_prompts.rs:662"
@@ -11182,7 +11304,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2066",
+        "SPEC.md:2082",
         "src/screen_prompt.rs:254",
         "src/terminal/runtime.rs:357",
         "src/app/screen_prompts.rs:43"
@@ -11207,7 +11329,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2067",
+        "SPEC.md:2083",
         "src/screen_prompt.rs:893"
       ]
     },
@@ -11233,7 +11355,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2068",
+        "SPEC.md:2084",
         "src/screen_prompt.rs:909"
       ]
     },
@@ -11263,7 +11385,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2069",
+        "SPEC.md:2085",
         "src/app/screen_prompts.rs:689",
         "src/app/screen_prompts.rs:299",
         "src/app/screen_prompts.rs:80"
@@ -11295,7 +11417,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2070",
+        "SPEC.md:2086",
         "src/app/api/decisions.rs:113",
         "src/app/screen_prompts.rs:160"
       ]
@@ -11324,7 +11446,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2071",
+        "SPEC.md:2087",
         "src/config/model.rs:379",
         "src/app/screen_prompts.rs:696"
       ]
@@ -11351,7 +11473,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2072",
+        "SPEC.md:2088",
         "src/api/schema/server.rs:29",
         "src/cli/status.rs:277"
       ]
@@ -11379,7 +11501,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2073",
+        "SPEC.md:2089",
         "src/app/api/decisions.rs:9",
         "src/cli/decision/watch.rs:229"
       ]
@@ -11414,7 +11536,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2074",
+        "SPEC.md:2090",
         "src/screen_prompt.rs:76",
         "src/app/screen_prompts.rs:397"
       ]
@@ -11444,7 +11566,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2075",
+        "SPEC.md:2091",
         "src/screen_prompt.rs:96",
         "src/app/screen_prompts.rs:785"
       ]
@@ -11485,7 +11607,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2076",
+        "SPEC.md:2092",
         "src/screen_prompt.rs:320",
         "src/app/screen_prompts.rs:956",
         "src/app/screen_prompts.rs:1005",
@@ -11513,7 +11635,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2077",
+        "SPEC.md:2093",
         "src/app/screen_prompts.rs:1324"
       ]
     },
@@ -11537,7 +11659,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2078",
+        "SPEC.md:2094",
         "src/app/screen_prompts.rs:1340"
       ]
     },
@@ -11562,7 +11684,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2079",
+        "SPEC.md:2095",
         "src/app/screen_prompts.rs:950"
       ]
     },
@@ -11589,7 +11711,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2080",
+        "SPEC.md:2096",
         "src/screen_prompt.rs:666"
       ]
     },
@@ -11614,7 +11736,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2081",
+        "SPEC.md:2097",
         "src/app/screen_prompts.rs:785"
       ]
     },
@@ -11644,7 +11766,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2082",
+        "SPEC.md:2098",
         "src/pane.rs:3058",
         "src/app/screen_prompts.rs:339"
       ]
@@ -11672,7 +11794,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2083",
+        "SPEC.md:2099",
         "src/app/screen_prompts.rs:947",
         "src/app/screen_prompts.rs:1812"
       ]
@@ -11705,7 +11827,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2084",
+        "SPEC.md:2100",
         "src/app/screen_prompts.rs:399",
         "src/app/screen_prompts.rs:1833"
       ]
@@ -11734,7 +11856,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2085",
+        "SPEC.md:2101",
         "src/app/api/decisions.rs:164",
         "src/app/screen_prompts.rs:1142"
       ]
@@ -11764,7 +11886,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2086",
+        "SPEC.md:2102",
         "src/screen_prompt.rs:643"
       ]
     },
@@ -11793,7 +11915,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2087",
+        "SPEC.md:2103",
         "src/app/screen_prompts.rs:669"
       ]
     },
@@ -11818,7 +11940,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2088",
+        "SPEC.md:2104",
         "apps/slack-decisions/slack-decisions.mjs:884"
       ]
     },
@@ -11842,7 +11964,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2089",
+        "SPEC.md:2105",
         "apps/slack-decisions/slack-decisions.mjs:1215",
         "apps/slack-decisions/slack-decisions.mjs:1307"
       ]
@@ -11871,7 +11993,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2090",
+        "SPEC.md:2106",
         "apps/slack-decisions/slack-decisions.mjs:1255"
       ]
     },
@@ -11923,7 +12045,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2111",
+        "SPEC.md:2127",
         "apps/mac-dialog-decisions/dialog.swift:315",
         "src/cli/mac_dialog.rs:201",
         "src/screen_prompt.rs:119"
@@ -11949,7 +12071,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2112",
+        "SPEC.md:2128",
         "apps/mac-dialog-decisions/dialog.swift:315"
       ]
     },
@@ -11973,7 +12095,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2113",
+        "SPEC.md:2129",
         "apps/slack-decisions/slack-decisions.mjs:22",
         "apps/mac-dialog-decisions/mac-dialog-decisions.mjs:31"
       ]
@@ -12003,7 +12125,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2130",
+        "SPEC.md:2146",
         "src/app/api/decisions.rs:329",
         "src/terminal/state.rs:1431"
       ]
@@ -12033,7 +12155,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2131",
+        "SPEC.md:2147",
         "src/terminal/state.rs:1431",
         "src/app/api/decisions.rs:329"
       ]
@@ -12060,7 +12182,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2132",
+        "SPEC.md:2148",
         "src/app/actions.rs:3116",
         "src/terminal/state.rs:1431"
       ]
@@ -12087,7 +12209,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2133",
+        "SPEC.md:2149",
         "src/app/actions.rs:3174",
         "src/app/actions.rs:3116"
       ]
@@ -12116,7 +12238,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2134",
+        "SPEC.md:2150",
         "src/app/mod.rs:936",
         "src/app/api/decisions.rs:329",
         "src/decision.rs:258"
@@ -12147,7 +12269,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2135",
+        "SPEC.md:2151",
         "src/server/endpoint_snapshot.rs:211",
         "src/decision.rs:258"
       ]
@@ -12176,7 +12298,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2136",
+        "SPEC.md:2152",
         "src/protocol/wire.rs:16",
         "src/api/schema.rs:153"
       ]
@@ -12203,7 +12325,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2173"
+        "SPEC.md:2189"
       ]
     },
     {
@@ -12228,7 +12350,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2174"
+        "SPEC.md:2190"
       ]
     },
     {
@@ -12253,7 +12375,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2175"
+        "SPEC.md:2191"
       ]
     },
     {
@@ -12278,7 +12400,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2176"
+        "SPEC.md:2192"
       ]
     },
     {
@@ -12303,7 +12425,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2177"
+        "SPEC.md:2193"
       ]
     },
     {
@@ -12328,7 +12450,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2178"
+        "SPEC.md:2194"
       ]
     },
     {
@@ -12353,7 +12475,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2179"
+        "SPEC.md:2195"
       ]
     },
     {
@@ -12378,7 +12500,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2180"
+        "SPEC.md:2196"
       ]
     },
     {
@@ -12403,7 +12525,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2181"
+        "SPEC.md:2197"
       ]
     },
     {
@@ -12428,7 +12550,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2182"
+        "SPEC.md:2198"
       ]
     },
     {
@@ -12456,7 +12578,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2220",
+        "SPEC.md:2236",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ]
@@ -12486,7 +12608,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2221",
+        "SPEC.md:2237",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ]
@@ -12516,7 +12638,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2222",
+        "SPEC.md:2238",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ]
@@ -12546,7 +12668,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2223",
+        "SPEC.md:2239",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ]
@@ -12576,7 +12698,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2224",
+        "SPEC.md:2240",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ]
@@ -12606,7 +12728,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2225",
+        "SPEC.md:2241",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ]
@@ -12636,7 +12758,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2226",
+        "SPEC.md:2242",
         "src/protocol/endpoint/core.rs:107",
         "src/client/endpoint/runtime.rs:63"
       ]
@@ -12662,7 +12784,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2253",
+        "SPEC.md:2269",
         "src/detect/mod.rs:159"
       ]
     },
@@ -12688,7 +12810,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2254",
+        "SPEC.md:2270",
         "src/detect/manifests/muse.toml:35"
       ]
     },
@@ -12713,7 +12835,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2255",
+        "SPEC.md:2271",
         "src/detect/manifests/qwen.toml:39"
       ]
     },
@@ -12743,7 +12865,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2256",
+        "SPEC.md:2272",
         "src/agent_resume.rs:190"
       ]
     },
@@ -12768,7 +12890,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2257",
+        "SPEC.md:2273",
         "src/cli/integration.rs:3"
       ]
     },
@@ -12793,7 +12915,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2258",
+        "SPEC.md:2274",
         "src/agent_resume.rs:196"
       ]
     },
@@ -12819,7 +12941,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2286",
+        "SPEC.md:2302",
         "src/cli/machine.rs:162",
         "src/machine.rs:251"
       ]
@@ -12845,7 +12967,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2287",
+        "SPEC.md:2303",
         "src/machine.rs:88"
       ]
     },
@@ -12870,7 +12992,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2288",
+        "SPEC.md:2304",
         "src/cli/machine.rs:40"
       ]
     },
@@ -12897,7 +13019,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2289",
+        "SPEC.md:2305",
         "src/cli/machine.rs:212",
         "src/cli/machine.rs:273",
         "src/machine.rs:155"
@@ -12924,7 +13046,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2290",
+        "SPEC.md:2306",
         "src/machine.rs:219"
       ]
     },
@@ -12952,7 +13074,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2308",
+        "SPEC.md:2324",
         "src/machine.rs:367"
       ]
     },
@@ -12975,7 +13097,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2309",
+        "SPEC.md:2325",
         "src/machine.rs:420"
       ]
     },
@@ -13001,7 +13123,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2310",
+        "SPEC.md:2326",
         "src/main.rs:544",
         "src/machine.rs:419"
       ]
@@ -13028,7 +13150,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2311",
+        "SPEC.md:2327",
         "src/machine.rs:155"
       ]
     },
@@ -13054,7 +13176,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2312",
+        "SPEC.md:2328",
         "src/main.rs:544",
         "src/machine.rs:295"
       ]
@@ -13081,7 +13203,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2328",
+        "SPEC.md:2344",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ]
     },
@@ -13107,7 +13229,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2329",
+        "SPEC.md:2345",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ]
     },
@@ -13137,7 +13259,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2345",
+        "SPEC.md:2361",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ]
@@ -13168,7 +13290,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2346",
+        "SPEC.md:2362",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ]
@@ -13199,7 +13321,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2347",
+        "SPEC.md:2363",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ]
@@ -13230,7 +13352,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2348",
+        "SPEC.md:2364",
         "src/client/endpoint/supervisor.rs:310",
         "src/client/endpoint/activation.rs:14"
       ]
@@ -13259,7 +13381,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2349",
+        "SPEC.md:2365",
         "src/remote/saved.rs:98",
         "src/remote/saved/process.rs:23"
       ]
@@ -13301,7 +13423,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2350",
+        "SPEC.md:2366",
         "src/remote.rs:37",
         "src/remote/saved/approval.rs:45",
         "src/client/endpoint/supervisor.rs:181",
@@ -13331,7 +13453,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2351",
+        "SPEC.md:2367",
         "src/client/endpoint/chrome.rs:732",
         "src/client/endpoint/frontend/input.rs:375"
       ]
@@ -13360,7 +13482,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2352",
+        "SPEC.md:2368",
         "src/remote/saved/process.rs:119",
         "src/client/endpoint/supervisor.rs:181"
       ]
@@ -13392,7 +13514,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2368",
+        "SPEC.md:2384",
         "src/client/endpoint/transport.rs:146",
         "src/protocol/render_ansi.rs:445",
         "src/client/terminal_pace.rs:22",
@@ -13427,7 +13549,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2369",
+        "SPEC.md:2385",
         "src/client/endpoint/transport.rs:146",
         "src/protocol/render_ansi.rs:445",
         "src/client/terminal_pace.rs:22",
@@ -13461,7 +13583,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2370",
+        "SPEC.md:2386",
         "src/client/endpoint/transport.rs:146",
         "src/protocol/render_ansi.rs:445",
         "src/client/terminal_pace.rs:22",
@@ -13495,7 +13617,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2371",
+        "SPEC.md:2387",
         "src/client/endpoint/transport.rs:146",
         "src/protocol/render_ansi.rs:445",
         "src/client/terminal_pace.rs:22",
@@ -13523,7 +13645,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2383",
+        "SPEC.md:2399",
         "src/protocol/render_ansi.rs:639"
       ]
     },
@@ -13546,7 +13668,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2384",
+        "SPEC.md:2400",
         "src/protocol/render_ansi.rs:639"
       ]
     },
@@ -13575,7 +13697,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2385",
+        "SPEC.md:2401",
         "src/logging.rs:47",
         "src/server/headless/endpoints.rs:523",
         "src/client/endpoint/transport.rs:96",
@@ -13606,7 +13728,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2386",
+        "SPEC.md:2402",
         "src/client/terminal_pace.rs:50",
         "src/server/headless/endpoints/graphics_patch.rs:16"
       ]
@@ -13634,7 +13756,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2398",
+        "SPEC.md:2414",
         "src/server/headless/endpoints/text_receipt.rs:102",
         "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
@@ -13662,7 +13784,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2399",
+        "SPEC.md:2415",
         "src/server/headless/endpoints/text_receipt.rs:102",
         "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
@@ -13690,7 +13812,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2400",
+        "SPEC.md:2416",
         "src/server/headless/endpoints/text_receipt.rs:102",
         "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
@@ -13717,7 +13839,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2401",
+        "SPEC.md:2417",
         "src/server/headless/endpoints/text_receipt.rs:102",
         "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
@@ -13743,7 +13865,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2402",
+        "SPEC.md:2418",
         "src/server/headless/endpoints/text_receipt.rs:160",
         "src/server/headless/tests/text_receipt.rs:458"
       ]
@@ -13769,7 +13891,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2403",
+        "SPEC.md:2419",
         "src/server/headless/tests/text_receipt.rs:540",
         "src/client/endpoint/transport/tests.rs:198"
       ]
@@ -13796,7 +13918,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2416",
+        "SPEC.md:2432",
         "src/client/endpoint/frontend/machines.rs:129"
       ]
     },
@@ -13822,7 +13944,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2417",
+        "SPEC.md:2433",
         "src/client/endpoint/frontend/machines.rs:129"
       ]
     },
@@ -13854,7 +13976,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2443",
+        "SPEC.md:2459",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13890,7 +14012,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2444",
+        "SPEC.md:2460",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13926,7 +14048,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2445",
+        "SPEC.md:2461",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13962,7 +14084,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2446",
+        "SPEC.md:2462",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13998,7 +14120,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2447",
+        "SPEC.md:2463",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14034,7 +14156,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2448",
+        "SPEC.md:2464",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14068,7 +14190,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2449",
+        "SPEC.md:2465",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14101,7 +14223,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2450",
+        "SPEC.md:2466",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14134,7 +14256,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2451",
+        "SPEC.md:2467",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14170,7 +14292,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2452",
+        "SPEC.md:2468",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14207,7 +14329,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2453",
+        "SPEC.md:2469",
         "src/client/endpoint/frontend/input.rs:1295",
         "src/app/input/mod.rs:685"
       ]
@@ -14240,7 +14362,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2454",
+        "SPEC.md:2470",
         "src/client/endpoint/frontend/copy_feedback.rs:16"
       ]
     },
@@ -14272,7 +14394,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2455",
+        "SPEC.md:2471",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14305,7 +14427,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2456",
+        "SPEC.md:2472",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14330,7 +14452,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2466",
+        "SPEC.md:2482",
         "src/window_title.rs:12"
       ]
     },
@@ -14354,7 +14476,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2467",
+        "SPEC.md:2483",
         "src/window_title.rs:12"
       ]
     },
@@ -14378,7 +14500,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2468",
+        "SPEC.md:2484",
         "src/window_title.rs:12"
       ]
     },
@@ -14402,7 +14524,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2469",
+        "SPEC.md:2485",
         "src/window_title.rs:12"
       ]
     },
@@ -14429,7 +14551,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2480",
+        "SPEC.md:2496",
         "src/guard/judge.rs:200",
         "src/cli/guard.rs:36"
       ]
@@ -14459,7 +14581,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2481",
+        "SPEC.md:2497",
         "src/guard/judge.rs:507",
         "src/guard/judge.rs:586"
       ]
@@ -14487,7 +14609,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2482",
+        "SPEC.md:2498",
         "src/guard/judge.rs:672",
         "src/guard/judge.rs:740"
       ]
@@ -14517,7 +14639,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2483",
+        "SPEC.md:2499",
         "src/guard/judge.rs:865",
         "src/guard/judge.rs:1158"
       ]
@@ -14545,7 +14667,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2484",
+        "SPEC.md:2500",
         "src/guard/judge.rs:367",
         "src/guard/judge.rs:430"
       ]
@@ -14579,7 +14701,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2485",
+        "SPEC.md:2501",
         "src/guard/judge.rs:1202",
         "src/guard/judge.rs:1643"
       ]
@@ -14607,7 +14729,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2486",
+        "SPEC.md:2502",
         "src/guard/judge.rs:265",
         "src/guard/judge.rs:1524"
       ]
@@ -14634,7 +14756,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2487",
+        "SPEC.md:2503",
         "src/config/model.rs:332",
         "src/guard/judge.rs:359"
       ]
@@ -14662,7 +14784,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2495",
+        "SPEC.md:2511",
         "src/guard/assets.rs:160",
         "src/guard/assets.rs:244",
         "src/cli/guard.rs:97"
@@ -14693,7 +14815,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2496",
+        "SPEC.md:2512",
         "src/guard/assets.rs:256",
         "src/guard/assets.rs:331",
         "src/guard/assets.rs:92"
@@ -14724,7 +14846,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2497",
+        "SPEC.md:2513",
         "src/guard/assets.rs:269",
         "src/guard/assets.rs:288",
         "src/guard/assets.rs:337"
@@ -14752,7 +14874,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2498",
+        "SPEC.md:2514",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
@@ -14783,7 +14905,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2499",
+        "SPEC.md:2515",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30"
@@ -14818,7 +14940,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2500",
+        "SPEC.md:2516",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
@@ -14850,7 +14972,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2501",
+        "SPEC.md:2517",
         "src/app/guard.rs:77"
       ]
     },
@@ -14875,7 +14997,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2502",
+        "SPEC.md:2518",
         "src/guard/assets.rs:42"
       ]
     },
@@ -14903,7 +15025,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2503",
+        "SPEC.md:2519",
         "src/pane.rs:1920",
         "src/guard/assets.rs:42"
       ]
@@ -14932,7 +15054,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2511",
+        "SPEC.md:2527",
         "src/guard/marker.rs:49",
         "src/cli/guard.rs:36"
       ]
@@ -14960,7 +15082,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2512",
+        "SPEC.md:2528",
         "src/app/guard.rs:14",
         "src/guard/marker.rs:93"
       ]
@@ -14987,7 +15109,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2513",
+        "SPEC.md:2529",
         "src/cli/guard.rs:36"
       ]
     },
@@ -15014,7 +15136,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2514",
+        "SPEC.md:2530",
         "src/guard/record.rs:142"
       ]
     },
@@ -15043,7 +15165,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2522",
+        "SPEC.md:2538",
         "src/config/model.rs:332",
         "src/guard/assets.rs:47",
         "src/cli/guard.rs:150"
@@ -15071,7 +15193,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2523",
+        "SPEC.md:2539",
         "src/cli/guard.rs:188"
       ]
     },
@@ -15099,7 +15221,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2524",
+        "SPEC.md:2540",
         "src/guard/enforce.rs:150",
         "src/cli/guard.rs:211"
       ]
@@ -15130,7 +15252,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2525",
+        "SPEC.md:2541",
         "src/guard/enforce.rs:60",
         "src/cli/guard.rs:228"
       ]
@@ -15162,7 +15284,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2526",
+        "SPEC.md:2542",
         "src/guard/enforce.rs:100",
         "src/cli/guard.rs:232",
         "src/cli/decision.rs:60"
@@ -15196,7 +15318,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2527",
+        "SPEC.md:2543",
         "src/guard/enforce.rs:170",
         "src/guard/judge.rs:1550",
         "src/cli/guard.rs:232"
@@ -15224,7 +15346,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2528",
+        "SPEC.md:2544",
         "src/guard/judge.rs:1524",
         "src/cli/guard.rs:240"
       ]
@@ -15251,7 +15373,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2529",
+        "SPEC.md:2545",
         "src/guard/assets.rs:62",
         "src/guard/mod.rs:40"
       ]
@@ -15279,7 +15401,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2537",
+        "SPEC.md:2553",
         "src/guard/compare.rs:49"
       ]
     },
@@ -15303,7 +15425,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2538",
+        "SPEC.md:2554",
         "src/guard/compare.rs:173"
       ]
     },
@@ -15331,7 +15453,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2539",
+        "SPEC.md:2555",
         "src/guard/record.rs:299"
       ]
     },
@@ -15354,7 +15476,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2550",
+        "SPEC.md:2566",
         "src/guard/assets.rs:321",
         "src/cli/guard.rs:504"
       ]
@@ -15378,7 +15500,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2551",
+        "SPEC.md:2567",
         "src/guard/assets.rs:321",
         "src/cli/guard.rs:504"
       ]
@@ -15402,7 +15524,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2552",
+        "SPEC.md:2568",
         "src/guard/assets.rs:321",
         "src/cli/guard.rs:504"
       ]

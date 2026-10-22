@@ -1492,6 +1492,15 @@
       "$defs": {
         "AgentPromptParams": {
           "properties": {
+            "caller_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "force": {
+              "type": "boolean"
+            },
             "target": {
               "type": "string"
             },
@@ -1593,6 +1602,15 @@
         },
         "AgentSendParams": {
           "properties": {
+            "caller_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "force": {
+              "type": "boolean"
+            },
             "target": {
               "type": "string"
             },
@@ -3875,6 +3893,15 @@
         },
         "PaneSendInputParams": {
           "properties": {
+            "caller_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "force": {
+              "type": "boolean"
+            },
             "keys": {
               "items": {
                 "type": "string"
@@ -3895,6 +3922,15 @@
         },
         "PaneSendKeysParams": {
           "properties": {
+            "caller_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "force": {
+              "type": "boolean"
+            },
             "keys": {
               "items": {
                 "type": "string"
@@ -3913,6 +3949,15 @@
         },
         "PaneSendTextParams": {
           "properties": {
+            "caller_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "force": {
+              "type": "boolean"
+            },
             "pane_id": {
               "type": "string"
             },

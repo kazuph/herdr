@@ -405,6 +405,170 @@ pub fn explain_with_input(agent: Agent, input: DetectionInput<'_>) -> DetectionE
     evaluate_loaded_manifest(agent, input, loaded, true)
 }
 
+/// The current confirmation is shared by input protection and identity parsing.
+/// State arbitration continues to use the original manifest regions.
+pub fn visible_confirmation_with_input(agent: Agent, input: DetectionInput<'_>) -> Option<&str> {
+    let loaded = load_manifest(agent)?;
+    let current = current_confirmation_region(agent, input.screen)?;
+    let scoped = DetectionInput {
+        screen: current,
+        ..input
+    };
+    loaded
+        .manifest
+        .rules
+        .iter()
+        .zip(&loaded.compiled_rules)
+        .find_map(|(rule, compiled)| {
+            if !rule.visible_blocker
+                || rule.state.map(AgentState::from) != Some(AgentState::Blocked)
+                || matches!(rule.region.as_str(), "osc_title" | "osc_progress")
+                || !compiled_rule_matches(compiled, region(scoped, &rule.region))
+            {
+                return None;
+            }
+            let tail = current.trim_end();
+            // Codex draws its interrupt hint below the matched submit footer.
+            let tail = if agent == Agent::Codex
+                && tail
+                    .lines()
+                    .last()
+                    .is_some_and(|line| line.trim().eq_ignore_ascii_case("esc to interrupt"))
+            {
+                tail.rsplit_once('\n')
+                    .map_or("", |(body, _)| body.trim_end())
+            } else {
+                tail
+            };
+            let lines = tail.lines().collect::<Vec<_>>();
+            let selected_last = lines
+                .iter()
+                .rposition(|line| {
+                    line.trim_start().starts_with(['❯', '›', '❭'])
+                        && crate::screen_prompt::option_row(line)
+                })
+                .is_some_and(|selected| {
+                    lines[selected..].iter().all(|line| {
+                        line.trim().is_empty() || crate::screen_prompt::option_row(line)
+                    })
+                });
+            (selected_last || gate_reaches_screen_end(&compiled.gate, tail)).then_some(current)
+        })
+}
+
+#[cfg(test)]
+pub fn visible_blocker_with_input(agent: Agent, input: DetectionInput<'_>) -> bool {
+    visible_confirmation_with_input(agent, input).is_some()
+}
+
+// Inspect the existing rule's positive evidence rather than maintaining a
+// second vocabulary of allowed confirmation commands. A match must reach the
+// last physical row, so old controls followed by ordinary prose do not count.
+fn gate_reaches_screen_end(gate: &CompiledGate, screen: &str) -> bool {
+    let last = screen.lines().last().unwrap_or("").trim();
+    let lower = last.to_lowercase();
+    let starts_control = |line: &str| {
+        line.split(['·', '|', '•']).any(|part| {
+            gate.contains
+                .iter()
+                .any(|needle| part.trim_start().starts_with(needle))
+        })
+    };
+    starts_control(&lower)
+        || gate
+            .line_regex
+            .iter()
+            .any(|re| re.find(last).is_some_and(|m| m.start() == 0))
+        || gate.regex.iter().any(|re| {
+            re.find_iter(screen).any(|m| {
+                m.end() >= screen.rfind('\n').map_or(0, |i| i + 1)
+                    && screen[..m.start()]
+                        .rsplit('\n')
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .is_empty()
+            })
+        })
+        || gate
+            .all
+            .iter()
+            .chain(&gate.any)
+            .any(|nested| gate_reaches_screen_end(nested, screen))
+}
+
+fn current_confirmation_region(agent: Agent, screen: &str) -> Option<&str> {
+    let mut boundaries = vec![0];
+    let mut offset = 0;
+    let mut fence: Option<(char, usize)> = None;
+    let mut cursor = None;
+    for line in screen.lines() {
+        let trimmed = line.trim_start();
+        let marker = if trimmed.starts_with("```") {
+            Some('`')
+        } else if trimmed.starts_with("~~~") {
+            Some('~')
+        } else {
+            None
+        };
+        if let Some(marker) = marker {
+            let width = trimmed.chars().take_while(|ch| *ch == marker).count();
+            match fence {
+                None => fence = Some((marker, width)),
+                Some((open, length))
+                    if open == marker
+                        && width >= length
+                        && trimmed.trim_matches(marker).trim().is_empty() =>
+                {
+                    fence = None
+                }
+                _ => {}
+            }
+        }
+        if fence.is_none() {
+            if is_horizontal_rule(line) {
+                boundaries.push((offset + line.len() + 1).min(screen.len()));
+            }
+            if trimmed.starts_with(['❯', '›', '❭']) {
+                cursor = Some(offset);
+            }
+        }
+        offset += line.len() + 1;
+    }
+    if fence.is_some() {
+        return None;
+    }
+    // A preview's lower divider is part of the same confirmation; the latest
+    // cursor anchors the containing region, including the options above it.
+    let last_boundary = *boundaries.last().unwrap_or(&0);
+    let start = cursor.map_or(last_boundary, |at| {
+        let containing = boundaries
+            .iter()
+            .copied()
+            .rfind(|&start| start <= at)
+            .unwrap_or(0);
+        if at >= last_boundary
+            || crate::screen_prompt::parse_screen_prompt(&screen[containing..]).is_some_and(|_| {
+                crate::screen_prompt::prompt_continuation(&screen[last_boundary..])
+            })
+        {
+            containing
+        } else {
+            last_boundary
+        }
+    });
+    let current = &screen[start..];
+    if start == 0 && cursor.is_none() {
+        return None;
+    }
+    if agent == Agent::Codex {
+        if let Some(current) = crate::screen_prompt::codex_question_region(current) {
+            return Some(current);
+        }
+    }
+    Some(current)
+}
+
 pub fn explain_for_label(agent_label: &str, screen_content: &str) -> DetectionExplain {
     let Some(agent) = parse_agent_label(agent_label) else {
         return DetectionExplain {

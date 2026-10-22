@@ -20,6 +20,7 @@ impl App {
             return;
         }
         if let Err(err) = result {
+            self.regular_mail_panes.remove(&message_id);
             tracing::warn!(message_id, err, "mailbox PTY write failed");
             return;
         }
@@ -29,12 +30,26 @@ impl App {
                 .map_err(msg_store_error)
         }) {
             Ok(true) => {}
-            Ok(false) => tracing::warn!(
-                message_id,
-                "mailbox write completed for a non-pending message"
-            ),
+            Ok(false) => {
+                tracing::warn!(
+                    message_id,
+                    "mailbox write completed for a non-pending message"
+                );
+                return;
+            }
             Err(err) => {
-                tracing::warn!(message_id, err = %err.message, "failed to record mailbox write completion")
+                tracing::warn!(message_id, err = %err.message, "failed to record mailbox write completion");
+                return;
+            }
+        }
+        if let Some(pane_id) = self.regular_mail_panes.remove(&message_id) {
+            if let Some(ws_idx) = self
+                .state
+                .workspaces
+                .iter()
+                .position(|ws| ws.pane_state(pane_id).is_some())
+            {
+                self.flush_msg_nudges_for_available_pane(ws_idx, pane_id);
             }
         }
     }
@@ -220,6 +235,23 @@ impl App {
         let Ok(resolved) = self.resolve_terminal_target(&agent.global_pane_id) else {
             return Ok(false);
         };
+        let visible = self.pane_has_visible_blocker(resolved.ws_idx, resolved.pane_id);
+        if visible
+            || self.input_guard_waiting.contains_key(&resolved.pane_id)
+            || self.screen_prompt_input_in_flight(resolved.pane_id)
+        {
+            self.hold_external_input(resolved.pane_id, visible);
+            return Ok(false);
+        }
+        // At most one submission per recipient is queued to the PTY actor. Its
+        // acknowledgement schedules the next, with a fresh screen check.
+        if messages
+            .iter()
+            .any(|message| self.regular_mail_in_flight.contains(&message.id))
+        {
+            return Ok(false);
+        }
+        let next_id = messages.first().map(|message| message.id);
         let mut in_flight = std::mem::take(&mut self.regular_mail_in_flight);
         let result = {
             let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id)
@@ -230,6 +262,11 @@ impl App {
             deliver_regular_messages(&self.mailbox_write_tx, &mut in_flight, runtime, messages)
         };
         self.regular_mail_in_flight = in_flight;
+        if result.as_ref().is_ok_and(|delivered| *delivered) {
+            if let Some(message_id) = next_id {
+                self.regular_mail_panes.insert(message_id, resolved.pane_id);
+            }
+        }
         result
     }
 
@@ -309,6 +346,14 @@ impl App {
         let Some(agent) = self.agent_info(resolved.ws_idx, resolved.pane_id) else {
             return Ok(false);
         };
+        let visible = self.pane_has_visible_blocker(resolved.ws_idx, resolved.pane_id);
+        if visible
+            || self.input_guard_waiting.contains_key(&resolved.pane_id)
+            || self.screen_prompt_input_in_flight(resolved.pane_id)
+        {
+            self.hold_external_input(resolved.pane_id, visible);
+            return Ok(false);
+        }
         if agent.agent_status == AgentStatus::Blocked {
             return Ok(false);
         }
@@ -457,6 +502,7 @@ fn deliver_regular_messages(
             return Err(err);
         }
         delivered = true;
+        break;
     }
     Ok(delivered)
 }
@@ -795,6 +841,828 @@ mod tests {
 
     fn error_response(response: &str) -> ErrorResponse {
         serde_json::from_str(response).unwrap()
+    }
+
+    fn draw_question(harness: &mut MsgApiHarness, screen: &str) {
+        let pane = harness.agents["claude"].pane_id;
+        harness
+            .app
+            .lookup_runtime_sender(0, pane)
+            .unwrap()
+            .test_process_pty_bytes(
+                format!(
+                    "\x1b[2J\x1b[H{}",
+                    screen.replace("\r\n", "\n").replace("\n", "\r\n")
+                )
+                .as_bytes(),
+            );
+    }
+
+    #[test]
+    fn managed_launch_confirmation_is_guarded_before_agent_detection() {
+        with_msg_api_harness(&["claude"], |harness| {
+            let pane_id = harness.agents["claude"].pane_id;
+            let id = harness.app.state.workspaces[0]
+                .terminal_id(pane_id)
+                .unwrap()
+                .clone();
+            let terminal = harness.app.state.terminals.get_mut(&id).unwrap();
+            terminal.hook_authority = None;
+            terminal.detected_agent = None;
+            terminal.begin_managed_agent(
+                "claude".into(),
+                crate::detect::Agent::Claude,
+                std::time::Instant::now(),
+                super::super::agents::AGENT_START_SETTLE_DELAY,
+                super::super::agents::AGENT_START_SETTLE_DELAY,
+            );
+            assert!(terminal.effective_known_agent().is_none());
+            draw_question(
+                harness,
+                include_str!("../detect/fixtures/claude-workspace-trust-live.txt"),
+            );
+            let error = harness
+                .app
+                .guard_external_input(0, pane_id, false, Some(&format!("p{}", pane_id.raw())))
+                .unwrap_err();
+            assert_eq!(error.code, "pane_confirmation_pending");
+            assert!(error.message.contains("Yes, I trust this folder"));
+            assert!(harness.received_texts("claude").is_empty());
+        });
+    }
+
+    #[test]
+    fn quoted_controls_and_old_questions_do_not_hold_mail_or_immediate_input() {
+        with_msg_api_harness(&["claude"], |harness| {
+            let pane = harness.global_pane_id("claude");
+            let old = include_str!("../detect/fixtures/claude-workspace-trust-live.txt");
+            let screens = [
+                "Here is code:\r\n```rust\r\nprintln!(\"Enter to select · Tab/Arrow keys to navigate · Esc to cancel\");\r\n```\r\n".to_string(),
+                format!("{old}\n────────────────────────\n❯ Ordinary input\n────────────────────────\n? for shortcuts\n"),
+            ];
+            for screen in screens {
+                draw_question(harness, &screen);
+                assert_eq!(
+                    harness.send("sender", &pane, "ordinary-input", "regular"),
+                    vec![pane.clone()]
+                );
+                assert_eq!(harness.received_texts("claude"), vec!["regular\r"]);
+                let response = harness.app.handle_api_request(Request {
+                    id: "ordinary-input".into(),
+                    method: Method::PaneSendText(crate::api::schema::PaneSendTextParams {
+                        input_peer_pid: None,
+                        caller_pane_id: None,
+                        force: false,
+                        pane_id: pane.clone(),
+                        text: "literal text".into(),
+                    }),
+                });
+                success_result(&response);
+                assert_eq!(harness.received_texts("claude"), vec!["literal text"]);
+            }
+        });
+    }
+
+    #[test]
+    fn mcp_confirmation_keeps_regular_and_job_messages_queued() {
+        // The same pre-existing live-capture fragment as the manifest MCP test.
+        let screen = "MCP server \u{201c}my-server\u{201d} requests your input\n\nGrant temporary access to the demo gateway for 15 minutes?\n\n\u{276f} Accept    Decline\n\nEsc to cancel \u{b7} \u{2191}/\u{2193} to navigate\n";
+        with_msg_api_harness(&["claude"], |harness| {
+            let pane = harness.global_pane_id("claude");
+            draw_question(harness, screen);
+            assert!(harness
+                .send("sender", &pane, "mcp-protection", "regular")
+                .is_empty());
+            assert!(harness
+                .send("herdr-run", &pane, crate::msg::JOBS_ROOM, "completion")
+                .is_empty());
+            assert!(harness.received_texts("claude").is_empty());
+            let pane_id = harness.agents["claude"].pane_id;
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, true, Some(&format!("p{}", pane_id.raw())))
+                .is_err());
+            let error = harness
+                .app
+                .guard_external_input(0, pane_id, false, Some(&format!("p{}", pane_id.raw())))
+                .unwrap_err();
+            assert_eq!(error.code, "pane_confirmation_pending");
+            assert!(error.message.contains("1. Accept"));
+            assert!(error.message.contains("2. Decline"));
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, true, Some(&format!("p{}", pane_id.raw())))
+                .is_ok());
+            draw_question(harness, "────────────────────────\n❯ Ordinary input\n────────────────────────\n? for shortcuts\n");
+            harness.app.input_guard_tasks(std::time::Instant::now());
+            harness.app.input_guard_tasks(
+                std::time::Instant::now()
+                    + super::super::screen_prompts::SCREEN_PROMPT_SCAN_INTERVAL,
+            );
+            harness.drain_events();
+            assert_eq!(
+                harness.received_texts("claude"),
+                vec!["regular\r", "completion", "\r"]
+            );
+        });
+    }
+
+    #[test]
+    fn mcp_decision_answer_passes_guard_while_mail_waits_for_screen_disappearance() {
+        with_msg_api_harness(&["claude"], |harness| {
+            let previous_db = std::env::var_os(crate::dispatch::HERDR_DB_PATH_ENV_VAR);
+            std::env::set_var(crate::dispatch::HERDR_DB_PATH_ENV_VAR, &harness.db_path);
+            harness.app.state.decisions_screen_prompts = true;
+            let pane = harness.global_pane_id("claude");
+            let pane_id = harness.agents["claude"].pane_id;
+            draw_question(
+                harness,
+                include_str!("../../tests/fixtures/screen_prompts/claude_mcp_accept.txt"),
+            );
+            harness.report_state("claude", PaneAgentState::Blocked);
+            harness.app.screen_prompt_scan_at = Some(std::time::Instant::now());
+            harness.app.screen_prompt_tasks(std::time::Instant::now());
+            let store = crate::decision::DecisionStore::open_active().unwrap();
+            let pending = store
+                .list(Some(crate::api::schema::DecisionStatus::Pending))
+                .unwrap();
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].options[0].label, "Accept");
+            assert_eq!(pending[0].options[1].label, "Decline");
+            // The hook may report Working while the MCP decision remains visible.
+            harness.report_state("claude", PaneAgentState::Working);
+            assert!(harness.app.pane_has_visible_blocker(0, pane_id));
+            assert!(harness
+                .send("sender", &pane, "mcp-decision", "regular")
+                .is_empty());
+            assert!(harness
+                .send("herdr-run", &pane, crate::msg::JOBS_ROOM, "completion")
+                .is_empty());
+            assert!(harness.received_texts("claude").is_empty());
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, true, Some(&format!("p{}", pane_id.raw())))
+                .is_err());
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, false, Some(&format!("p{}", pane_id.raw())))
+                .is_err());
+            let response = harness.app.handle_api_request(Request {
+                id: "dialog-answer".into(),
+                method: Method::DecisionAnswer(crate::api::schema::DecisionAnswerParams {
+                    decision_id: pending[0].decision_id.clone(),
+                    option_id: Some("1".into()),
+                    option_ids: None,
+                    text: None,
+                    responder: Some("mac-dialog".into()),
+                }),
+            });
+            success_result(&response);
+            harness
+                .app
+                .screen_prompt_tasks(std::time::Instant::now() + std::time::Duration::from_secs(5));
+            assert_eq!(harness.received_texts("claude"), vec!["\r"]);
+            assert!(store
+                .list(Some(crate::api::schema::DecisionStatus::Pending))
+                .unwrap()
+                .is_empty());
+            harness
+                .app
+                .input_guard_tasks(std::time::Instant::now() + std::time::Duration::from_secs(5));
+            harness
+                .app
+                .input_guard_tasks(std::time::Instant::now() + std::time::Duration::from_secs(6));
+            harness.drain_events();
+            assert!(
+                harness.received_texts("claude").is_empty(),
+                "answer resolution alone must not release mail"
+            );
+            assert!(harness.history("mcp-decision")[0].delivered_at.is_none());
+            draw_question(harness, "────────────────────────\n❯ Ordinary input\n────────────────────────\n? for shortcuts\n");
+            harness
+                .app
+                .input_guard_tasks(std::time::Instant::now() + std::time::Duration::from_secs(10));
+            harness
+                .app
+                .input_guard_tasks(std::time::Instant::now() + std::time::Duration::from_secs(11));
+            harness.drain_events();
+            assert_eq!(
+                harness.received_texts("claude"),
+                vec!["regular\r", "completion", "\r"]
+            );
+            if let Some(previous) = previous_db {
+                std::env::set_var(crate::dispatch::HERDR_DB_PATH_ENV_VAR, previous);
+            } else {
+                std::env::remove_var(crate::dispatch::HERDR_DB_PATH_ENV_VAR);
+            }
+        });
+    }
+
+    #[test]
+    fn visible_confirmation_holds_mail_and_jobs_even_while_working_and_decisions_disabled() {
+        with_msg_api_harness(&["claude"], |harness| {
+            harness.app.state.decisions_screen_prompts = false;
+            let pane = harness.global_pane_id("claude");
+            draw_question(
+                harness,
+                include_str!("../detect/fixtures/claude-narrow-multi-question.txt"),
+            );
+            assert!(harness.send("sender", &pane, "guard", "regular").is_empty());
+            assert!(harness
+                .send("herdr-run", &pane, crate::msg::JOBS_ROOM, "completion")
+                .is_empty());
+            assert!(harness.received_texts("claude").is_empty());
+            assert!(harness.history("guard")[0].delivered_at.is_none());
+            assert!(harness.history(crate::msg::JOBS_ROOM)[0]
+                .delivered_at
+                .is_none());
+            assert!(harness.app.screen_prompt_deadline().is_some());
+            // No hook/state report/new message triggers this release.
+            draw_question(harness, "ordinary answer\r\n1. first\r\n2. second\r\n❯ ");
+            harness.app.input_guard_tasks(std::time::Instant::now());
+            harness.app.input_guard_tasks(
+                std::time::Instant::now()
+                    + super::super::screen_prompts::SCREEN_PROMPT_SCAN_INTERVAL,
+            );
+            harness.drain_events();
+            assert_eq!(
+                harness.received_texts("claude"),
+                vec!["regular\r", "completion", "\r"]
+            );
+            assert!(harness.history("guard")[0].delivered_at.is_some());
+            assert!(harness.history(crate::msg::JOBS_ROOM)[0]
+                .delivered_at
+                .is_some());
+        });
+    }
+
+    #[test]
+    fn confirmation_force_requires_prior_unforced_rejection_for_same_question() {
+        with_msg_api_harness(&["claude"], |harness| {
+            let pane_id = harness.agents["claude"].pane_id;
+            let screen = include_str!("../detect/fixtures/claude-narrow-multi-question.txt");
+            draw_question(harness, screen);
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, true, Some(&format!("p{}", pane_id.raw())))
+                .is_err());
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, true, Some(&format!("p{}", pane_id.raw())))
+                .is_err());
+            let error = harness
+                .app
+                .guard_external_input(0, pane_id, false, Some(&format!("p{}", pane_id.raw())))
+                .unwrap_err();
+            assert_eq!(error.code, "pane_confirmation_pending");
+            assert!(error.message.contains("待機中"));
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, true, Some(&format!("p{}", pane_id.raw())))
+                .is_ok());
+            let changed = screen.replace("Summary", "Changed summary");
+            draw_question(harness, &changed);
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, true, Some(&format!("p{}", pane_id.raw())))
+                .is_err());
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, false, Some(&format!("p{}", pane_id.raw())))
+                .is_err());
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, true, Some(&format!("p{}", pane_id.raw())))
+                .is_ok());
+            draw_question(harness, "❯ normal prompt");
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, false, Some(&format!("p{}", pane_id.raw())))
+                .is_ok());
+            draw_question(harness, &changed);
+            assert!(harness
+                .app
+                .guard_external_input(0, pane_id, true, Some(&format!("p{}", pane_id.raw())))
+                .is_err());
+            assert!(harness.received_texts("claude").is_empty());
+        });
+    }
+
+    #[test]
+    fn confirmation_between_mail_acknowledgements_holds_the_next_body() {
+        with_msg_api_harness(&["claude"], |harness| {
+            let pane_id = harness.agents["claude"].pane_id;
+            let pane = harness.global_pane_id("claude");
+            harness.insert_queued_message("first-room", &pane, "first");
+            harness.insert_queued_message("second-room", &pane, "second");
+            harness.app.flush_msg_nudges_for_available_pane(0, pane_id);
+            assert_eq!(harness.received_texts("claude"), vec!["first\r"]);
+            draw_question(
+                harness,
+                include_str!("../detect/fixtures/claude-narrow-multi-question.txt"),
+            );
+            harness.drain_events();
+            assert!(harness.received_texts("claude").is_empty());
+            assert!(harness.history("first-room")[0].delivered_at.is_some());
+            assert!(harness.history("second-room")[0].delivered_at.is_none());
+            draw_question(harness, "❯ normal prompt");
+            harness.app.input_guard_tasks(std::time::Instant::now());
+            harness.app.input_guard_tasks(
+                std::time::Instant::now()
+                    + super::super::screen_prompts::SCREEN_PROMPT_SCAN_INTERVAL,
+            );
+            harness.drain_events();
+            assert_eq!(harness.received_texts("claude"), vec!["second\r"]);
+            harness.app.input_guard_tasks(std::time::Instant::now());
+            harness.app.input_guard_tasks(
+                std::time::Instant::now()
+                    + super::super::screen_prompts::SCREEN_PROMPT_SCAN_INTERVAL,
+            );
+            harness.drain_events();
+            assert!(harness.received_texts("claude").is_empty());
+        });
+    }
+
+    #[test]
+    fn direct_api_input_routes_reject_before_writing_confirmation() {
+        with_msg_api_harness(&["claude"], |harness| {
+            let pane = harness.public_pane_id("claude");
+            draw_question(
+                harness,
+                include_str!("../detect/fixtures/claude-narrow-multi-question.txt"),
+            );
+            for method in [
+                Method::PaneSendText(crate::api::schema::PaneSendTextParams {
+                    input_peer_pid: None,
+                    caller_pane_id: Some(pane.clone()),
+                    force: false,
+                    pane_id: pane.clone(),
+                    text: "danger".into(),
+                }),
+                Method::PaneSendKeys(crate::api::schema::PaneSendKeysParams {
+                    input_peer_pid: None,
+                    caller_pane_id: Some(pane.clone()),
+                    force: false,
+                    pane_id: pane.clone(),
+                    keys: vec!["Enter".into()],
+                }),
+                Method::PaneSendInput(crate::api::schema::PaneSendInputParams {
+                    input_peer_pid: None,
+                    caller_pane_id: Some(pane.clone()),
+                    force: false,
+                    pane_id: pane.clone(),
+                    text: "danger".into(),
+                    keys: vec!["Enter".into()],
+                }),
+                Method::AgentSend(crate::api::schema::AgentSendParams {
+                    input_peer_pid: None,
+                    caller_pane_id: Some(pane.clone()),
+                    force: false,
+                    target: pane.clone(),
+                    text: "danger".into(),
+                }),
+            ] {
+                let response = harness.app.handle_api_request(Request {
+                    id: "guard".into(),
+                    method,
+                });
+                assert_eq!(
+                    error_response(&response).error.code,
+                    "pane_confirmation_pending",
+                    "{response}"
+                );
+                assert!(harness.received_texts("claude").is_empty());
+            }
+            let (tx, rx) = std::sync::mpsc::channel();
+            assert!(harness.app.handle_deferred_agent_api_request(
+                Request {
+                    id: "prompt-guard".into(),
+                    method: Method::AgentPrompt(crate::api::schema::AgentPromptParams {
+                        input_peer_pid: None,
+                        caller_pane_id: Some(pane.clone()),
+                        force: false,
+                        target: pane.clone(),
+                        text: "danger".into(),
+                        wait: None
+                    }),
+                },
+                tx
+            ));
+            assert_eq!(
+                error_response(&rx.try_recv().unwrap()).error.code,
+                "pane_confirmation_pending"
+            );
+            assert!(harness.received_texts("claude").is_empty());
+            let response = harness.app.handle_api_request(Request {
+                id: "approved-guard".into(),
+                method: Method::PaneSendKeys(crate::api::schema::PaneSendKeysParams {
+                    input_peer_pid: None,
+                    caller_pane_id: Some(pane.clone()),
+                    force: true,
+                    pane_id: pane,
+                    keys: vec!["Enter".into()],
+                }),
+            });
+            assert_eq!(
+                error_response(&response).error.code,
+                "pane_confirmation_pending"
+            );
+            assert!(harness.received_texts("claude").is_empty());
+        });
+    }
+    fn guard_tick(harness: &mut MsgApiHarness, tick: u64) {
+        harness
+            .app
+            .input_guard_tasks(std::time::Instant::now() + std::time::Duration::from_secs(tick));
+        harness.drain_events();
+    }
+
+    #[test]
+    fn review_saved_questions_hold_mail_jobs_and_every_direct_input_route() {
+        for (agent, screen) in [
+            (
+                crate::detect::Agent::Claude,
+                include_str!("../../tests/fixtures/screen_prompts/claude_preview_multi.txt"),
+            ),
+            (
+                crate::detect::Agent::Claude,
+                include_str!("../../tests/fixtures/screen_prompts/claude_preview_wrapped.txt"),
+            ),
+            (
+                crate::detect::Agent::Codex,
+                include_str!("../../tests/fixtures/screen_prompt/codex-question.txt"),
+            ),
+            (
+                crate::detect::Agent::Codex,
+                include_str!("../../tests/fixtures/screen_prompt/codex-countdown-1.txt"),
+            ),
+            (
+                crate::detect::Agent::Codex,
+                include_str!("../../tests/fixtures/screen_prompt/codex-notes.txt"),
+            ),
+        ] {
+            with_msg_api_harness(&["claude"], |harness| {
+                let pane_id = harness.agents["claude"].pane_id;
+                let (runtime, rx) = TerminalRuntime::test_with_channel_capacity(240, 100, 16);
+                harness.app.state.insert_test_runtime(pane_id, runtime);
+                harness.agents.get_mut("claude").unwrap().rx = rx;
+                let terminal_id = harness.app.state.workspaces[0]
+                    .terminal_id(pane_id)
+                    .unwrap()
+                    .clone();
+                let terminal = harness.app.state.terminals.get_mut(&terminal_id).unwrap();
+                terminal.hook_authority = None;
+                terminal.detected_agent = Some(agent);
+                let pane = harness.public_pane_id("claude");
+                draw_question(harness, screen);
+                assert!(harness.app.pane_has_visible_blocker(0, pane_id));
+                assert!(harness
+                    .send("sender", &pane, "review-fixtures", "regular")
+                    .is_empty());
+                assert!(harness
+                    .send("herdr-run", &pane, crate::msg::JOBS_ROOM, "completion")
+                    .is_empty());
+                for method in [
+                    Method::PaneSendText(crate::api::schema::PaneSendTextParams {
+                        input_peer_pid: None,
+                        caller_pane_id: Some(pane.clone()),
+                        force: false,
+                        pane_id: pane.clone(),
+                        text: "danger".into(),
+                    }),
+                    Method::PaneSendKeys(crate::api::schema::PaneSendKeysParams {
+                        input_peer_pid: None,
+                        caller_pane_id: Some(pane.clone()),
+                        force: false,
+                        pane_id: pane.clone(),
+                        keys: vec!["Enter".into()],
+                    }),
+                    Method::PaneSendInput(crate::api::schema::PaneSendInputParams {
+                        input_peer_pid: None,
+                        caller_pane_id: Some(pane.clone()),
+                        force: false,
+                        pane_id: pane.clone(),
+                        text: "danger".into(),
+                        keys: vec!["Enter".into()],
+                    }),
+                    Method::AgentSend(crate::api::schema::AgentSendParams {
+                        input_peer_pid: None,
+                        caller_pane_id: Some(pane.clone()),
+                        force: false,
+                        target: pane.clone(),
+                        text: "danger".into(),
+                    }),
+                ] {
+                    let response = harness.app.handle_api_request(Request {
+                        id: "review-direct".into(),
+                        method,
+                    });
+                    assert_eq!(
+                        error_response(&response).error.code,
+                        "pane_confirmation_pending",
+                        "{response}"
+                    );
+                }
+                let (tx, rx) = std::sync::mpsc::channel();
+                assert!(harness.app.handle_deferred_agent_api_request(
+                    Request {
+                        id: "review-prompt".into(),
+                        method: Method::AgentPrompt(crate::api::schema::AgentPromptParams {
+                            input_peer_pid: None,
+                            caller_pane_id: Some(pane.clone()),
+                            force: false,
+                            target: pane.clone(),
+                            text: "danger".into(),
+                            wait: None
+                        }),
+                    },
+                    tx
+                ));
+                assert_eq!(
+                    error_response(&rx.try_recv().unwrap()).error.code,
+                    "pane_confirmation_pending"
+                );
+                assert!(harness.received_texts("claude").is_empty());
+                draw_question(harness, "ordinary answer");
+                guard_tick(harness, 1);
+                assert!(harness.received_texts("claude").is_empty());
+                guard_tick(harness, 2);
+                assert_eq!(
+                    harness.received_texts("claude"),
+                    vec!["regular\r", "completion", "\r"]
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn review_unverified_api_caller_cannot_authorize_force_or_substitute_history() {
+        with_msg_api_harness(&["claude", "alpha", "beta"], |harness| {
+            let pane = harness.public_pane_id("claude");
+            let alpha = harness.public_pane_id("alpha");
+            let beta = harness.public_pane_id("beta");
+            let trust = include_str!("../detect/fixtures/claude-workspace-trust-live.txt");
+            let historical = "Old question?\n❯ 1. Yes\n  2. No\nEnter to select · ↑/↓ to navigate · Esc to cancel\n";
+            let current = format!("{historical}{trust}");
+            let send = |harness: &mut MsgApiHarness, caller: Option<String>, force| {
+                harness.app.handle_api_request(Request {
+                    id: "caller-guard".into(),
+                    method: Method::PaneSendKeys(crate::api::schema::PaneSendKeysParams {
+                        input_peer_pid: None,
+                        caller_pane_id: caller,
+                        force,
+                        pane_id: pane.clone(),
+                        keys: vec!["Enter".into()],
+                    }),
+                })
+            };
+            draw_question(harness, &current);
+            let response = send(harness, Some(alpha.clone()), false);
+            let error = error_response(&response).error;
+            assert_eq!(error.code, "pane_confirmation_pending");
+            assert!(error.message.contains("fix/hold-mail-while-asking"));
+            assert!(error
+                .message
+                .contains("No, exit / Yes, I trust this folder"));
+            assert!(!error.message.contains("Old question?"));
+            for caller in [Some(beta.clone()), None, Some("missing-pane".into())] {
+                assert_eq!(
+                    error_response(&send(harness, caller, true)).error.code,
+                    "pane_confirmation_pending"
+                );
+            }
+            assert!(harness.received_texts("claude").is_empty());
+            assert_eq!(
+                error_response(&send(harness, Some(alpha.clone()), true))
+                    .error
+                    .code,
+                "pane_confirmation_pending"
+            );
+            assert!(harness.received_texts("claude").is_empty());
+            let changed = current.replace("fix/hold-mail-while-asking", "other-current-folder");
+            draw_question(harness, &changed);
+            assert_eq!(
+                error_response(&send(harness, Some(alpha.clone()), true))
+                    .error
+                    .code,
+                "pane_confirmation_pending"
+            );
+            let response = send(harness, Some(alpha.clone()), false);
+            assert!(error_response(&response)
+                .error
+                .message
+                .contains("other-current-folder"));
+            assert_eq!(
+                error_response(&send(harness, Some(alpha.clone()), true))
+                    .error
+                    .code,
+                "pane_confirmation_pending"
+            );
+            assert!(harness.received_texts("claude").is_empty());
+            let unsupported = format!("{historical}────────────────────────\nUnreadable current confirmation\nEnter to confirm · Esc to cancel\n");
+            draw_question(harness, &unsupported);
+            assert_eq!(
+                error_response(&send(harness, Some(alpha.clone()), false))
+                    .error
+                    .code,
+                "pane_confirmation_unsupported"
+            );
+            assert_eq!(
+                error_response(&send(harness, Some(alpha), true)).error.code,
+                "pane_confirmation_unsupported"
+            );
+            assert!(harness.received_texts("claude").is_empty());
+        });
+    }
+
+    #[test]
+    fn review_force_records_do_not_cross_targets_or_question_kinds() {
+        for screen in [
+            include_str!("../detect/fixtures/claude-workspace-trust-live.txt"),
+            include_str!("../../tests/fixtures/screen_prompts/claude_mcp_accept.txt"),
+            include_str!("../detect/fixtures/claude-narrow-multi-question.txt"),
+        ] {
+            with_msg_api_harness(&["claude", "other", "caller"], |harness| {
+                let caller = harness.public_pane_id("caller");
+                let target = harness.agents["claude"].pane_id;
+                let other = harness.agents["other"].pane_id;
+                let terminal_id = harness.app.state.workspaces[0]
+                    .terminal_id(other)
+                    .unwrap()
+                    .clone();
+                harness
+                    .app
+                    .state
+                    .terminals
+                    .get_mut(&terminal_id)
+                    .unwrap()
+                    .detected_agent = Some(crate::detect::Agent::Claude);
+                harness
+                    .app
+                    .state
+                    .terminals
+                    .get_mut(&terminal_id)
+                    .unwrap()
+                    .hook_authority = None;
+                for pane_id in [target, other] {
+                    let (runtime, rx) = TerminalRuntime::test_with_channel_capacity(240, 100, 16);
+                    runtime.test_process_pty_bytes(screen.replace('\n', "\r\n").as_bytes());
+                    harness.app.state.insert_test_runtime(pane_id, runtime);
+                    let name = if pane_id == target { "claude" } else { "other" };
+                    harness.agents.get_mut(name).unwrap().rx = rx;
+                }
+                assert!(harness
+                    .app
+                    .guard_external_input(0, target, false, Some(&caller))
+                    .is_err());
+                assert!(harness
+                    .app
+                    .guard_external_input(0, target, true, Some(&caller))
+                    .is_ok());
+                assert!(harness
+                    .app
+                    .guard_external_input(0, other, true, Some(&caller))
+                    .is_err());
+                assert!(harness
+                    .app
+                    .guard_external_input(0, target, true, None)
+                    .is_err());
+                let changed = screen
+                    .replace("TextEdit", "Different app")
+                    .replace("Summary", "Changed summary")
+                    .replace("fix/hold-mail-while-asking", "changed-workspace");
+                assert_ne!(changed, screen);
+                draw_question(harness, &changed);
+                assert!(harness
+                    .app
+                    .guard_external_input(0, target, true, Some(&caller))
+                    .is_err());
+                assert!(harness
+                    .app
+                    .guard_external_input(0, target, false, Some(&caller))
+                    .is_err());
+                assert!(harness
+                    .app
+                    .guard_external_input(0, target, true, Some(&caller))
+                    .is_ok());
+                assert!(harness.received_texts("claude").is_empty());
+                assert!(harness.received_texts("other").is_empty());
+            });
+        }
+    }
+
+    #[test]
+    fn review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs() {
+        for room in ["review2-regular", crate::msg::JOBS_ROOM] {
+            for immediate in [false, true] {
+                with_msg_api_harness(&["claude"], |h| {
+                    let pane = h.global_pane_id("claude");
+                    let target = h.agents["claude"].pane_id;
+                    let question =
+                        include_str!("../detect/fixtures/claude-narrow-multi-question.txt");
+                    draw_question(h, question);
+                    assert!(h.send("sender", &pane, room, "first").is_empty());
+                    draw_question(h, "");
+                    guard_tick(h, 1);
+                    assert_eq!(h.app.input_guard_waiting[&target], 1);
+                    draw_question(h, &question.replace("Summary", "Next question"));
+                    if immediate {
+                        assert!(h.app.guard_external_input(0, target, false, None).is_err());
+                    } else {
+                        assert!(h.send("sender", &pane, room, "second").is_empty());
+                    }
+                    assert_eq!(h.app.input_guard_waiting[&target], 0);
+                    draw_question(h, "");
+                    guard_tick(h, 2);
+                    assert!(h.received_texts("claude").is_empty());
+                    assert_eq!(h.app.input_guard_waiting[&target], 1);
+                    // A fresh arrival on a clear frame must not restart the two scans.
+                    assert!(h.send("sender", &pane, room, "clear-arrival").is_empty());
+                    assert_eq!(h.app.input_guard_waiting[&target], 1);
+                    guard_tick(h, 3);
+                    let received = h.received_texts("claude").join("");
+                    assert!(received.contains("first"), "{received:?}");
+                    if !immediate {
+                        assert!(received.contains("second"));
+                    }
+                    assert!(received.contains("clear-arrival"));
+                    assert!(!h.app.input_guard_waiting.contains_key(&target));
+                    assert!(h.history(room).iter().all(|m| m.delivered_at.is_some()));
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn review_redraw_and_next_question_require_two_consecutive_clear_scans() {
+        with_msg_api_harness(&["claude"], |harness| {
+            let pane = harness.public_pane_id("claude");
+            let question = include_str!("../detect/fixtures/claude-narrow-multi-question.txt");
+            draw_question(harness, question);
+            assert!(harness
+                .send("sender", &pane, "review-redraw", "first")
+                .is_empty());
+            draw_question(harness, "");
+            guard_tick(harness, 1);
+            assert!(harness.received_texts("claude").is_empty());
+            draw_question(harness, "Drawing next question...");
+            assert!(harness
+                .send("sender", &pane, "review-redraw", "second")
+                .is_empty());
+            assert!(harness.received_texts("claude").is_empty());
+            draw_question(harness, &question.replace("Summary", "Next question"));
+            guard_tick(harness, 2);
+            draw_question(harness, "ordinary answer");
+            guard_tick(harness, 3);
+            assert!(harness.received_texts("claude").is_empty());
+            guard_tick(harness, 4);
+            assert_eq!(
+                harness.received_texts("claude"),
+                vec!["first\r", "second\r"]
+            );
+        });
+    }
+
+    #[test]
+    fn review_delayed_free_text_and_preview_steps_keep_mail_held() {
+        for preview in [false, true] {
+            with_msg_api_harness(&["claude"], |harness| {
+                let pane = harness.public_pane_id("claude");
+                let pane_id = harness.agents["claude"].pane_id;
+                draw_question(
+                    harness,
+                    include_str!("../detect/fixtures/claude-narrow-multi-question.txt"),
+                );
+                assert!(harness
+                    .send("sender", &pane, "review-delayed", "regular")
+                    .is_empty());
+                let at = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                let write = if preview {
+                    super::super::screen_prompts::DeferredPaneWrite::PreviewScanStep {
+                        at,
+                        ws_idx: 0,
+                        pane_id,
+                    }
+                } else {
+                    super::super::screen_prompts::DeferredPaneWrite::Bytes {
+                        at,
+                        ws_idx: 0,
+                        pane_id,
+                        bytes: bytes::Bytes::from_static(b"free text\r"),
+                    }
+                };
+                harness.app.deferred_pane_writes.push(write);
+                draw_question(harness, "intermediate redraw");
+                guard_tick(harness, 1);
+                guard_tick(harness, 2);
+                assert!(harness.received_texts("claude").is_empty());
+                harness.app.deferred_pane_writes.clear();
+                guard_tick(harness, 3);
+                assert!(harness.received_texts("claude").is_empty());
+                guard_tick(harness, 4);
+                assert_eq!(harness.received_texts("claude"), vec!["regular\r"]);
+            });
+        }
     }
 
     #[test]

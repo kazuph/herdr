@@ -337,18 +337,42 @@ pub struct PopupScrollParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneSendTextParams {
+    // Transport-owned identity; never accepted from JSON or exposed in the schema.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) input_peer_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub force: bool,
     pub pane_id: String,
     pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneSendKeysParams {
+    // Transport-owned identity; never accepted from JSON or exposed in the schema.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) input_peer_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub force: bool,
     pub pane_id: String,
     pub keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneSendInputParams {
+    // Transport-owned identity; never accepted from JSON or exposed in the schema.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) input_peer_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_pane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub force: bool,
     pub pane_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub text: String,

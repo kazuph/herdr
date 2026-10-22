@@ -28,6 +28,7 @@ mod msg;
 pub(crate) mod pane_graphics;
 mod popup;
 pub(crate) use popup::{PopupGeometry, PopupOwner};
+mod input_guard;
 mod runtime;
 mod runtime_mutations;
 mod screen_prompts;
@@ -146,6 +147,10 @@ pub struct App {
     pub(crate) last_jobs_prune: Option<Instant>,
     pub(crate) last_jobs_db_stamp: Option<(std::time::SystemTime, Option<std::time::SystemTime>)>,
     pub(crate) regular_mail_in_flight: HashSet<i64>,
+    pub(crate) regular_mail_panes: HashMap<i64, crate::layout::PaneId>,
+    pub(crate) input_guard_observed: HashMap<(String, crate::layout::PaneId), String>,
+    pub(crate) input_guard_waiting: HashMap<crate::layout::PaneId, u8>,
+    pub(crate) input_guard_scan_at: Option<Instant>,
     pub(crate) git_refresh_due_after_in_flight: bool,
     pub(crate) git_status_cache: HashMap<std::path::PathBuf, crate::workspace::GitStatusCacheEntry>,
     pub(crate) pending_api_worktree_creates: HashMap<std::path::PathBuf, u64>,
@@ -880,6 +885,10 @@ impl App {
                 .checked_sub(JOBS_REFRESH_INTERVAL)
                 .unwrap_or_else(Instant::now),
             regular_mail_in_flight: HashSet::new(),
+            regular_mail_panes: HashMap::new(),
+            input_guard_observed: HashMap::new(),
+            input_guard_waiting: HashMap::new(),
+            input_guard_scan_at: None,
             git_refresh_due_after_in_flight: false,
             git_status_cache: HashMap::new(),
             pending_api_worktree_creates: HashMap::new(),

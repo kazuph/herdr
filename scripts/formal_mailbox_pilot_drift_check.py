@@ -19,6 +19,14 @@ except ModuleNotFoundError:
 ROOT = Path(__file__).resolve().parents[1]
 MAILBOX_SECTION = "herdr msg durable mailbox"
 CONTRACT_EVIDENCE = {
+    "G9-7c5f4cd7c6": {
+        # The existing Quint model does not represent independent screen blockers.
+        "quint": (),
+        "rust": (
+            "visible_confirmation_holds_mail_and_jobs_even_while_working_and_decisions_disabled",
+            "confirmation_between_mail_acknowledgements_holds_the_next_body",
+        ),
+    },
     "G9-f86e9d2db8": {
         "quint": (("formal/p428_mailbox_immediate_steering.qnt", "availableQueueHasDeliveryEvent"),),
         "rust": (

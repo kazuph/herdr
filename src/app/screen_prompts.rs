@@ -29,14 +29,14 @@ use crate::screen_prompt::{
 /// Decision origin reason marking decisions created from pane screens.
 pub(crate) const SCREEN_PROMPT_REASON: &str = "screen_prompt";
 /// How often blocked panes are re-scanned while the feature is active.
-const SCREEN_PROMPT_SCAN_INTERVAL: Duration = Duration::from_millis(400);
+pub(super) const SCREEN_PROMPT_SCAN_INTERVAL: Duration = Duration::from_millis(400);
 /// Consecutive reads that no longer show the watched prompt before the watch
 /// is released and the pending decision cancelled.
 const SCREEN_PROMPT_MISMATCH_LIMIT: u8 = 2;
 /// Extra scrollback rows above the viewport included in every screen-prompt
 /// read — a permission dialog taller than the pane keeps its header, the
 /// full command box and the `⏺` call line reachable for the title.
-const SCREEN_PROMPT_EXTRA_ROWS: usize = 24;
+pub(super) const SCREEN_PROMPT_EXTRA_ROWS: usize = 24;
 /// Cancel+recreate rebuilds inside this window mark a pane as churning.
 const SCREEN_PROMPT_FLOOD_WINDOW: Duration = Duration::from_secs(30);
 /// Rebuild count inside the window that triggers the flood brake — beyond
@@ -285,6 +285,19 @@ impl DeferredPaneWrite {
 }
 
 impl App {
+    pub(super) fn screen_prompt_input_in_flight(&self, pane: PaneId) -> bool {
+        self.preview_scans.contains_key(&pane)
+            || self.deferred_pane_writes.iter().any(|write| {
+                let (DeferredPaneWrite::Bytes { pane_id, .. }
+                | DeferredPaneWrite::MultiSelectSubmit { pane_id, .. }
+                | DeferredPaneWrite::McpConfirm { pane_id, .. }
+                | DeferredPaneWrite::PreviewConfirm { pane_id, .. }
+                | DeferredPaneWrite::PreviewScanStep { pane_id, .. }
+                | DeferredPaneWrite::AmendStep { pane_id, .. }) = write;
+                *pane_id == pane
+            })
+    }
+
     /// Arm the next scan tick. Called from pane state events and the answer
     /// path; scanning itself runs on the loop deadline so a parse never
     /// stalls event handling.
@@ -309,6 +322,7 @@ impl App {
         });
         [
             scan_deadline,
+            self.input_guard_scan_at,
             self.deferred_pane_writes
                 .iter()
                 .map(DeferredPaneWrite::at)
@@ -322,6 +336,7 @@ impl App {
     /// Deadline-driven work for the TUI and headless loops: flush due writes
     /// and run a scan when its scheduled instant passed.
     pub(crate) fn screen_prompt_tasks(&mut self, now: Instant) -> bool {
+        self.input_guard_tasks(now);
         let mut changed = self.flush_deferred_pane_writes(now);
         if self
             .screen_prompt_scan_at
@@ -2649,6 +2664,15 @@ mod tests {
             assert_eq!(decision.options[0].role, DecisionOptionRole::Approve);
             assert_eq!(decision.options[1].role, DecisionOptionRole::Reject);
             assert!(!decision.allow_text);
+            assert!(app.pane_has_visible_blocker(0, pane));
+            assert!(app
+                .guard_external_input(0, pane, true, Some(&format!("p{}", pane.raw())))
+                .is_err());
+            let refused = app
+                .guard_external_input(0, pane, false, Some(&format!("p{}", pane.raw())))
+                .unwrap_err();
+            assert_eq!(refused.code, "pane_confirmation_pending");
+            assert!(rx.try_recv().is_err(), "external refusal sends no keys");
             answer(&mut app, &decision.decision_id, Some(target), None);
             assert_eq!(drain_arrow(&mut rx), arrow);
             rx = replace_screen(&mut app, pane, &crlf(next));
@@ -3579,6 +3603,85 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(60));
         assert_eq!(rx.try_recv().expect("text").as_ref(), "ぶどう".as_bytes());
         assert_eq!(rx.try_recv().expect("enter").as_ref(), b"\r");
+    }
+
+    fn queue_review_mail(app: &mut App, pane: PaneId) {
+        let terminal = app.state.workspaces[0].terminal_id(pane).unwrap().clone();
+        app.state.terminals.get_mut(&terminal).unwrap().state = AgentState::Working;
+        let target = app.agent_info(0, pane).unwrap().global_pane_id;
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "review-redraw-mail".into(),
+            method: crate::api::schema::Method::MsgSend(crate::api::schema::MsgSendParams {
+                room: "review-redraw".into(),
+                project: "/repo".into(),
+                from_agent: "sender".into(),
+                to: target,
+                body: "must stay queued".into(),
+                reply_to: None,
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert!(response.get("error").is_none(), "{response}");
+        assert!(app.input_guard_waiting.contains_key(&pane));
+        let mail = crate::msg::MsgStore::open_active()
+            .unwrap()
+            .history("review-redraw", Some("/repo"), 10)
+            .unwrap();
+        assert_eq!(mail.len(), 1);
+        assert!(mail[0].delivered_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn review_real_free_text_answer_holds_mail_through_deferred_redraw() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane, mut rx) = test_app("review-free-text", CC_QUESTION, true);
+        app.scan_screen_prompts(Instant::now());
+        let decision = pending_decisions().pop().unwrap();
+        answer(&mut app, &decision.decision_id, None, Some("ぶどう"));
+        assert_eq!(rx.try_recv().unwrap().as_ref(), b"3");
+        rx = replace_screen(&mut app, pane, "");
+        queue_review_mail(&mut app, pane);
+        let now = Instant::now();
+        app.input_guard_tasks(now + Duration::from_secs(1));
+        app.input_guard_tasks(now + Duration::from_secs(2));
+        assert!(app.input_guard_waiting.contains_key(&pane));
+        assert!(
+            rx.try_recv().is_err(),
+            "no mailbox body or Enter during deferred redraw"
+        );
+        app.flush_deferred_pane_writes(now + Duration::from_secs(3));
+        assert_eq!(rx.try_recv().unwrap().as_ref(), "ぶどう".as_bytes());
+        assert_eq!(rx.try_recv().unwrap().as_ref(), b"\r");
+        assert!(rx.try_recv().is_err());
+        rx = replace_screen(&mut app, pane, CC_PERMISSION);
+        app.input_guard_tasks(now + Duration::from_secs(4));
+        assert!(
+            app.input_guard_waiting.contains_key(&pane),
+            "next question resets clear reads"
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn review_real_preview_scan_holds_mail_through_intermediate_frame() {
+        let _guard = crate::config::lock_test_config_env();
+        let (mut app, pane, mut rx) =
+            test_app("review-preview-frame", &crlf(CC_PREVIEW_OPTION_1), true);
+        app.scan_screen_prompts(Instant::now());
+        assert!(app.preview_scans.contains_key(&pane));
+        let now = Instant::now();
+        app.flush_deferred_pane_writes(now + Duration::from_secs(1));
+        assert_eq!(drain_arrow(&mut rx), b'B');
+        rx = replace_screen(&mut app, pane, "partial redraw");
+        queue_review_mail(&mut app, pane);
+        app.input_guard_tasks(now + Duration::from_secs(2));
+        app.input_guard_tasks(now + Duration::from_secs(3));
+        assert!(app.input_guard_waiting.contains_key(&pane));
+        assert!(rx.try_recv().is_err());
+        rx = replace_screen(&mut app, pane, &crlf(CC_PREVIEW_OPTION_2));
+        app.input_guard_tasks(now + Duration::from_secs(4));
+        assert!(app.input_guard_waiting.contains_key(&pane));
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]

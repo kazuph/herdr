@@ -601,6 +601,7 @@ fn agent_rename(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn agent_send(args: &[String]) -> std::io::Result<i32> {
+    let (force, args) = super::external_input_force(args);
     if args.len() < 2 {
         eprintln!("usage: herdr agent send <target> <text>");
         return Ok(2);
@@ -609,6 +610,9 @@ fn agent_send(args: &[String]) -> std::io::Result<i32> {
     super::print_response(&super::send_request(&Request {
         id: "cli:agent:send".into(),
         method: Method::AgentSend(AgentSendParams {
+            input_peer_pid: None,
+            caller_pane_id: super::comms::resolve_run_caller(None).ok(),
+            force,
             target: args[0].clone(),
             text: args[1..].join(" "),
         }),
@@ -616,6 +620,7 @@ fn agent_send(args: &[String]) -> std::io::Result<i32> {
 }
 
 fn agent_prompt(args: &[String]) -> std::io::Result<i32> {
+    let (force, args) = super::external_input_force(args);
     let Some(target) = args.first() else {
         eprintln!(
             "usage: herdr agent prompt <target> <text> [--wait] [--until STATUS]... [--timeout MS]"
@@ -679,6 +684,9 @@ fn agent_prompt(args: &[String]) -> std::io::Result<i32> {
     let response = super::send_request(&Request {
         id: "cli:agent:prompt".into(),
         method: Method::AgentPrompt(AgentPromptParams {
+            input_peer_pid: None,
+            caller_pane_id: super::comms::resolve_run_caller(None).ok(),
+            force,
             target: target.clone(),
             text: text.clone(),
             wait: wait.then_some(AgentPromptWaitOptions {
