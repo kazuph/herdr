@@ -102,7 +102,7 @@ test('orphaned runtime variables fail pane detection but upgrade really spawns h
   const safePath = path.join(dir, 'commands');
   fs.mkdirSync(safePath);
   for (const [name, source] of Object.entries({ ps: '/bin/ps', ...bins })) fs.symlinkSync(source, path.join(safePath, name));
-  const env = { HOME: dir, PATH: safePath, HERDR_PANE_ID: 'p1', IKESU_PANE_ID: 'p1', HERDR_BIN_PATH: bins.herdr, IKESU_BIN_PATH: bins.ikesu };
+  const env = { TB_TEST_APP_ROOT: process.env.TB_TEST_APP_ROOT, HOME: dir, PATH: safePath, HERDR_PANE_ID: 'p1', IKESU_PANE_ID: 'p1', HERDR_BIN_PATH: bins.herdr, IKESU_BIN_PATH: bins.ikesu };
   await exec('/bin/sh', ['-c', shellQuote([process.execPath, path.resolve(__dirname, 'nested-probe.cjs'), output, 'herdr', 'orphan']) + ' </dev/null >/dev/null 2>&1 &'], { env });
   const result = await eventually(() => JSON.parse(fs.readFileSync(output, 'utf8')));
   assert.match(result.selectionError, /Cannot establish the inner herdr\/ikesu runtime/);
