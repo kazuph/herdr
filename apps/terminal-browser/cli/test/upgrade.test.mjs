@@ -26,3 +26,16 @@ if (process.env.HERDR_TB_TEST_REAL_BIN) {
     assert.match(result.stderr, /tb installation supports macOS Apple silicon/);
   });
 }
+
+const { upgradeTarget } = await import(moduleUrl);
+for (const runtime of ['herdr', 'ikesu', 'gtx']) {
+  test(`upgrade targets ${runtime} and prefers its BIN_PATH`, () => {
+    const env = { [`${runtime.toUpperCase()}_PANE_ID`]: 'p1' };
+    assert.deepEqual(upgradeTarget(env), { runtime, bin: runtime, args: ["tb", "install"] });
+    env[`${runtime.toUpperCase()}_BIN_PATH`] = `/installed/${runtime}`;
+    assert.deepEqual(upgradeTarget(env), { runtime, bin: `/installed/${runtime}`, args: ["tb", "install"] });
+  });
+}
+test('upgrade defaults to herdr only without a runtime', () => {
+  assert.deepEqual(upgradeTarget({}), { runtime: 'herdr', bin: 'herdr', args: ["tb", "install"] });
+});

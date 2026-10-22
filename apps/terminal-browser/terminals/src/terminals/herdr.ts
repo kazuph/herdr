@@ -17,7 +17,7 @@ function herdrConfigPath(env: NodeJS.ProcessEnv): string {
   return path.join(env.HOME ?? os.homedir(), ".config", "herdr", "config.toml");
 }
 
-function enableKittyGraphics(config: string): string {
+export function enableKittyGraphics(config: string): string {
   const flag = /^([ \t]*kitty_graphics[ \t]*=[ \t]*)false([ \t]*)$/m;
   if (flag.test(config)) return config.replace(flag, "$1true$2");
   const header = /^\[experimental\][ \t]*$/m;

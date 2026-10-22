@@ -7,3 +7,5 @@ export type { TerminalCheck } from "./detect";
 export { cannotOpenPanes, checkTerminal, detect } from "./detect";
 export type { GraphicsSupport } from "./graphics";
 export { probeGraphics, unsupportedGraphicsMessage, SKIP_ENV as GRAPHICS_SKIP_ENV } from "./graphics";
+
+export { currentMultiplexer, multiplexerBin } from "./multiplexer";
