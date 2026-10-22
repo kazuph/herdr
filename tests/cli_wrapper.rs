@@ -817,69 +817,98 @@ fn devin_hook_ignores_non_matching_session_list_entries() {
 
 #[test]
 fn pane_run_sends_one_send_input_request_with_enter_key() {
-    let base = unique_test_dir();
-    fs::create_dir_all(&base).unwrap();
-    let socket_path = base.join("herdr.sock");
-    let listener = UnixListener::bind(&socket_path).unwrap();
+    for caller in [Some("p2"), None] {
+        let base = unique_test_dir();
+        fs::create_dir_all(&base).unwrap();
+        let socket_path = base.join("herdr.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
 
-    let server = thread::spawn(move || {
-        let (mut first_stream, first_line) = accept_fake_cli_operation(&listener);
-        first_stream
-            .write_all(br#"{"id":"cli:request","result":{"type":"ok"}}"#)
-            .unwrap();
-        first_stream.write_all(b"\n").unwrap();
-        first_stream.flush().unwrap();
+        let server = thread::spawn(move || {
+            let (mut caller_stream, caller_line) = accept_fake_cli_operation(&listener);
+            let caller_request: serde_json::Value = serde_json::from_str(&caller_line).unwrap();
+            assert_eq!(caller_request["method"], "pane.current");
+            assert!(
+                caller_request["params"]["caller_process_id"]
+                    .as_u64()
+                    .unwrap()
+                    > 0
+            );
+            let caller_response = match caller {
+                Some(pane_id) => serde_json::json!({
+                    "id":caller_request["id"],
+                    "result":{"type":"pane_current","pane":{"pane_id":pane_id}}
+                }),
+                None => serde_json::json!({
+                    "id":caller_request["id"],
+                    "error":{"code":"pane_current_unavailable","message":"no caller pane"}
+                }),
+            };
+            writeln!(caller_stream, "{caller_response}").unwrap();
+            caller_stream.flush().unwrap();
 
-        let mut second_line = None;
-        listener.set_nonblocking(true).unwrap();
-        let deadline = Instant::now() + Duration::from_millis(250);
-        while Instant::now() < deadline {
-            match listener.accept() {
-                Ok((mut second_stream, _)) => {
-                    let mut line = String::new();
-                    let mut reader = BufReader::new(second_stream.try_clone().unwrap());
-                    reader.read_line(&mut line).unwrap();
-                    second_stream
-                        .write_all(br#"{"id":"cli:request","result":{"type":"ok"}}"#)
-                        .unwrap();
-                    second_stream.write_all(b"\n").unwrap();
-                    second_stream.flush().unwrap();
-                    second_line = Some(line);
-                    break;
+            // Every operation has its own compatibility ping, including after caller lookup.
+            let (mut first_stream, first_line) = accept_fake_cli_operation(&listener);
+            first_stream
+                .write_all(br#"{"id":"cli:request","result":{"type":"ok"}}"#)
+                .unwrap();
+            first_stream.write_all(b"\n").unwrap();
+            first_stream.flush().unwrap();
+
+            let mut second_line = None;
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + Duration::from_millis(250);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut second_stream, _)) => {
+                        let mut line = String::new();
+                        let mut reader = BufReader::new(second_stream.try_clone().unwrap());
+                        reader.read_line(&mut line).unwrap();
+                        second_stream
+                            .write_all(br#"{"id":"cli:request","result":{"type":"ok"}}"#)
+                            .unwrap();
+                        second_stream.write_all(b"\n").unwrap();
+                        second_stream.flush().unwrap();
+                        second_line = Some(line);
+                        break;
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(err) => panic!("second accept failed: {err}"),
                 }
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(err) => panic!("second accept failed: {err}"),
             }
-        }
 
-        (first_line, second_line)
-    });
+            (first_line, second_line)
+        });
 
-    let run = run_cli(&socket_path, &["pane", "run", "p1", "echo hello"]);
-    assert!(
-        run.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&run.stderr)
-    );
+        let run = run_cli(&socket_path, &["pane", "run", "p1", "echo hello"]);
+        assert!(
+            run.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&run.stderr)
+        );
 
-    let (first_line, second_line) = server.join().unwrap();
-    let first_request: serde_json::Value = serde_json::from_str(&first_line).unwrap();
-    assert_eq!(first_request["method"], "pane.send_input");
-    assert_eq!(first_request["params"]["pane_id"], "p1");
-    assert_eq!(first_request["params"]["text"], "echo hello");
-    assert_eq!(
-        first_request["params"]["keys"],
-        serde_json::json!(["Enter"])
-    );
-    assert!(
-        second_line.is_none(),
-        "pane run sent an unexpected second request: {:?}",
-        second_line
-    );
+        let (first_line, second_line) = server.join().unwrap();
+        let first_request: serde_json::Value = serde_json::from_str(&first_line).unwrap();
+        assert_eq!(first_request["method"], "pane.send_input");
+        assert_eq!(first_request["params"]["pane_id"], "p1");
+        assert_eq!(
+            first_request["params"]["caller_pane_id"],
+            serde_json::json!(caller)
+        );
+        assert_eq!(first_request["params"]["text"], "echo hello");
+        assert_eq!(
+            first_request["params"]["keys"],
+            serde_json::json!(["Enter"])
+        );
+        assert!(
+            second_line.is_none(),
+            "pane run sent an unexpected second request: {:?}",
+            second_line
+        );
 
-    cleanup_test_base(&base);
+        cleanup_test_base(&base);
+    }
 }
 
 #[test]

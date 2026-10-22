@@ -9909,7 +9909,8 @@
         "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
         "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
         "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
-        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
+        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry",
+        "rust_test_target:pane_run_sends_one_send_input_request_with_enter_key"
       ],
       "live_status": [
         "unverified"
