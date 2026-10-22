@@ -283,3 +283,63 @@ test("replay while an answer waits for SSH does not reopen its window", async ()
   assert.equal(daemon.showing.size, 0);
   await daemon.stop();
 });
+
+test("answer retry survives down up replay with the original options and note", async () => {
+  let calls = 0;
+  const ctx = makeDaemon({answerRetryMs: 40, runAnswer: async () => ++calls === 1
+    ? {code:255, stdout:"", stderr:"https://login.tailscale.com/a/retry"}
+    : {code:0, stdout:"{}", stderr:""}});
+  const {daemon, watch, dialogs, answers} = ctx;
+  try {
+    await daemon.start();
+    const machine = {id:"mini", label:"mini"};
+    watch.push({event:"created", machine, decision:decision("retry-down", {allow_text:true})});
+    await waitUntil(()=>dialogs.length===1);
+    dialogs[0].answer(["b"], "元の補足");
+    await waitUntil(()=>daemon.entries.get("mini retry-down")?.answerRetryTimer);
+    watch.push({event:"machine_down", machine});
+    await waitUntil(()=>daemon.machinesDown.has("mini"));
+    watch.push({event:"machine_up", machine});
+    watch.push({event:"created", machine, decision:decision("retry-down", {allow_text:true})});
+    await waitUntil(()=>calls===2);
+    assert.deepEqual(answers[1], answers[0]);
+    assert.ok(answers[1].includes("元の補足"));
+    assert.equal(dialogs.length,1);
+  } finally { await daemon.stop(); }
+});
+
+test("disconnect while the first answer is in flight still schedules its retry", async () => {
+  let finish;
+  let calls=0;
+  const {daemon,watch,dialogs,answers}=makeDaemon({answerRetryMs:40,runAnswer:()=>{
+    calls++; return calls===1 ? new Promise(resolve=>{finish=resolve;}) : Promise.resolve({code:0,stdout:"{}",stderr:""});
+  }});
+  try {
+    await daemon.start();const machine={id:"mini",label:"mini"};
+    watch.push({event:"created",machine,decision:decision("inflight",{allow_text:true})});
+    await waitUntil(()=>dialogs.length===1);dialogs[0].answer(["a"],"保持する文");
+    await waitUntil(()=>calls===1);watch.push({event:"machine_down",machine});
+    await waitUntil(()=>daemon.machinesDown.has("mini"));
+    finish({code:255,stdout:"",stderr:"https://login.tailscale.com/a/retry"});
+    await waitUntil(()=>calls===2);
+    assert.deepEqual(answers[1],answers[0]);
+    watch.push({event:"resolved",machine,decision:{...decision("inflight"),status:"answered"}});
+    await waitUntil(()=>daemon.entries.size===0);
+  } finally { await daemon.stop(); }
+});
+
+test("remote resolution stops retry even while the machine is disconnected", async () => {
+  const {daemon,watch,dialogs,answers}=makeDaemon({answerRetryMs:40,runAnswer:async()=>({code:255,stdout:"",stderr:"https://login.tailscale.com/a/retry"})});
+  try {
+    await daemon.start();const machine={id:"mini",label:"mini"};
+    watch.push({event:"created",machine,decision:decision("resolved-down")});
+    await waitUntil(()=>dialogs.length===1);dialogs[0].answer(["a"]);
+    await waitUntil(()=>daemon.entries.get("mini resolved-down")?.answerRetryTimer);
+    watch.push({event:"machine_down",machine});
+    watch.push({event:"resolved",machine,decision:{...decision("resolved-down"),status:"answered"}});
+    await waitUntil(()=>daemon.entries.size===0);
+    const before=answers.length;
+    await new Promise(resolve=>setTimeout(resolve,80));
+    assert.equal(answers.length,before);
+  } finally {await daemon.stop();}
+});

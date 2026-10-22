@@ -451,10 +451,10 @@ export class MacDialogDecisionsDaemon {
       entry.machineDown = true;
       entry.queued = false;
       clearTimeout(entry.snoozeTimer);
-      clearTimeout(entry.answerRetryTimer);
       this.queue = this.queue.filter((k) => k !== entry.key);
       if (entry.showing) this._closeDialog(entry);
-      this.entries.delete(entry.key);
+      // A submitted answer still owns its text and retry timer while offline.
+      if (!entry.answerPending && !entry.answerRetryTimer) this.entries.delete(entry.key);
     }
     this.log(`マシン切断: ${mid} (${reason})`);
   }
@@ -578,7 +578,7 @@ export class MacDialogDecisionsDaemon {
   // ---- answering ---------------------------------------------------------------
 
   async submitAnswer(entry, { optionIds = [], text = "" }) {
-    if (this.stopped || entry.machineDown || entry.resolved || entry.answerPending) return;
+    if (this.stopped || entry.resolved || entry.answerPending) return;
     entry.answerPending = true;
     const did = entry.decision.decision_id;
     const args = [
@@ -596,7 +596,7 @@ export class MacDialogDecisionsDaemon {
       `回答を送信: ${did} option=${optionIds.join(",") || "-"}${text ? " +text" : ""}`,
     );
     const result = await this.runAnswer(args);
-    if (this.stopped || entry.machineDown || entry.resolved) return;
+    if (this.stopped || entry.resolved) return;
     if (result.code === 0) return; // the resolved event closes/removes the entry
     entry.answerPending = false;
     const combined = `${result.stdout}\n${result.stderr}`;
@@ -605,12 +605,13 @@ export class MacDialogDecisionsDaemon {
       return;
     }
     const approvalUrl = combined.match(/https:\/\/login\.tailscale\.com\/\S+/)?.[0];
-    if (approvalUrl && !entry.resolved) {
+    if (approvalUrl) entry.answerApprovalUrl = approvalUrl;
+    if (entry.answerApprovalUrl && !entry.resolved) {
       // The saved machine wants a Tailscale SSH re-approval for a new
       // connection: keep the answer and resend it until it lands or the
       // decision resolves elsewhere.
       entry.answerRetries = (entry.answerRetries || 0) + 1;
-      this.log(`回答を送れません (${did}): Tailscale の承認待ち ${approvalUrl}（${entry.answerRetries}回目）`);
+      this.log(`回答を送れません (${did}): Tailscale の承認待ち ${entry.answerApprovalUrl}（${entry.answerRetries}回目）`);
       if (entry.answerRetries < ANSWER_RETRY_LIMIT) {
         clearTimeout(entry.answerRetryTimer);
         entry.answerRetryTimer = setTimeout(() => {
@@ -947,6 +948,7 @@ async function ensureDaemon(config, env) {
         requestRestart(config);
         log(`登録版 ${pluginVersion()} と稼働版 ${state.version || "不明（旧常駐役）"} が異なります。書きかけ・あとで・回答再送を保ち、安全に切り替えられるまで待ちます`);
       } else {
+        fs.rmSync(path.join(config.stateDir, "restart-request.json"), { force: true });
         log(`デーモンは起動済み (pid ${state.pid}, version ${state.version})`);
       }
       return;
@@ -1099,6 +1101,23 @@ async function main() {
     if (!config.helperCmd && !ensureNativeDialog(config, log, request.plugin_root)) {
       log("新版のアプリ検証に失敗しました。現在の版を保持します"); return;
     }
+    const herdrBin = resolveHerdrBin(config, log);
+    if (!herdrBin) return;
+    const listed = await execFileText(herdrBin, ["plugin", "list", "--json", "--plugin", PLUGIN_ID]);
+    let registered;
+    try { registered = JSON.parse(listed.stdout).result.plugins.find(plugin => plugin.plugin_id === PLUGIN_ID); } catch { return; }
+    if (listed.code !== 0) return;
+    // ensure may have cancelled or replaced the request while the registry
+    // was being read. Never apply that superseded request.
+    let currentRequest;
+    try { currentRequest = JSON.parse(fs.readFileSync(restartPath, "utf8")); } catch { return; }
+    if (currentRequest.plugin_root !== request.plugin_root) return;
+    if (registered?.plugin_root !== request.plugin_root) {
+      fs.rmSync(restartPath, { force: true });
+      log("登録先と一致しない古い切替要求を取り消しました");
+      return;
+    }
+    if (handingOff || daemon.stopped || daemon.entries.size !== 0 || daemon.showing.size !== 0) return;
     handingOff = true;
     await daemon.stop();
     restartWatcher.close();

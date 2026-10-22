@@ -433,3 +433,5 @@ KAZUHIRO HOMMA (67M8FDFZ28) 的 Developer ID 签名，不进行 Apple 公证。
 ## `mac-dialog`
 
 使用 `herdr mac-dialog install [--version MAJOR.MINOR.PATCH]` 安装已签名的待决策对话框，使用 `herdr mac-dialog status` 查看已注册、运行、等待切换和最新版本。仅支持 macOS Apple silicon，需要 Node.js 和兼容的 herdr。专用 kazuph-mac-dialog-v 发布包经过 SHA-256 和严格的 Apple Developer ID 验证后安装到 `~/.local/share/herdr/mac-dialog-decisions/<版本>` 并保留旧版本，注册当前用户的插件。应用由 KAZUHIRO HOMMA (67M8FDFZ28) 签名，未经公证，位于用户主目录而非 /Applications。应用缺失或被修改时失败，不退回开发构建；直接链接仓库的开发插件仍使用 swiftc。两台机器都订阅全部机器；所有窗口、稍后处理和重试完成后才切换。旧守护进程显示运行版本未知和等待切换，不强行停止，也不自动更新。
+
+未连接终端窗格的保存机器也可通过无窗格的 `herdr run --completion none` 启动守护进程，不设置通知接收者。需要通知或使用 --pane 的任务仍要求可解析的调用者。重新注册正在运行的旧版本会取消升级请求，切换前也会重新检查注册路径。

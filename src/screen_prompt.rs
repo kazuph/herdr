@@ -547,12 +547,18 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
             .iter()
             .rposition(|line| PROMPT_END_RE.is_match(line));
         // A historical MCP confirmation must not hide a later numbered question.
-        if mcp_end.is_none() || mcp_end == last_end {
-            return parse_mcp_confirmation(screen);
+        if let Some(prompt) = parse_mcp_confirmation(screen) {
+            return Some(prompt);
         }
-        if let Some(end) = mcp_end {
-            raw_lines.drain(..=end);
+        let mcp_end = mcp_end?;
+        if Some(mcp_end) == last_end
+            && !raw_lines[mcp_end + 1..]
+                .iter()
+                .any(|line| option_match(line).is_some())
+        {
+            return None;
         }
+        raw_lines.drain(..=mcp_end);
     }
     for preview in extract_preview_boxes(&raw_lines) {
         if let Some(prompt) = parse_prompt_lines(&raw_lines, Some(preview)) {
@@ -1261,6 +1267,16 @@ fn parse_mq_tabs(lines: &[&str], before: usize) -> Option<MqInfo> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn historical_mcp_keeps_footerless_numbered_questions_readable() {
+        let history = include_str!("../tests/fixtures/screen_prompts/claude_mcp_accept.txt");
+        let current = "次の質問です\n\n❯ 1. Yes\n  2. No";
+        let expected = super::parse_screen_prompt(current).expect("existing footerless form");
+        let actual = super::parse_screen_prompt(&format!("{history}\n{current}"))
+            .expect("historical MCP must not hide the bottom block");
+        assert_eq!(actual.signature(), expected.signature());
+    }
 
     #[test]
     fn historical_mcp_does_not_hide_the_new_numbered_question() {

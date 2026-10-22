@@ -14331,7 +14331,12 @@
         "signed macOS arm64 dialog distribution and transactional user plugin install",
         "registered and running version with safe empty-state handoff and unknown legacy daemon",
         "all-machines dual responders and first-answer-wins closure",
-        "MCP Accept Decline confirmation uses arrows and verified focus before Enter"
+        "MCP Accept Decline confirmation uses arrows and verified focus before Enter",
+        "MCP server identity required across refresh cut-title flood and startup adoption",
+        "pending remote answers survive disconnect and replay without duplication",
+        "reverting registration clears stale handoff and handoff rechecks registration",
+        "footerless numbered prompts remain readable after historical MCP confirmations",
+        "normal nonactivating panels without utilityWindow"
       ],
       "verification_methods": [
         "drift_source_anchor:apps/mac-dialog-decisions/dialog.swift",
@@ -14345,7 +14350,11 @@
         "rust_test_target:mac_dialog_real_unsigned_app_is_rejected_and_signed_local_releases_are_transactional",
         "rust_test_target:mcp_real_accept_decline_screens_and_identity",
         "rust_test_target:mcp_answers_use_arrows_confirm_focus_then_enter_in_both_directions",
-        "rust_test_target:mcp_confirmation_sends_nothing_on_change_disappearance_wrong_focus_or_human_input"
+        "rust_test_target:mcp_confirmation_sends_nothing_on_change_disappearance_wrong_focus_or_human_input",
+        "rust_test_target:mcp_server_change_cancels_old_approval_before_accepting_answers",
+        "rust_test_target:historical_mcp_keeps_footerless_numbered_questions_readable",
+        "platform_live_acceptance:.artifacts/mac-dialog-background-preview/review-window-style/window-count.json",
+        "platform_live_acceptance:.artifacts/mac-dialog-background-preview/review-lifecycle/summary.json"
       ],
       "source_anchors": [
         "SPEC.md:2108",

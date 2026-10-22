@@ -1129,7 +1129,7 @@ final class DialogController: NSObject, NSWindowDelegate {
     let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
     panel = KeyPanel(
       contentRect: NSRect(x: 0, y: 0, width: Look.width, height: 400),
-      styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .utilityWindow],
+      styleMask: [.titled, .closable, .resizable, .nonactivatingPanel],
       backing: .buffered, defer: false)
     panel.title = spec.window_title
     panel.contentView = root

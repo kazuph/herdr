@@ -1012,9 +1012,19 @@ impl App {
         })
     }
 
-    /// Identical option ids+labels after volatile-display normalisation —
-    /// the answer surface is the same prompt's.
+    /// Identical MCP source and option ids+labels after volatile-display
+    /// normalisation, including the flood-brake and startup adoption paths.
     fn same_prompt_options(existing: &Decision, parts: &PromptDecisionParts) -> bool {
+        let server = |origin: Option<&DecisionOrigin>| {
+            origin
+                .and_then(|origin| origin.agent.as_deref())
+                .and_then(|agent| agent.split_once(" / MCP server “"))
+                .and_then(|(_, server)| server.strip_suffix('”'))
+                .map(str::to_string)
+        };
+        if server(existing.origin.as_ref()) != server(Some(&parts.origin)) {
+            return false;
+        }
         existing
             .options
             .iter()
@@ -2575,6 +2585,47 @@ mod tests {
         include_str!("../../tests/fixtures/screen_prompts/claude_mcp_accept.txt");
     const MCP_DECLINE: &str =
         include_str!("../../tests/fixtures/screen_prompts/claude_mcp_decline.txt");
+
+    #[tokio::test]
+    async fn mcp_server_change_cancels_old_approval_before_accepting_answers() {
+        let _guard = crate::config::lock_test_config_env();
+        for restart in [false, true] {
+            for flood in [false, true] {
+                for cut_title in [false, true] {
+                    let (mut app, pane, _) = test_app("mcp-source", &crlf(MCP_ACCEPT), true);
+                    app.scan_screen_prompts(Instant::now());
+                    let old = pending_decisions().pop().unwrap();
+                    if restart {
+                        app.screen_prompt_watches.remove(&pane);
+                    }
+                    if flood {
+                        for _ in 0..SCREEN_PROMPT_FLOOD_LIMIT {
+                            app.record_pane_rebuild(pane);
+                        }
+                    }
+                    let mut next = MCP_ACCEPT.replace("codex-cu", "different-server");
+                    if cut_title {
+                        next = next.replace("Allow Computer Use to use", "use");
+                    }
+                    let mut rx = replace_screen(&mut app, pane, &crlf(&next));
+                    rescan_until_adopted(&mut app);
+                    let current = pending_decisions().pop().unwrap();
+                    assert_ne!(
+                        old.decision_id, current.decision_id,
+                        "restart={restart} flood={flood} cut={cut_title}"
+                    );
+                    assert!(all_decisions()
+                        .iter()
+                        .any(|d| d.decision_id == old.decision_id
+                            && d.status == DecisionStatus::Cancelled));
+                    let response = answer_response(&mut app, &old.decision_id, Some("1"), None);
+                    assert!(response.contains("\"error\""));
+                    app.flush_deferred_pane_writes(Instant::now() + Duration::from_secs(5));
+                    assert!(rx.try_recv().is_err(), "no keys into the other MCP server");
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn mcp_answers_use_arrows_confirm_focus_then_enter_in_both_directions() {

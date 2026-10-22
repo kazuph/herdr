@@ -435,3 +435,5 @@ link/disable/unlink の値を上書きせず、競合をエラーで知らせる
 ## `mac-dialog`
 
 `herdr mac-dialog install [--version MAJOR.MINOR.PATCH]` で署名済み判断待ちダイアログを導入し、`herdr mac-dialog status` で登録版・稼働版・切替待ち・最新版を確認できます。macOS Apple silicon 専用で、Node.js と対応 herdr が必要です。専用タグ kazuph-mac-dialog-v の配布物を SHA-256 と厳密な Developer ID 署名検証後、`~/.local/share/herdr/mac-dialog-decisions/<版>` に置き、旧版を残して利用者のプラグインを登録します。KAZUHIRO HOMMA (67M8FDFZ28) の開発者 ID で署名した、herdr の判断待ちを表示するアプリです。ホーム以下に置き /Applications には入れず、公証はしません。同梱アプリの欠落・改変時に開発ビルドへ戻りません。リポジトリ直結の開発用は従来どおり swiftc で組み立てます。親子とも全マシンを購読し、窓・あとで・再送がすべて無くなると新版へ切り替えます。旧常駐役は稼働版不明・切替待ちと表示して強制停止せず、自動更新は行いません。
+
+画面を接続していない保存マシンでも、常駐役は呼び出し元なし・通知なしの `herdr run --completion none`（--pane なし）として起動します。通知ありや --pane は呼び出し元が必須です。登録を稼働中の旧版へ戻すと切替予約を取り消し、切替直前にも登録先を確認します。

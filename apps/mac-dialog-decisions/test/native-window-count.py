@@ -24,6 +24,9 @@ func check(_ count: Int) {
     let expected = count > 1 ? "ほかに \(count - 1) 件開いています" : ""
     for controller in owner.windows.values {
         precondition(controller.pendingLabel.stringValue == expected)
+        precondition(!controller.panel.styleMask.contains(.utilityWindow))
+        precondition(controller.panel.styleMask.contains(.nonactivatingPanel))
+        precondition(controller.panel.level == .normal)
     }
     records.append(["open": count, "other_open_label": expected, "badge": NSApp.dockTile.badgeLabel ?? ""])
 }
