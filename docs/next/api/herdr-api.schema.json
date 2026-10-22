@@ -1492,6 +1492,12 @@
       "$defs": {
         "AgentPromptParams": {
           "properties": {
+            "caller_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "force": {
               "type": "boolean"
             },
@@ -1596,6 +1602,12 @@
         },
         "AgentSendParams": {
           "properties": {
+            "caller_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "force": {
               "type": "boolean"
             },
@@ -3881,6 +3893,12 @@
         },
         "PaneSendInputParams": {
           "properties": {
+            "caller_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "force": {
               "type": "boolean"
             },
@@ -3904,6 +3922,12 @@
         },
         "PaneSendKeysParams": {
           "properties": {
+            "caller_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "force": {
               "type": "boolean"
             },
@@ -3925,6 +3949,12 @@
         },
         "PaneSendTextParams": {
           "properties": {
+            "caller_pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "force": {
               "type": "boolean"
             },

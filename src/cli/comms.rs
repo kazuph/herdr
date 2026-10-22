@@ -742,6 +742,7 @@ fn run_in_pane(
     let submit = super::send_request(&Request {
         id: "cli:run:pane-submit".into(),
         method: Method::PaneSendInput(PaneSendInputParams {
+            caller_pane_id: resolve_run_caller(None).ok(),
             force: false,
             pane_id: pane.clone(),
             text: runner_parts.join(" "),
@@ -1100,7 +1101,7 @@ fn current_msg_identity(explicit_agent: Option<String>) -> std::io::Result<MsgId
     })
 }
 
-fn resolve_run_caller(explicit: Option<&str>) -> std::io::Result<String> {
+pub(super) fn resolve_run_caller(explicit: Option<&str>) -> std::io::Result<String> {
     if let Some(pane_id) = explicit {
         let pane_id = super::normalize_pane_id(pane_id);
         let response = pane_info(&pane_id)?;

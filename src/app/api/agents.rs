@@ -90,9 +90,12 @@ impl App {
             Ok(resolved) => resolved,
             Err(err) => return Err(encode_error_body(id, self.agent_target_error_body(err))),
         };
-        if let Err(error) =
-            self.guard_external_input(resolved.ws_idx, resolved.pane_id, params.force)
-        {
+        if let Err(error) = self.guard_external_input(
+            resolved.ws_idx,
+            resolved.pane_id,
+            params.force,
+            params.caller_pane_id.as_deref(),
+        ) {
             return Err(encode_error_body(id, error));
         }
         let Some(terminal_id) = self
@@ -470,9 +473,12 @@ impl App {
         if self.agent_info(resolved.ws_idx, resolved.pane_id).is_none() {
             return agent_not_found(id, &params.target);
         }
-        if let Err(error) =
-            self.guard_external_input(resolved.ws_idx, resolved.pane_id, params.force)
-        {
+        if let Err(error) = self.guard_external_input(
+            resolved.ws_idx,
+            resolved.pane_id,
+            params.force,
+            params.caller_pane_id.as_deref(),
+        ) {
             return encode_error_body(id, error);
         }
         let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id) else {
@@ -606,6 +612,7 @@ mod tests {
         let response = app.handle_agent_send(
             "req".into(),
             AgentSendParams {
+                caller_pane_id: None,
                 force: false,
                 target: "pi".into(),
                 text: "hello agent".into(),
@@ -634,6 +641,7 @@ mod tests {
         let response = app.handle_agent_send(
             "req".into(),
             AgentSendParams {
+                caller_pane_id: None,
                 force: false,
                 target: "pi".into(),
                 text: "hello agent\r\n\n".into(),
@@ -664,6 +672,7 @@ mod tests {
         let response = app.handle_agent_send(
             "req".into(),
             AgentSendParams {
+                caller_pane_id: None,
                 force: false,
                 target: terminal_id,
                 text: "must not run".into(),
@@ -777,6 +786,7 @@ mod tests {
                     crate::api::schema::Request {
                         id: "prompt".into(),
                         method: crate::api::schema::Method::AgentPrompt(AgentPromptParams {
+                            caller_pane_id: None,
                             force: false,
                             target: target.into(),
                             text: text.into(),
@@ -832,6 +842,7 @@ mod tests {
                 let response: SuccessResponse = serde_json::from_str(&probe.app.handle_agent_send(
                     "legacy".into(),
                     AgentSendParams {
+                        caller_pane_id: None,
                         force: false,
                         target: "reviewer".into(),
                         text: "old\n\n".into(),

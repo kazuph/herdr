@@ -1399,3 +1399,47 @@ fn input_blocker_preserves_existing_permission_control_forms() {
         }
     });
 }
+
+#[test]
+fn review_saved_confirmation_forms_keep_manifest_protection() {
+    with_manifest_dirs("review-confirmation-forms", || {
+        for (agent, screen) in [
+            (Agent::Codex, "Allow command?\n  › 1. Yes\n    2. No\n"),
+            (
+                Agent::Claude,
+                include_str!("../../../tests/fixtures/screen_prompts/claude_preview_multi.txt"),
+            ),
+            (
+                Agent::Claude,
+                include_str!("../../../tests/fixtures/screen_prompts/claude_preview_wrapped.txt"),
+            ),
+            (
+                Agent::Codex,
+                include_str!("../../../tests/fixtures/screen_prompt/codex-question.txt"),
+            ),
+            (
+                Agent::Codex,
+                include_str!("../../../tests/fixtures/screen_prompt/codex-countdown-1.txt"),
+            ),
+            (
+                Agent::Codex,
+                include_str!("../../../tests/fixtures/screen_prompt/codex-notes.txt"),
+            ),
+        ] {
+            let input = DetectionInput {
+                screen,
+                osc_title: "",
+                osc_progress: "",
+            };
+            assert!(
+                visible_blocker_with_input(agent, input),
+                "{agent:?}: {screen}"
+            );
+            let current = visible_confirmation_with_input(agent, input).unwrap();
+            assert!(
+                crate::screen_prompt::parse_screen_prompt(current).is_some(),
+                "identity must use the protected question"
+            );
+        }
+    });
+}

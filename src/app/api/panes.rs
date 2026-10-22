@@ -2261,7 +2261,12 @@ impl App {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
-        if let Err(error) = self.guard_external_input(ws_idx, pane_id, params.force) {
+        if let Err(error) = self.guard_external_input(
+            ws_idx,
+            pane_id,
+            params.force,
+            params.caller_pane_id.as_deref(),
+        ) {
             return super::responses::encode_error_body(id, error);
         }
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
@@ -2283,7 +2288,12 @@ impl App {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
-        if let Err(error) = self.guard_external_input(ws_idx, pane_id, params.force) {
+        if let Err(error) = self.guard_external_input(
+            ws_idx,
+            pane_id,
+            params.force,
+            params.caller_pane_id.as_deref(),
+        ) {
             return super::responses::encode_error_body(id, error);
         }
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
@@ -2392,7 +2402,12 @@ impl App {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
-        if let Err(error) = self.guard_external_input(ws_idx, pane_id, params.force) {
+        if let Err(error) = self.guard_external_input(
+            ws_idx,
+            pane_id,
+            params.force,
+            params.caller_pane_id.as_deref(),
+        ) {
             return super::responses::encode_error_body(id, error);
         }
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
@@ -2762,6 +2777,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                caller_pane_id: None,
                 force: false,
                 pane_id,
                 keys: vec![
@@ -2816,6 +2832,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                caller_pane_id: None,
                 force: false,
                 pane_id,
                 keys: vec!["C-c".into(), "c-c".into(), "ctrl+c".into()],
@@ -2838,6 +2855,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                caller_pane_id: None,
                 force: false,
                 pane_id,
                 keys: vec!["+".into()],
@@ -2868,6 +2886,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                caller_pane_id: None,
                 force: false,
                 pane_id,
                 keys: vec!["shift+?".into()],
@@ -2888,6 +2907,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
+                caller_pane_id: None,
                 force: false,
                 pane_id,
                 text: String::new(),
@@ -2913,6 +2933,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
+                caller_pane_id: None,
                 force: false,
                 pane_id,
                 text: "echo ready".into(),
@@ -2938,6 +2959,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                caller_pane_id: None,
                 force: false,
                 pane_id,
                 keys: vec!["ctrl+h".into(), "not-a-key".into()],
@@ -2958,6 +2980,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
+                caller_pane_id: None,
                 force: false,
                 pane_id,
                 text: "hello".into(),

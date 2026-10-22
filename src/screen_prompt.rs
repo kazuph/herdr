@@ -529,6 +529,29 @@ fn footer_offers_amend(footer: &[&str]) -> bool {
     joined.contains("tab to amend") || joined.contains("tab to add context")
 }
 
+pub(crate) fn option_row(line: &str) -> bool {
+    option_match(line).is_some()
+}
+
+pub(crate) fn prompt_continuation(screen: &str) -> bool {
+    screen
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .is_some_and(|line| option_match(line).is_some() || FREE_TEXT_LABELS.contains(&line.trim()))
+}
+
+pub(crate) fn codex_question_region(screen: &str) -> Option<&str> {
+    let mut offset = 0;
+    let mut start = None;
+    for line in screen.lines() {
+        if CODEX_QUESTION_RE.is_match(line) {
+            start = Some(offset);
+        }
+        offset += line.len() + 1;
+    }
+    start.map(|start| &screen[start..])
+}
+
 /// Port of saberante's `parse_prompt`. Returns `None` when the screen holds no
 /// numbered option block anchored by a prompt footer or by the screen bottom.
 pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {

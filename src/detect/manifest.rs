@@ -1,6 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex, OnceLock, RwLock},
+    sync::{Mutex, OnceLock, RwLock},
 };
 
 use regex::Regex;
@@ -405,16 +405,13 @@ pub fn explain_with_input(agent: Agent, input: DetectionInput<'_>) -> DetectionE
     evaluate_loaded_manifest(agent, input, loaded, true)
 }
 
-/// Independently checks current input controls without changing state arbitration.
-pub fn visible_blocker_with_input(agent: Agent, input: DetectionInput<'_>) -> bool {
-    let Some(current_input) = current_confirmation_input(input.screen) else {
-        return false;
-    };
-    let Some(loaded) = load_manifest(agent) else {
-        return false;
-    };
-    let current = DetectionInput {
-        screen: current_input,
+/// The current confirmation is shared by input protection and identity parsing.
+/// State arbitration continues to use the original manifest regions.
+pub fn visible_confirmation_with_input(agent: Agent, input: DetectionInput<'_>) -> Option<&str> {
+    let loaded = load_manifest(agent)?;
+    let current = current_confirmation_region(agent, input.screen)?;
+    let scoped = DetectionInput {
+        screen: current,
         ..input
     };
     loaded
@@ -422,46 +419,89 @@ pub fn visible_blocker_with_input(agent: Agent, input: DetectionInput<'_>) -> bo
         .rules
         .iter()
         .zip(&loaded.compiled_rules)
-        .any(|(rule, compiled)| {
-            rule.visible_blocker
-                && rule.state.map(AgentState::from) == Some(AgentState::Blocked)
-                && compiled_rule_matches(compiled, region(current, &rule.region))
+        .find_map(|(rule, compiled)| {
+            if !rule.visible_blocker
+                || rule.state.map(AgentState::from) != Some(AgentState::Blocked)
+                || matches!(rule.region.as_str(), "osc_title" | "osc_progress")
+                || !compiled_rule_matches(compiled, region(scoped, &rule.region))
+            {
+                return None;
+            }
+            let tail = current.trim_end();
+            // Codex draws its interrupt hint below the matched submit footer.
+            let tail = if agent == Agent::Codex
+                && tail
+                    .lines()
+                    .last()
+                    .is_some_and(|line| line.trim().eq_ignore_ascii_case("esc to interrupt"))
+            {
+                tail.rsplit_once('\n')
+                    .map_or("", |(body, _)| body.trim_end())
+            } else {
+                tail
+            };
+            let lines = tail.lines().collect::<Vec<_>>();
+            let selected_last = lines
+                .iter()
+                .rposition(|line| {
+                    line.trim_start().starts_with(['❯', '›', '❭'])
+                        && crate::screen_prompt::option_row(line)
+                })
+                .is_some_and(|selected| {
+                    lines[selected..].iter().all(|line| {
+                        line.trim().is_empty() || crate::screen_prompt::option_row(line)
+                    })
+                });
+            (selected_last || gate_reaches_screen_end(&compiled.gate, tail)).then_some(current)
         })
 }
 
-// A complete control-guide suffix, including physical line wraps, is evidence
-// of a current input field. Prose after it invalidates that evidence.
-static CONFIRMATION_GUIDE: LazyLock<Regex> = LazyLock::new(|| {
-    let action = concat!(
-        r"(?:(?:press\s+)?(?:enter|return|↵)\s+(?:to\s+)?(?:select|confirm|accept|submit(?:\s+(?:answer|all))?)",
-        r"|esc(?:ape)?\s+(?:to\s+)?(?:cancel|exit|dismiss)",
-        r"|(?:(?:tab/arrow|arrow)\s+keys|arrows|↑/↓|↑↓)\s+(?:to\s+)?(?:navigate|select)",
-        r"|tab\s+(?:to\s+)?(?:amend|add\s+(?:context|notes))|ctrl\+e\s+to\s+explain)",
-    );
-    Regex::new(&format!(
-        r"(?i)^{action}(?:(?:\s*[·•|,]\s*|\s+(?:or|and)\s+){action})*\s*$"
-    ))
-    .expect("confirmation control-guide regex")
-});
+#[cfg(test)]
+pub fn visible_blocker_with_input(agent: Agent, input: DetectionInput<'_>) -> bool {
+    visible_confirmation_with_input(agent, input).is_some()
+}
 
-static CONFIRMATION_CHOICE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*([❯›❭·])?\s*\d+[.)]?\s+\S.*$").expect("confirmation selection-row regex")
-});
+// Inspect the existing rule's positive evidence rather than maintaining a
+// second vocabulary of allowed confirmation commands. A match must reach the
+// last physical row, so old controls followed by ordinary prose do not count.
+fn gate_reaches_screen_end(gate: &CompiledGate, screen: &str) -> bool {
+    let last = screen.lines().last().unwrap_or("").trim();
+    let lower = last.to_lowercase();
+    let starts_control = |line: &str| {
+        line.split(['·', '|', '•']).any(|part| {
+            gate.contains
+                .iter()
+                .any(|needle| part.trim_start().starts_with(needle))
+        })
+    };
+    starts_control(&lower)
+        || gate
+            .line_regex
+            .iter()
+            .any(|re| re.find(last).is_some_and(|m| m.start() == 0))
+        || gate.regex.iter().any(|re| {
+            re.find_iter(screen).any(|m| {
+                m.end() >= screen.rfind('\n').map_or(0, |i| i + 1)
+                    && screen[..m.start()]
+                        .rsplit('\n')
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .is_empty()
+            })
+        })
+        || gate
+            .all
+            .iter()
+            .chain(&gate.any)
+            .any(|nested| gate_reaches_screen_end(nested, screen))
+}
 
-fn current_confirmation_input(screen: &str) -> Option<&str> {
-    let current = after_last_horizontal_rule(screen);
-    let start = screen.len() - current.len();
-    // Existing region semantics use the whole screen for a cropped capture
-    // without a border. Such a capture still needs a visible selection cursor.
-    if start == 0
-        && !current
-            .lines()
-            .any(|line| line.trim_start().starts_with(['❯', '›', '❭']))
-    {
-        return None;
-    }
+fn current_confirmation_region(agent: Agent, screen: &str) -> Option<&str> {
+    let mut boundaries = vec![0];
     let mut offset = 0;
     let mut fence: Option<(char, usize)> = None;
+    let mut cursor = None;
     for line in screen.lines() {
         let trimmed = line.trim_start();
         let marker = if trimmed.starts_with("```") {
@@ -485,29 +525,48 @@ fn current_confirmation_input(screen: &str) -> Option<&str> {
                 _ => {}
             }
         }
-        if offset >= start && fence.is_none() {
-            let tail = &screen[offset..];
-            if CONFIRMATION_GUIDE.is_match(tail.trim()) {
-                return Some(current);
+        if fence.is_none() {
+            if is_horizontal_rule(line) {
+                boundaries.push((offset + line.len() + 1).min(screen.len()));
             }
-            // Some selection forms (Devin trust) end at the last option,
-            // without a separate guide. Require the live cursor and a tail
-            // consisting entirely of option rows, not surrounding prose.
-            let selected = CONFIRMATION_CHOICE.captures(line).is_some_and(|row| {
-                row.get(1)
-                    .is_some_and(|marker| matches!(marker.as_str(), "❯" | "›" | "❭"))
-            });
-            if selected
-                && tail
-                    .lines()
-                    .all(|row| row.trim().is_empty() || CONFIRMATION_CHOICE.is_match(row))
-            {
-                return Some(current);
+            if trimmed.starts_with(['❯', '›', '❭']) {
+                cursor = Some(offset);
             }
         }
         offset += line.len() + 1;
     }
-    None
+    if fence.is_some() {
+        return None;
+    }
+    // A preview's lower divider is part of the same confirmation; the latest
+    // cursor anchors the containing region, including the options above it.
+    let last_boundary = *boundaries.last().unwrap_or(&0);
+    let start = cursor.map_or(last_boundary, |at| {
+        let containing = boundaries
+            .iter()
+            .copied()
+            .rfind(|&start| start <= at)
+            .unwrap_or(0);
+        if at >= last_boundary
+            || crate::screen_prompt::parse_screen_prompt(&screen[containing..]).is_some_and(|_| {
+                crate::screen_prompt::prompt_continuation(&screen[last_boundary..])
+            })
+        {
+            containing
+        } else {
+            last_boundary
+        }
+    });
+    let current = &screen[start..];
+    if start == 0 && cursor.is_none() {
+        return None;
+    }
+    if agent == Agent::Codex {
+        if let Some(current) = crate::screen_prompt::codex_question_region(current) {
+            return Some(current);
+        }
+    }
+    Some(current)
 }
 
 pub fn explain_for_label(agent_label: &str, screen_content: &str) -> DetectionExplain {

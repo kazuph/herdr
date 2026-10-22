@@ -337,6 +337,8 @@ pub struct PopupScrollParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneSendTextParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_pane_id: Option<String>,
     #[serde(default, skip_serializing_if = "super::is_false")]
     pub force: bool,
     pub pane_id: String,
@@ -345,6 +347,8 @@ pub struct PaneSendTextParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneSendKeysParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_pane_id: Option<String>,
     #[serde(default, skip_serializing_if = "super::is_false")]
     pub force: bool,
     pub pane_id: String,
@@ -353,6 +357,8 @@ pub struct PaneSendKeysParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneSendInputParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_pane_id: Option<String>,
     #[serde(default, skip_serializing_if = "super::is_false")]
     pub force: bool,
     pub pane_id: String,
