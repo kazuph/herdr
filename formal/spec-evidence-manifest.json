@@ -12,7 +12,7 @@
       "alloy": "verified: Alloy 6.2.0 SAT4J; 4 assertions UNSAT and OwnershipWitness SAT; see formal/formal-verification-results.json",
       "quint": "verified: Quint 0.32.0; 6 invariants GREEN at 20000 samples x 25 steps and 2 non-vacuity RED witnesses; see formal/formal-verification-results.json"
     },
-    "active_contract_count": 591
+    "active_contract_count": 594
   },
   "contracts": [
     {
@@ -7829,6 +7829,117 @@
       ]
     },
     {
+      "contract_id": "G8-ef09374c9f",
+      "dimensions": [
+        "tb independent distribution and atomic installation"
+      ],
+      "verification_methods": [
+        "rust_test_target:tb_local_archive_install_upgrade_reinstall_and_registration_rollback",
+        "rust_test_target:tb_extract_checksum_switch_failures_preserve_old_version",
+        "rust_test_target:tb_registration_restore_preserves_exact_entry_and_other_plugins",
+        "rust_test_target:tb_running_old_version_survives_upgrade",
+        "drift_source_anchor:src/cli/tb.rs",
+        "platform_live_acceptance:unverified",
+        "node_test_target:apps/terminal-browser/cli/test/upgrade.test.mjs",
+        "node_test_target:apps/terminal-browser/terminals/test/nested.integration.cjs",
+        "drift_source_anchor:apps/terminal-browser/cli/src/upgrade.ts"
+      ],
+      "source_anchors": [
+        "SPEC.md:1589",
+        "apps/terminal-browser/terminals/src/multiplexer.ts:8",
+        "src/cli/tb.rs:17",
+        "apps/terminal-browser/cli/src/upgrade.ts:16"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Signed Electron payload, GitHub publication and work Mac acceptance await parent execution"
+      ]
+    },
+    {
+      "contract_id": "G8-6f0ebc77a0",
+      "dimensions": [
+        "executable identity of nested runtimes",
+        "pane existence and failure isolation"
+      ],
+      "verification_methods": [
+        "node_test_target:apps/terminal-browser/terminals/test/nested.integration.cjs",
+        "node_test_target:apps/terminal-browser/terminals/test/multiplexer.test.js",
+        "drift_source_anchor:apps/terminal-browser/terminals/src/multiplexer.ts",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1590",
+        "apps/terminal-browser/terminals/src/multiplexer.ts:11"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Signed release publication and parent acceptance remain outside this implementation task"
+      ]
+    },
+    {
+      "contract_id": "G8-4664927481",
+      "dimensions": [
+        "server-owned configuration identity",
+        "atomic update and conditional rollback",
+        "valid experimental section"
+      ],
+      "verification_methods": [
+        "node_test_target:apps/terminal-browser/terminals/test/ikesu.integration.cjs",
+        "node_test_target:apps/terminal-browser/terminals/test/config-transaction.integration.cjs",
+        "node_test_target:apps/terminal-browser/terminals/test/kitty-config.test.js",
+        "drift_source_anchor:apps/terminal-browser/terminals/src/terminals/ikesu.ts",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1591",
+        "apps/terminal-browser/terminals/src/terminals/ikesu.ts:52",
+        "apps/terminal-browser/terminals/src/terminals/herdr.ts:20"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Native ikesu 0.4.1 config_path emission is not yet available; compatibility response tested with real ikesu 0.4.0 forwarding; publication and parent review remain outside implementation acceptance"
+      ]
+    },
+    {
+      "contract_id": "G8-522b2a5eae",
+      "dimensions": [
+        "versioned herdr and ikesu plugins in release archive"
+      ],
+      "verification_methods": [
+        "node_test_target:apps/terminal-browser/cli/test/plugin-release.test.mjs",
+        "drift_source_anchor:apps/terminal-browser/scripts/stage-plugins.sh",
+        "platform_live_acceptance:unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1592",
+        "apps/terminal-browser/scripts/stage-plugins.sh:6"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "unrepresented_dimensions": [
+        "Signed release publication and parent acceptance remain outside this implementation task"
+      ]
+    },
+    {
       "contract_id": "G8-a434cb2ec6",
       "unrepresented_dimensions": [
         "Signed Electron payload, GitHub publication and work Mac acceptance await parent execution"
@@ -7847,7 +7958,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1590",
+        "SPEC.md:1593",
         ".github/workflows/kazuph-tb-release.yml:2"
       ]
     },
@@ -7873,7 +7984,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1591",
+        "SPEC.md:1594",
         "src/cli/plugin.rs:90"
       ]
     },
@@ -7901,7 +8012,41 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1612"
+        "SPEC.md:1615"
+      ]
+    },
+    {
+      "contract_id": "G9-7c5f4cd7c6",
+      "unrepresented_dimensions": [
+        "real question permission MCP screens and restart acceptance not yet run"
+      ],
+      "dimensions": [
+        "visible confirmation input protection",
+        "same question force observation"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:visible_confirmation_holds_mail_and_jobs_even_while_working_and_decisions_disabled",
+        "platform_live_acceptance:unverified",
+        "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
+        "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
+        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
+        "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
+        "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
+        "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
+        "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
+        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
+        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
+        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1616",
+        "src/app/input_guard.rs:8"
       ]
     },
     {
@@ -7926,7 +8071,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1614"
+        "SPEC.md:1617"
       ]
     },
     {
@@ -7952,7 +8097,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1615"
+        "SPEC.md:1618"
       ]
     },
     {
@@ -7978,7 +8123,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1616"
+        "SPEC.md:1619"
       ]
     },
     {
@@ -8003,7 +8148,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1617"
+        "SPEC.md:1620"
       ]
     },
     {
@@ -8029,7 +8174,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1618"
+        "SPEC.md:1621"
       ]
     },
     {
@@ -8057,7 +8202,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1619"
+        "SPEC.md:1622"
       ]
     },
     {
@@ -8083,7 +8228,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1636"
+        "SPEC.md:1639"
       ]
     },
     {
@@ -8110,7 +8255,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1637"
+        "SPEC.md:1640"
       ]
     },
     {
@@ -8136,7 +8281,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1638"
+        "SPEC.md:1641"
       ]
     },
     {
@@ -8163,7 +8308,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1639"
+        "SPEC.md:1642"
       ]
     },
     {
@@ -8189,7 +8334,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1640"
+        "SPEC.md:1643"
       ]
     },
     {
@@ -8216,7 +8361,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1641"
+        "SPEC.md:1644"
       ]
     },
     {
@@ -8241,7 +8386,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1642"
+        "SPEC.md:1645"
       ]
     },
     {
@@ -8265,7 +8410,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1665"
+        "SPEC.md:1668"
       ]
     },
     {
@@ -8289,7 +8434,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1666"
+        "SPEC.md:1669"
       ]
     },
     {
@@ -8313,7 +8458,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1667"
+        "SPEC.md:1670"
       ]
     },
     {
@@ -8337,7 +8482,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1668"
+        "SPEC.md:1671"
       ]
     },
     {
@@ -8362,7 +8507,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1669",
+        "SPEC.md:1672",
         "tests/cli_wrapper.rs:3547"
       ]
     },
@@ -8388,7 +8533,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1670"
+        "SPEC.md:1673"
       ]
     },
     {
@@ -8413,7 +8558,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1671"
+        "SPEC.md:1674"
       ]
     },
     {
@@ -8436,7 +8581,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1672",
+        "SPEC.md:1675",
         "src/cli/comms.rs:1640"
       ]
     },
@@ -8461,7 +8606,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1686"
+        "SPEC.md:1689"
       ]
     },
     {
@@ -8485,7 +8630,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1687"
+        "SPEC.md:1690"
       ]
     },
     {
@@ -8509,7 +8654,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1688"
+        "SPEC.md:1691"
       ]
     },
     {
@@ -8533,7 +8678,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1699"
+        "SPEC.md:1702"
       ]
     },
     {
@@ -8557,7 +8702,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1700"
+        "SPEC.md:1703"
       ]
     },
     {
@@ -8581,7 +8726,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1701"
+        "SPEC.md:1704"
       ]
     },
     {
@@ -8605,7 +8750,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1710"
+        "SPEC.md:1713"
       ]
     },
     {
@@ -8629,7 +8774,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1711"
+        "SPEC.md:1714"
       ]
     },
     {
@@ -8653,7 +8798,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1720"
+        "SPEC.md:1723"
       ]
     },
     {
@@ -8677,7 +8822,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1721"
+        "SPEC.md:1724"
       ]
     },
     {
@@ -8701,7 +8846,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1730"
+        "SPEC.md:1733"
       ]
     },
     {
@@ -8725,7 +8870,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1731"
+        "SPEC.md:1734"
       ]
     },
     {
@@ -8749,7 +8894,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1732"
+        "SPEC.md:1735"
       ]
     },
     {
@@ -8773,7 +8918,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1741"
+        "SPEC.md:1744"
       ]
     },
     {
@@ -8797,7 +8942,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1742"
+        "SPEC.md:1745"
       ]
     },
     {
@@ -8821,7 +8966,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1743"
+        "SPEC.md:1746"
       ]
     },
     {
@@ -8845,7 +8990,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1752"
+        "SPEC.md:1755"
       ]
     },
     {
@@ -8869,7 +9014,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1753"
+        "SPEC.md:1756"
       ]
     },
     {
@@ -8893,7 +9038,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1754"
+        "SPEC.md:1757"
       ]
     },
     {
@@ -8917,7 +9062,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1755"
+        "SPEC.md:1758"
       ]
     },
     {
@@ -8941,7 +9086,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1756"
+        "SPEC.md:1759"
       ]
     },
     {
@@ -8965,7 +9110,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1766"
+        "SPEC.md:1769"
       ]
     },
     {
@@ -8989,7 +9134,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1767"
+        "SPEC.md:1770"
       ]
     },
     {
@@ -9013,7 +9158,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1768"
+        "SPEC.md:1771"
       ]
     },
     {
@@ -9037,7 +9182,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1769"
+        "SPEC.md:1772"
       ]
     },
     {
@@ -9061,7 +9206,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1770"
+        "SPEC.md:1773"
       ]
     },
     {
@@ -9085,7 +9230,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1779"
+        "SPEC.md:1782"
       ]
     },
     {
@@ -9109,7 +9254,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1780"
+        "SPEC.md:1783"
       ]
     },
     {
@@ -9133,7 +9278,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1781"
+        "SPEC.md:1784"
       ]
     },
     {
@@ -9157,7 +9302,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1782"
+        "SPEC.md:1785"
       ]
     },
     {
@@ -9181,7 +9326,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1792"
+        "SPEC.md:1795"
       ]
     },
     {
@@ -9205,7 +9350,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1793"
+        "SPEC.md:1796"
       ]
     },
     {
@@ -9229,95 +9374,11 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1794"
+        "SPEC.md:1797"
       ]
     },
     {
       "contract_id": "G9-0c49beb039",
-      "unrepresented_dimensions": [
-        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
-      ],
-      "dimensions": [
-        "spawn next hint",
-        "json key order"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
-        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
-        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
-        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
-        "drift_source_anchor:src/cli/comms.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1805",
-        "src/cli/comms.rs:1230"
-      ]
-    },
-    {
-      "contract_id": "G9-855ff86e4c",
-      "unrepresented_dimensions": [
-        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
-      ],
-      "dimensions": [
-        "spawn next hint",
-        "json key order"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
-        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
-        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
-        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
-        "drift_source_anchor:src/cli/comms.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1806",
-        "src/cli/comms.rs:1230"
-      ]
-    },
-    {
-      "contract_id": "G9-7a150838d4",
-      "unrepresented_dimensions": [
-        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
-      ],
-      "dimensions": [
-        "spawn next hint",
-        "json key order"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
-        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
-        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
-        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
-        "drift_source_anchor:src/cli/comms.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1807",
-        "src/cli/comms.rs:1230"
-      ]
-    },
-    {
-      "contract_id": "G9-30cf6c945d",
       "unrepresented_dimensions": [
         "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
       ],
@@ -9345,6 +9406,90 @@
       ]
     },
     {
+      "contract_id": "G9-855ff86e4c",
+      "unrepresented_dimensions": [
+        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
+      ],
+      "dimensions": [
+        "spawn next hint",
+        "json key order"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
+        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
+        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
+        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
+        "drift_source_anchor:src/cli/comms.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1809",
+        "src/cli/comms.rs:1230"
+      ]
+    },
+    {
+      "contract_id": "G9-7a150838d4",
+      "unrepresented_dimensions": [
+        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
+      ],
+      "dimensions": [
+        "spawn next hint",
+        "json key order"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
+        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
+        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
+        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
+        "drift_source_anchor:src/cli/comms.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1810",
+        "src/cli/comms.rs:1230"
+      ]
+    },
+    {
+      "contract_id": "G9-30cf6c945d",
+      "unrepresented_dimensions": [
+        "Hint text is unit-covered; whether agents follow it is behavioral and not represented"
+      ],
+      "dimensions": [
+        "spawn next hint",
+        "json key order"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:run_spawn_next_hint_points_background_jobs_at_the_exit_notice",
+        "rust_test_target:run_spawn_next_hint_does_not_claim_a_notice_for_completion_none",
+        "rust_test_target:run_spawn_next_hint_describes_pane_exit_notice",
+        "rust_test_target:run_spawn_output_serializes_next_after_existing_keys",
+        "drift_source_anchor:src/cli/comms.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1811",
+        "src/cli/comms.rs:1230"
+      ]
+    },
+    {
       "contract_id": "G9-a8db650967",
       "unrepresented_dimensions": [
         "Real mouse drag in a terminal is not automated; the endpoint drag is driven through the frontend input path against a real server socket"
@@ -9365,7 +9510,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1821",
+        "SPEC.md:1824",
         "src/ui/tabs.rs:30",
         "src/client/endpoint/frontend/tab_drag.rs:31"
       ]
@@ -9393,7 +9538,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1822",
+        "SPEC.md:1825",
         "src/workspace/aggregate.rs:106",
         "src/ui/sidebar.rs:535"
       ]
@@ -9419,7 +9564,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1823",
+        "SPEC.md:1826",
         "src/ui/tabs.rs:30",
         "src/client/endpoint/frontend/tab_drag.rs:31"
       ]
@@ -9438,7 +9583,7 @@
         "rust_test_target:explicit_missing_caller_never_creates_a_silent_job"
       ],
       "source_anchors": [
-        "SPEC.md:1836",
+        "SPEC.md:1839",
         "src/app/api/jobs.rs:24",
         "src/cli/comms.rs:409",
         "src/app/api/jobs.rs:25"
@@ -9467,7 +9612,7 @@
         "rust_test_target:explicit_missing_caller_never_creates_a_silent_job"
       ],
       "source_anchors": [
-        "SPEC.md:1837",
+        "SPEC.md:1840",
         "src/app/api/jobs.rs:24",
         "src/cli/comms.rs:409",
         "src/app/api/jobs.rs:25"
@@ -9496,7 +9641,7 @@
         "rust_test_target:explicit_missing_caller_never_creates_a_silent_job"
       ],
       "source_anchors": [
-        "SPEC.md:1838",
+        "SPEC.md:1841",
         "src/app/api/jobs.rs:24",
         "src/cli/comms.rs:409",
         "src/app/api/jobs.rs:25"
@@ -9537,7 +9682,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1853",
+        "SPEC.md:1856",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ]
@@ -9568,7 +9713,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1854",
+        "SPEC.md:1857",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ]
@@ -9599,7 +9744,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1855",
+        "SPEC.md:1858",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ]
@@ -9630,7 +9775,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1856",
+        "SPEC.md:1859",
         "src/machine.rs:489",
         "src/cli/comms.rs:1550"
       ]
@@ -9661,7 +9806,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1870",
+        "SPEC.md:1873",
         "src/app/api/agents.rs:957"
       ]
     },
@@ -9691,7 +9836,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1871",
+        "SPEC.md:1874",
         "src/app/api/agents.rs:957"
       ]
     },
@@ -9721,8 +9866,95 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1872",
+        "SPEC.md:1875",
         "src/app/api/agents.rs:957"
+      ]
+    },
+    {
+      "contract_id": "G9-7dd56658e6",
+      "unrepresented_dimensions": [
+        "real question permission MCP screens and restart acceptance not yet run"
+      ],
+      "dimensions": [
+        "visible confirmation input protection",
+        "same question force observation",
+        "current input boundary",
+        "instruction-only terminal tail",
+        "quoted and historical controls exclusion"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:confirmation_force_requires_prior_unforced_rejection_for_same_question",
+        "rust_test_target:direct_api_input_routes_reject_before_writing_confirmation",
+        "platform_live_acceptance:unverified",
+        "rust_test_target:managed_launch_confirmation_is_guarded_before_agent_detection",
+        "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices",
+        "rust_test_target:input_blocker_does_not_block_code_explaining_confirmation_controls",
+        "rust_test_target:input_blocker_ignores_old_question_above_current_input",
+        "rust_test_target:input_blocker_requires_instruction_only_tail_after_current_controls",
+        "rust_test_target:input_blocker_ignores_quoted_controls_inside_fenced_code_with_border",
+        "rust_test_target:input_blocker_preserves_captured_trust_and_wrapped_question_controls",
+        "rust_test_target:quoted_controls_and_old_questions_do_not_hold_mail_or_immediate_input",
+        "rust_test_target:mcp_confirmation_keeps_regular_and_job_messages_queued",
+        "rust_test_target:input_blocker_preserves_existing_permission_control_forms",
+        "rust_test_target:mcp_decision_answer_passes_guard_while_mail_waits_for_screen_disappearance",
+        "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
+        "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
+        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
+        "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
+        "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
+        "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
+        "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
+        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
+        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
+        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1888",
+        "src/app/input_guard.rs:8",
+        "src/detect/manifest.rs:407"
+      ]
+    },
+    {
+      "contract_id": "G9-732241a923",
+      "unrepresented_dimensions": [
+        "real question permission MCP screens and restart acceptance not yet run"
+      ],
+      "dimensions": [
+        "visible confirmation input protection",
+        "same question force observation"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:confirmation_force_requires_prior_unforced_rejection_for_same_question",
+        "rust_test_target:direct_api_input_routes_reject_before_writing_confirmation",
+        "platform_live_acceptance:unverified",
+        "rust_test_target:managed_launch_confirmation_is_guarded_before_agent_detection",
+        "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices",
+        "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
+        "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
+        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
+        "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
+        "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
+        "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
+        "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
+        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
+        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
+        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1889",
+        "src/app/input_guard.rs:8"
       ]
     },
     {
@@ -9749,7 +9981,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1898",
+        "SPEC.md:1901",
         "src/detect/manifest.rs:147"
       ]
     },
@@ -9777,7 +10009,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1899",
+        "SPEC.md:1902",
         "src/detect/manifest.rs:147"
       ]
     },
@@ -9805,7 +10037,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1900",
+        "SPEC.md:1903",
         "src/detect/manifest.rs:147"
       ]
     },
@@ -9832,7 +10064,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1901",
+        "SPEC.md:1904",
         "src/detect/manifests/claude.toml:80",
         "src/app/screen_prompts.rs:1780"
       ]
@@ -9857,7 +10089,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1911",
+        "SPEC.md:1914",
         "src/pane/terminal.rs:24"
       ]
     },
@@ -9882,7 +10114,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1923",
+        "SPEC.md:1926",
         "src/ghostty/mod.rs:483"
       ]
     },
@@ -9907,99 +10139,12 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1924",
+        "SPEC.md:1927",
         "src/ghostty/mod.rs:483"
       ]
     },
     {
       "contract_id": "G9-31be5cc52e",
-      "unrepresented_dimensions": [
-        "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
-      ],
-      "dimensions": [
-        "foreground cwd reuse",
-        "job retention",
-        "jobs refresh cadence"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl",
-        "rust_test_target:prune_removes_only_jobs_finished_before_the_cutoff_and_their_logs",
-        "rust_test_target:headless_scheduled_tasks_refresh_jobs_for_both_sidebar_tabs",
-        "drift_source_anchor:src/pane.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1940",
-        "src/pane.rs:308",
-        "src/app/runtime.rs:712"
-      ]
-    },
-    {
-      "contract_id": "G9-a501fef056",
-      "unrepresented_dimensions": [
-        "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
-      ],
-      "dimensions": [
-        "foreground cwd reuse",
-        "job retention",
-        "jobs refresh cadence"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl",
-        "rust_test_target:prune_removes_only_jobs_finished_before_the_cutoff_and_their_logs",
-        "rust_test_target:headless_scheduled_tasks_refresh_jobs_for_both_sidebar_tabs",
-        "drift_source_anchor:src/pane.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1941",
-        "src/pane.rs:308",
-        "src/app/runtime.rs:712"
-      ]
-    },
-    {
-      "contract_id": "G9-0856ab1d13",
-      "unrepresented_dimensions": [
-        "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
-      ],
-      "dimensions": [
-        "foreground cwd reuse",
-        "job retention",
-        "jobs refresh cadence"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl",
-        "rust_test_target:prune_removes_only_jobs_finished_before_the_cutoff_and_their_logs",
-        "rust_test_target:headless_scheduled_tasks_refresh_jobs_for_both_sidebar_tabs",
-        "drift_source_anchor:src/pane.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1942",
-        "src/pane.rs:308",
-        "src/app/runtime.rs:712"
-      ]
-    },
-    {
-      "contract_id": "G9-9d9330b99e",
       "unrepresented_dimensions": [
         "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
       ],
@@ -10028,7 +10173,7 @@
       ]
     },
     {
-      "contract_id": "G9-d205a17800",
+      "contract_id": "G9-a501fef056",
       "unrepresented_dimensions": [
         "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
       ],
@@ -10057,7 +10202,7 @@
       ]
     },
     {
-      "contract_id": "G9-40b783cbd9",
+      "contract_id": "G9-0856ab1d13",
       "unrepresented_dimensions": [
         "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
       ],
@@ -10086,7 +10231,7 @@
       ]
     },
     {
-      "contract_id": "G9-0b06da62d9",
+      "contract_id": "G9-9d9330b99e",
       "unrepresented_dimensions": [
         "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
       ],
@@ -10115,7 +10260,7 @@
       ]
     },
     {
-      "contract_id": "G9-064f0d94ff",
+      "contract_id": "G9-d205a17800",
       "unrepresented_dimensions": [
         "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
       ],
@@ -10144,7 +10289,7 @@
       ]
     },
     {
-      "contract_id": "G9-e148011b9c",
+      "contract_id": "G9-40b783cbd9",
       "unrepresented_dimensions": [
         "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
       ],
@@ -10173,6 +10318,93 @@
       ]
     },
     {
+      "contract_id": "G9-0b06da62d9",
+      "unrepresented_dimensions": [
+        "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
+      ],
+      "dimensions": [
+        "foreground cwd reuse",
+        "job retention",
+        "jobs refresh cadence"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl",
+        "rust_test_target:prune_removes_only_jobs_finished_before_the_cutoff_and_their_logs",
+        "rust_test_target:headless_scheduled_tasks_refresh_jobs_for_both_sidebar_tabs",
+        "drift_source_anchor:src/pane.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1949",
+        "src/pane.rs:308",
+        "src/app/runtime.rs:712"
+      ]
+    },
+    {
+      "contract_id": "G9-064f0d94ff",
+      "unrepresented_dimensions": [
+        "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
+      ],
+      "dimensions": [
+        "foreground cwd reuse",
+        "job retention",
+        "jobs refresh cadence"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl",
+        "rust_test_target:prune_removes_only_jobs_finished_before_the_cutoff_and_their_logs",
+        "rust_test_target:headless_scheduled_tasks_refresh_jobs_for_both_sidebar_tabs",
+        "drift_source_anchor:src/pane.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1950",
+        "src/pane.rs:308",
+        "src/app/runtime.rs:712"
+      ]
+    },
+    {
+      "contract_id": "G9-e148011b9c",
+      "unrepresented_dimensions": [
+        "Unit-covered; the 2026-10-08 benchmark (24 panes, pane list 112ms to 34ms per call) is manual evidence and live input latency under real load is not represented"
+      ],
+      "dimensions": [
+        "foreground cwd reuse",
+        "job retention",
+        "jobs refresh cadence"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:cached_cwd_is_reused_only_for_the_same_process_group_within_the_ttl",
+        "rust_test_target:prune_removes_only_jobs_finished_before_the_cutoff_and_their_logs",
+        "rust_test_target:headless_scheduled_tasks_refresh_jobs_for_both_sidebar_tabs",
+        "drift_source_anchor:src/pane.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1951",
+        "src/pane.rs:308",
+        "src/app/runtime.rs:712"
+      ]
+    },
+    {
       "contract_id": "G9-c7a1aea424",
       "unrepresented_dimensions": [
         "PTY acknowledgement and concurrent delivery acceptance unverified"
@@ -10193,7 +10425,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1958"
+        "SPEC.md:1961"
       ]
     },
     {
@@ -10217,7 +10449,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1959"
+        "SPEC.md:1962"
       ]
     },
     {
@@ -10241,110 +10473,11 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1960"
+        "SPEC.md:1963"
       ]
     },
     {
       "contract_id": "G9-cdc0d05af6",
-      "unrepresented_dimensions": [
-        "Store, wait and validation behavior are unit-covered; simultaneous answers from two real socket clients and the isolated-session CLI run are manual evidence"
-      ],
-      "dimensions": [
-        "decision record",
-        "first-answer-wins",
-        "expiry",
-        "wait and events"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:first_answer_wins_and_second_answer_is_already_resolved",
-        "rust_test_target:expire_pending_only_expires_due_pending_rows",
-        "rust_test_target:expiry_works_after_reopen_and_next_pending_expiry_tracks_min",
-        "rust_test_target:decision_wait_wakes_when_resolved_event_arrives",
-        "rust_test_target:decision_wait_returns_pending_decision_on_timeout",
-        "rust_test_target:plugin_hook_event_names_include_decision_events",
-        "drift_source_anchor:src/decision.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1991",
-        "src/decision.rs:134",
-        "src/app/api/decisions.rs:195"
-      ]
-    },
-    {
-      "contract_id": "G9-55f3e8ba67",
-      "unrepresented_dimensions": [
-        "Store, wait and validation behavior are unit-covered; simultaneous answers from two real socket clients and the isolated-session CLI run are manual evidence"
-      ],
-      "dimensions": [
-        "decision record",
-        "first-answer-wins",
-        "expiry",
-        "wait and events"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:first_answer_wins_and_second_answer_is_already_resolved",
-        "rust_test_target:expire_pending_only_expires_due_pending_rows",
-        "rust_test_target:expiry_works_after_reopen_and_next_pending_expiry_tracks_min",
-        "rust_test_target:decision_wait_wakes_when_resolved_event_arrives",
-        "rust_test_target:decision_wait_returns_pending_decision_on_timeout",
-        "rust_test_target:plugin_hook_event_names_include_decision_events",
-        "drift_source_anchor:src/decision.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1992",
-        "src/decision.rs:134",
-        "src/app/api/decisions.rs:195"
-      ]
-    },
-    {
-      "contract_id": "G9-ab1f5f97c8",
-      "unrepresented_dimensions": [
-        "Store, wait and validation behavior are unit-covered; simultaneous answers from two real socket clients and the isolated-session CLI run are manual evidence"
-      ],
-      "dimensions": [
-        "decision record",
-        "first-answer-wins",
-        "expiry",
-        "wait and events"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:first_answer_wins_and_second_answer_is_already_resolved",
-        "rust_test_target:expire_pending_only_expires_due_pending_rows",
-        "rust_test_target:expiry_works_after_reopen_and_next_pending_expiry_tracks_min",
-        "rust_test_target:decision_wait_wakes_when_resolved_event_arrives",
-        "rust_test_target:decision_wait_returns_pending_decision_on_timeout",
-        "rust_test_target:plugin_hook_event_names_include_decision_events",
-        "drift_source_anchor:src/decision.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1993",
-        "src/decision.rs:134",
-        "src/app/api/decisions.rs:195"
-      ]
-    },
-    {
-      "contract_id": "G9-aeb4bb9a25",
       "unrepresented_dimensions": [
         "Store, wait and validation behavior are unit-covered; simultaneous answers from two real socket clients and the isolated-session CLI run are manual evidence"
       ],
@@ -10377,7 +10510,7 @@
       ]
     },
     {
-      "contract_id": "G9-9d8a1d1860",
+      "contract_id": "G9-55f3e8ba67",
       "unrepresented_dimensions": [
         "Store, wait and validation behavior are unit-covered; simultaneous answers from two real socket clients and the isolated-session CLI run are manual evidence"
       ],
@@ -10410,7 +10543,7 @@
       ]
     },
     {
-      "contract_id": "G9-ac6d12b08d",
+      "contract_id": "G9-ab1f5f97c8",
       "unrepresented_dimensions": [
         "Store, wait and validation behavior are unit-covered; simultaneous answers from two real socket clients and the isolated-session CLI run are manual evidence"
       ],
@@ -10443,6 +10576,105 @@
       ]
     },
     {
+      "contract_id": "G9-aeb4bb9a25",
+      "unrepresented_dimensions": [
+        "Store, wait and validation behavior are unit-covered; simultaneous answers from two real socket clients and the isolated-session CLI run are manual evidence"
+      ],
+      "dimensions": [
+        "decision record",
+        "first-answer-wins",
+        "expiry",
+        "wait and events"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:first_answer_wins_and_second_answer_is_already_resolved",
+        "rust_test_target:expire_pending_only_expires_due_pending_rows",
+        "rust_test_target:expiry_works_after_reopen_and_next_pending_expiry_tracks_min",
+        "rust_test_target:decision_wait_wakes_when_resolved_event_arrives",
+        "rust_test_target:decision_wait_returns_pending_decision_on_timeout",
+        "rust_test_target:plugin_hook_event_names_include_decision_events",
+        "drift_source_anchor:src/decision.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1997",
+        "src/decision.rs:134",
+        "src/app/api/decisions.rs:195"
+      ]
+    },
+    {
+      "contract_id": "G9-9d8a1d1860",
+      "unrepresented_dimensions": [
+        "Store, wait and validation behavior are unit-covered; simultaneous answers from two real socket clients and the isolated-session CLI run are manual evidence"
+      ],
+      "dimensions": [
+        "decision record",
+        "first-answer-wins",
+        "expiry",
+        "wait and events"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:first_answer_wins_and_second_answer_is_already_resolved",
+        "rust_test_target:expire_pending_only_expires_due_pending_rows",
+        "rust_test_target:expiry_works_after_reopen_and_next_pending_expiry_tracks_min",
+        "rust_test_target:decision_wait_wakes_when_resolved_event_arrives",
+        "rust_test_target:decision_wait_returns_pending_decision_on_timeout",
+        "rust_test_target:plugin_hook_event_names_include_decision_events",
+        "drift_source_anchor:src/decision.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1998",
+        "src/decision.rs:134",
+        "src/app/api/decisions.rs:195"
+      ]
+    },
+    {
+      "contract_id": "G9-ac6d12b08d",
+      "unrepresented_dimensions": [
+        "Store, wait and validation behavior are unit-covered; simultaneous answers from two real socket clients and the isolated-session CLI run are manual evidence"
+      ],
+      "dimensions": [
+        "decision record",
+        "first-answer-wins",
+        "expiry",
+        "wait and events"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:first_answer_wins_and_second_answer_is_already_resolved",
+        "rust_test_target:expire_pending_only_expires_due_pending_rows",
+        "rust_test_target:expiry_works_after_reopen_and_next_pending_expiry_tracks_min",
+        "rust_test_target:decision_wait_wakes_when_resolved_event_arrives",
+        "rust_test_target:decision_wait_returns_pending_decision_on_timeout",
+        "rust_test_target:plugin_hook_event_names_include_decision_events",
+        "drift_source_anchor:src/decision.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:1999",
+        "src/decision.rs:134",
+        "src/app/api/decisions.rs:195"
+      ]
+    },
+    {
       "contract_id": "G9-4820818a37",
       "unrepresented_dimensions": [
         "Schema round-trip and CLI flag application are unit-covered; end-to-end ask with descriptions on an isolated server remains manual evidence"
@@ -10467,7 +10699,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1997",
+        "SPEC.md:2000",
         "src/api/schema/decisions.rs:41",
         "src/cli/decision.rs:114"
       ]
@@ -10497,7 +10729,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1998",
+        "SPEC.md:2001",
         "src/app/api/decisions.rs:21"
       ]
     },
@@ -10524,7 +10756,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:1999",
+        "SPEC.md:2002",
         "apps/slack-decisions/slack-decisions.mjs:1097"
       ]
     },
@@ -10553,7 +10785,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2000",
+        "SPEC.md:2003",
         "src/api/mod.rs:102",
         "apps/slack-decisions/slack-decisions.mjs:204"
       ]
@@ -10581,7 +10813,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2041",
+        "SPEC.md:2044",
         "src/cli/decision/watch.rs:356"
       ]
     },
@@ -10607,7 +10839,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2042",
+        "SPEC.md:2045",
         "src/cli/decision/watch.rs:348"
       ]
     },
@@ -10633,7 +10865,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2043",
+        "SPEC.md:2046",
         "src/cli/decision/watch.rs:109"
       ]
     },
@@ -10660,7 +10892,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2044",
+        "SPEC.md:2047",
         "src/cli/decision/watch.rs:356"
       ]
     },
@@ -10688,7 +10920,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2045",
+        "SPEC.md:2048",
         "src/cli/decision/watch.rs:701"
       ]
     },
@@ -10718,7 +10950,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2046",
+        "SPEC.md:2049",
         "src/cli/decision/watch.rs:259",
         "src/cli/decision/watch.rs:701"
       ]
@@ -10746,7 +10978,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2047",
+        "SPEC.md:2050",
         "src/machine.rs:301",
         "src/machine.rs:311"
       ]
@@ -10775,7 +11007,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2048",
+        "SPEC.md:2051",
         "src/cli/decision/watch.rs:1110",
         "src/api/subscriptions.rs:738"
       ]
@@ -10804,7 +11036,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2049",
+        "SPEC.md:2052",
         "src/cli/decision/watch.rs:271",
         "src/cli/decision/watch.rs:1509"
       ]
@@ -10830,7 +11062,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2050",
+        "SPEC.md:2053",
         "src/cli/decision/watch.rs:31"
       ]
     },
@@ -10863,7 +11095,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2072",
+        "SPEC.md:2075",
         "src/screen_prompt.rs:145",
         "src/app/screen_prompts.rs:378"
       ]
@@ -10893,7 +11125,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2073",
+        "SPEC.md:2076",
         "src/app/screen_prompts.rs:533"
       ]
     },
@@ -10924,7 +11156,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2074",
+        "SPEC.md:2077",
         "src/app/screen_prompts.rs:1620",
         "src/screen_prompt.rs:504"
       ]
@@ -10952,7 +11184,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2075",
+        "SPEC.md:2078",
         "src/app/screen_prompts.rs:299"
       ]
     },
@@ -10981,7 +11213,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2076",
+        "SPEC.md:2079",
         "src/app/screen_prompts.rs:378"
       ]
     },
@@ -11007,7 +11239,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2077",
+        "SPEC.md:2080",
         "src/screen_prompt.rs:934",
         "src/app/screen_prompts.rs:1644",
         "src/app/screen_prompts.rs:1806"
@@ -11039,7 +11271,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2078",
+        "SPEC.md:2081",
         "src/screen_prompt.rs:232",
         "src/screen_prompt.rs:175",
         "src/app/screen_prompts.rs:662"
@@ -11071,7 +11303,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2079",
+        "SPEC.md:2082",
         "src/screen_prompt.rs:254",
         "src/terminal/runtime.rs:357",
         "src/app/screen_prompts.rs:43"
@@ -11096,7 +11328,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2080",
+        "SPEC.md:2083",
         "src/screen_prompt.rs:893"
       ]
     },
@@ -11122,7 +11354,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2081",
+        "SPEC.md:2084",
         "src/screen_prompt.rs:909"
       ]
     },
@@ -11152,7 +11384,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2082",
+        "SPEC.md:2085",
         "src/app/screen_prompts.rs:689",
         "src/app/screen_prompts.rs:299",
         "src/app/screen_prompts.rs:80"
@@ -11184,7 +11416,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2083",
+        "SPEC.md:2086",
         "src/app/api/decisions.rs:113",
         "src/app/screen_prompts.rs:160"
       ]
@@ -11213,7 +11445,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2084",
+        "SPEC.md:2087",
         "src/config/model.rs:379",
         "src/app/screen_prompts.rs:696"
       ]
@@ -11240,7 +11472,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2085",
+        "SPEC.md:2088",
         "src/api/schema/server.rs:29",
         "src/cli/status.rs:277"
       ]
@@ -11268,7 +11500,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2086",
+        "SPEC.md:2089",
         "src/app/api/decisions.rs:9",
         "src/cli/decision/watch.rs:229"
       ]
@@ -11303,7 +11535,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2087",
+        "SPEC.md:2090",
         "src/screen_prompt.rs:76",
         "src/app/screen_prompts.rs:397"
       ]
@@ -11333,7 +11565,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2088",
+        "SPEC.md:2091",
         "src/screen_prompt.rs:96",
         "src/app/screen_prompts.rs:785"
       ]
@@ -11374,7 +11606,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2089",
+        "SPEC.md:2092",
         "src/screen_prompt.rs:320",
         "src/app/screen_prompts.rs:956",
         "src/app/screen_prompts.rs:1005",
@@ -11402,7 +11634,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2090",
+        "SPEC.md:2093",
         "src/app/screen_prompts.rs:1324"
       ]
     },
@@ -11426,7 +11658,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2091",
+        "SPEC.md:2094",
         "src/app/screen_prompts.rs:1340"
       ]
     },
@@ -11451,7 +11683,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2092",
+        "SPEC.md:2095",
         "src/app/screen_prompts.rs:950"
       ]
     },
@@ -11478,7 +11710,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2093",
+        "SPEC.md:2096",
         "src/screen_prompt.rs:666"
       ]
     },
@@ -11503,7 +11735,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2094",
+        "SPEC.md:2097",
         "src/app/screen_prompts.rs:785"
       ]
     },
@@ -11533,7 +11765,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2095",
+        "SPEC.md:2098",
         "src/pane.rs:3058",
         "src/app/screen_prompts.rs:339"
       ]
@@ -11561,7 +11793,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2096",
+        "SPEC.md:2099",
         "src/app/screen_prompts.rs:947",
         "src/app/screen_prompts.rs:1812"
       ]
@@ -11594,7 +11826,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2097",
+        "SPEC.md:2100",
         "src/app/screen_prompts.rs:399",
         "src/app/screen_prompts.rs:1833"
       ]
@@ -11623,7 +11855,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2098",
+        "SPEC.md:2101",
         "src/app/api/decisions.rs:164",
         "src/app/screen_prompts.rs:1142"
       ]
@@ -11653,7 +11885,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2099",
+        "SPEC.md:2102",
         "src/screen_prompt.rs:643"
       ]
     },
@@ -11682,7 +11914,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2100",
+        "SPEC.md:2103",
         "src/app/screen_prompts.rs:669"
       ]
     },
@@ -11707,7 +11939,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2101",
+        "SPEC.md:2104",
         "apps/slack-decisions/slack-decisions.mjs:884"
       ]
     },
@@ -11731,7 +11963,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2102",
+        "SPEC.md:2105",
         "apps/slack-decisions/slack-decisions.mjs:1215",
         "apps/slack-decisions/slack-decisions.mjs:1307"
       ]
@@ -11760,7 +11992,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2103",
+        "SPEC.md:2106",
         "apps/slack-decisions/slack-decisions.mjs:1255"
       ]
     },
@@ -11812,7 +12044,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2124",
+        "SPEC.md:2127",
         "apps/mac-dialog-decisions/dialog.swift:315",
         "src/cli/mac_dialog.rs:201",
         "src/screen_prompt.rs:119"
@@ -11838,7 +12070,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2125",
+        "SPEC.md:2128",
         "apps/mac-dialog-decisions/dialog.swift:315"
       ]
     },
@@ -11862,7 +12094,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2126",
+        "SPEC.md:2129",
         "apps/slack-decisions/slack-decisions.mjs:22",
         "apps/mac-dialog-decisions/mac-dialog-decisions.mjs:31"
       ]
@@ -11892,7 +12124,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2143",
+        "SPEC.md:2146",
         "src/app/api/decisions.rs:329",
         "src/terminal/state.rs:1431"
       ]
@@ -11922,7 +12154,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2144",
+        "SPEC.md:2147",
         "src/terminal/state.rs:1431",
         "src/app/api/decisions.rs:329"
       ]
@@ -11949,7 +12181,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2145",
+        "SPEC.md:2148",
         "src/app/actions.rs:3116",
         "src/terminal/state.rs:1431"
       ]
@@ -11976,7 +12208,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2146",
+        "SPEC.md:2149",
         "src/app/actions.rs:3174",
         "src/app/actions.rs:3116"
       ]
@@ -12005,7 +12237,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2147",
+        "SPEC.md:2150",
         "src/app/mod.rs:936",
         "src/app/api/decisions.rs:329",
         "src/decision.rs:258"
@@ -12036,7 +12268,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2148",
+        "SPEC.md:2151",
         "src/server/endpoint_snapshot.rs:211",
         "src/decision.rs:258"
       ]
@@ -12065,7 +12297,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2149",
+        "SPEC.md:2152",
         "src/protocol/wire.rs:16",
         "src/api/schema.rs:153"
       ]
@@ -12092,7 +12324,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2186"
+        "SPEC.md:2189"
       ]
     },
     {
@@ -12117,7 +12349,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2187"
+        "SPEC.md:2190"
       ]
     },
     {
@@ -12142,7 +12374,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2188"
+        "SPEC.md:2191"
       ]
     },
     {
@@ -12167,7 +12399,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2189"
+        "SPEC.md:2192"
       ]
     },
     {
@@ -12192,7 +12424,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2190"
+        "SPEC.md:2193"
       ]
     },
     {
@@ -12217,7 +12449,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2191"
+        "SPEC.md:2194"
       ]
     },
     {
@@ -12242,7 +12474,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2192"
+        "SPEC.md:2195"
       ]
     },
     {
@@ -12267,7 +12499,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2193"
+        "SPEC.md:2196"
       ]
     },
     {
@@ -12292,7 +12524,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2194"
+        "SPEC.md:2197"
       ]
     },
     {
@@ -12317,101 +12549,11 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2195"
+        "SPEC.md:2198"
       ]
     },
     {
       "contract_id": "G10-d785b4acbb",
-      "unrepresented_dimensions": [
-        "Generation negotiation and viewer independence are test-covered; old-server compatibility against released binaries is not represented"
-      ],
-      "dimensions": [
-        "endpoint generation range",
-        "per-viewer view and size"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:json_core_keeps_additive_range_and_per_method_disable_contract",
-        "rust_test_target:actual_socket_handshake_writer_and_semantic_input_use_generation_one_bytes",
-        "rust_test_target:endpoint_frontend_independent_processes_same_ids_input_and_reconnect",
-        "rust_test_target:multi_client_effective_size_shrinks_when_smaller_client_joins",
-        "rust_test_target:endpoint_chrome_fork_geometry_including_action_bar_matches_existing_ui_for_all_tiny_sizes",
-        "drift_source_anchor:src/protocol/endpoint/core.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:2233",
-        "src/protocol/endpoint/core.rs:107",
-        "src/client/endpoint/runtime.rs:63"
-      ]
-    },
-    {
-      "contract_id": "G10-d8306cfb28",
-      "unrepresented_dimensions": [
-        "Generation negotiation and viewer independence are test-covered; old-server compatibility against released binaries is not represented"
-      ],
-      "dimensions": [
-        "endpoint generation range",
-        "per-viewer view and size"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:json_core_keeps_additive_range_and_per_method_disable_contract",
-        "rust_test_target:actual_socket_handshake_writer_and_semantic_input_use_generation_one_bytes",
-        "rust_test_target:endpoint_frontend_independent_processes_same_ids_input_and_reconnect",
-        "rust_test_target:multi_client_effective_size_shrinks_when_smaller_client_joins",
-        "rust_test_target:endpoint_chrome_fork_geometry_including_action_bar_matches_existing_ui_for_all_tiny_sizes",
-        "drift_source_anchor:src/protocol/endpoint/core.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:2234",
-        "src/protocol/endpoint/core.rs:107",
-        "src/client/endpoint/runtime.rs:63"
-      ]
-    },
-    {
-      "contract_id": "G10-a904153779",
-      "unrepresented_dimensions": [
-        "Generation negotiation and viewer independence are test-covered; old-server compatibility against released binaries is not represented"
-      ],
-      "dimensions": [
-        "endpoint generation range",
-        "per-viewer view and size"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:json_core_keeps_additive_range_and_per_method_disable_contract",
-        "rust_test_target:actual_socket_handshake_writer_and_semantic_input_use_generation_one_bytes",
-        "rust_test_target:endpoint_frontend_independent_processes_same_ids_input_and_reconnect",
-        "rust_test_target:multi_client_effective_size_shrinks_when_smaller_client_joins",
-        "rust_test_target:endpoint_chrome_fork_geometry_including_action_bar_matches_existing_ui_for_all_tiny_sizes",
-        "drift_source_anchor:src/protocol/endpoint/core.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:2235",
-        "src/protocol/endpoint/core.rs:107",
-        "src/client/endpoint/runtime.rs:63"
-      ]
-    },
-    {
-      "contract_id": "G10-ad7cabdf2b",
       "unrepresented_dimensions": [
         "Generation negotiation and viewer independence are test-covered; old-server compatibility against released binaries is not represented"
       ],
@@ -12441,7 +12583,7 @@
       ]
     },
     {
-      "contract_id": "G10-3ebb41ed5b",
+      "contract_id": "G10-d8306cfb28",
       "unrepresented_dimensions": [
         "Generation negotiation and viewer independence are test-covered; old-server compatibility against released binaries is not represented"
       ],
@@ -12471,7 +12613,7 @@
       ]
     },
     {
-      "contract_id": "G10-2508f36b68",
+      "contract_id": "G10-a904153779",
       "unrepresented_dimensions": [
         "Generation negotiation and viewer independence are test-covered; old-server compatibility against released binaries is not represented"
       ],
@@ -12501,7 +12643,7 @@
       ]
     },
     {
-      "contract_id": "G10-24e942269f",
+      "contract_id": "G10-ad7cabdf2b",
       "unrepresented_dimensions": [
         "Generation negotiation and viewer independence are test-covered; old-server compatibility against released binaries is not represented"
       ],
@@ -12531,6 +12673,96 @@
       ]
     },
     {
+      "contract_id": "G10-3ebb41ed5b",
+      "unrepresented_dimensions": [
+        "Generation negotiation and viewer independence are test-covered; old-server compatibility against released binaries is not represented"
+      ],
+      "dimensions": [
+        "endpoint generation range",
+        "per-viewer view and size"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:json_core_keeps_additive_range_and_per_method_disable_contract",
+        "rust_test_target:actual_socket_handshake_writer_and_semantic_input_use_generation_one_bytes",
+        "rust_test_target:endpoint_frontend_independent_processes_same_ids_input_and_reconnect",
+        "rust_test_target:multi_client_effective_size_shrinks_when_smaller_client_joins",
+        "rust_test_target:endpoint_chrome_fork_geometry_including_action_bar_matches_existing_ui_for_all_tiny_sizes",
+        "drift_source_anchor:src/protocol/endpoint/core.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2240",
+        "src/protocol/endpoint/core.rs:107",
+        "src/client/endpoint/runtime.rs:63"
+      ]
+    },
+    {
+      "contract_id": "G10-2508f36b68",
+      "unrepresented_dimensions": [
+        "Generation negotiation and viewer independence are test-covered; old-server compatibility against released binaries is not represented"
+      ],
+      "dimensions": [
+        "endpoint generation range",
+        "per-viewer view and size"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:json_core_keeps_additive_range_and_per_method_disable_contract",
+        "rust_test_target:actual_socket_handshake_writer_and_semantic_input_use_generation_one_bytes",
+        "rust_test_target:endpoint_frontend_independent_processes_same_ids_input_and_reconnect",
+        "rust_test_target:multi_client_effective_size_shrinks_when_smaller_client_joins",
+        "rust_test_target:endpoint_chrome_fork_geometry_including_action_bar_matches_existing_ui_for_all_tiny_sizes",
+        "drift_source_anchor:src/protocol/endpoint/core.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2241",
+        "src/protocol/endpoint/core.rs:107",
+        "src/client/endpoint/runtime.rs:63"
+      ]
+    },
+    {
+      "contract_id": "G10-24e942269f",
+      "unrepresented_dimensions": [
+        "Generation negotiation and viewer independence are test-covered; old-server compatibility against released binaries is not represented"
+      ],
+      "dimensions": [
+        "endpoint generation range",
+        "per-viewer view and size"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:json_core_keeps_additive_range_and_per_method_disable_contract",
+        "rust_test_target:actual_socket_handshake_writer_and_semantic_input_use_generation_one_bytes",
+        "rust_test_target:endpoint_frontend_independent_processes_same_ids_input_and_reconnect",
+        "rust_test_target:multi_client_effective_size_shrinks_when_smaller_client_joins",
+        "rust_test_target:endpoint_chrome_fork_geometry_including_action_bar_matches_existing_ui_for_all_tiny_sizes",
+        "drift_source_anchor:src/protocol/endpoint/core.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2242",
+        "src/protocol/endpoint/core.rs:107",
+        "src/client/endpoint/runtime.rs:63"
+      ]
+    },
+    {
       "contract_id": "G10-3df74806bb",
       "unrepresented_dimensions": [
         "Live process-name observation on macOS/Linux and human acceptance remain unverified"
@@ -12551,7 +12783,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2266",
+        "SPEC.md:2269",
         "src/detect/mod.rs:159"
       ]
     },
@@ -12577,7 +12809,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2267",
+        "SPEC.md:2270",
         "src/detect/manifests/muse.toml:35"
       ]
     },
@@ -12602,7 +12834,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2268",
+        "SPEC.md:2271",
         "src/detect/manifests/qwen.toml:39"
       ]
     },
@@ -12632,7 +12864,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2269",
+        "SPEC.md:2272",
         "src/agent_resume.rs:190"
       ]
     },
@@ -12657,7 +12889,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2270",
+        "SPEC.md:2273",
         "src/cli/integration.rs:3"
       ]
     },
@@ -12682,7 +12914,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2271",
+        "SPEC.md:2274",
         "src/agent_resume.rs:196"
       ]
     },
@@ -12708,7 +12940,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2299",
+        "SPEC.md:2302",
         "src/cli/machine.rs:162",
         "src/machine.rs:251"
       ]
@@ -12734,7 +12966,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2300",
+        "SPEC.md:2303",
         "src/machine.rs:88"
       ]
     },
@@ -12759,7 +12991,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2301",
+        "SPEC.md:2304",
         "src/cli/machine.rs:40"
       ]
     },
@@ -12786,7 +13018,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2302",
+        "SPEC.md:2305",
         "src/cli/machine.rs:212",
         "src/cli/machine.rs:273",
         "src/machine.rs:155"
@@ -12813,7 +13045,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2303",
+        "SPEC.md:2306",
         "src/machine.rs:219"
       ]
     },
@@ -12841,7 +13073,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2321",
+        "SPEC.md:2324",
         "src/machine.rs:367"
       ]
     },
@@ -12864,7 +13096,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2322",
+        "SPEC.md:2325",
         "src/machine.rs:420"
       ]
     },
@@ -12890,7 +13122,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2323",
+        "SPEC.md:2326",
         "src/main.rs:544",
         "src/machine.rs:419"
       ]
@@ -12917,7 +13149,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2324",
+        "SPEC.md:2327",
         "src/machine.rs:155"
       ]
     },
@@ -12943,7 +13175,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2325",
+        "SPEC.md:2328",
         "src/main.rs:544",
         "src/machine.rs:295"
       ]
@@ -12970,7 +13202,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2341",
+        "SPEC.md:2344",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ]
     },
@@ -12996,105 +13228,12 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2342",
+        "SPEC.md:2345",
         "src/client/endpoint/chrome/sidebar.rs:24"
       ]
     },
     {
       "contract_id": "G11-b0e1f9ac00",
-      "unrepresented_dimensions": [
-        "Timing and rollback are unit-covered; the 2026-10-07 harness screenshots of a hung machine are manual evidence"
-      ],
-      "dimensions": [
-        "reconnect backoff",
-        "target-first activation rollback",
-        "notice placement",
-        "resize without handoff"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_supervisor_flapping_backoff_attention_and_local_recovery_are_independent",
-        "rust_test_target:switching_to_an_unresponsive_machine_keeps_the_source_presenting_and_typing",
-        "rust_test_target:notice_area_sits_between_copy_and_layout_buttons",
-        "rust_test_target:a_resize_is_sent_to_the_presenting_endpoint_without_a_handoff",
-        "drift_source_anchor:src/client/endpoint/supervisor.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:2358",
-        "src/client/endpoint/supervisor.rs:310",
-        "src/client/endpoint/activation.rs:14"
-      ]
-    },
-    {
-      "contract_id": "G11-ab6a60904a",
-      "unrepresented_dimensions": [
-        "Timing and rollback are unit-covered; the 2026-10-07 harness screenshots of a hung machine are manual evidence"
-      ],
-      "dimensions": [
-        "reconnect backoff",
-        "target-first activation rollback",
-        "notice placement",
-        "resize without handoff"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_supervisor_flapping_backoff_attention_and_local_recovery_are_independent",
-        "rust_test_target:switching_to_an_unresponsive_machine_keeps_the_source_presenting_and_typing",
-        "rust_test_target:notice_area_sits_between_copy_and_layout_buttons",
-        "rust_test_target:a_resize_is_sent_to_the_presenting_endpoint_without_a_handoff",
-        "drift_source_anchor:src/client/endpoint/supervisor.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:2359",
-        "src/client/endpoint/supervisor.rs:310",
-        "src/client/endpoint/activation.rs:14"
-      ]
-    },
-    {
-      "contract_id": "G11-9174eaff1d",
-      "unrepresented_dimensions": [
-        "Timing and rollback are unit-covered; the 2026-10-07 harness screenshots of a hung machine are manual evidence"
-      ],
-      "dimensions": [
-        "reconnect backoff",
-        "target-first activation rollback",
-        "notice placement",
-        "resize without handoff"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:endpoint_supervisor_flapping_backoff_attention_and_local_recovery_are_independent",
-        "rust_test_target:switching_to_an_unresponsive_machine_keeps_the_source_presenting_and_typing",
-        "rust_test_target:notice_area_sits_between_copy_and_layout_buttons",
-        "rust_test_target:a_resize_is_sent_to_the_presenting_endpoint_without_a_handoff",
-        "drift_source_anchor:src/client/endpoint/supervisor.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:2360",
-        "src/client/endpoint/supervisor.rs:310",
-        "src/client/endpoint/activation.rs:14"
-      ]
-    },
-    {
-      "contract_id": "G11-8990717e9b",
       "unrepresented_dimensions": [
         "Timing and rollback are unit-covered; the 2026-10-07 harness screenshots of a hung machine are manual evidence"
       ],
@@ -13125,6 +13264,99 @@
       ]
     },
     {
+      "contract_id": "G11-ab6a60904a",
+      "unrepresented_dimensions": [
+        "Timing and rollback are unit-covered; the 2026-10-07 harness screenshots of a hung machine are manual evidence"
+      ],
+      "dimensions": [
+        "reconnect backoff",
+        "target-first activation rollback",
+        "notice placement",
+        "resize without handoff"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:endpoint_supervisor_flapping_backoff_attention_and_local_recovery_are_independent",
+        "rust_test_target:switching_to_an_unresponsive_machine_keeps_the_source_presenting_and_typing",
+        "rust_test_target:notice_area_sits_between_copy_and_layout_buttons",
+        "rust_test_target:a_resize_is_sent_to_the_presenting_endpoint_without_a_handoff",
+        "drift_source_anchor:src/client/endpoint/supervisor.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2362",
+        "src/client/endpoint/supervisor.rs:310",
+        "src/client/endpoint/activation.rs:14"
+      ]
+    },
+    {
+      "contract_id": "G11-9174eaff1d",
+      "unrepresented_dimensions": [
+        "Timing and rollback are unit-covered; the 2026-10-07 harness screenshots of a hung machine are manual evidence"
+      ],
+      "dimensions": [
+        "reconnect backoff",
+        "target-first activation rollback",
+        "notice placement",
+        "resize without handoff"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:endpoint_supervisor_flapping_backoff_attention_and_local_recovery_are_independent",
+        "rust_test_target:switching_to_an_unresponsive_machine_keeps_the_source_presenting_and_typing",
+        "rust_test_target:notice_area_sits_between_copy_and_layout_buttons",
+        "rust_test_target:a_resize_is_sent_to_the_presenting_endpoint_without_a_handoff",
+        "drift_source_anchor:src/client/endpoint/supervisor.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2363",
+        "src/client/endpoint/supervisor.rs:310",
+        "src/client/endpoint/activation.rs:14"
+      ]
+    },
+    {
+      "contract_id": "G11-8990717e9b",
+      "unrepresented_dimensions": [
+        "Timing and rollback are unit-covered; the 2026-10-07 harness screenshots of a hung machine are manual evidence"
+      ],
+      "dimensions": [
+        "reconnect backoff",
+        "target-first activation rollback",
+        "notice placement",
+        "resize without handoff"
+      ],
+      "test_status": [
+        "unverified"
+      ],
+      "verification_methods": [
+        "rust_test_target:endpoint_supervisor_flapping_backoff_attention_and_local_recovery_are_independent",
+        "rust_test_target:switching_to_an_unresponsive_machine_keeps_the_source_presenting_and_typing",
+        "rust_test_target:notice_area_sits_between_copy_and_layout_buttons",
+        "rust_test_target:a_resize_is_sent_to_the_presenting_endpoint_without_a_handoff",
+        "drift_source_anchor:src/client/endpoint/supervisor.rs",
+        "platform_live_acceptance:unverified"
+      ],
+      "live_status": [
+        "unverified"
+      ],
+      "source_anchors": [
+        "SPEC.md:2364",
+        "src/client/endpoint/supervisor.rs:310",
+        "src/client/endpoint/activation.rs:14"
+      ]
+    },
+    {
       "contract_id": "G11-dbef70a87c",
       "unrepresented_dimensions": [
         "A real tailscaled check round trip through the local browser remains live-unverified"
@@ -13148,7 +13380,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2362",
+        "SPEC.md:2365",
         "src/remote/saved.rs:98",
         "src/remote/saved/process.rs:23"
       ]
@@ -13190,7 +13422,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2363",
+        "SPEC.md:2366",
         "src/remote.rs:37",
         "src/remote/saved/approval.rs:45",
         "src/client/endpoint/supervisor.rs:181",
@@ -13220,7 +13452,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2364",
+        "SPEC.md:2367",
         "src/client/endpoint/chrome.rs:732",
         "src/client/endpoint/frontend/input.rs:375"
       ]
@@ -13249,7 +13481,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2365",
+        "SPEC.md:2368",
         "src/remote/saved/process.rs:119",
         "src/client/endpoint/supervisor.rs:181"
       ]
@@ -13281,7 +13513,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2381",
+        "SPEC.md:2384",
         "src/client/endpoint/transport.rs:146",
         "src/protocol/render_ansi.rs:445",
         "src/client/terminal_pace.rs:22",
@@ -13316,7 +13548,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2382",
+        "SPEC.md:2385",
         "src/client/endpoint/transport.rs:146",
         "src/protocol/render_ansi.rs:445",
         "src/client/terminal_pace.rs:22",
@@ -13350,7 +13582,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2383",
+        "SPEC.md:2386",
         "src/client/endpoint/transport.rs:146",
         "src/protocol/render_ansi.rs:445",
         "src/client/terminal_pace.rs:22",
@@ -13384,7 +13616,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2384",
+        "SPEC.md:2387",
         "src/client/endpoint/transport.rs:146",
         "src/protocol/render_ansi.rs:445",
         "src/client/terminal_pace.rs:22",
@@ -13412,7 +13644,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2396",
+        "SPEC.md:2399",
         "src/protocol/render_ansi.rs:639"
       ]
     },
@@ -13435,7 +13667,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2397",
+        "SPEC.md:2400",
         "src/protocol/render_ansi.rs:639"
       ]
     },
@@ -13464,7 +13696,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2398",
+        "SPEC.md:2401",
         "src/logging.rs:47",
         "src/server/headless/endpoints.rs:523",
         "src/client/endpoint/transport.rs:96",
@@ -13495,7 +13727,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2399",
+        "SPEC.md:2402",
         "src/client/terminal_pace.rs:50",
         "src/server/headless/endpoints/graphics_patch.rs:16"
       ]
@@ -13523,7 +13755,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2411",
+        "SPEC.md:2414",
         "src/server/headless/endpoints/text_receipt.rs:102",
         "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
@@ -13551,7 +13783,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2412",
+        "SPEC.md:2415",
         "src/server/headless/endpoints/text_receipt.rs:102",
         "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
@@ -13579,7 +13811,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2413",
+        "SPEC.md:2416",
         "src/server/headless/endpoints/text_receipt.rs:102",
         "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
@@ -13606,7 +13838,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2414",
+        "SPEC.md:2417",
         "src/server/headless/endpoints/text_receipt.rs:102",
         "src/server/headless/tests/text_receipt.rs:124",
         "src/client/endpoint/transport/tests.rs:198"
@@ -13632,7 +13864,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2415",
+        "SPEC.md:2418",
         "src/server/headless/endpoints/text_receipt.rs:160",
         "src/server/headless/tests/text_receipt.rs:458"
       ]
@@ -13658,7 +13890,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2416",
+        "SPEC.md:2419",
         "src/server/headless/tests/text_receipt.rs:540",
         "src/client/endpoint/transport/tests.rs:198"
       ]
@@ -13685,7 +13917,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2429",
+        "SPEC.md:2432",
         "src/client/endpoint/frontend/machines.rs:129"
       ]
     },
@@ -13711,7 +13943,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2430",
+        "SPEC.md:2433",
         "src/client/endpoint/frontend/machines.rs:129"
       ]
     },
@@ -13743,7 +13975,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2456",
+        "SPEC.md:2459",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13779,7 +14011,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2457",
+        "SPEC.md:2460",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13815,7 +14047,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2458",
+        "SPEC.md:2461",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13851,7 +14083,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2459",
+        "SPEC.md:2462",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13887,7 +14119,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2460",
+        "SPEC.md:2463",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13923,7 +14155,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2461",
+        "SPEC.md:2464",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13957,7 +14189,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2462",
+        "SPEC.md:2465",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -13990,7 +14222,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2463",
+        "SPEC.md:2466",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14023,7 +14255,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2464",
+        "SPEC.md:2467",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14059,7 +14291,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2465",
+        "SPEC.md:2468",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14096,7 +14328,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2466",
+        "SPEC.md:2469",
         "src/client/endpoint/frontend/input.rs:1295",
         "src/app/input/mod.rs:685"
       ]
@@ -14129,7 +14361,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2467",
+        "SPEC.md:2470",
         "src/client/endpoint/frontend/copy_feedback.rs:16"
       ]
     },
@@ -14161,7 +14393,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2468",
+        "SPEC.md:2471",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14194,7 +14426,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2469",
+        "SPEC.md:2472",
         "src/server/headless/endpoints.rs:32",
         "src/client/endpoint/runtime.rs:61"
       ]
@@ -14219,7 +14451,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2479",
+        "SPEC.md:2482",
         "src/window_title.rs:12"
       ]
     },
@@ -14243,7 +14475,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2480",
+        "SPEC.md:2483",
         "src/window_title.rs:12"
       ]
     },
@@ -14267,7 +14499,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2481",
+        "SPEC.md:2484",
         "src/window_title.rs:12"
       ]
     },
@@ -14291,7 +14523,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2482",
+        "SPEC.md:2485",
         "src/window_title.rs:12"
       ]
     },
@@ -14318,7 +14550,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2493",
+        "SPEC.md:2496",
         "src/guard/judge.rs:200",
         "src/cli/guard.rs:36"
       ]
@@ -14348,7 +14580,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2494",
+        "SPEC.md:2497",
         "src/guard/judge.rs:507",
         "src/guard/judge.rs:586"
       ]
@@ -14376,7 +14608,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2495",
+        "SPEC.md:2498",
         "src/guard/judge.rs:672",
         "src/guard/judge.rs:740"
       ]
@@ -14406,7 +14638,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2496",
+        "SPEC.md:2499",
         "src/guard/judge.rs:865",
         "src/guard/judge.rs:1158"
       ]
@@ -14434,7 +14666,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2497",
+        "SPEC.md:2500",
         "src/guard/judge.rs:367",
         "src/guard/judge.rs:430"
       ]
@@ -14468,7 +14700,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2498",
+        "SPEC.md:2501",
         "src/guard/judge.rs:1202",
         "src/guard/judge.rs:1643"
       ]
@@ -14496,7 +14728,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2499",
+        "SPEC.md:2502",
         "src/guard/judge.rs:265",
         "src/guard/judge.rs:1524"
       ]
@@ -14523,7 +14755,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2500",
+        "SPEC.md:2503",
         "src/config/model.rs:332",
         "src/guard/judge.rs:359"
       ]
@@ -14551,7 +14783,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2508",
+        "SPEC.md:2511",
         "src/guard/assets.rs:160",
         "src/guard/assets.rs:244",
         "src/cli/guard.rs:97"
@@ -14582,7 +14814,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2509",
+        "SPEC.md:2512",
         "src/guard/assets.rs:256",
         "src/guard/assets.rs:331",
         "src/guard/assets.rs:92"
@@ -14613,7 +14845,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2510",
+        "SPEC.md:2513",
         "src/guard/assets.rs:269",
         "src/guard/assets.rs:288",
         "src/guard/assets.rs:337"
@@ -14641,7 +14873,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2511",
+        "SPEC.md:2514",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
@@ -14672,7 +14904,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2512",
+        "SPEC.md:2515",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30"
@@ -14707,7 +14939,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2513",
+        "SPEC.md:2516",
         "src/guard/assets.rs:30",
         "src/guard/coverage.rs:30",
         "src/app/guard.rs:30",
@@ -14739,7 +14971,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2514",
+        "SPEC.md:2517",
         "src/app/guard.rs:77"
       ]
     },
@@ -14764,7 +14996,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2515",
+        "SPEC.md:2518",
         "src/guard/assets.rs:42"
       ]
     },
@@ -14792,7 +15024,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2516",
+        "SPEC.md:2519",
         "src/pane.rs:1920",
         "src/guard/assets.rs:42"
       ]
@@ -14821,7 +15053,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2524",
+        "SPEC.md:2527",
         "src/guard/marker.rs:49",
         "src/cli/guard.rs:36"
       ]
@@ -14849,7 +15081,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2525",
+        "SPEC.md:2528",
         "src/app/guard.rs:14",
         "src/guard/marker.rs:93"
       ]
@@ -14876,7 +15108,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2526",
+        "SPEC.md:2529",
         "src/cli/guard.rs:36"
       ]
     },
@@ -14903,7 +15135,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2527",
+        "SPEC.md:2530",
         "src/guard/record.rs:142"
       ]
     },
@@ -14932,7 +15164,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2535",
+        "SPEC.md:2538",
         "src/config/model.rs:332",
         "src/guard/assets.rs:47",
         "src/cli/guard.rs:150"
@@ -14960,7 +15192,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2536",
+        "SPEC.md:2539",
         "src/cli/guard.rs:188"
       ]
     },
@@ -14988,7 +15220,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2537",
+        "SPEC.md:2540",
         "src/guard/enforce.rs:150",
         "src/cli/guard.rs:211"
       ]
@@ -15019,7 +15251,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2538",
+        "SPEC.md:2541",
         "src/guard/enforce.rs:60",
         "src/cli/guard.rs:228"
       ]
@@ -15051,7 +15283,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2539",
+        "SPEC.md:2542",
         "src/guard/enforce.rs:100",
         "src/cli/guard.rs:232",
         "src/cli/decision.rs:60"
@@ -15085,7 +15317,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2540",
+        "SPEC.md:2543",
         "src/guard/enforce.rs:170",
         "src/guard/judge.rs:1550",
         "src/cli/guard.rs:232"
@@ -15113,7 +15345,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2541",
+        "SPEC.md:2544",
         "src/guard/judge.rs:1524",
         "src/cli/guard.rs:240"
       ]
@@ -15140,7 +15372,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2542",
+        "SPEC.md:2545",
         "src/guard/assets.rs:62",
         "src/guard/mod.rs:40"
       ]
@@ -15168,7 +15400,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2550",
+        "SPEC.md:2553",
         "src/guard/compare.rs:49"
       ]
     },
@@ -15192,7 +15424,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2551",
+        "SPEC.md:2554",
         "src/guard/compare.rs:173"
       ]
     },
@@ -15220,7 +15452,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2552",
+        "SPEC.md:2555",
         "src/guard/record.rs:299"
       ]
     },
@@ -15243,7 +15475,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2563",
+        "SPEC.md:2566",
         "src/guard/assets.rs:321",
         "src/cli/guard.rs:504"
       ]
@@ -15267,7 +15499,7 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2564",
+        "SPEC.md:2567",
         "src/guard/assets.rs:321",
         "src/cli/guard.rs:504"
       ]
@@ -15291,157 +15523,9 @@
         "unverified"
       ],
       "source_anchors": [
-        "SPEC.md:2565",
+        "SPEC.md:2568",
         "src/guard/assets.rs:321",
         "src/cli/guard.rs:504"
-      ]
-    },
-    {
-      "contract_id": "G8-a2339f2866",
-      "unrepresented_dimensions": [
-        "Signed Electron payload, GitHub publication and work Mac acceptance await parent execution"
-      ],
-      "dimensions": [
-        "tb independent distribution and atomic installation"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:tb_local_archive_install_upgrade_reinstall_and_registration_rollback",
-        "rust_test_target:tb_extract_checksum_switch_failures_preserve_old_version",
-        "rust_test_target:tb_registration_restore_preserves_exact_entry_and_other_plugins",
-        "rust_test_target:tb_running_old_version_survives_upgrade",
-        "drift_source_anchor:src/cli/tb.rs",
-        "platform_live_acceptance:unverified"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1589",
-        "src/cli/tb.rs:17"
-      ]
-    },
-    {
-      "contract_id": "G9-7c5f4cd7c6",
-      "unrepresented_dimensions": [
-        "real question permission MCP screens and restart acceptance not yet run"
-      ],
-      "dimensions": [
-        "visible confirmation input protection",
-        "same question force observation"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:visible_confirmation_holds_mail_and_jobs_even_while_working_and_decisions_disabled",
-        "platform_live_acceptance:unverified",
-        "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
-        "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
-        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
-        "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
-        "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
-        "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
-        "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
-        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
-        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
-        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1613",
-        "src/app/input_guard.rs:8"
-      ]
-    },
-    {
-      "contract_id": "G9-732241a923",
-      "unrepresented_dimensions": [
-        "real question permission MCP screens and restart acceptance not yet run"
-      ],
-      "dimensions": [
-        "visible confirmation input protection",
-        "same question force observation"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:confirmation_force_requires_prior_unforced_rejection_for_same_question",
-        "rust_test_target:direct_api_input_routes_reject_before_writing_confirmation",
-        "platform_live_acceptance:unverified",
-        "rust_test_target:managed_launch_confirmation_is_guarded_before_agent_detection",
-        "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices",
-        "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
-        "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
-        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
-        "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
-        "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
-        "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
-        "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
-        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
-        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
-        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1886",
-        "src/app/input_guard.rs:8"
-      ]
-    },
-    {
-      "contract_id": "G9-7dd56658e6",
-      "unrepresented_dimensions": [
-        "real question permission MCP screens and restart acceptance not yet run"
-      ],
-      "dimensions": [
-        "visible confirmation input protection",
-        "same question force observation",
-        "current input boundary",
-        "instruction-only terminal tail",
-        "quoted and historical controls exclusion"
-      ],
-      "test_status": [
-        "unverified"
-      ],
-      "verification_methods": [
-        "rust_test_target:confirmation_force_requires_prior_unforced_rejection_for_same_question",
-        "rust_test_target:direct_api_input_routes_reject_before_writing_confirmation",
-        "platform_live_acceptance:unverified",
-        "rust_test_target:managed_launch_confirmation_is_guarded_before_agent_detection",
-        "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices",
-        "rust_test_target:input_blocker_does_not_block_code_explaining_confirmation_controls",
-        "rust_test_target:input_blocker_ignores_old_question_above_current_input",
-        "rust_test_target:input_blocker_requires_instruction_only_tail_after_current_controls",
-        "rust_test_target:input_blocker_ignores_quoted_controls_inside_fenced_code_with_border",
-        "rust_test_target:input_blocker_preserves_captured_trust_and_wrapped_question_controls",
-        "rust_test_target:quoted_controls_and_old_questions_do_not_hold_mail_or_immediate_input",
-        "rust_test_target:mcp_confirmation_keeps_regular_and_job_messages_queued",
-        "rust_test_target:input_blocker_preserves_existing_permission_control_forms",
-        "rust_test_target:mcp_decision_answer_passes_guard_while_mail_waits_for_screen_disappearance",
-        "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
-        "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
-        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
-        "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
-        "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
-        "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
-        "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
-        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
-        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
-        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
-      ],
-      "live_status": [
-        "unverified"
-      ],
-      "source_anchors": [
-        "SPEC.md:1885",
-        "src/app/input_guard.rs:8",
-        "src/detect/manifest.rs:407"
       ]
     }
   ]

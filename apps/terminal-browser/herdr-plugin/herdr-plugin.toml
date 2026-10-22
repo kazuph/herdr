@@ -1,6 +1,6 @@
 id = "zenbu-labs.terminal-browser"
 name = "Terminal Browser"
-version = "0.7.1-herdr.1"
+version = "0.7.3"
 min_herdr_version = "0.2.0"
 description = "Open the monorepo-built terminal browser inside Herdr"
 platforms = ["linux", "macos"]
