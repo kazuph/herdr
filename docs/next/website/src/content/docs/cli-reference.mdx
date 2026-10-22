@@ -495,3 +495,9 @@ finishes, then replayed. When registration fails and the install rolls back, a
 manual plugin link/disable/unlink made in the meantime is kept and reported as
 a conflict. This does not guarantee recovery
 from SIGKILL or power loss.
+
+## `mac-dialog`
+
+Install signed decision dialogs with `herdr mac-dialog install [--version MAJOR.MINOR.PATCH]`; inspect registered, running, pending switch and latest versions with `herdr mac-dialog status`. macOS Apple silicon only; Node.js and a compatible herdr are required. Dedicated `kazuph-mac-dialog-v` releases install below `~/.local/share/herdr/mac-dialog-decisions/<version>` and retain older versions. SHA-256 and strict Apple Developer ID verification precede plugin registration. The bundled app is signed by KAZUHIRO HOMMA (67M8FDFZ28), not notarized, and never installed in /Applications. Missing or modified apps fail without a development build fallback. The repository-linked development plugin still builds with swiftc. Both machines keep subscribing to all machines. Updates wait for all windows, snoozed decisions and answer retries to clear; legacy daemons show unknown running version and pending switch without being killed. No automatic updates.
+
+Without an attached pane, the daemon starts through pane-less `herdr run --completion none` with no completion recipient. Notifying jobs and `--pane` still require a resolved caller. Re-registering the running old version cancels a pending upgrade; handoff also rechecks the current registration.

@@ -1234,6 +1234,33 @@ pub(crate) fn endpoint_peer_pid(stream: &crate::ipc::LocalStream) -> Option<u32>
     (result == 0).then(|| u32::try_from(pid).ok()).flatten()
 }
 
+pub(super) fn mac_dialog_daemon_running(pid: u32) -> bool {
+    std::process::Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .is_ok_and(|output| {
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains("mac-dialog-decisions.mjs")
+        })
+}
+
+pub(super) fn verify_mac_dialog_signature(app: &std::path::Path) -> std::io::Result<()> {
+    let result = std::process::Command::new("/usr/bin/codesign")
+        .args(["--verify", "--deep", "--strict", "--test-requirement",
+            r#"=anchor apple generic and identifier "dev.herdr.mac-dialog-decisions" and certificate leaf[subject.OU] = "67M8FDFZ28" and certificate leaf[subject.CN] = "Developer ID Application: KAZUHIRO HOMMA (67M8FDFZ28)""#])
+        .arg(app).output()?;
+    if !result.status.success() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "判断待ちアプリの署名が無効、改変済み、または開発者 ID が一致しません: {}",
+                String::from_utf8_lossy(&result.stderr).trim()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

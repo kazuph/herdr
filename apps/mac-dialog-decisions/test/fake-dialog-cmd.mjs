@@ -15,51 +15,54 @@
 // spec to <FAKE_DIR>/specs.jsonl for assertions.
 
 import fs from "node:fs";
+import readline from "node:readline";
 
-const specPath = process.argv[2];
 const planPath = process.env.MAC_DIALOG_FAKE_PLAN || "";
 const evidenceDir = process.env.MAC_DIALOG_FAKE_DIR || "";
-
-const spec = JSON.parse(fs.readFileSync(specPath, "utf8"));
-
-if (evidenceDir) {
-  fs.mkdirSync(evidenceDir, { recursive: true });
-  fs.appendFileSync(
-    `${evidenceDir}/specs.jsonl`,
-    JSON.stringify({ pid: process.pid, spec }) + "\n",
-  );
-  fs.writeFileSync(`${evidenceDir}/alive-${process.pid}`, String(Date.now()));
-  process.on("SIGTERM", () => process.exit(0));
-  process.on("exit", () => {
-    try {
-      fs.unlinkSync(`${evidenceDir}/alive-${process.pid}`);
-    } catch {}
-  });
-}
-
+const windows = new Map();
 const emit = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
-emit({ event: "shown" });
+function close(key) {
+  windows.delete(key);
+  try { fs.unlinkSync(`${evidenceDir}/alive-${Buffer.from(key).toString("hex")}`); } catch {}
+}
+const input = readline.createInterface({input: process.stdin});
+input.on("line", raw => {
+  const command = JSON.parse(raw);
+  if (command.command === "close") { close(command.key); return; }
+  if (command.command !== "open" || windows.has(command.key)) return;
+  const spec = JSON.parse(fs.readFileSync(command.spec_path, "utf8"));
+  windows.set(command.key, spec);
+  fs.mkdirSync(evidenceDir, {recursive:true});
+  fs.appendFileSync(`${evidenceDir}/specs.jsonl`, JSON.stringify({pid:process.pid, spec}) + "\n");
+  fs.writeFileSync(`${evidenceDir}/alive-${Buffer.from(command.key).toString("hex")}`, "open");
+  emit({event:"shown", key:command.key});
+});
+input.on("close", () => process.exit(0));
+process.on("SIGTERM", () => process.exit(0));
+process.on("exit", () => { for (const key of windows.keys()) close(key); });
 
 const timer = setInterval(() => {
   let plan = {};
   try {
     plan = JSON.parse(fs.readFileSync(planPath, "utf8"));
   } catch {}
+  for (const [key, spec] of windows) {
   const haystack = `${spec.title}\n${spec.body || ""}`;
   const action = Object.entries(plan).find(([needle]) =>
     haystack.includes(needle),
   )?.[1];
-  if (!action || action.action === "wait") return;
+  if (!action || action.action === "wait") continue;
   if (action.action === "answer") {
     emit({
-      result: "answer",
+      key, result: "answer",
       option_ids: action.option_ids || [],
       text: action.text || "",
     });
-    process.exit(0);
+    close(key);
   }
   if (action.action === "later") {
-    emit({ result: "later" });
-    process.exit(0);
+    emit({ key, result: "later" });
+    close(key);
+  }
   }
 }, 100);

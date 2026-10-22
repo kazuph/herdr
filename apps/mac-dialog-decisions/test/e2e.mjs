@@ -5,9 +5,9 @@
 // Spawns `herdr server` against throwaway XDG dirs, runs mac-dialog-decisions.mjs
 // with the dialog helper swapped for a scripted fake (MAC_DIALOG_HELPER_CMD)
 // that polls a plan file for what to "press", and asserts:
-//   - two pending decisions show one dialog, with the queue count on it
+//   - two pending decisions open together in a single dialog process
 //   - answering via the dialog resolves the decision with responder mac-dialog
-//   - the next queued decision opens right after
+//   - answering either window leaves the other open
 //   - a free-text (allow_text) answer carries the text
 //   - resolving via `herdr decision answer` kills the open dialog child
 
@@ -192,7 +192,7 @@ async function main() {
   });
   step("two decisions pending before daemon start", true);
 
-  // 3. daemon with the fake dialog helper: replays both, shows only the first
+  // 3. daemon component transport: replays both into one helper process
   const daemonEnv = {
     ...herdrEnv,
     HERDR_BIN_PATH: HERDR,
@@ -209,19 +209,11 @@ async function main() {
     daemonLog,
   );
   cleanup.push(() => daemon.kill("SIGTERM"));
-  await waitUntil(() => specFiles().length === 1, { timeout: 15_000 });
-  await sleep(400); // prove no second dialog pops
-  step(
-    "exactly one dialog shown for two pending decisions",
-    specFiles().length === 1 && aliveDialogs() === 1,
-    `specs=${specFiles().length} alive=${aliveDialogs()}`,
-  );
-  const firstSpec = specFiles()[0].spec;
-  step(
-    "queue count shown on the first dialog",
-    firstSpec.queue_remaining === 1,
-    `queue_remaining=${firstSpec.queue_remaining}`,
-  );
+  await waitUntil(() => specFiles().length === 2, { timeout: 15_000 });
+  step("both pending decisions open simultaneously in one dialog process",
+    aliveDialogs() === 2 && new Set(specFiles().map(row => row.pid)).size === 1,
+    `specs=${specFiles().length} alive=${aliveDialogs()}`);
+  const firstSpec = specFiles()[1].spec;
   const firstId = specDecisionId(firstSpec);
   step("first spec carries the decision id", Boolean(firstId), firstId);
 
@@ -239,11 +231,11 @@ async function main() {
     firstResult.stdout.trim().slice(0, 240),
   );
   await waitUntil(() => specFiles().length === 2, { timeout: 15_000 });
-  const secondSpec = specFiles()[1].spec;
+  const secondSpec = specFiles()[0].spec;
   const secondId = specDecisionId(secondSpec);
   step(
-    "queued decision shown after the first resolved",
-    Boolean(secondId) && secondId !== firstId,
+    "other window remains after second window answered first",
+    Boolean(secondId) && secondId !== firstId && aliveDialogs() === 1,
     secondSpec.title,
   );
 
