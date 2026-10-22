@@ -162,7 +162,7 @@ fn handle_connection(
         return Ok(());
     }
 
-    let request = match serde_json::from_str::<Request>(line) {
+    let mut request = match serde_json::from_str::<Request>(line) {
         Ok(request) => request,
         Err(request_error) => {
             write_json_line_allow_disconnect(
@@ -178,6 +178,17 @@ fn handle_connection(
             return Ok(());
         }
     };
+
+    // Only the kernel's socket peer identity can authorize a claimed caller pane.
+    let peer_pid = crate::platform::endpoint_peer_pid(&stream);
+    match &mut request.method {
+        Method::PaneSendText(params) => params.input_peer_pid = peer_pid,
+        Method::PaneSendKeys(params) => params.input_peer_pid = peer_pid,
+        Method::PaneSendInput(params) => params.input_peer_pid = peer_pid,
+        Method::AgentSend(params) => params.input_peer_pid = peer_pid,
+        Method::AgentPrompt(params) => params.input_peer_pid = peer_pid,
+        _ => {}
+    }
 
     let request_id = request.id.clone();
     let method = api_method_name(&request.method);

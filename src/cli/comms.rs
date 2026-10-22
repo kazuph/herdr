@@ -742,6 +742,7 @@ fn run_in_pane(
     let submit = super::send_request(&Request {
         id: "cli:run:pane-submit".into(),
         method: Method::PaneSendInput(PaneSendInputParams {
+            input_peer_pid: None,
             caller_pane_id: resolve_run_caller(None).ok(),
             force: false,
             pane_id: pane.clone(),

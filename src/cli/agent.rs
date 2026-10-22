@@ -610,6 +610,7 @@ fn agent_send(args: &[String]) -> std::io::Result<i32> {
     super::print_response(&super::send_request(&Request {
         id: "cli:agent:send".into(),
         method: Method::AgentSend(AgentSendParams {
+            input_peer_pid: None,
             caller_pane_id: super::comms::resolve_run_caller(None).ok(),
             force,
             target: args[0].clone(),
@@ -683,6 +684,7 @@ fn agent_prompt(args: &[String]) -> std::io::Result<i32> {
     let response = super::send_request(&Request {
         id: "cli:agent:prompt".into(),
         method: Method::AgentPrompt(AgentPromptParams {
+            input_peer_pid: None,
             caller_pane_id: super::comms::resolve_run_caller(None).ok(),
             force,
             target: target.clone(),

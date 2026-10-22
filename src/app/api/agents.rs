@@ -90,11 +90,13 @@ impl App {
             Ok(resolved) => resolved,
             Err(err) => return Err(encode_error_body(id, self.agent_target_error_body(err))),
         };
+        let caller =
+            self.verified_input_caller(params.caller_pane_id.as_deref(), params.input_peer_pid);
         if let Err(error) = self.guard_external_input(
             resolved.ws_idx,
             resolved.pane_id,
             params.force,
-            params.caller_pane_id.as_deref(),
+            caller.as_deref(),
         ) {
             return Err(encode_error_body(id, error));
         }
@@ -473,11 +475,13 @@ impl App {
         if self.agent_info(resolved.ws_idx, resolved.pane_id).is_none() {
             return agent_not_found(id, &params.target);
         }
+        let caller =
+            self.verified_input_caller(params.caller_pane_id.as_deref(), params.input_peer_pid);
         if let Err(error) = self.guard_external_input(
             resolved.ws_idx,
             resolved.pane_id,
             params.force,
-            params.caller_pane_id.as_deref(),
+            caller.as_deref(),
         ) {
             return encode_error_body(id, error);
         }
@@ -612,6 +616,7 @@ mod tests {
         let response = app.handle_agent_send(
             "req".into(),
             AgentSendParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 target: "pi".into(),
@@ -641,6 +646,7 @@ mod tests {
         let response = app.handle_agent_send(
             "req".into(),
             AgentSendParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 target: "pi".into(),
@@ -672,6 +678,7 @@ mod tests {
         let response = app.handle_agent_send(
             "req".into(),
             AgentSendParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 target: terminal_id,
@@ -786,6 +793,7 @@ mod tests {
                     crate::api::schema::Request {
                         id: "prompt".into(),
                         method: crate::api::schema::Method::AgentPrompt(AgentPromptParams {
+                            input_peer_pid: None,
                             caller_pane_id: None,
                             force: false,
                             target: target.into(),
@@ -842,6 +850,7 @@ mod tests {
                 let response: SuccessResponse = serde_json::from_str(&probe.app.handle_agent_send(
                     "legacy".into(),
                     AgentSendParams {
+                        input_peer_pid: None,
                         caller_pane_id: None,
                         force: false,
                         target: "reviewer".into(),

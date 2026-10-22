@@ -15340,12 +15340,14 @@
         "platform_live_acceptance:unverified",
         "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
         "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
-        "rust_test_target:review_force_is_bound_to_caller_target_and_current_confirmation",
+        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
         "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
         "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
         "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
         "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
-        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame"
+        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
+        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
+        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
       ],
       "live_status": [
         "unverified"
@@ -15375,12 +15377,14 @@
         "rust_test_target:captured_workspace_trust_preserves_title_and_bare_choices",
         "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
         "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
-        "rust_test_target:review_force_is_bound_to_caller_target_and_current_confirmation",
+        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
         "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
         "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
         "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
         "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
-        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame"
+        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
+        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
+        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
       ],
       "live_status": [
         "unverified"
@@ -15391,7 +15395,7 @@
       ]
     },
     {
-      "contract_id": "G9-d07d6b2e4d",
+      "contract_id": "G9-7dd56658e6",
       "unrepresented_dimensions": [
         "real question permission MCP screens and restart acceptance not yet run"
       ],
@@ -15422,12 +15426,14 @@
         "rust_test_target:mcp_decision_answer_passes_guard_while_mail_waits_for_screen_disappearance",
         "rust_test_target:review_saved_confirmation_forms_keep_manifest_protection",
         "rust_test_target:review_saved_questions_hold_mail_jobs_and_every_direct_input_route",
-        "rust_test_target:review_force_is_bound_to_caller_target_and_current_confirmation",
+        "rust_test_target:review_unverified_api_caller_cannot_authorize_force_or_substitute_history",
         "rust_test_target:review_force_records_do_not_cross_targets_or_question_kinds",
         "rust_test_target:review_redraw_and_next_question_require_two_consecutive_clear_scans",
         "rust_test_target:review_delayed_free_text_and_preview_steps_keep_mail_held",
         "rust_test_target:review_real_free_text_answer_holds_mail_through_deferred_redraw",
-        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame"
+        "rust_test_target:review_real_preview_scan_holds_mail_through_intermediate_frame",
+        "rust_test_target:review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs",
+        "rust_test_target:force_uses_socket_peer_ancestry_rejects_real_other_clients_and_keeps_valid_cli_retry"
       ],
       "live_status": [
         "unverified"

@@ -235,11 +235,12 @@ impl App {
         let Ok(resolved) = self.resolve_terminal_target(&agent.global_pane_id) else {
             return Ok(false);
         };
-        if self.pane_has_visible_blocker(resolved.ws_idx, resolved.pane_id)
+        let visible = self.pane_has_visible_blocker(resolved.ws_idx, resolved.pane_id);
+        if visible
             || self.input_guard_waiting.contains_key(&resolved.pane_id)
             || self.screen_prompt_input_in_flight(resolved.pane_id)
         {
-            self.hold_external_input(resolved.pane_id);
+            self.hold_external_input(resolved.pane_id, visible);
             return Ok(false);
         }
         // At most one submission per recipient is queued to the PTY actor. Its
@@ -345,14 +346,15 @@ impl App {
         let Some(agent) = self.agent_info(resolved.ws_idx, resolved.pane_id) else {
             return Ok(false);
         };
-        if agent.agent_status == AgentStatus::Blocked {
-            return Ok(false);
-        }
-        if self.pane_has_visible_blocker(resolved.ws_idx, resolved.pane_id)
+        let visible = self.pane_has_visible_blocker(resolved.ws_idx, resolved.pane_id);
+        if visible
             || self.input_guard_waiting.contains_key(&resolved.pane_id)
             || self.screen_prompt_input_in_flight(resolved.pane_id)
         {
-            self.hold_external_input(resolved.pane_id);
+            self.hold_external_input(resolved.pane_id, visible);
+            return Ok(false);
+        }
+        if agent.agent_status == AgentStatus::Blocked {
             return Ok(false);
         }
         let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id) else {
@@ -908,6 +910,7 @@ mod tests {
                 let response = harness.app.handle_api_request(Request {
                     id: "ordinary-input".into(),
                     method: Method::PaneSendText(crate::api::schema::PaneSendTextParams {
+                        input_peer_pid: None,
                         caller_pane_id: None,
                         force: false,
                         pane_id: pane.clone(),
@@ -1190,18 +1193,21 @@ mod tests {
             );
             for method in [
                 Method::PaneSendText(crate::api::schema::PaneSendTextParams {
+                    input_peer_pid: None,
                     caller_pane_id: Some(pane.clone()),
                     force: false,
                     pane_id: pane.clone(),
                     text: "danger".into(),
                 }),
                 Method::PaneSendKeys(crate::api::schema::PaneSendKeysParams {
+                    input_peer_pid: None,
                     caller_pane_id: Some(pane.clone()),
                     force: false,
                     pane_id: pane.clone(),
                     keys: vec!["Enter".into()],
                 }),
                 Method::PaneSendInput(crate::api::schema::PaneSendInputParams {
+                    input_peer_pid: None,
                     caller_pane_id: Some(pane.clone()),
                     force: false,
                     pane_id: pane.clone(),
@@ -1209,6 +1215,7 @@ mod tests {
                     keys: vec!["Enter".into()],
                 }),
                 Method::AgentSend(crate::api::schema::AgentSendParams {
+                    input_peer_pid: None,
                     caller_pane_id: Some(pane.clone()),
                     force: false,
                     target: pane.clone(),
@@ -1231,6 +1238,7 @@ mod tests {
                 Request {
                     id: "prompt-guard".into(),
                     method: Method::AgentPrompt(crate::api::schema::AgentPromptParams {
+                        input_peer_pid: None,
                         caller_pane_id: Some(pane.clone()),
                         force: false,
                         target: pane.clone(),
@@ -1248,14 +1256,18 @@ mod tests {
             let response = harness.app.handle_api_request(Request {
                 id: "approved-guard".into(),
                 method: Method::PaneSendKeys(crate::api::schema::PaneSendKeysParams {
+                    input_peer_pid: None,
                     caller_pane_id: Some(pane.clone()),
                     force: true,
                     pane_id: pane,
                     keys: vec!["Enter".into()],
                 }),
             });
-            success_result(&response);
-            assert_eq!(harness.received_texts("claude"), vec!["\r"]);
+            assert_eq!(
+                error_response(&response).error.code,
+                "pane_confirmation_pending"
+            );
+            assert!(harness.received_texts("claude").is_empty());
         });
     }
     fn guard_tick(harness: &mut MsgApiHarness, tick: u64) {
@@ -1312,18 +1324,21 @@ mod tests {
                     .is_empty());
                 for method in [
                     Method::PaneSendText(crate::api::schema::PaneSendTextParams {
+                        input_peer_pid: None,
                         caller_pane_id: Some(pane.clone()),
                         force: false,
                         pane_id: pane.clone(),
                         text: "danger".into(),
                     }),
                     Method::PaneSendKeys(crate::api::schema::PaneSendKeysParams {
+                        input_peer_pid: None,
                         caller_pane_id: Some(pane.clone()),
                         force: false,
                         pane_id: pane.clone(),
                         keys: vec!["Enter".into()],
                     }),
                     Method::PaneSendInput(crate::api::schema::PaneSendInputParams {
+                        input_peer_pid: None,
                         caller_pane_id: Some(pane.clone()),
                         force: false,
                         pane_id: pane.clone(),
@@ -1331,6 +1346,7 @@ mod tests {
                         keys: vec!["Enter".into()],
                     }),
                     Method::AgentSend(crate::api::schema::AgentSendParams {
+                        input_peer_pid: None,
                         caller_pane_id: Some(pane.clone()),
                         force: false,
                         target: pane.clone(),
@@ -1352,6 +1368,7 @@ mod tests {
                     Request {
                         id: "review-prompt".into(),
                         method: Method::AgentPrompt(crate::api::schema::AgentPromptParams {
+                            input_peer_pid: None,
                             caller_pane_id: Some(pane.clone()),
                             force: false,
                             target: pane.clone(),
@@ -1379,7 +1396,7 @@ mod tests {
     }
 
     #[test]
-    fn review_force_is_bound_to_caller_target_and_current_confirmation() {
+    fn review_unverified_api_caller_cannot_authorize_force_or_substitute_history() {
         with_msg_api_harness(&["claude", "alpha", "beta"], |harness| {
             let pane = harness.public_pane_id("claude");
             let alpha = harness.public_pane_id("alpha");
@@ -1391,6 +1408,7 @@ mod tests {
                 harness.app.handle_api_request(Request {
                     id: "caller-guard".into(),
                     method: Method::PaneSendKeys(crate::api::schema::PaneSendKeysParams {
+                        input_peer_pid: None,
                         caller_pane_id: caller,
                         force,
                         pane_id: pane.clone(),
@@ -1414,8 +1432,13 @@ mod tests {
                 );
             }
             assert!(harness.received_texts("claude").is_empty());
-            success_result(&send(harness, Some(alpha.clone()), true));
-            assert_eq!(harness.received_texts("claude"), vec!["\r"]);
+            assert_eq!(
+                error_response(&send(harness, Some(alpha.clone()), true))
+                    .error
+                    .code,
+                "pane_confirmation_pending"
+            );
+            assert!(harness.received_texts("claude").is_empty());
             let changed = current.replace("fix/hold-mail-while-asking", "other-current-folder");
             draw_question(harness, &changed);
             assert_eq!(
@@ -1429,8 +1452,13 @@ mod tests {
                 .error
                 .message
                 .contains("other-current-folder"));
-            success_result(&send(harness, Some(alpha.clone()), true));
-            assert_eq!(harness.received_texts("claude"), vec!["\r"]);
+            assert_eq!(
+                error_response(&send(harness, Some(alpha.clone()), true))
+                    .error
+                    .code,
+                "pane_confirmation_pending"
+            );
+            assert!(harness.received_texts("claude").is_empty());
             let unsupported = format!("{historical}────────────────────────\nUnreadable current confirmation\nEnter to confirm · Esc to cancel\n");
             draw_question(harness, &unsupported);
             assert_eq!(
@@ -1520,6 +1548,48 @@ mod tests {
                 assert!(harness.received_texts("claude").is_empty());
                 assert!(harness.received_texts("other").is_empty());
             });
+        }
+    }
+
+    #[test]
+    fn review2_every_positive_entry_resets_clear_scans_for_mail_and_jobs() {
+        for room in ["review2-regular", crate::msg::JOBS_ROOM] {
+            for immediate in [false, true] {
+                with_msg_api_harness(&["claude"], |h| {
+                    let pane = h.global_pane_id("claude");
+                    let target = h.agents["claude"].pane_id;
+                    let question =
+                        include_str!("../detect/fixtures/claude-narrow-multi-question.txt");
+                    draw_question(h, question);
+                    assert!(h.send("sender", &pane, room, "first").is_empty());
+                    draw_question(h, "");
+                    guard_tick(h, 1);
+                    assert_eq!(h.app.input_guard_waiting[&target], 1);
+                    draw_question(h, &question.replace("Summary", "Next question"));
+                    if immediate {
+                        assert!(h.app.guard_external_input(0, target, false, None).is_err());
+                    } else {
+                        assert!(h.send("sender", &pane, room, "second").is_empty());
+                    }
+                    assert_eq!(h.app.input_guard_waiting[&target], 0);
+                    draw_question(h, "");
+                    guard_tick(h, 2);
+                    assert!(h.received_texts("claude").is_empty());
+                    assert_eq!(h.app.input_guard_waiting[&target], 1);
+                    // A fresh arrival on a clear frame must not restart the two scans.
+                    assert!(h.send("sender", &pane, room, "clear-arrival").is_empty());
+                    assert_eq!(h.app.input_guard_waiting[&target], 1);
+                    guard_tick(h, 3);
+                    let received = h.received_texts("claude").join("");
+                    assert!(received.contains("first"), "{received:?}");
+                    if !immediate {
+                        assert!(received.contains("second"));
+                    }
+                    assert!(received.contains("clear-arrival"));
+                    assert!(!h.app.input_guard_waiting.contains_key(&target));
+                    assert!(h.history(room).iter().all(|m| m.delivered_at.is_some()));
+                });
+            }
         }
     }
 

@@ -961,6 +961,7 @@ fn pane_send_text(args: &[String]) -> std::io::Result<i32> {
     let pane_id = super::normalize_pane_id(&args[0]);
     let text = args[1..].join(" ");
     super::send_ok_request(Method::PaneSendText(PaneSendTextParams {
+        input_peer_pid: None,
         caller_pane_id: super::comms::resolve_run_caller(None).ok(),
         force,
         pane_id,
@@ -978,6 +979,7 @@ fn pane_send_keys(args: &[String]) -> std::io::Result<i32> {
     let pane_id = super::normalize_pane_id(&args[0]);
     let keys = args[1..].to_vec();
     super::send_ok_request(Method::PaneSendKeys(PaneSendKeysParams {
+        input_peer_pid: None,
         caller_pane_id: super::comms::resolve_run_caller(None).ok(),
         force,
         pane_id,
@@ -995,6 +997,7 @@ fn pane_run(args: &[String]) -> std::io::Result<i32> {
     let pane_id = super::normalize_pane_id(&args[0]);
     let text = args[1..].join(" ");
     super::send_ok_request(Method::PaneSendInput(PaneSendInputParams {
+        input_peer_pid: None,
         caller_pane_id: super::comms::resolve_run_caller(None).ok(),
         force,
         pane_id,

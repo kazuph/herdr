@@ -48,6 +48,21 @@ fn process_ancestor_pids(mut pid: u32) -> Vec<u32> {
 }
 
 impl App {
+    pub(in crate::app) fn verified_input_caller(
+        &self,
+        claimed: Option<&str>,
+        peer_pid: Option<u32>,
+    ) -> Option<String> {
+        let claimed = self.parse_pane_id(claimed?)?;
+        let peer_pid = peer_pid?;
+        let mut ancestors = process_ancestor_pids(peer_pid);
+        ancestors.push(peer_pid);
+        let actual = self.pane_for_process_ancestors(&ancestors).ok()?;
+        (actual == claimed)
+            .then(|| self.public_pane_id(actual.0, actual.1))
+            .flatten()
+    }
+
     pub(crate) fn handle_pane_agent_start(
         &mut self,
         id: String,
@@ -2261,12 +2276,11 @@ impl App {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
-        if let Err(error) = self.guard_external_input(
-            ws_idx,
-            pane_id,
-            params.force,
-            params.caller_pane_id.as_deref(),
-        ) {
+        let caller =
+            self.verified_input_caller(params.caller_pane_id.as_deref(), params.input_peer_pid);
+        if let Err(error) =
+            self.guard_external_input(ws_idx, pane_id, params.force, caller.as_deref())
+        {
             return super::responses::encode_error_body(id, error);
         }
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
@@ -2288,12 +2302,11 @@ impl App {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
-        if let Err(error) = self.guard_external_input(
-            ws_idx,
-            pane_id,
-            params.force,
-            params.caller_pane_id.as_deref(),
-        ) {
+        let caller =
+            self.verified_input_caller(params.caller_pane_id.as_deref(), params.input_peer_pid);
+        if let Err(error) =
+            self.guard_external_input(ws_idx, pane_id, params.force, caller.as_deref())
+        {
             return super::responses::encode_error_body(id, error);
         }
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
@@ -2402,12 +2415,11 @@ impl App {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);
         };
-        if let Err(error) = self.guard_external_input(
-            ws_idx,
-            pane_id,
-            params.force,
-            params.caller_pane_id.as_deref(),
-        ) {
+        let caller =
+            self.verified_input_caller(params.caller_pane_id.as_deref(), params.input_peer_pid);
+        if let Err(error) =
+            self.guard_external_input(ws_idx, pane_id, params.force, caller.as_deref())
+        {
             return super::responses::encode_error_body(id, error);
         }
         let Some(runtime) = self.lookup_runtime_sender(ws_idx, pane_id) else {
@@ -2777,6 +2789,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 pane_id,
@@ -2832,6 +2845,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 pane_id,
@@ -2855,6 +2869,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 pane_id,
@@ -2886,6 +2901,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 pane_id,
@@ -2907,6 +2923,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 pane_id,
@@ -2933,6 +2950,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 pane_id,
@@ -2959,6 +2977,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendKeys(PaneSendKeysParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 pane_id,
@@ -2980,6 +2999,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req".into(),
             method: crate::api::schema::Method::PaneSendInput(PaneSendInputParams {
+                input_peer_pid: None,
                 caller_pane_id: None,
                 force: false,
                 pane_id,

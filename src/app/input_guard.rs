@@ -37,8 +37,11 @@ impl App {
         self.current_input_confirmation(ws_idx, pane_id).is_some()
     }
 
-    pub(super) fn hold_external_input(&mut self, pane_id: PaneId) {
-        self.input_guard_waiting.entry(pane_id).or_insert(0);
+    pub(super) fn hold_external_input(&mut self, pane_id: PaneId, visible: bool) {
+        let count = self.input_guard_waiting.entry(pane_id).or_insert(0);
+        if visible {
+            *count = 0;
+        }
         self.input_guard_scan_at.get_or_insert(Instant::now());
     }
 
@@ -52,20 +55,20 @@ impl App {
         ws_idx: usize,
         pane_id: PaneId,
         force: bool,
-        caller: Option<&str>,
+        verified_caller: Option<&str>,
     ) -> Result<(), ErrorBody> {
         let Some(screen) = self.current_input_confirmation(ws_idx, pane_id) else {
             self.forget_input_observations(pane_id);
             return Ok(());
         };
-        self.hold_external_input(pane_id);
+        self.hold_external_input(pane_id, true);
         let Some((signature, description)) = blocker_description(&screen) else {
             self.forget_input_observations(pane_id);
             return Err(ErrorBody { code: "pane_confirmation_unsupported".into(), message: format!("待機中：現在の確認画面の題名と選択肢を読み取れません。強制入力は未対応です。\n{screen}") });
         };
         self.input_guard_observed
             .retain(|(_, target), observed| *target != pane_id || observed == &signature);
-        let caller = caller
+        let caller = verified_caller
             .and_then(|id| self.parse_pane_id(id))
             .and_then(|(ws, pane)| self.public_pane_id(ws, pane));
         if let Some(caller) = caller {
@@ -167,6 +170,50 @@ fn blocker_description(screen: &str) -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn review2_socket_identity_is_never_deserialized_or_serialized() {
+        use crate::api::schema::{Method, Request};
+        for (method, params) in [
+            (
+                "pane.send_text",
+                serde_json::json!({"pane_id":"p1","text":"x"}),
+            ),
+            (
+                "pane.send_keys",
+                serde_json::json!({"pane_id":"p1","keys":["Enter"]}),
+            ),
+            (
+                "pane.send_input",
+                serde_json::json!({"pane_id":"p1","text":"x"}),
+            ),
+            ("agent.send", serde_json::json!({"target":"p1","text":"x"})),
+            (
+                "agent.prompt",
+                serde_json::json!({"target":"p1","text":"x"}),
+            ),
+        ] {
+            let mut params = params;
+            params["input_peer_pid"] = serde_json::json!(std::process::id());
+            let mut request: Request = serde_json::from_value(
+                serde_json::json!({"id":"identity", "method":method,"params":params}),
+            )
+            .unwrap();
+            let peer = match &mut request.method {
+                Method::PaneSendText(p) => &mut p.input_peer_pid,
+                Method::PaneSendKeys(p) => &mut p.input_peer_pid,
+                Method::PaneSendInput(p) => &mut p.input_peer_pid,
+                Method::AgentSend(p) => &mut p.input_peer_pid,
+                Method::AgentPrompt(p) => &mut p.input_peer_pid,
+                _ => unreachable!(),
+            };
+            assert_eq!(*peer, None, "{method}");
+            *peer = Some(std::process::id());
+            assert!(serde_json::to_value(request).unwrap()["params"]
+                .get("input_peer_pid")
+                .is_none());
+        }
+    }
+
     #[test]
     fn captured_workspace_trust_preserves_title_and_bare_choices() {
         let screen = include_str!("../detect/fixtures/claude-workspace-trust-live.txt");

@@ -18,6 +18,10 @@ pub struct AgentReadParams {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentSendParams {
+    // Transport-owned identity; never accepted from JSON or exposed in the schema.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) input_peer_pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caller_pane_id: Option<String>,
     #[serde(default, skip_serializing_if = "super::is_false")]
@@ -248,6 +252,10 @@ pub struct AgentSessionInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentPromptParams {
+    // Transport-owned identity; never accepted from JSON or exposed in the schema.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub(crate) input_peer_pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caller_pane_id: Option<String>,
     #[serde(default, skip_serializing_if = "super::is_false")]
