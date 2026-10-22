@@ -532,7 +532,7 @@ fn footer_offers_amend(footer: &[&str]) -> bool {
 /// Port of saberante's `parse_prompt`. Returns `None` when the screen holds no
 /// numbered option block anchored by a prompt footer or by the screen bottom.
 pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
-    let raw_lines: Vec<&str> = screen.lines().collect();
+    let mut raw_lines: Vec<&str> = screen.lines().collect();
     if let Some(header) = raw_lines
         .iter()
         .rposition(|line| line.trim_start().starts_with("MCP server "))
@@ -549,6 +549,9 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
         // A historical MCP confirmation must not hide a later numbered question.
         if mcp_end.is_none() || mcp_end == last_end {
             return parse_mcp_confirmation(screen);
+        }
+        if let Some(end) = mcp_end {
+            raw_lines.drain(..=end);
         }
     }
     for preview in extract_preview_boxes(&raw_lines) {

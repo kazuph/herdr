@@ -14335,7 +14335,7 @@
       "source_anchors": [
         "SPEC.md:2108",
         "apps/mac-dialog-decisions/dialog.swift:315",
-        "src/cli/mac_dialog.rs:1",
+        "src/cli/mac_dialog.rs:201",
         "src/screen_prompt.rs:119"
       ],
       "test_status": [

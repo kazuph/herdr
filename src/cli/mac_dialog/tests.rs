@@ -292,6 +292,46 @@ mod macos {
                 "0.1.1"
             );
             let installed = fs::read(&registry).unwrap();
+            assert_eq!(
+                run_with_distribution(
+                    &["status".into()],
+                    &LocalFiles {
+                        root: signed.join("0.1.1"),
+                        version: "0.1.1".into(),
+                    }
+                )
+                .unwrap(),
+                0
+            );
+            // SHA corruption and a validly signed, different payload under the
+            // same version must both preserve registration and the active marker.
+            let different = Sandbox::new();
+            unpack(
+                &signed.join("0.1.0").join(ARCHIVE),
+                &different.0.join("payload"),
+            )
+            .unwrap();
+            let payload = different.0.join("payload/mac-dialog-decisions");
+            fs::write(payload.join("README.md"), "different release contents").unwrap();
+            pack(&payload, &different.0.join(ARCHIVE));
+            fs::write(
+                different.0.join("SHA256SUMS"),
+                sums(&different.0.join(ARCHIVE)),
+            )
+            .unwrap();
+            assert!(install(&s, &different.0, "0.1.0").is_err());
+            fs::write(
+                different.0.join("SHA256SUMS"),
+                format!("{}  {ARCHIVE}\n", "0".repeat(64)),
+            )
+            .unwrap();
+            assert!(install(&s, &different.0, "0.1.0").is_err());
+            assert_eq!(fs::read(&registry).unwrap(), installed);
+            assert_eq!(
+                fs::read_to_string(s.versions().join("current-version")).unwrap(),
+                "0.1.1"
+            );
+
             // Recalculate the archive checksum after tampering: signature
             // verification, rather than a stale SHA, must reject the app.
             let damaged = Sandbox::new();
