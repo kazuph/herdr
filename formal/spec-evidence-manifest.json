@@ -13068,7 +13068,10 @@
         "one-time arrow traversal reads every option's preview",
         "cursor restored to original position after traversal",
         "preview unavailable marker",
-        "dialog/Slack preview display"
+        "dialog/Slack preview display",
+        "current option block owns adjacent preview box",
+        "wrapped option label beside preview preserved",
+        "No preview available retains preview_box without preview content"
       ],
       "verification_methods": [
         "rust_test_target:parses_preview_box_beside_focused_option",
@@ -13078,7 +13081,11 @@
         "drift_source_anchor:src/screen_prompt.rs",
         "drift_source_anchor:src/app/screen_prompts.rs",
         "drift_source_anchor:src/cli/decision.rs",
-        "platform_live_acceptance:.artifacts/feat-decision-dialog-context/real-preview-scan-decisions.json"
+        "platform_live_acceptance:.artifacts/feat-decision-dialog-context/real-preview-scan-decisions.json",
+        "rust_test_target:real_preview_frames_ignore_transcript_tables_and_keep_wrapped_labels",
+        "rust_test_target:preview_box_belongs_only_to_current_question_and_none_keeps_format",
+        "rust_test_target:real_table_preview_scan_restores_nonfirst_cursor_without_recreating_decision",
+        "rust_test_target:current_preview_survives_old_boxes_resize_nested_tables_and_hidden_lines"
       ],
       "source_anchors": [
         "SPEC.md:2073",
@@ -14301,12 +14308,18 @@
     {
       "contract_id": "G9-a3f774d45d",
       "dimensions": [
-        "mac dialog shows once without stealing the keyboard; clicks only select"
+        "mac dialog shows once without stealing the keyboard; clicks only select",
+        "normal window level and active Space only",
+        "one application with keyed independent windows",
+        "Dock count and menu of open windows",
+        "nonwrapping unicode-width preview cells"
       ],
       "verification_methods": [
         "drift_source_anchor:apps/mac-dialog-decisions/dialog.swift",
         "drift_source_anchor:apps/mac-dialog-decisions/mac-dialog-decisions.mjs",
-        "platform_live_acceptance:unverified"
+        "platform_live_acceptance:unverified",
+        "node_test:apps/mac-dialog-decisions/test/daemon.test.mjs",
+        "node_test:apps/mac-dialog-decisions/test/render.test.mjs"
       ],
       "source_anchors": [
         "SPEC.md:2104",

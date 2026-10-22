@@ -3519,6 +3519,69 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         assert!(options.iter().all(|o| !o.preview_unavailable));
     }
 
+    #[tokio::test]
+    async fn real_table_preview_scan_restores_nonfirst_cursor_without_recreating_decision() {
+        let _guard = crate::config::lock_test_config_env();
+        let original = include_str!("../../tests/fixtures/screen_prompts/claude_preview_table.txt");
+        let frame = |number: u32| {
+            original
+                .replace("❯ 2. 案B", "  2. 案B")
+                .replace(&format!("  {number}. 案"), &format!("❯ {number}. 案"))
+                .replace("[店長] --依頼-->", &format!("[選択{number}] --依頼-->"))
+        };
+        let (mut app, pane_id, _) = test_app("real-table-preview", IDLE_SCREEN, true);
+        let install = |app: &mut App, text: &str| {
+            let (runtime, rx) =
+                crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                    240,
+                    100,
+                    0,
+                    crlf(text).as_bytes(),
+                    16,
+                );
+            app.state.workspaces[0].tabs[0]
+                .runtimes
+                .insert(pane_id, runtime);
+            rx
+        };
+        let mut rx = install(&mut app, &frame(2));
+        let mut now = Instant::now();
+        app.scan_screen_prompts(now);
+        assert!(pending_decisions().is_empty());
+        for (number, key) in [(1, b'A'), (2, b'B'), (3, b'B'), (2, b'A')] {
+            now += Duration::from_secs(1);
+            app.flush_deferred_pane_writes(now);
+            assert_eq!(drain_arrow(&mut rx), key);
+            assert!(rx.try_recv().is_err());
+            rx = install(&mut app, &frame(number));
+        }
+        now += Duration::from_secs(1);
+        app.flush_deferred_pane_writes(now);
+        assert!(
+            rx.try_recv().is_err(),
+            "no keys after original cursor restored"
+        );
+        assert!(app.preview_scans.is_empty());
+        let pending = pending_decisions();
+        assert_eq!(pending.len(), 1);
+        let id = pending[0].decision_id.clone();
+        for (index, option) in pending[0].options.iter().enumerate() {
+            assert!(option
+                .preview
+                .as_deref()
+                .expect("visited preview")
+                .contains(&format!("選択{}", index + 1)));
+            assert!(!option.preview_unavailable);
+        }
+        for _ in 0..3 {
+            now += Duration::from_secs(1);
+            app.scan_screen_prompts(now);
+        }
+        assert_eq!(all_decisions().len(), 1, "one creation and no cancellation");
+        assert_eq!(pending_decisions()[0].decision_id, id);
+        assert!(rx.try_recv().is_err());
+    }
+
     /// Walk a preview scan over the three-option fixture so the decision
     /// exists, leaving the cursor back on option 1.
     fn finish_three_option_preview_scan(

@@ -1,0 +1,52 @@
+
+⏺ Bash(E=/Users/kazuph/src/github.com/kazuph/herdr/.worktree/fix/mac-dialog-background-preview/.artifacts/mac-dialog-background-preview/evidence; . /private/tmp/claude…)
+  ⎿         3 /Users/kazuph/src/github.com/kazuph/herdr/.worktree/fix/mac-dialog-background-preview/.artifacts/mac-dialog-background-preview/evidence/iso-decisions.tsv
+            6 /Users/kazuph/src/github.com/kazuph/herdr/.worktree/fix/mac-dialog-background-preview/.artifacts/mac-dialog-background-preview/evidence/no-preview-available-ids.txt
+            9 total
+  ⎿  Allowed by auto mode classifier
+
+⏺ Now edit the plan with the review reflected.
+
+⏺ Bash(cd /Users/kazuph/src/github.com/kazuph/herdr/.worktree/fix/mac-dialog-background-preview/.artifacts/mac-dialog-background-preview; python3 -I - <<'EOF'
+      s=open("…)
+  ⎿  ok
+       pixelHeight: 5102
+  ⎿  Allowed by auto mode classifier
+
+⏺ Bash(cd /Users/kazuph/src/github.com/kazuph/herdr/.worktree/fix/mac-dialog-background-preview/.artifacts/mac-dialog-background-preview; sips -c 1500 1200 --cropOffse…)
+  ⎿  (No output)
+  ⎿  Allowed by auto mode classifier
+
+  Thought for 7s, read 1 file (ctrl+o to expand)
+
+⏺ Plan updated. Before asking, start a background capture so this very question (with previews) becomes a live test sample.
+
+⏺ Bash(E=/Users/kazuph/src/github.com/kazuph/herdr/.worktree/fix/mac-dialog-background-preview/.artifacts/mac-dialog-background-preview/evidence/live-ask; mkdir -p $E;…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  Allowed by auto mode classifier
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ 戻し方  ☐ 計画承認  ✔ Submit  →
+
+│ 【Mac の判断待ちダイアログ修正・質問1/2】ダイアログを「普通のウィンドウ」にして複数同時に開けるようにすると、後ろに隠れたダイアログを前に戻す手段が必要になるよ。今のダイアログは Dock
+│ に出ない小物として「1件 = 1プロセス」で動いてるから、隠れると ⌘Tab や Dock からは戻せない（計画書の 3-1 節）。あーしのおすすめは A：Dock のアイコン1つから
+│ ⌘Tab・クリック・右クリックの一覧で戻せて、Mac の普通のアプリと同じ感覚で使えるから。ただし常駐役とダイアログのやり取りを「1本の通り道で複数件を扱う」形に作り替える必要がある。※Dock や
+│ ⌘Tab の動きは見込みで、実装後に実機で撮影して確かめるよ。どれにする？
+
+❯ 1. A.                           ┌───────────────────────────────────────────────────────┐
+    1アプリにまとめる（推奨）     │ Dock:  [🟦 herdr 判断待ち (3)]                        │
+  2. B. Dock に出さない           │          右クリック ▼                                 │
+  3. C. 件数分の Dock アイコン    │          ├ mangene2 › boss › p2449  ログインが必要で… │
+                                  │          ├ TenkaiHifumi › boss      圧縮方式を x265…  │
+                                  │          └ herdr › impl › p2790    裏の窓を戻す…      │
+                                  │                                                       │
+                                  │ ⌘Tab:  [...] [🟦] [...]   ← 1つだけ                   │
+                                  └───────────────────────────────────────────────────────┘
+
+                                  Notes: press n to add notes
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Chat about this
+
+Enter to select · ↑/↓ to navigate · n to add notes · Tab to switch questions · Esc to cancel
+

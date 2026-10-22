@@ -450,7 +450,8 @@ fn left_of_cell(line: &str, col: usize) -> String {
 /// stripped from the lines the option walk sees. `├── ✂ ─ N lines hidden ┤`
 /// separators keep their inner text so a truncated preview still reads
 /// truthfully.
-fn extract_preview_box(lines: &[&str]) -> Option<(usize, usize, usize, Vec<String>)> {
+fn extract_preview_boxes(lines: &[&str]) -> Vec<(usize, usize, usize, Vec<String>)> {
+    let mut boxes = Vec::new();
     for top in 0..lines.len() {
         let Some(box_col) = lines[top]
             .chars()
@@ -487,9 +488,9 @@ fn extract_preview_box(lines: &[&str]) -> Option<(usize, usize, usize, Vec<Strin
             }
             inner.push(preview_inner(row, box_col));
         }
-        return Some((top, bottom, box_col, inner));
+        boxes.push((top, bottom, box_col, inner));
     }
-    None
+    boxes
 }
 
 /// Inner text of one preview-box row: strip the left border at `box_col`
@@ -530,11 +531,21 @@ fn footer_offers_amend(footer: &[&str]) -> bool {
 /// numbered option block anchored by a prompt footer or by the screen bottom.
 pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     let raw_lines: Vec<&str> = screen.lines().collect();
+    for preview in extract_preview_boxes(&raw_lines) {
+        if let Some(prompt) = parse_prompt_lines(&raw_lines, Some(preview)) {
+            return Some(prompt);
+        }
+    }
+    parse_prompt_lines(&raw_lines, None)
+}
+
+type PreviewBox = (usize, usize, usize, Vec<String>);
+
+fn parse_prompt_lines(raw_lines: &[&str], preview: Option<PreviewBox>) -> Option<ScreenPrompt> {
     // Lift the option-side preview box out of the text before option
     // matching — its top border would otherwise land inside the first
     // option's label and its side borders inside descriptions.
-    let preview = extract_preview_box(&raw_lines);
-    let display: Vec<String> = raw_lines
+    let mut display: Vec<String> = raw_lines
         .iter()
         .enumerate()
         .map(|(i, line)| {
@@ -545,6 +556,28 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
                 .unwrap_or_else(|| line.to_string())
         })
         .collect();
+    // Claude wraps a label at the same four-cell indent as its text after
+    // the number. Description rows are indented further. Preserve the label
+    // as one logical row before the bottom-up option walk.
+    if let Some((top, bottom, _, _)) = &preview {
+        let mut option_row = None;
+        for row in *top..=*bottom {
+            if option_match(&display[row]).is_some() {
+                option_row = Some(row);
+            } else if display[row].starts_with("    ")
+                && display[row]
+                    .chars()
+                    .nth(4)
+                    .is_some_and(|ch| !ch.is_whitespace())
+            {
+                if let Some(previous) = option_row {
+                    let tail = display[row].trim().to_string();
+                    display[previous] = format!("{} {}", display[previous].trim_end(), tail);
+                    display[row].clear();
+                }
+            }
+        }
+    }
     let lines: Vec<&str> = display.iter().map(String::as_str).collect();
     // saberante anchors on the LAST footer line so a stale prompt in
     // scrollback cannot shadow the active one.
@@ -671,6 +704,19 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
             return None;
         }
         mq = parse_mq_tabs(&lines, lines.len());
+    }
+
+    // A box is a preview only when it actually sits beside a numbered row
+    // of the active block selected by the last footer. Historical tables and
+    // boxes belonging to an earlier question cannot pass this check.
+    if let Some((top, bottom, col, _)) = &preview {
+        if !option_rows.values().any(|row| {
+            row >= top
+                && row <= bottom
+                && option_match(&left_of_cell(raw_lines[*row], *col)).is_some()
+        }) {
+            return None;
+        }
     }
 
     let codex_header = end
@@ -890,7 +936,15 @@ pub(crate) fn parse_screen_prompt(screen: &str) -> Option<ScreenPrompt> {
     // it attaches to nothing rather than to the slot's draft text.
     let previews = preview
         .as_ref()
-        .filter(|(_, _, _, inner)| inner.iter().any(|line| !line.trim().is_empty()))
+        .filter(|(_, _, _, inner)| {
+            let text = inner
+                .iter()
+                .map(|line| line.trim())
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            !text.is_empty() && text != "No preview available"
+        })
         .and_then(|(_, _, _, inner)| {
             extras
                 .focused
@@ -1347,6 +1401,81 @@ with untrusted content.
   3. [ ] Type something
      Next
 ";
+
+    #[test]
+    fn real_preview_frames_ignore_transcript_tables_and_keep_wrapped_labels() {
+        let table = parse_screen_prompt(include_str!(
+            "../tests/fixtures/screen_prompts/claude_preview_table.txt"
+        ))
+        .expect("table frame");
+        assert_eq!(table.choices.len(), 3);
+        assert_eq!(table.choices[&1], "案A");
+        assert!(table.previews[&2].contains("[店長] --依頼--> [親 Opus]"));
+        assert!(!table.previews[&2].contains("作業中"));
+        let multi = parse_screen_prompt(include_str!(
+            "../tests/fixtures/screen_prompts/claude_preview_multi.txt"
+        ))
+        .expect("multi frame");
+        assert_eq!(multi.mq.as_ref().expect("tabs").total, 2);
+        assert!(multi.previews[&1].contains("│ Review │ Pending"));
+        assert!(multi.previews[&1].contains("└────────┴"));
+        let wrapped = parse_screen_prompt(include_str!(
+            "../tests/fixtures/screen_prompts/claude_preview_wrapped.txt"
+        ))
+        .expect("wrapped frame");
+        assert_eq!(wrapped.choices.len(), 3);
+        assert_eq!(wrapped.choices[&1], "A. 1アプリにまとめる（推奨）");
+        assert!(wrapped.question.contains("どれにする？"));
+        assert!(!wrapped.question.contains("1アプリにまとめる"));
+        assert!(wrapped.previews[&1].contains("Dock:"));
+    }
+
+    #[test]
+    fn current_preview_survives_old_boxes_resize_nested_tables_and_hidden_lines() {
+        let current = include_str!("../tests/fixtures/screen_prompts/claude_preview_multi.txt");
+        let old = include_str!("../tests/fixtures/screen_prompts/claude_preview_table.txt");
+        let baseline = parse_screen_prompt(current).expect("baseline");
+        for prefix in [
+            old.to_string(),
+            format!(
+                "{old}{}",
+                old.replace(
+                    "                                  ┌",
+                    "                                              ┌"
+                )
+            ),
+        ] {
+            let prompt = parse_screen_prompt(&format!("{prefix}{current}")).expect("current");
+            assert_eq!(prompt.signature(), baseline.signature());
+            assert_eq!(prompt.previews, baseline.previews);
+        }
+        let hidden = current.replace(
+            "│ │ CI     │ Passed   │ GitHub │ 全部緑   │    │",
+            "├── ✂ ─ 32 lines hidden ────────────────────────┤",
+        );
+        let prompt = parse_screen_prompt(&hidden).expect("hidden lines");
+        assert!(prompt.previews[&1].contains("32 lines hidden"));
+        assert_eq!(prompt.signature(), baseline.signature());
+        assert!(!prompt.choices.values().any(|label| label.contains('│')));
+        assert!(!prompt
+            .descriptions
+            .values()
+            .any(|label| label.contains('│')));
+    }
+
+    #[test]
+    fn preview_box_belongs_only_to_current_question_and_none_keeps_format() {
+        let old = include_str!("../tests/fixtures/screen_prompts/claude_preview_multi.txt");
+        let current = "\n────────────────────\n☐ 新しい質問\n\n次の質問です\n\n❯ 1. はい\n  2. いいえ\n\nEnter to select · Esc to cancel\n";
+        let prompt = parse_screen_prompt(&format!("{old}{current}")).expect("new question");
+        assert!(!prompt.preview_box);
+        assert!(prompt.previews.is_empty());
+        assert_eq!(prompt.choices[&1], "はい");
+        let absent = "☐ 無し\n\n質問です\n\n❯ 1. A      ┌──────────────────────┐\n  2. B      │ No preview available │\n            └──────────────────────┘\n\nEnter to select · Esc to cancel\n";
+        let prompt = parse_screen_prompt(absent).expect("absent preview");
+        assert!(prompt.preview_box);
+        assert!(prompt.previews.is_empty());
+    }
 
     // Verbatim preview frame: Claude Code draws the focused option's
     // `preview` as a box to the right of the options.
