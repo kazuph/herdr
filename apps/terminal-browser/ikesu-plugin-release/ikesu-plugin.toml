@@ -1,0 +1,13 @@
+id = "zenbu-labs.terminal-browser"
+name = "Terminal Browser"
+version = "0.7.3"
+min_ikesu_version = "0.4.1"
+description = "Open the bundled terminal browser in ikesu"
+platforms = ["macos"]
+
+[[actions]]
+id = "open-split"
+title = "Open terminal-browser (right split)"
+description = "Split the focused pane and open this installed terminal-browser version"
+contexts = ["global"]
+command = ["bash", "open-split.sh"]
