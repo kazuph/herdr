@@ -19,8 +19,8 @@ async function eventually(check) {
   throw error;
 }
 
-for (const [outer, inner] of [['ikesu', 'herdr'], ['herdr', 'ikesu']]) {
-  test(`real ${outer} -> ${inner}: nearest runtime wins and false selected pane fails closed`, async () => {
+for (const [outer, inner] of [['ikesu', 'herdr'], ['herdr', 'ikesu']]) for (const mode of ['symlink', 'alias', 'disappeared']) {
+  test(`real ${outer} -> ${inner} (${mode}): executable identity and false pane fail closed`, async () => {
     const dir = fs.mkdtempSync('/tmp/tb-nest-');
     const base = { ...process.env };
     for (const key of Object.keys(base)) if (/^(IKESU_|HERDR_|GTX_|GOTERRACE_|XDG_)/.test(key)) delete base[key];
@@ -28,8 +28,9 @@ for (const [outer, inner] of [['ikesu', 'herdr'], ['herdr', 'ikesu']]) {
     for (const name of [outer, inner]) {
       const home = path.join(dir, name);
       fs.mkdirSync(home);
-      const bin = path.join(home, name);
-      fs.symlinkSync(bins[name], bin);
+      const bin = path.join(home, name === inner && mode !== 'symlink' ? `${name}-dev` : name);
+      if (name === inner && mode !== 'symlink') fs.copyFileSync(fs.realpathSync(bins[name]), bin);
+      else fs.symlinkSync(bins[name], bin);
       const config = path.join(home, 'config.toml');
       fs.writeFileSync(config, '[experimental]\nallow_nested = true\n');
       const env = { ...base, HOME: home, XDG_CONFIG_HOME: path.join(home, '.config'), XDG_DATA_HOME: path.join(home, 'data'), XDG_STATE_HOME: path.join(home, 'state'), SHELL: '/bin/sh' };
@@ -45,7 +46,7 @@ for (const [outer, inner] of [['ikesu', 'herdr'], ['herdr', 'ikesu']]) {
         env.HERDR_SOCKET_PATH = path.join(home, 'herdr.sock');
         env.HERDR_SOCKET_PATH_EXPLICIT = '1';
       }
-      contexts[name] = { home, bin, env, cli: async args => { const {stdout}=await exec(bin,args,{env}); return stdout.trim() ? JSON.parse(stdout) : null; } };
+      contexts[name] = { home, bin, env, cli: async args => { const {stdout}=await exec(bins[name],args,{env}); return stdout.trim() ? JSON.parse(stdout) : null; } };
     }
     const outerLog = fs.openSync(path.join(dir, 'outer.log'), 'w');
     const server = spawn(contexts[outer].bin, ['server'], { env: contexts[outer].env, stdio: ['ignore', outerLog, outerLog] });
@@ -61,22 +62,33 @@ for (const [outer, inner] of [['ikesu', 'herdr'], ['herdr', 'ikesu']]) {
       const innerPane = child.result.root_pane;
       assert.ok(innerPane?.pane_id, JSON.stringify(child));
       const output = path.join(dir, 'selection.json');
-      const probe = path.join(dir, 'probe.cjs');
-      const modulePath = path.resolve(__dirname, '../dist/index.js');
-      fs.writeFileSync(probe, `const fs=require('fs'); const {detect,currentMultiplexer}=require(${JSON.stringify(modulePath)}); (async()=>{const env={...process.env}; const good=detect(env); const pane=await good.getCurrentPane({tty:null,cwd:process.cwd()}); env[${JSON.stringify(inner.toUpperCase()+'_PANE_ID')}]='p999999999'; let rejected=false; try{await detect(env).getCurrentPane({tty:null,cwd:process.cwd()})}catch(e){rejected=/Cannot verify/.test(e.message)};fs.writeFileSync(${JSON.stringify(output)},JSON.stringify({name:good.name,pane,rejected,herdr:process.env.HERDR_PANE_ID,ikesu:process.env.IKESU_PANE_ID}));})().catch(e=>{fs.writeFileSync(${JSON.stringify(output)},JSON.stringify({error:e.stack}));process.exitCode=1});`);
-      await contexts[inner].cli(['pane', 'run', innerPane.pane_id, shellQuote([process.execPath, probe])]);
+      if (mode === 'disappeared') fs.unlinkSync(contexts[inner].bin);
+      const probe = path.resolve(__dirname, 'nested-probe.cjs');
+      const safePath = path.join(dir, 'commands');
+      fs.mkdirSync(safePath);
+      for (const [name, source] of Object.entries({ ps: '/bin/ps', ...bins })) fs.symlinkSync(source, path.join(safePath, name));
+      await contexts[inner].cli(['pane', 'run', innerPane.pane_id, shellQuote(['env', `PATH=${safePath}`, process.execPath, probe, output, inner]) + ' </dev/null']);
       const result = await eventually(() => JSON.parse(fs.readFileSync(output, 'utf8')));
+      if (mode === 'disappeared') {
+        assert.match(result.error, /Cannot establish the inner/);
+        console.log('PASS disappeared executable refuses outer runtime', outer, inner);
+        return;
+      }
       assert.equal(result.name, inner, JSON.stringify(result));
       assert.ok(result.herdr && result.ikesu, 'both runtime environments must really coexist');
       assert.equal(result.pane.id, innerPane.pane_id);
       assert.equal(result.rejected, true);
+      assert.equal(result.upgradeRejected, true);
+      assert.equal(result.invalidPaneSpawnedInstall, false);
+      assert.equal(result.target.runtime, inner);
+      assert.deepEqual(result.commands.find(c => c.args.join(' ') === 'tb install'), { bin: contexts[inner].bin, args: ['tb', 'install'] });
       console.log('PASS nested', outer, '->', inner, JSON.stringify(result), dir);
     } finally {
       const pids = execFileSync('pgrep', ['-u', String(process.getuid()), '-f', dir], { encoding: 'utf8' }).trim().split('\n').map(Number);
       for (const pid of pids) {
         const info = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
         if (info.status !== 0) continue;
-        if (info.stdout.includes(dir) && /\/(herdr|ikesu) server\s*$/.test(info.stdout)) execFileSync('kill', [String(pid)]);
+        if (info.stdout.includes(dir) && /\/(herdr|ikesu)(-dev)? server\s*$/.test(info.stdout)) execFileSync('kill', [String(pid)]);
       }
       if (server.exitCode === null) await new Promise(resolve => server.once('exit', resolve));
       fs.closeSync(outerLog);
@@ -84,14 +96,17 @@ for (const [outer, inner] of [['ikesu', 'herdr'], ['herdr', 'ikesu']]) {
   });
 }
 
-test('inherited variables without any runtime ancestor fail with an explicit error', async () => {
+test('orphaned runtime variables fail pane detection but upgrade really spawns herdr tb install', async () => {
   const dir = fs.mkdtempSync('/tmp/tb-orphan-');
-  const probe = path.join(dir, 'probe.cjs');
   const output = path.join(dir, 'result.json');
-  const modulePath = path.resolve(__dirname, '../dist/index.js');
-  fs.writeFileSync(probe, `const fs=require('fs'); const {currentMultiplexer}=require(${JSON.stringify(modulePath)});const deadline=Date.now()+5000;function run(){if(process.ppid!==1&&Date.now()<deadline){setTimeout(run,10);return;}try{currentMultiplexer({HERDR_PANE_ID:'p1',IKESU_PANE_ID:'p1'});fs.writeFileSync(${JSON.stringify(output)},'unexpected selection');}catch(e){fs.writeFileSync(${JSON.stringify(output)},e.message);}}run();`);
-  await exec('/bin/sh', ['-c', shellQuote([process.execPath, probe]) + ' >/dev/null 2>&1 &']);
-  const error = await eventually(() => fs.readFileSync(output, 'utf8'));
-  assert.match(error, /Cannot establish the inner herdr\/ikesu runtime from process ancestry/);
-  console.log('PASS no ancestor refuses inherited variables', error);
+  const safePath = path.join(dir, 'commands');
+  fs.mkdirSync(safePath);
+  for (const [name, source] of Object.entries({ ps: '/bin/ps', ...bins })) fs.symlinkSync(source, path.join(safePath, name));
+  const env = { HOME: dir, PATH: safePath, HERDR_PANE_ID: 'p1', IKESU_PANE_ID: 'p1', HERDR_BIN_PATH: bins.herdr, IKESU_BIN_PATH: bins.ikesu };
+  await exec('/bin/sh', ['-c', shellQuote([process.execPath, path.resolve(__dirname, 'nested-probe.cjs'), output, 'herdr', 'orphan']) + ' </dev/null >/dev/null 2>&1 &'], { env });
+  const result = await eventually(() => JSON.parse(fs.readFileSync(output, 'utf8')));
+  assert.match(result.selectionError, /Cannot establish the inner herdr\/ikesu runtime/);
+  assert.equal(result.target?.runtime, 'herdr', JSON.stringify(result));
+  assert.deepEqual(result.commands.find(c => c.args.join(' ') === 'tb install'), { bin: bins.herdr, args: ['tb', 'install'] });
+  console.log('PASS orphan fallback observes actual subprocess', JSON.stringify(result));
 });

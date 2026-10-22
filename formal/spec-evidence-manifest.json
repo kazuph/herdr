@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "active_contract_count": 588,
+    "active_contract_count": 591,
     "models": {
       "lean": "formal/ForkDecisionSpec.lean: two-pane toggle and grid rounding",
       "alloy": "formal/fork-ownership.als: public pane identity and popup ownership",
@@ -15242,19 +15242,26 @@
       ]
     },
     {
-      "contract_id": "G8-affd232b2e",
+      "contract_id": "G8-ef09374c9f",
       "dimensions": [
-        "tb ikesu adapter, nested runtime selection and release plugins"
+        "tb independent distribution and atomic installation"
       ],
       "verification_methods": [
+        "rust_test_target:tb_local_archive_install_upgrade_reinstall_and_registration_rollback",
+        "rust_test_target:tb_extract_checksum_switch_failures_preserve_old_version",
+        "rust_test_target:tb_registration_restore_preserves_exact_entry_and_other_plugins",
+        "rust_test_target:tb_running_old_version_survives_upgrade",
+        "drift_source_anchor:src/cli/tb.rs",
         "platform_live_acceptance:unverified",
-        "drift_source_anchor:apps/terminal-browser/terminals/src/multiplexer.ts",
-        "node_test_target:apps/terminal-browser/terminals/test/ikesu.integration.cjs",
-        "node_test_target:apps/terminal-browser/cli/test/plugin-release.test.mjs"
+        "node_test_target:apps/terminal-browser/cli/test/upgrade.test.mjs",
+        "node_test_target:apps/terminal-browser/terminals/test/nested.integration.cjs",
+        "drift_source_anchor:apps/terminal-browser/cli/src/upgrade.ts"
       ],
       "source_anchors": [
         "SPEC.md:1589",
-        "apps/terminal-browser/terminals/src/multiplexer.ts:8"
+        "apps/terminal-browser/terminals/src/multiplexer.ts:8",
+        "src/cli/tb.rs:17",
+        "apps/terminal-browser/cli/src/upgrade.ts:16"
       ],
       "test_status": [
         "unverified"
@@ -15263,23 +15270,24 @@
         "unverified"
       ],
       "unrepresented_dimensions": [
-        "Signed release publication and parent acceptance remain outside this implementation task"
+        "Signed Electron payload, GitHub publication and work Mac acceptance await parent execution"
       ]
     },
     {
-      "contract_id": "G8-f2261c90f0",
+      "contract_id": "G8-6f0ebc77a0",
       "dimensions": [
-        "tb ikesu adapter, nested runtime selection and release plugins"
+        "executable identity of nested runtimes",
+        "pane existence and failure isolation"
       ],
       "verification_methods": [
-        "platform_live_acceptance:unverified",
+        "node_test_target:apps/terminal-browser/terminals/test/nested.integration.cjs",
+        "node_test_target:apps/terminal-browser/terminals/test/multiplexer.test.js",
         "drift_source_anchor:apps/terminal-browser/terminals/src/multiplexer.ts",
-        "node_test_target:apps/terminal-browser/terminals/test/ikesu.integration.cjs",
-        "node_test_target:apps/terminal-browser/cli/test/plugin-release.test.mjs"
+        "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
         "SPEC.md:1590",
-        "apps/terminal-browser/terminals/src/multiplexer.ts:8"
+        "apps/terminal-browser/terminals/src/multiplexer.ts:11"
       ],
       "test_status": [
         "unverified"
@@ -15294,17 +15302,19 @@
     {
       "contract_id": "G8-f8d8101165",
       "dimensions": [
-        "tb ikesu adapter, nested runtime selection and release plugins"
+        "server-owned configuration identity",
+        "atomic update and conditional rollback",
+        "valid experimental section"
       ],
       "verification_methods": [
-        "platform_live_acceptance:unverified",
-        "drift_source_anchor:apps/terminal-browser/terminals/src/multiplexer.ts",
         "node_test_target:apps/terminal-browser/terminals/test/ikesu.integration.cjs",
-        "node_test_target:apps/terminal-browser/cli/test/plugin-release.test.mjs"
+        "node_test_target:apps/terminal-browser/terminals/test/kitty-config.test.js",
+        "drift_source_anchor:apps/terminal-browser/terminals/src/terminals/ikesu.ts",
+        "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
         "SPEC.md:1591",
-        "apps/terminal-browser/terminals/src/multiplexer.ts:8"
+        "apps/terminal-browser/terminals/src/terminals/ikesu.ts:8"
       ],
       "test_status": [
         "unverified"
@@ -15319,17 +15329,16 @@
     {
       "contract_id": "G8-522b2a5eae",
       "dimensions": [
-        "tb ikesu adapter, nested runtime selection and release plugins"
+        "versioned herdr and ikesu plugins in release archive"
       ],
       "verification_methods": [
-        "platform_live_acceptance:unverified",
-        "drift_source_anchor:apps/terminal-browser/terminals/src/multiplexer.ts",
-        "node_test_target:apps/terminal-browser/terminals/test/ikesu.integration.cjs",
-        "node_test_target:apps/terminal-browser/cli/test/plugin-release.test.mjs"
+        "node_test_target:apps/terminal-browser/cli/test/plugin-release.test.mjs",
+        "drift_source_anchor:apps/terminal-browser/scripts/stage-plugins.sh",
+        "platform_live_acceptance:unverified"
       ],
       "source_anchors": [
         "SPEC.md:1592",
-        "apps/terminal-browser/terminals/src/multiplexer.ts:8"
+        "apps/terminal-browser/scripts/stage-plugins.sh:6"
       ],
       "test_status": [
         "unverified"

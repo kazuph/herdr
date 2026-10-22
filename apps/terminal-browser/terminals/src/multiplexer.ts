@@ -1,27 +1,58 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import fs from "node:fs";
 import type { Run } from "./run";
 import type { Pane } from "./terminal";
 
 export type Multiplexer = "herdr" | "ikesu" | "gtx";
 
+export class UnknownMultiplexerError extends Error {}
+
+function executablePath(name: "herdr" | "ikesu", env: NodeJS.ProcessEnv): string | null {
+  const explicit = env[`${name.toUpperCase()}_BIN_PATH`];
+  const candidates = explicit ? [explicit] : (env.PATH ?? process.env.PATH ?? "").split(path.delimiter).map(dir => path.join(dir, name));
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return fs.realpathSync(candidate);
+    } catch {}
+  }
+  return null;
+}
+
+function processExecutable(pid: number): string {
+  if (process.platform === "linux") return fs.realpathSync(`/proc/${pid}/exe`);
+  const files = execFileSync("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-Fn"], { encoding: "utf8" });
+  const executable = files.split("\n").find(line => line.startsWith("n"))?.slice(1);
+  if (!executable) throw new Error(`Executable for ancestor ${pid} is unavailable`);
+  return fs.realpathSync(executable);
+}
+
 export function currentMultiplexer(env: NodeJS.ProcessEnv): Multiplexer | null {
   if (env.HERDR_PANE_ID && env.IKESU_PANE_ID) {
-    const rows = execFileSync("ps", ["-axo", "pid=,ppid=,comm="], { encoding: "utf8" });
-    const processes = new Map<number, { parent: number; name: string }>();
-    for (const row of rows.trim().split("\n")) {
-      const match = row.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
-      if (match) processes.set(Number(match[1]), { parent: Number(match[2]), name: path.basename(match[3]) });
+    try {
+      const expected = { herdr: executablePath("herdr", env), ikesu: executablePath("ikesu", env) };
+      const rows = execFileSync("/bin/ps", ["-axo", "pid=,ppid=,comm="], { encoding: "utf8" });
+      const processes = new Map<number, { parent: number; executable: string }>();
+      for (const row of rows.trim().split("\n")) {
+        const match = row.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+        if (match) processes.set(Number(match[1]), { parent: Number(match[2]), executable: match[3] });
+      }
+      const visited = new Set<number>();
+      for (let pid = process.ppid; pid > 1 && !visited.has(pid);) {
+        visited.add(pid);
+        const ancestor = processes.get(pid);
+        if (!ancestor) break;
+        const real = processExecutable(pid);
+        for (const name of ["herdr", "ikesu"] as const) {
+          if (real === expected[name] || (!env[`${name.toUpperCase()}_BIN_PATH`] && path.basename(ancestor.executable) === name)) return name;
+        }
+        pid = ancestor.parent;
+      }
+    } catch (error) {
+      throw new UnknownMultiplexerError(`Cannot establish the inner herdr/ikesu runtime from executable ancestry. ${error instanceof Error ? error.message : String(error)}`);
     }
-    const visited = new Set<number>();
-    for (let pid = process.ppid; pid > 1 && !visited.has(pid);) {
-      visited.add(pid);
-      const ancestor = processes.get(pid);
-      if (!ancestor) break;
-      if (ancestor.name === "herdr" || ancestor.name === "ikesu") return ancestor.name;
-      pid = ancestor.parent;
-    }
-    throw new Error("Cannot establish the inner herdr/ikesu runtime from process ancestry; refusing inherited pane variables.");
+    throw new UnknownMultiplexerError("Cannot establish the inner herdr/ikesu runtime from executable ancestry; refusing inherited pane variables.");
   }
   if (env.IKESU_PANE_ID) return "ikesu";
   if (env.GTX_PANE_ID) return "gtx";

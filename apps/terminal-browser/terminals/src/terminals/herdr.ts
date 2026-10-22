@@ -18,10 +18,21 @@ function herdrConfigPath(env: NodeJS.ProcessEnv): string {
 }
 
 export function enableKittyGraphics(config: string): string {
-  const flag = /^([ \t]*kitty_graphics[ \t]*=[ \t]*)false([ \t]*)$/m;
-  if (flag.test(config)) return config.replace(flag, "$1true$2");
-  const header = /^\[experimental\][ \t]*$/m;
-  if (header.test(config)) return config.replace(header, "[experimental]\nkitty_graphics = true");
+  const lines = config.split("\n");
+  const section = lines.findIndex(line => /^[ \t]*\[experimental\][ \t]*(?:#.*)?$/.test(line));
+  if (section !== -1) {
+    let end = section + 1;
+    while (end < lines.length && !/^[ \t]*\[/.test(lines[end])) end++;
+    const flag = /^([ \t]*(?:kitty_graphics|"kitty_graphics"|'kitty_graphics')[ \t]*=[ \t]*)(?:false|true)([ \t]*(?:#.*)?)$/;
+    for (let i = section + 1; i < end; i++) {
+      if (flag.test(lines[i])) {
+        lines[i] = lines[i].replace(flag, "$1true$2");
+        return lines.join("\n");
+      }
+    }
+    lines.splice(section + 1, 0, "kitty_graphics = true");
+    return lines.join("\n");
+  }
   const trimmed = config.replace(/\s+$/, "");
   return `${trimmed}${trimmed ? "\n\n" : ""}[experimental]\nkitty_graphics = true\n`;
 }
@@ -57,9 +68,10 @@ export const herdr: Detect = (env, run) => {
     try {
       const configPath = herdrConfigPath(env);
       const current = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf8") : "";
-      if (/^[ \t]*kitty_graphics[ \t]*=[ \t]*true[ \t]*$/m.test(current)) return;
+      const updated = enableKittyGraphics(current);
+      if (updated === current) return;
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
-      fs.writeFileSync(configPath, enableKittyGraphics(current));
+      fs.writeFileSync(configPath, updated);
       await herdr(["server", "reload-config"]);
     } catch {
     }
